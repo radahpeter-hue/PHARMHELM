@@ -66,11 +66,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   className="flex items-center gap-3 p-1.5 hover:bg-zinc-100 rounded-xl transition-colors"
                 >
                   <div className="h-9 w-9 bg-zinc-900 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-sm">
-                    {profile?.displayName?.charAt(0) || 'U'}
+                    {(profile?.full_name || profile?.displayName || profile?.email || 'U').charAt(0).toUpperCase()}
                   </div>
                   <div className="text-left hidden sm:block">
-                    <p className="text-xs font-black text-zinc-900 leading-none mb-1">{profile?.displayName}</p>
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">{profile?.role}</p>
+                    <p className="text-xs font-black text-zinc-900 leading-none mb-1">
+                      {profile?.full_name || profile?.displayName || profile?.email || 'User'}
+                    </p>
+                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">{profile?.role || 'Staff'}</p>
                   </div>
                   <ChevronDown size={14} className={`text-zinc-400 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
                 </button>

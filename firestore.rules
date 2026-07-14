@@ -368,6 +368,36 @@ service cloud.firestore {
       allow read, update, delete: if isAdmin();
     }
 
+    // Procurement, transfers, billing, and welfare collections
+    match /stock_orders/{orderId} {
+      allow read: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+      allow write: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+    }
+    match /stock_order_lines/{lineId} {
+      allow read: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+      allow write: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+    }
+    match /transfer_invoices/{invoiceId} {
+      allow read: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+      allow write: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+    }
+    match /transfer_invoice_lines/{lineId} {
+      allow read: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+      allow write: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+    }
+    match /hq_order_drafts/{draftId} {
+      allow read: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+      allow write: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+    }
+    match /billable_services/{serviceId} {
+      allow read: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+      allow write: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+    }
+    match /welfare_records/{recordId} {
+      allow read: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+      allow write: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+    }
+
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);

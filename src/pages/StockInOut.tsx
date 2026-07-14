@@ -653,6 +653,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
           const { id, ...lineToSave } = line as any; // Strip out id if updating existing draft lines
           await firestoreService.addDocument('stock_order_lines', {
             ...lineToSave,
+            tenantId: profile.tenantId,
             order_id: orderId,
             line_status: 'ordered'
           });
