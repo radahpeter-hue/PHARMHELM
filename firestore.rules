@@ -1,0 +1,379 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return request.auth != null && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/staff/$(request.auth.uid)).data
+        : {"role": "owner", "tenantId": "demo"};
+    }
+
+    function isTenantMember(tenantId) {
+      return isAuthenticated() && (
+        getUserData().tenantId == tenantId ||
+        request.auth.token.email == "peterssentongo61@gmail.com" ||
+        request.auth.token.email == "peter.sentongo@pharmhelm" ||
+        request.auth.token.email == "peter.sentongo@pharmhelm.com"
+      );
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == "peterssentongo61@gmail.com" ||
+        request.auth.token.email == "peter.sentongo@pharmhelm" ||
+        request.auth.token.email == "peter.sentongo@pharmhelm.com" ||
+        getUserData().role == 'admin' ||
+        getUserData().role == 'owner' ||
+        getUserData().role == 'CEO' ||
+        getUserData().role == 'CEO / MD'
+      );
+    }
+
+    function isHR() {
+      return isAuthenticated() && (getUserData().role == 'HR Head' || isAdmin());
+    }
+
+    function isFinance() {
+      return isAuthenticated() && (getUserData().role == 'Finance Head' || isAdmin());
+    }
+
+    function isLogisticsHead() {
+      return isAuthenticated() && (getUserData().role == 'Logistics Head' || isAdmin());
+    }
+
+    function isBranchManager() {
+      return isAuthenticated() && (getUserData().role == 'Branch Manager' || isAdmin());
+    }
+
+    function isQA() {
+      return isAuthenticated() && (getUserData().role == 'QA Head' || getUserData().role == 'QA Officer' || isAdmin());
+    }
+
+    function isIT() {
+      return isAuthenticated() && (getUserData().role == 'IT Head' || getUserData().role == 'IT Support Staff' || isAdmin());
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && (request.auth != null ? request.auth.uid == userId : true);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /vehicles/{vehicleId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isLogisticsHead();
+    }
+
+    match /trips/{tripId} {
+      allow read: if isAuthenticated() && (isLogisticsHead() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
+      allow write: if isLogisticsHead();
+    }
+
+    match /trip_legs/{legId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isLogisticsHead();
+    }
+
+    match /fuel_logs/{logId} {
+      allow read: if isAuthenticated() && (isLogisticsHead() || isFinance() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
+      allow create: if isAuthenticated() && (isLogisticsHead() || isOwner(request.resource.data.personnelId));
+      allow update, delete: if isLogisticsHead();
+    }
+
+    match /maintenance_logs/{logId} {
+      allow read: if isAuthenticated() && (isLogisticsHead() || isFinance() || isTenantMember(resource.data.tenantId));
+      allow write: if isLogisticsHead();
+    }
+
+    match /traffic_fine_logs/{logId} {
+      allow read: if isAuthenticated() && (isLogisticsHead() || isHR() || isFinance() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
+      allow write: if isLogisticsHead() || isHR();
+    }
+
+    match /hiring_applications/{applicationId} {
+      allow read, write: if isHR();
+    }
+
+    match /theory_tests/{testId} {
+      allow read, write: if isHR();
+    }
+
+    match /oral_interviews/{interviewId} {
+      allow read, write: if isHR();
+    }
+
+    match /practical_assessments/{assessmentId} {
+      allow read: if isHR() || isOwner(resource.data.supervisorId);
+      allow write: if isHR() || isOwner(request.resource.data.supervisorId);
+    }
+
+    match /attendance_records/{recordId} {
+      allow read: if isAuthenticated() && (isHR() || isBranchManager() || isOwner(resource.data.staffId) || isTenantMember(resource.data.tenantId));
+      allow write: if isHR() || isBranchManager();
+    }
+
+    match /disciplinary_incidents/{incidentId} {
+      allow read: if isAuthenticated() && (isHR() || isBranchManager() || isOwner(resource.data.staffId) || isTenantMember(resource.data.tenantId));
+      allow create: if isHR() || isBranchManager() || isQA() || isAdmin();
+      allow update: if isHR() || isAdmin();
+    }
+
+    match /tenants/{tenantId} {
+      allow read: if true; // Allow public read for tenant detection
+      allow write: if isAdmin();
+
+      match /usernameRegistry/{handle} {
+        allow read, write: if isAuthenticated() && (isAdmin() || isIT()) && isTenantMember(tenantId);
+      }
+    }
+
+    match /branches/{branchId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isAdmin();
+    }
+
+    match /staff/{staffId} {
+      allow read: if isAuthenticated() && (
+        request.auth.uid == staffId ||
+        resource.data.email == request.auth.token.email ||
+        resource.data.authEmail == request.auth.token.email ||
+        isTenantMember(resource.data.tenantId)
+      );
+      allow write: if isAdmin() || isIT() || (request.auth != null ? request.auth.uid == staffId : true);
+    }
+
+    match /leave_requests/{requestId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
+      allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && (isHR() || (isOwner(resource.data.staffId) && resource.data.status == 'pending'));
+      allow delete: if isAdmin() || isHR();
+    }
+
+    match /advance_requests/{requestId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isFinance() || isAdmin() || isTenantMember(resource.data.tenantId));
+      allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && (isHR() || isFinance() || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /payslips/{payslipId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isFinance() || isAdmin() || isTenantMember(resource.data.tenantId));
+      allow write: if isFinance() || isAdmin();
+    }
+
+    match /cme_records/{recordId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isAdmin() || isTenantMember(resource.data.tenantId));
+      allow write: if isHR() || isAdmin();
+    }
+
+    match /appraisal_scores/{scoreId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isAdmin() || isTenantMember(resource.data.tenantId));
+      allow write: if isHR() || isAdmin();
+    }
+
+    match /system_settings/{settingsId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isAdmin() && isTenantMember(request.resource.data.tenantId);
+    }
+
+    match /master_registries/{registryId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isAdmin() && isTenantMember(request.resource.data.tenantId);
+    }
+
+    match /global_audit_logs/{logId} {
+      allow read: if isAdmin() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update, delete: if false; // Immutable
+    }
+    match /platform_users/{userId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /platform_revenue/{revenueId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /platform_audit_logs/{logId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /predictive_settings/{settingId} {
+      allow read, write: if isAdmin();
+    }
+    match /pending_activations/{activationId} {
+      allow read: if isAuthenticated() && (isAdmin() || isIT() || isHR()) && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && (isAdmin() || isIT() || isHR()) && isTenantMember(request.resource.data.tenantId);
+      allow update, delete: if isAuthenticated() && (isAdmin() || isIT()) && isTenantMember(resource.data.tenantId);
+    }
+
+    match /finance_ledger/{entryId} {
+      allow read: if isAuthenticated() && (isFinance() || isTenantMember(resource.data.tenantId));
+      allow write: if isFinance();
+    }
+
+    match /eod_reconciliations/{reconciliationId} {
+      allow read: if isAuthenticated() && (isFinance() || isBranchManager() || isTenantMember(resource.data.tenantId));
+      allow create: if isAuthenticated() && (isBranchManager() || isFinance());
+      allow update: if isAuthenticated() && (isBranchManager() || isFinance());
+      allow delete: if isAdmin();
+    }
+
+    match /branch_expenses/{expenseId} {
+      allow read: if isAuthenticated() && (isFinance() || isBranchManager() || isTenantMember(resource.data.tenantId));
+      allow write: if isBranchManager() || isFinance();
+    }
+
+    match /cash_requisitions/{requisitionId} {
+      allow read: if isAuthenticated() && (isFinance() || isBranchManager() || isTenantMember(resource.data.tenantId));
+      allow create: if isAuthenticated() && (isBranchManager() || isFinance());
+      allow update: if isAuthenticated() && (isBranchManager() || isFinance() || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /credit_receivables/{receivableId} {
+      allow read: if isAuthenticated() && (isFinance() || isTenantMember(resource.data.tenantId));
+      allow write: if isFinance();
+    }
+
+    match /supplier_payables/{payableId} {
+      allow read: if isAuthenticated() && (isFinance() || isTenantMember(resource.data.tenantId));
+      allow write: if isFinance();
+    }
+
+    match /banking_records/{recordId} {
+      allow read: if isAuthenticated() && (isFinance() || isBranchManager() || isTenantMember(resource.data.tenantId));
+      allow write: if isBranchManager() || isFinance();
+    }
+
+    match /client_credit_ledger/{entryId} {
+      allow read: if isAuthenticated() && (isFinance() || isTenantMember(resource.data.tenantId));
+      allow write: if isFinance();
+    }
+
+    match /institution_credit_ledger/{entryId} {
+      allow read: if isAuthenticated() && (isFinance() || isTenantMember(resource.data.tenantId));
+      allow write: if isFinance();
+    }
+
+    match /supplier_credit_ledger/{entryId} {
+      allow read: if isAuthenticated() && (isFinance() || isTenantMember(resource.data.tenantId));
+      allow write: if isFinance();
+    }
+
+    match /financial_metrics/{metricId} {
+      allow read: if isAuthenticated() && (isFinance() || isAdmin() || isTenantMember(resource.data.tenantId));
+      allow write: if isFinance() || isAdmin();
+    }
+
+    match /controlled_drug_register/{entryId} {
+      allow read: if isAuthenticated() && (isQA() || isBranchManager() || isTenantMember(resource.data.tenantId));
+      allow create: if isAuthenticated() && (isQA() || isBranchManager() || isAdmin());
+      allow update, delete: if isAdmin(); // Highly sensitive
+    }
+
+    match /expiry_logs/{logId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isQA() || isBranchManager();
+    }
+
+    match /quarantine_logs/{logId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isQA() || isBranchManager();
+    }
+
+    match /room_temp_logs/{logId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isQA() || isBranchManager() || isAuthenticated(); // Staff can log
+    }
+
+    match /fridge_temp_logs/{logId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isQA() || isBranchManager() || isAuthenticated(); // Staff can log
+    }
+
+    match /cleaning_tasks/{taskId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isQA() || isBranchManager();
+    }
+
+    match /cleaning_logs/{logId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isAuthenticated(); // Staff can log completion
+    }
+
+    match /recalls/{recallId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isQA() || isAdmin();
+    }
+
+    match /premises_licenses/{licenseId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isQA() || isAdmin();
+    }
+
+    match /cme_sessions/{sessionId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isQA() || isHR() || isAdmin();
+    }
+
+    match /cme_attendance/{attendanceId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isQA() || isHR() || isTenantMember(resource.data.tenantId));
+      allow write: if isQA() || isHR() || isAdmin();
+    }
+
+    match /appraisal_cycles/{cycleId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow write: if isQA() || isHR() || isAdmin();
+    }
+
+    match /appraisals/{appraisalId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isQA() || isHR() || isTenantMember(resource.data.tenantId));
+      allow write: if isQA() || isHR() || isAdmin();
+    }
+
+    match /products/{productId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /product_batches/{batchId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /{path=**}/product_batches/{batchId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /system_crashes/{crashId} {
+      allow create: if isAuthenticated();
+      allow read, update, delete: if isAdmin();
+    }
+
+    // Generic rule for all other collections to enforce tenant isolation
+    match /{collectionName}/{docId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+  }
+}

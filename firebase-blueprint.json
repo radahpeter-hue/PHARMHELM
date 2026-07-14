@@ -1,0 +1,1471 @@
+{
+  "entities": {
+    "Tenant": {
+      "title": "Tenant",
+      "description": "A pharmacy business entity.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "subscriptionPlan": { "type": "string", "enum": ["basic", "pro", "enterprise"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "subscriptionPlan", "createdAt"]
+    },
+    "Branch": {
+      "title": "Branch",
+      "description": "A physical branch of a pharmacy.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "phone": { "type": "string" },
+        "isMainBranch": { "type": "boolean" }
+      },
+      "required": ["tenantId", "name", "location", "phone", "isMainBranch"]
+    },
+    "Staff": {
+      "title": "Staff",
+      "description": "Master employee database record.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "staffId": { "type": "string", "description": "System-generated ID (e.g., STF-000123)" },
+        "fullName": { "type": "string" },
+        "sex": { "type": "string", "enum": ["Male", "Female", "Prefer not to say"] },
+        "dateOfBirth": { "type": "string", "format": "date" },
+        "nin": { "type": "string", "description": "National ID or Passport" },
+        "phone": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "jobTitle": { "type": "string" },
+        "startDate": { "type": "string", "format": "date" },
+        "designatedBranches": { "type": "array", "items": { "type": "string" } },
+        "employmentStatus": { "type": "string", "enum": ["Full-Time", "Part-Time", "Probation", "Locum", "Trainee", "Consultant", "Independent Contractor", "Archived"] },
+        "remunerationType": { "type": "string", "enum": ["hourly", "salary", "per-trip"] },
+        "remunerationRate": { "type": "number", "description": "Rate per hour or per trip" },
+        "paymentMethod": { "type": "string", "enum": ["Bank Transfer", "MTN Mobile Money", "Airtel Money", "Cash"] },
+        "paymentDetails": { "type": "string", "description": "Account number or MoMo number" },
+        "cadre": { "type": "string", "enum": ["Technical (Clinical)", "Non-Technical (Operational)"] },
+        "licenseNumber": { "type": "string" },
+        "licenseExpiryDate": { "type": "string", "format": "date" },
+        "roleTags": { "type": "array", "items": { "type": "string" } },
+        "shiftAssignmentId": { "type": "string" },
+        "welfareAllocation": { "type": "number" },
+        "supervisorId": { "type": "string" },
+        "active": { "type": "boolean" },
+        "notEligibleForRehire": { "type": "boolean" }
+      },
+      "required": ["tenantId", "staffId", "fullName", "email", "employmentStatus", "active"]
+    },
+    "Vehicle": {
+      "title": "Vehicle",
+      "description": "Company-owned or operated vehicle.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "vehicleId": { "type": "string", "description": "System-generated (e.g., VEH-001)" },
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["Van", "Pick-up / Truck", "Saloon Car", "Motorcycle / Bodaboda", "Bicycle"] },
+        "numberPlate": { "type": "string" },
+        "makeModel": { "type": "string" },
+        "yearOfManufacture": { "type": "number" },
+        "fuelType": { "type": "string", "enum": ["Petrol", "Diesel", "Electric", "Hybrid"] },
+        "operationalMode": { "type": "string", "enum": ["Product & People", "Product Only", "People Only"] },
+        "assignedPersonnelId": { "type": "string" },
+        "status": { "type": "string", "enum": ["Active", "In Garage (Maintenance)", "Grounded (Unserviceable)", "Decommissioned"] },
+        "insuranceExpiryDate": { "type": "string", "format": "date" },
+        "roadLicenceExpiryDate": { "type": "string", "format": "date" },
+        "notes": { "type": "string" }
+      },
+      "required": ["tenantId", "vehicleId", "name", "type", "numberPlate", "status"]
+    },
+    "Trip": {
+      "title": "Trip",
+      "description": "A logistics movement record.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "tripId": { "type": "string", "description": "TRP-YYYY-XXXXX" },
+        "date": { "type": "string", "format": "date" },
+        "personnelId": { "type": "string" },
+        "vehicleId": { "type": "string" },
+        "operationalMode": { "type": "string", "enum": ["Category 1 - Internal & Supplier", "Category 2 - Client & Institution"] },
+        "departureTime": { "type": "string", "format": "date-time" },
+        "returnTime": { "type": "string", "format": "date-time" },
+        "turnaroundTimeMinutes": { "type": "number" },
+        "status": { "type": "string", "enum": ["Draft", "Dispatched", "In Progress", "Completed", "Partially Completed", "Cancelled"] },
+        "tripPay": { "type": "number" },
+        "payModifier": { "type": "number" },
+        "payModifierReason": { "type": "string" },
+        "totalCost": { "type": "number" }
+      },
+      "required": ["tenantId", "tripId", "date", "personnelId", "vehicleId", "status"]
+    },
+    "TripLeg": {
+      "title": "TripLeg",
+      "description": "A discrete movement within a trip.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "tripId": { "type": "string" },
+        "legNumber": { "type": "number" },
+        "movementType": { "type": "string", "enum": ["Product Delivery", "Product Collection", "Personnel Transport", "Combined (Product + Person)"] },
+        "origin": { "type": "string" },
+        "destination": { "type": "string" },
+        "referenceId": { "type": "string", "description": "Transfer ID, GRN ID, or Receipt ID" },
+        "payloadDescription": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pending", "Completed", "Incomplete"] },
+        "incompleteReason": { "type": "string" }
+      },
+      "required": ["tenantId", "tripId", "legNumber", "movementType", "origin", "destination"]
+    },
+    "FuelLog": {
+      "title": "FuelLog",
+      "description": "Vehicle refuelling event.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "vehicleId": { "type": "string" },
+        "personnelId": { "type": "string" },
+        "fuelType": { "type": "string" },
+        "amountUgx": { "type": "number" },
+        "volumeLitres": { "type": "number" },
+        "station": { "type": "string" },
+        "receiptUrl": { "type": "string" },
+        "refuelType": { "type": "string", "enum": ["Standard", "Emergency"] },
+        "isAuthorized": { "type": "boolean" },
+        "authorizedBy": { "type": "string" },
+        "tripId": { "type": "string" }
+      },
+      "required": ["tenantId", "timestamp", "vehicleId", "personnelId", "amountUgx", "refuelType"]
+    },
+    "MaintenanceLog": {
+      "title": "MaintenanceLog",
+      "description": "Vehicle maintenance or repair event.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "vehicleId": { "type": "string" },
+        "eventType": { "type": "string", "enum": ["Routine Maintenance", "Repair", "Part Replacement", "Inspection / Roadworthiness"] },
+        "description": { "type": "string" },
+        "garage": { "type": "string" },
+        "costUgx": { "type": "number" },
+        "receiptUrl": { "type": "string" }
+      },
+      "required": ["tenantId", "date", "vehicleId", "eventType", "costUgx"]
+    },
+    "TrafficFineLog": {
+      "title": "TrafficFineLog",
+      "description": "Traffic fine incurred by a vehicle/personnel.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "dateOfOffence": { "type": "string", "format": "date" },
+        "vehicleId": { "type": "string" },
+        "personnelId": { "type": "string" },
+        "category": { "type": "string", "enum": ["Traffic Violation", "Parking Violation", "Overloading", "Other"] },
+        "amountUgx": { "type": "number" },
+        "issuingAuthority": { "type": "string" },
+        "description": { "type": "string" },
+        "receiptUrl": { "type": "string" },
+        "chargeDecision": { "type": "string", "enum": ["Company Absorbs Cost", "Deducted from Personnel Remuneration"] },
+        "isProcessed": { "type": "boolean" }
+      },
+      "required": ["tenantId", "dateOfOffence", "vehicleId", "personnelId", "amountUgx", "chargeDecision"]
+    },
+    "HiringApplication": {
+      "title": "HiringApplication",
+      "description": "Job application in the hiring pipeline.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "fullName": { "type": "string" },
+        "contactDetails": { "type": "string" },
+        "positionAppliedFor": { "type": "string" },
+        "coverLetterUrl": { "type": "string" },
+        "cvUrl": { "type": "string" },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["Pending", "Accepted", "Rejected"] },
+        "rejectionReason": { "type": "string" }
+      },
+      "required": ["tenantId", "fullName", "positionAppliedFor", "status", "submittedAt"]
+    },
+    "TheoryTest": {
+      "title": "TheoryTest",
+      "description": "Hiring pipeline theory test result.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "applicationId": { "type": "string" },
+        "score": { "type": "number" },
+        "passMark": { "type": "number" },
+        "status": { "type": "string", "enum": ["Passed", "Failed"] },
+        "date": { "type": "string", "format": "date" }
+      },
+      "required": ["tenantId", "applicationId", "score", "passMark", "status"]
+    },
+    "OralInterview": {
+      "title": "OralInterview",
+      "description": "Hiring pipeline oral interview scoring.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "applicationId": { "type": "string" },
+        "scores": { "type": "object", "description": "Map of criterion to average score" },
+        "compositeScore": { "type": "number" },
+        "passThreshold": { "type": "number" },
+        "status": { "type": "string", "enum": ["Interview Passed", "Interview Failed"] },
+        "panelists": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["tenantId", "applicationId", "compositeScore", "status"]
+    },
+    "PracticalAssessment": {
+      "title": "PracticalAssessment",
+      "description": "Hiring pipeline practical assessment period.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "applicationId": { "type": "string" },
+        "supervisorId": { "type": "string" },
+        "practiceBranchId": { "type": "string" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "strengths": { "type": "string" },
+        "weaknesses": { "type": "string" },
+        "recommendations": { "type": "string" },
+        "overallRating": { "type": "number" },
+        "theoreticalExamScore": { "type": "number" },
+        "status": { "type": "string", "enum": ["Passed", "Failed", "In Progress"] },
+        "hrDecision": { "type": "string", "enum": ["Place on Training", "Extend Probation", "Halt", "Proceed to Probation"] }
+      },
+      "required": ["tenantId", "applicationId", "status"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily attendance log.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "staffId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "timeIn": { "type": "string", "format": "time" },
+        "timeOut": { "type": "string", "format": "time" },
+        "hoursWorked": { "type": "number" },
+        "lateMinutes": { "type": "number" },
+        "overtimeHours": { "type": "number" },
+        "status": { "type": "string", "enum": ["Draft", "Submitted", "Approved", "Rejected"] },
+        "notes": { "type": "string" },
+        "reviewedBy": { "type": "string" }
+      },
+      "required": ["tenantId", "branchId", "staffId", "date", "status"]
+    },
+    "DisciplinaryIncident": {
+      "title": "DisciplinaryIncident",
+      "description": "Recorded disciplinary infraction.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "staffId": { "type": "string" },
+        "category": { "type": "string", "enum": ["Category 1 - Time & Attendance", "Category 2 - Financial & POS", "Category 3 - Clinical & Compliance", "Category 4 - Behavioural / Policy"] },
+        "description": { "type": "string" },
+        "incidentDate": { "type": "string", "format": "date" },
+        "evidenceUrls": { "type": "array", "items": { "type": "string" } },
+        "proposedActionLevel": { "type": "number" },
+        "finalActionLevel": { "type": "number" },
+        "status": { "type": "string", "enum": ["Pending Review", "Finalised", "Appealed"] },
+        "initiatedBy": { "type": "string" },
+        "finalisedBy": { "type": "string" },
+        "pipDetails": { "type": "string" }
+      },
+      "required": ["tenantId", "staffId", "category", "description", "incidentDate", "status"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "A pharmaceutical or retail product.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "productId": { "type": "string" },
+        "sku": { "type": "string" },
+        "name": { "type": "string", "description": "Brand name" },
+        "category": { "type": "string", "enum": ["drug/medicine", "cosmetic", "consumable", "device", "cosmetic therapeutics"] },
+        "costPricePerPack": { "type": "number" },
+        "sellingPricePerUnit": { "type": "number" },
+        "taxExempt": { "type": "boolean" },
+        "taxRate": { "type": "number" },
+        "genericName": { "type": "string" },
+        "dosageForm": { "type": "string", "enum": ["Ampule", "Vial", "Nasal Spray", "Nasal Drop", "Tablet", "Capsule", "Pessary", "Suppository", "Powder/Granule", "Syrup", "Suspension", "Oral Drop", "Eye/Ear Drops", "Prefilled Syringe", "Elixir", "Cream", "Ointment", "Gel", "IV fluids", "Lotion", "Nebulizer Solution", "Inhaler", "Transdermal patches"] },
+        "strength": { "type": "string" },
+        "routeOfAdministration": { "type": "string", "enum": ["oral", "iv", "im", "ophthalmic"] },
+        "prescriptionCategory": { "type": "string", "enum": ["OTC", "prescription only", "controlled"] },
+        "countryOfManufacture": { "type": "string" },
+        "ndaRegistrationNumber": { "type": "string" },
+        "unitsPerPack": { "type": "number" },
+        "unit": { "type": "string" },
+        "baseUnit": { "type": "string" },
+        "unitsPerStrip": { "type": "number" },
+        "volumeWeight": { "type": "number" },
+        "volumeWeightUnit": { "type": "string", "enum": ["ml", "oz", "gms"] },
+        "manufacturingCompany": { "type": "string" },
+        "manufacturer": { "type": "string" }
+      },
+      "required": ["tenantId", "name", "category", "costPricePerPack", "sellingPricePerUnit"]
+    },
+    "InventoryMovement": {
+      "title": "InventoryMovement",
+      "description": "Record of stock movement.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "productId": { "type": "string" },
+        "batchId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "reference": { "type": "string", "description": "Receipt, invoice, or adjustment ID" },
+        "movementClass": { "type": "string", "enum": ["sale", "transfer out", "transfer in", "adjustment"] },
+        "initiator": { "type": "string", "description": "Staff ID" },
+        "receiver": { "type": "string", "description": "Client ID or Branch ID" },
+        "amount": { "type": "number" },
+        "quantity": { "type": "number" }
+      },
+      "required": ["tenantId", "branchId", "productId", "timestamp", "movementClass", "quantity"]
+    },
+    "OperationalInventory": {
+      "title": "OperationalInventory",
+      "description": "Non-sellable items used in operations.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "type": { "type": "string", "enum": ["fixed", "non-fixed"] },
+        "name": { "type": "string" },
+        "unitPerPack": { "type": "number" },
+        "costPerPack": { "type": "number" },
+        "unitOfIssue": { "type": "string" },
+        "supplier": { "type": "string" },
+        "quantityInStock": { "type": "number" },
+        "uniqueId": { "type": "string", "description": "For fixed assets" },
+        "purchaseDate": { "type": "string", "format": "date" },
+        "cost": { "type": "number" },
+        "utilizationTime": { "type": "number", "description": "Days in system" }
+      },
+      "required": ["tenantId", "branchId", "type", "name"]
+    },
+    "OperationalInventoryUsage": {
+      "title": "OperationalInventoryUsage",
+      "description": "Logs of operational inventory usage.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "inventoryId": { "type": "string" },
+        "issuedAmount": { "type": "number" },
+        "cost": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "period": { "type": "string", "enum": ["daily", "weekly", "bi-weekly", "monthly"] }
+      },
+      "required": ["tenantId", "branchId", "inventoryId", "issuedAmount", "cost", "timestamp"]
+    },
+    "ProductBatch": {
+      "title": "ProductBatch",
+      "description": "Stock levels for a product at a specific branch.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "productId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "quantity": { "type": "number" },
+        "expiryDate": { "type": "string", "format": "date" },
+        "batchNumber": { "type": "string" },
+        "purchasePrice": { "type": "number" },
+        "sellingPrice": { "type": "number" },
+        "batch_status": { "type": "string", "enum": ["active", "quarantined", "expired", "in_transit"] }
+      },
+      "required": ["tenantId", "productId", "branchId", "quantity", "purchasePrice", "sellingPrice", "batchNumber", "expiryDate"]
+    },
+    "SupplierRegistry": {
+      "title": "SupplierRegistry",
+      "description": "Registry of authorized suppliers.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "supplier_id": { "type": "string" },
+        "supplier_name": { "type": "string" },
+        "commercial_category": { "type": "string" },
+        "nda_wholesale_licence_number": { "type": "string" },
+        "nda_licence_expiry_date": { "type": "string", "format": "date" },
+        "nda_licence_status": { "type": "string", "enum": ["valid", "expiring_soon", "expired"] },
+        "is_suspended": { "type": "boolean" },
+        "suspension_reason": { "type": "string" },
+        "suspended_by": { "type": "string" },
+        "suspended_at": { "type": "string", "format": "date-time" },
+        "payment_terms": { "type": "string" },
+        "bank_name": { "type": "string" },
+        "bank_account_number": { "type": "string" },
+        "bank_account_name": { "type": "string" },
+        "bank_branch": { "type": "string" },
+        "address": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive"] }
+      },
+      "required": ["tenantId", "supplier_id", "supplier_name", "nda_licence_status"]
+    },
+    "SupplierRepresentative": {
+      "title": "SupplierRepresentative",
+      "description": "Representatives for a supplier.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "supplier_id": { "type": "string" },
+        "rep_name": { "type": "string" },
+        "role": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "is_primary": { "type": "boolean" }
+      },
+      "required": ["tenantId", "supplier_id", "rep_name"]
+    },
+    "StockOrder": {
+      "title": "StockOrder",
+      "description": "Orders for stock from branches to HQ/Procurement.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "order_number": { "type": "string" },
+        "requesting_branch_id": { "type": "string" },
+        "order_type": { "type": "string", "enum": ["monthly", "weekly", "emergency"] },
+        "category": { "type": "string", "enum": ["sellable_non_cosmetic", "sellable_cosmetic", "non_sellable"] },
+        "generation_method": { "type": "string", "enum": ["manual", "auto_generated"] },
+        "status": { "type": "string", "enum": ["draft", "submitted", "in_triage", "sourcing", "awaiting_finance_approval", "approved", "grn_in_progress", "dispatched", "partially_received", "fully_received", "closed"] },
+        "is_emergency": { "type": "boolean" },
+        "submitted_by": { "type": "string" },
+        "submitted_at": { "type": "string", "format": "date-time" },
+        "approved_by": { "type": "string" },
+        "approved_at": { "type": "string", "format": "date-time" },
+        "finance_approval_note": { "type": "string" },
+        "total_order_value_ugx": { "type": "number" }
+      },
+      "required": ["tenantId", "order_number", "requesting_branch_id", "order_type", "category", "status"]
+    },
+    "StockOrderLine": {
+      "title": "StockOrderLine",
+      "description": "Individual items within a stock order.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "order_id": { "type": "string" },
+        "product_id": { "type": "string" },
+        "qty_ordered": { "type": "number" },
+        "unit_cost_ugx": { "type": "number" },
+        "line_total_ugx": { "type": "number" },
+        "supplier_id": { "type": "string" },
+        "line_status": { "type": "string", "enum": ["ordered", "in_store_transfer", "sourcing", "finance_approved", "grn_received", "dispatched", "branch_accepted", "queried", "unsupplied"] }
+      },
+      "required": ["tenantId", "order_id", "product_id", "qty_ordered"]
+    },
+    "TransferInvoice": {
+      "title": "TransferInvoice",
+      "description": "Invoices for transferring stock between branches.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "transfer_number": { "type": "string" },
+        "order_id": { "type": "string" },
+        "source_branch_id": { "type": "string" },
+        "destination_branch_id": { "type": "string" },
+        "transfer_type": { "type": "string", "enum": ["store_fulfillment", "branch_transfer", "return_to_procurement", "query_return"] },
+        "status": { "type": "string", "enum": ["draft", "dispatched", "in_transit", "pending_receipt", "partially_accepted", "queried", "fully_accepted"] },
+        "logistics_trip_id": { "type": "string" },
+        "dispatched_by": { "type": "string" },
+        "dispatched_at": { "type": "string", "format": "date-time" },
+        "expected_delivery_date": { "type": "string", "format": "date" }
+      },
+      "required": ["tenantId", "transfer_number", "source_branch_id", "destination_branch_id", "transfer_type", "status"]
+    },
+    "TransferInvoiceLine": {
+      "title": "TransferInvoiceLine",
+      "description": "Individual items within a transfer invoice.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "transfer_id": { "type": "string" },
+        "product_id": { "type": "string" },
+        "batch_id": { "type": "string" },
+        "batch_number": { "type": "string" },
+        "expiry_date": { "type": "string", "format": "date" },
+        "qty_dispatched": { "type": "number" },
+        "qty_accepted": { "type": "number" },
+        "qty_queried": { "type": "number" },
+        "unit_cost_ugx": { "type": "number" },
+        "query_reason": { "type": "string" },
+        "line_status": { "type": "string", "enum": ["pending", "accepted", "partial_accept", "queried"] }
+      },
+      "required": ["tenantId", "transfer_id", "product_id", "qty_dispatched"]
+    },
+    "ReceiptVerification": {
+      "title": "ReceiptVerification",
+      "description": "Verification of received stock transfers.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "transfer_id": { "type": "string" },
+        "verified_by": { "type": "string" },
+        "verified_at": { "type": "string", "format": "date-time" },
+        "overall_status": { "type": "string", "enum": ["fully_accepted", "partially_accepted", "queries_raised"] },
+        "notes": { "type": "string" }
+      },
+      "required": ["tenantId", "transfer_id", "verified_by", "overall_status"]
+    },
+    "GRNRecord": {
+      "title": "GRNRecord",
+      "description": "Goods Received Note records.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "grn_number": { "type": "string" },
+        "order_id": { "type": "string" },
+        "supplier_id": { "type": "string" },
+        "supplier_invoice_number": { "type": "string" },
+        "destination_branch_id": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "verified", "dispatched"] },
+        "is_unplanned_purchase": { "type": "boolean" },
+        "payment_method": { "type": "string", "enum": ["cash", "credit"] },
+        "total_grn_value_ugx": { "type": "number" },
+        "dispatched_by": { "type": "string" },
+        "dispatched_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "grn_number", "supplier_id", "destination_branch_id", "status"]
+    },
+    "GRNLine": {
+      "title": "GRNLine",
+      "description": "Individual items within a GRN.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "grn_id": { "type": "string" },
+        "product_id": { "type": "string" },
+        "order_line_id": { "type": "string" },
+        "batch_number": { "type": "string" },
+        "expiry_date": { "type": "string", "format": "date" },
+        "qty_ordered": { "type": "number" },
+        "qty_received": { "type": "number" },
+        "unit_cost_per_pack_ugx": { "type": "number" },
+        "unit_cost_per_unit_ugx": { "type": "number" },
+        "line_total_ugx": { "type": "number" },
+        "has_price_variance": { "type": "boolean" },
+        "price_variance_acknowledged": { "type": "boolean" }
+      },
+      "required": ["tenantId", "grn_id", "product_id", "batch_number", "expiry_date", "qty_received", "unit_cost_per_pack_ugx"]
+    },
+    "UnsuppliedLine": {
+      "title": "UnsuppliedLine",
+      "description": "Items that could not be supplied in an order.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "order_id": { "type": "string" },
+        "product_id": { "type": "string" },
+        "qty_unsupplied": { "type": "number" },
+        "reason": { "type": "string", "enum": ["not_quoted", "supplier_unavailable", "budget_reduction", "grn_short_supply", "queried_by_branch", "other"] },
+        "status": { "type": "string", "enum": ["pending", "reloaded_to_sourcing", "manual_handling", "closed"] }
+      },
+      "required": ["tenantId", "order_id", "product_id", "qty_unsupplied", "reason", "status"]
+    },
+    "QuotationSession": {
+      "title": "QuotationSession",
+      "description": "Sessions for editing order quotations.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "order_id": { "type": "string" },
+        "edited_by": { "type": "string" },
+        "edited_at": { "type": "string", "format": "date-time" },
+        "snapshot_json": { "type": "string" }
+      },
+      "required": ["tenantId", "order_id", "edited_by", "snapshot_json"]
+    },
+    "FinanceLedger": {
+      "title": "FinanceLedger",
+      "description": "General ledger for all financial transactions.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branch_id": { "type": "string" },
+        "transaction_date": { "type": "string", "format": "date" },
+        "entry_type": { "type": "string", "enum": ["debit", "credit"] },
+        "account_category": { "type": "string", "enum": ["sales", "expense", "asset", "liability", "equity"] },
+        "account_name": { "type": "string" },
+        "amount_ugx": { "type": "number" },
+        "description": { "type": "string" },
+        "reference_id": { "type": "string" },
+        "reference_type": { "type": "string", "enum": ["pos_receipt", "expense", "requisition", "banking", "credit_payment", "supplier_payment"] },
+        "logged_by": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "branch_id", "transaction_date", "entry_type", "account_category", "amount_ugx", "reference_id", "reference_type", "created_at"]
+    },
+    "EODReconciliation": {
+      "title": "EODReconciliation",
+      "description": "End of day cash and digital payment reconciliations.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branch_id": { "type": "string" },
+        "reconciliation_date": { "type": "string", "format": "date" },
+        "cashier_id": { "type": "string" },
+        "cash_expected": { "type": "number" },
+        "cash_actual": { "type": "number" },
+        "cash_variance": { "type": "number" },
+        "momo_expected": { "type": "number" },
+        "momo_actual": { "type": "number" },
+        "momo_variance": { "type": "number" },
+        "airtel_expected": { "type": "number" },
+        "airtel_actual": { "type": "number" },
+        "airtel_variance": { "type": "number" },
+        "card_expected": { "type": "number" },
+        "card_actual": { "type": "number" },
+        "card_variance": { "type": "number" },
+        "credit_sales_total": { "type": "number" },
+        "insurance_sales_total": { "type": "number" },
+        "total_variance": { "type": "number" },
+        "variance_reason": { "type": "string" },
+        "manager_id": { "type": "string" },
+        "manager_signed_at": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["draft", "submitted", "verified", "flagged"] },
+        "notes": { "type": "string" }
+      },
+      "required": ["tenantId", "branch_id", "reconciliation_date", "cashier_id", "status"]
+    },
+    "BankingRecord": {
+      "title": "BankingRecord",
+      "description": "Records of cash deposits to bank accounts.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branch_id": { "type": "string" },
+        "deposit_date": { "type": "string", "format": "date" },
+        "bank_name": { "type": "string" },
+        "account_number": { "type": "string" },
+        "amount_ugx": { "type": "number" },
+        "slip_reference": { "type": "string" },
+        "deposited_by": { "type": "string" },
+        "attachment_url": { "type": "string" },
+        "verified_by_finance": { "type": "boolean" },
+        "verified_at": { "type": "string", "format": "date-time" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "branch_id", "deposit_date", "bank_name", "amount_ugx", "slip_reference", "deposited_by", "created_at"]
+    },
+    "BranchExpense": {
+      "title": "BranchExpense",
+      "description": "Operational expenses logged by branches.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branch_id": { "type": "string" },
+        "expense_date": { "type": "string", "format": "date" },
+        "category": { "type": "string" },
+        "amount_ugx": { "type": "number" },
+        "description": { "type": "string" },
+        "payment_method": { "type": "string", "enum": ["petty_cash", "bank_transfer", "mobile_money"] },
+        "receipt_url": { "type": "string" },
+        "logged_by": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "approved_by": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "branch_id", "expense_date", "category", "amount_ugx", "payment_method", "logged_by", "status", "created_at"]
+    },
+    "CashRequisition": {
+      "title": "CashRequisition",
+      "description": "Requests for cash for operational needs.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branch_id": { "type": "string" },
+        "requisition_date": { "type": "string", "format": "date" },
+        "amount_requested": { "type": "number" },
+        "purpose": { "type": "string" },
+        "requested_by": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending_manager", "pending_finance", "approved", "rejected", "disbursed"] },
+        "disbursed_amount": { "type": "number" },
+        "disbursed_at": { "type": "string", "format": "date-time" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "branch_id", "requisition_date", "amount_requested", "purpose", "requested_by", "status", "created_at"]
+    },
+    "ClientCreditLedgerEntry": {
+      "title": "ClientCreditLedgerEntry",
+      "description": "Credit and payment history for individual clients.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "client_id": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "entry_type": { "type": "string", "enum": ["credit", "payment"] },
+        "amount_ugx": { "type": "number" },
+        "balance_after": { "type": "number" },
+        "reference_id": { "type": "string" },
+        "notes": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "client_id", "date", "entry_type", "amount_ugx", "balance_after", "reference_id", "created_at"]
+    },
+    "InstitutionCreditLedgerEntry": {
+      "title": "InstitutionCreditLedgerEntry",
+      "description": "Credit and payment history for institutions.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "institution_id": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "entry_type": { "type": "string", "enum": ["credit", "payment"] },
+        "amount_ugx": { "type": "number" },
+        "balance_after": { "type": "number" },
+        "reference_id": { "type": "string" },
+        "notes": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "institution_id", "date", "entry_type", "amount_ugx", "balance_after", "reference_id", "created_at"]
+    },
+    "SupplierCreditLedgerEntry": {
+      "title": "SupplierCreditLedgerEntry",
+      "description": "Credit and payment history for suppliers.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "supplier_id": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "entry_type": { "type": "string", "enum": ["credit", "payment"] },
+        "amount_ugx": { "type": "number" },
+        "balance_after": { "type": "number" },
+        "reference_id": { "type": "string" },
+        "notes": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "supplier_id", "date", "entry_type", "amount_ugx", "balance_after", "reference_id", "created_at"]
+    },
+    "FinancialMetrics": {
+      "title": "FinancialMetrics",
+      "description": "Aggregated financial metrics for reporting.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branch_id": { "type": "string" },
+        "period": { "type": "string", "description": "YYYY-MM or YYYY-MM-DD" },
+        "total_revenue": { "type": "number" },
+        "total_expenses": { "type": "number" },
+        "net_profit": { "type": "number" },
+        "cash_on_hand": { "type": "number" },
+        "total_receivables": { "type": "number" },
+        "total_payables": { "type": "number" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "period", "total_revenue", "total_expenses", "updated_at"]
+    },
+    "PredictiveSettings": {
+      "title": "PredictiveSettings",
+      "description": "Settings and variables for the Predictive & Diagnostic Engine.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "inventoryValue": { "type": "number" },
+        "totalSales": { "type": "number" },
+        "turnover": { "type": "number" },
+        "markup": { "type": "number" },
+        "fixedCosts": { "type": "number" },
+        "desiredProfit": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "branchId", "inventoryValue", "totalSales", "turnover", "markup", "fixedCosts", "desiredProfit"]
+    },
+    "CreditReceivable": {
+      "title": "CreditReceivable",
+      "description": "Outstanding receivables from clients/institutions.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "receipt_id": { "type": "string" },
+        "client_id": { "type": "string" },
+        "institution_id": { "type": "string" },
+        "amount_ugx": { "type": "number" },
+        "amount_paid_ugx": { "type": "number" },
+        "outstanding_ugx": { "type": "number" },
+        "invoice_date": { "type": "string", "format": "date" },
+        "due_date": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["outstanding", "partially_paid", "paid", "defaulted", "written_off"] },
+        "last_payment_date": { "type": "string", "format": "date" },
+        "last_payment_reference": { "type": "string" },
+        "bad_debt_flagged": { "type": "boolean" }
+      },
+      "required": ["tenantId", "receipt_id", "amount_ugx", "invoice_date", "status"]
+    },
+    "SupplierPayable": {
+      "title": "SupplierPayable",
+      "description": "Outstanding payables to suppliers.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "grn_id": { "type": "string" },
+        "supplier_id": { "type": "string" },
+        "amount_ugx": { "type": "number" },
+        "amount_paid_ugx": { "type": "number" },
+        "outstanding_ugx": { "type": "number" },
+        "grn_date": { "type": "string", "format": "date" },
+        "due_date": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["unpaid", "partially_paid", "paid", "overdue"] },
+        "payment_reference": { "type": "string" },
+        "paid_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "grn_id", "supplier_id", "amount_ugx", "grn_date", "status"]
+    },
+    "TemperatureLog": {
+      "title": "TemperatureLog",
+      "description": "Logs for room and fridge temperatures.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branch_id": { "type": "string" },
+        "log_type": { "type": "string", "enum": ["room", "fridge"] },
+        "fridge_unit_name": { "type": "string" },
+        "log_date": { "type": "string", "format": "date" },
+        "log_time": { "type": "string", "format": "time" },
+        "reading_session": { "type": "string", "enum": ["morning", "evening", "ad_hoc"] },
+        "temperature_celsius": { "type": "number" },
+        "humidity_pct": { "type": "number" },
+        "is_out_of_range": { "type": "boolean" },
+        "acceptable_min_celsius": { "type": "number" },
+        "acceptable_max_celsius": { "type": "number" },
+        "logged_by": { "type": "string" }
+      },
+      "required": ["tenantId", "branch_id", "log_type", "log_date", "log_time", "reading_session", "temperature_celsius", "logged_by"]
+    },
+    "QuarantineLog": {
+      "title": "QuarantineLog",
+      "description": "Logs for quarantined stock batches.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "batch_id": { "type": "string" },
+        "product_id": { "type": "string" },
+        "branch_id": { "type": "string" },
+        "quarantine_reason": { "type": "string", "enum": ["expiry", "recall", "damage", "contamination", "nda_hold", "other"] },
+        "reason_notes": { "type": "string" },
+        "recall_id": { "type": "string" },
+        "quarantined_at": { "type": "string", "format": "date-time" },
+        "quarantined_by": { "type": "string" },
+        "resolution": { "type": "string", "enum": ["returned_to_supplier", "destroyed", "released", "pending"] },
+        "resolved_at": { "type": "string", "format": "date-time" },
+        "resolved_by": { "type": "string" },
+        "release_reason": { "type": "string" }
+      },
+      "required": ["tenantId", "batch_id", "product_id", "branch_id", "quarantine_reason"]
+    },
+    "RecallLog": {
+      "title": "RecallLog",
+      "description": "Logs for system-wide product recalls.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "recall_number": { "type": "string" },
+        "recall_type": { "type": "string", "enum": ["nda_mandated", "internal"] },
+        "product_id": { "type": "string" },
+        "batch_number": { "type": "string" },
+        "reason": { "type": "string" },
+        "supporting_document_url": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "resolved"] },
+        "initiated_by": { "type": "string" },
+        "initiated_at": { "type": "string", "format": "date-time" },
+        "resolved_at": { "type": "string", "format": "date-time" },
+        "resolution_notes": { "type": "string" }
+      },
+      "required": ["tenantId", "recall_number", "recall_type", "product_id", "batch_number", "reason", "status", "initiated_by"]
+    },
+    "CleaningTaskConfig": {
+      "title": "CleaningTaskConfig",
+      "description": "Configuration for cleaning tasks.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branch_id": { "type": "string" },
+        "task_name": { "type": "string" },
+        "frequency": { "type": "string", "enum": ["daily", "weekly", "monthly"] },
+        "responsible_role": { "type": "string" },
+        "is_active": { "type": "boolean" }
+      },
+      "required": ["tenantId", "branch_id", "task_name", "frequency"]
+    },
+    "CleaningLog": {
+      "title": "CleaningLog",
+      "description": "Logs for completed cleaning tasks.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "task_id": { "type": "string" },
+        "branch_id": { "type": "string" },
+        "completed_by": { "type": "string" },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "notes": { "type": "string" }
+      },
+      "required": ["tenantId", "task_id", "branch_id", "completed_by"]
+    },
+    "PremisesLicence": {
+      "title": "PremisesLicence",
+      "description": "Licences for pharmacy premises.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branch_id": { "type": "string" },
+        "licence_type": { "type": "string" },
+        "licence_number": { "type": "string" },
+        "issuing_authority": { "type": "string" },
+        "issue_date": { "type": "string", "format": "date" },
+        "expiry_date": { "type": "string", "format": "date" },
+        "document_url": { "type": "string" },
+        "status": { "type": "string", "enum": ["valid", "expiring_soon", "expired"] }
+      },
+      "required": ["tenantId", "licence_type", "expiry_date", "status"]
+    },
+    "CMESession": {
+      "title": "CMESession",
+      "description": "Continuous Medical Education sessions.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "cme_id": { "type": "string" },
+        "topic": { "type": "string" },
+        "session_date": { "type": "string", "format": "date" },
+        "session_time": { "type": "string", "format": "time" },
+        "duration_minutes": { "type": "number" },
+        "venue_platform": { "type": "string" },
+        "presenter_type": { "type": "string", "enum": ["internal", "external"] },
+        "presenter_name": { "type": "string" },
+        "internal_presenter_id": { "type": "string" },
+        "material_url": { "type": "string" },
+        "notes": { "type": "string" },
+        "created_by": { "type": "string" }
+      },
+      "required": ["tenantId", "cme_id", "topic", "session_date", "presenter_type"]
+    },
+    "CMEAttendance": {
+      "title": "CMEAttendance",
+      "description": "Attendance records for CME sessions.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "cme_id": { "type": "string" },
+        "staff_id": { "type": "string" },
+        "attended": { "type": "boolean" },
+        "arrival_minutes_late": { "type": "number" },
+        "attendance_points": { "type": "number" },
+        "punctuality_points": { "type": "number" },
+        "engagement_points": { "type": "number" },
+        "total_points": { "type": "number" },
+        "marked_by": { "type": "string" },
+        "marked_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "cme_id", "staff_id"]
+    },
+    "AppraisalRecord": {
+      "title": "AppraisalRecord",
+      "description": "Performance appraisal records for staff.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "appraisal_id": { "type": "string" },
+        "staff_id": { "type": "string" },
+        "administered_by": { "type": "string" },
+        "appraisal_date": { "type": "string", "format": "date" },
+        "subject_area": { "type": "string" },
+        "score_pct": { "type": "number" },
+        "pass_mark_pct": { "type": "number" },
+        "passed": { "type": "boolean" },
+        "subject_area_scores": { "type": "string" },
+        "strengths": { "type": "string" },
+        "gaps": { "type": "string" },
+        "recommendations": { "type": "string" },
+        "follow_up_required": { "type": "boolean" },
+        "follow_up_appraisal_id": { "type": "string" },
+        "gap_status": { "type": "string", "enum": ["open", "addressed", "persisting"] }
+      },
+      "required": ["tenantId", "appraisal_id", "staff_id", "appraisal_date", "score_pct", "pass_mark_pct"]
+    },
+    "Client": {
+      "title": "Client",
+      "description": "Individual clients.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "address": { "type": "string" },
+        "is_blacklisted": { "type": "boolean" },
+        "blacklist_reason": { "type": "string" }
+      },
+      "required": ["tenantId", "name"]
+    },
+    "Institution": {
+      "title": "Institution",
+      "description": "Institutional clients (hospitals, insurance, etc.).",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "name": { "type": "string" },
+        "contact_person": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "address": { "type": "string" },
+        "credit_limit_ugx": { "type": "number" },
+        "current_balance_ugx": { "type": "number" },
+        "is_blacklisted": { "type": "boolean" }
+      },
+      "required": ["tenantId", "name"]
+    },
+    "Prescriber": {
+      "title": "Prescriber",
+      "description": "Medical prescribers.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "name": { "type": "string" },
+        "professional_reg_number": { "type": "string" },
+        "specialization": { "type": "string" },
+        "workplace": { "type": "string" }
+      },
+      "required": ["tenantId", "name"]
+    },
+    "POSReceipt": {
+      "title": "POSReceipt",
+      "description": "Receipts from POS transactions.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branch_id": { "type": "string" },
+        "receipt_number": { "type": "string" },
+        "customer_name": { "type": "string" },
+        "total_amount_ugx": { "type": "number" },
+        "payment_method": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "is_controlled_drug_sale": { "type": "boolean" }
+      },
+      "required": ["tenantId", "branch_id", "receipt_number", "total_amount_ugx", "timestamp"]
+    },
+    "LeaveRequest": {
+      "title": "LeaveRequest",
+      "description": "Staff leave applications.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "staffId": { "type": "string" },
+        "staffName": { "type": "string" },
+        "leaveType": { "type": "string", "enum": ["annual", "sick", "study", "maternity", "compassionate", "unpaid"] },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "totalDays": { "type": "number" },
+        "reason": { "type": "string" },
+        "attachmentUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "reviewedBy": { "type": "string" },
+        "reviewDate": { "type": "string", "format": "date-time" },
+        "isPaid": { "type": "boolean" },
+        "reviewNote": { "type": "string" }
+      },
+      "required": ["tenantId", "staffId", "leaveType", "startDate", "endDate", "totalDays", "status", "submittedAt"]
+    },
+    "SalaryAdvanceRequest": {
+      "title": "SalaryAdvanceRequest",
+      "description": "Staff salary advance requests.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "staffId": { "type": "string" },
+        "staffName": { "type": "string" },
+        "amountRequested": { "type": "number" },
+        "amountApproved": { "type": "number" },
+        "reason": { "type": "string" },
+        "repaymentMethod": { "type": "string", "enum": ["next_payroll", "spread_over_months"] },
+        "repaymentMonths": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending_hr", "pending_finance", "pending_ceo", "approved", "rejected"] },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "hrApprovedAt": { "type": "string", "format": "date-time" },
+        "financeApprovedAt": { "type": "string", "format": "date-time" },
+        "ceoApprovedAt": { "type": "string", "format": "date-time" },
+        "outstandingBalance": { "type": "number" }
+      },
+      "required": ["tenantId", "staffId", "amountRequested", "repaymentMethod", "status", "submittedAt"]
+    },
+    "Payslip": {
+      "title": "Payslip",
+      "description": "Staff monthly payslips.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "staffId": { "type": "string" },
+        "month": { "type": "string", "description": "YYYY-MM" },
+        "basePay": { "type": "number" },
+        "hoursWorked": { "type": "number" },
+        "bonuses": { "type": "number" },
+        "deductions": { "type": "number" },
+        "advanceRepayments": { "type": "number" },
+        "netPayable": { "type": "number" },
+        "pdfUrl": { "type": "string" },
+        "generatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "staffId", "month", "basePay", "netPayable", "generatedAt"]
+    },
+    "ControlledDrugEntry": {
+      "title": "ControlledDrugEntry",
+      "description": "Record of controlled drug dispensing or adjustment.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "transactionRef": { "type": "string" },
+        "drugName": { "type": "string" },
+        "dosageForm": { "type": "string" },
+        "strength": { "type": "string" },
+        "batchNumber": { "type": "string" },
+        "quantity": { "type": "number" },
+        "patientName": { "type": "string" },
+        "clientId": { "type": "string" },
+        "prescriberName": { "type": "string" },
+        "prescriberReg": { "type": "string" },
+        "linkedInstitution": { "type": "string" },
+        "runningBalance": { "type": "number" },
+        "entryType": { "type": "string", "enum": ["Dispensed", "Reversal", "Manual Adjustment"] },
+        "reasonCode": { "type": "string" },
+        "authorisedBy": { "type": "string" },
+        "supportingDocUrl": { "type": "string" }
+      },
+      "required": ["tenantId", "branchId", "timestamp", "drugName", "quantity", "runningBalance", "entryType"]
+    },
+    "ExpiryLogEntry": {
+      "title": "ExpiryLogEntry",
+      "description": "Inventory expiry tracking record.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "batchNumber": { "type": "string" },
+        "supplierName": { "type": "string" },
+        "expiryDate": { "type": "string", "format": "date" },
+        "remainingDays": { "type": "number" },
+        "sohUnits": { "type": "number" },
+        "estimatedValue": { "type": "number" },
+        "riskBucket": { "type": "string", "enum": ["Critical", "High Risk", "Medium Risk", "Watchlist"] },
+        "status": { "type": "string", "enum": ["Active", "Quarantined", "Returned to Supplier", "Disposed"] }
+      },
+      "required": ["tenantId", "branchId", "productId", "expiryDate", "riskBucket", "status"]
+    },
+    "QuarantineLogEntry": {
+      "title": "QuarantineLogEntry",
+      "description": "Record of items placed in quarantine.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "quarantineId": { "type": "string" },
+        "dateQuarantined": { "type": "string", "format": "date" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "batchNumber": { "type": "string" },
+        "quantity": { "type": "number" },
+        "reason": { "type": "string", "enum": ["Expiry", "Recall", "Damage", "Suspected Contamination", "Quality Concern", "NDA Hold", "Other"] },
+        "quarantinedBy": { "type": "string" },
+        "currentLocation": { "type": "string" },
+        "status": { "type": "string", "enum": ["Active (In Quarantine)", "Disposed", "Returned to Supplier", "Released (Re-approved)"] },
+        "releaseAuthorisedBy": { "type": "string" },
+        "releaseReason": { "type": "string" }
+      },
+      "required": ["tenantId", "branchId", "quarantineId", "dateQuarantined", "productId", "quantity", "reason", "status"]
+    },
+    "RoomTempLogEntry": {
+      "title": "RoomTempLogEntry",
+      "description": "Daily room temperature and humidity log.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "time": { "type": "string", "format": "time" },
+        "location": { "type": "string" },
+        "temperature": { "type": "number" },
+        "humidity": { "type": "number" },
+        "recordedBy": { "type": "string" },
+        "notes": { "type": "string" },
+        "isOutOfRange": { "type": "boolean" }
+      },
+      "required": ["tenantId", "branchId", "date", "time", "location", "temperature", "recordedBy", "isOutOfRange"]
+    },
+    "FridgeTempLogEntry": {
+      "title": "FridgeTempLogEntry",
+      "description": "Daily fridge temperature log.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "readingPeriod": { "type": "string", "enum": ["Morning", "Evening", "Spot Check"] },
+        "fridgeId": { "type": "string" },
+        "temperature": { "type": "number" },
+        "recordedBy": { "type": "string" },
+        "notes": { "type": "string" },
+        "isOutOfRange": { "type": "boolean" },
+        "excursionProtocolTriggered": { "type": "boolean" },
+        "affectedProductsConfirmed": { "type": "boolean" }
+      },
+      "required": ["tenantId", "branchId", "date", "readingPeriod", "fridgeId", "temperature", "recordedBy", "isOutOfRange"]
+    },
+    "CleaningTask": {
+      "title": "CleaningTask",
+      "description": "Definition of a cleaning task.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "taskName": { "type": "string" },
+        "frequency": { "type": "string", "enum": ["Daily", "Weekly", "Fortnightly", "Monthly"] },
+        "responsibleRole": { "type": "string" }
+      },
+      "required": ["tenantId", "branchId", "taskName", "frequency"]
+    },
+    "CleaningLogEntry": {
+      "title": "CleaningLogEntry",
+      "description": "Record of a completed cleaning task.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "taskId": { "type": "string" },
+        "taskName": { "type": "string" },
+        "dateCompleted": { "type": "string", "format": "date" },
+        "timeCompleted": { "type": "string", "format": "time" },
+        "completedBy": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["Completed", "Missed"] }
+      },
+      "required": ["tenantId", "branchId", "taskId", "dateCompleted", "completedBy", "status"]
+    },
+    "Recall": {
+      "title": "Recall",
+      "description": "Product recall management record.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "recallId": { "type": "string" },
+        "recallType": { "type": "string", "enum": ["NDA / National Recall", "Internal Recall"] },
+        "productName": { "type": "string" },
+        "batchNumber": { "type": "string" },
+        "reason": { "type": "string" },
+        "referenceDocUrl": { "type": "string" },
+        "dateInitiated": { "type": "string", "format": "date" },
+        "initiatedBy": { "type": "string" },
+        "status": { "type": "string", "enum": ["Active", "Resolved"] },
+        "resolutionType": { "type": "string", "enum": ["Returned to Supplier", "Destroyed", "NDA Cleared (Reinstated)"] },
+        "quantitiesAccountedFor": { "type": "object" },
+        "supportingDocUrl": { "type": "string" }
+      },
+      "required": ["tenantId", "recallId", "recallType", "productName", "dateInitiated", "status"]
+    },
+    "PremisesLicense": {
+      "title": "PremisesLicense",
+      "description": "Branch premises license record.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "licenseType": { "type": "string", "enum": ["NDA Premises Licence", "Certificate of Suitability of Premises", "Business Registration / Trading Licence", "Pharmacy Council Registration", "Other"] },
+        "customName": { "type": "string" },
+        "licenseNumber": { "type": "string" },
+        "issuingAuthority": { "type": "string" },
+        "issueDate": { "type": "string", "format": "date" },
+        "expiryDate": { "type": "string", "format": "date" },
+        "documentUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["Valid", "Expiring Soon", "Expired"] }
+      },
+      "required": ["tenantId", "branchId", "licenseType", "licenseNumber", "expiryDate", "status"]
+    },
+    "CMESession": {
+      "title": "CMESession",
+      "description": "CME session definition.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "cmeId": { "type": "string" },
+        "topic": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "time": { "type": "string", "format": "time" },
+        "durationMinutes": { "type": "number" },
+        "venue": { "type": "string" },
+        "presenterType": { "type": "string", "enum": ["Internal", "External"] },
+        "presenterName": { "type": "string" },
+        "presenterStaffId": { "type": "string" },
+        "materialUrl": { "type": "string" },
+        "notes": { "type": "string" },
+        "status": { "type": "string", "enum": ["Scheduled", "Completed"] }
+      },
+      "required": ["tenantId", "cmeId", "topic", "date", "status"]
+    },
+    "CMEAttendance": {
+      "title": "CMEAttendance",
+      "description": "Staff attendance record for a CME session.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "staffId": { "type": "string" },
+        "staffName": { "type": "string" },
+        "basePoints": { "type": "number" },
+        "punctualityTier": { "type": "number" },
+        "punctualityBonus": { "type": "number" },
+        "engagementBonus": { "type": "number" },
+        "totalPoints": { "type": "number" }
+      },
+      "required": ["tenantId", "sessionId", "staffId", "totalPoints"]
+    },
+    "AppraisalCycle": {
+      "title": "AppraisalCycle",
+      "description": "Definition of an appraisal cycle.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "cycleId": { "type": "string" },
+        "title": { "type": "string" },
+        "frequency": { "type": "string", "enum": ["Monthly", "Quarterly", "Bi-Annual", "Annual", "Ad-hoc"] },
+        "targetCohort": { "type": "string", "enum": ["All Technical Staff", "Specific Role", "Specific Branch", "Named Individuals"] },
+        "targetRole": { "type": "string" },
+        "targetBranchId": { "type": "string" },
+        "targetStaffIds": { "type": "array", "items": { "type": "string" } },
+        "subjectAreas": { "type": "array", "items": { "type": "string" } },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "passMark": { "type": "number" },
+        "administeredBy": { "type": "string" },
+        "status": { "type": "string", "enum": ["Scheduled", "In Progress", "Completed"] }
+      },
+      "required": ["tenantId", "cycleId", "title", "frequency", "targetCohort", "startDate", "endDate", "status"]
+    },
+    "Appraisal": {
+      "title": "Appraisal",
+      "description": "Individual staff appraisal record.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "cycleId": { "type": "string" },
+        "staffId": { "type": "string" },
+        "staffName": { "type": "string" },
+        "dateAdministered": { "type": "string", "format": "date" },
+        "score": { "type": "number" },
+        "pass": { "boolean": "boolean" },
+        "subjectAreaScores": { "type": "object" },
+        "strengths": { "type": "string" },
+        "gaps": { "type": "string" },
+        "recommendations": { "type": "string" },
+        "followUpRequired": { "type": "boolean" },
+        "followUpDate": { "type": "string", "format": "date" },
+        "administeredBy": { "type": "string" },
+        "status": { "type": "string", "enum": ["Draft", "Submitted"] },
+        "gapStatus": { "type": "string", "enum": ["Addressed", "Persisting"] }
+      },
+      "required": ["tenantId", "cycleId", "staffId", "dateAdministered", "score", "status"]
+    },
+    "PendingActivation": {
+      "title": "PendingActivation",
+      "description": "Staff account activation queue.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "staffId": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "activated", "rejected"] },
+        "requestedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId", "staffId", "name", "role", "status", "requestedAt"]
+    }
+  },
+  "firestore": {
+    "/vehicles/{vehicleId}": { "schema": "Vehicle", "description": "Vehicle register" },
+    "/trips/{tripId}": { "schema": "Trip", "description": "Logistics trips" },
+    "/trip_legs/{legId}": { "schema": "TripLeg", "description": "Individual trip legs" },
+    "/fuel_logs/{logId}": { "schema": "FuelLog", "description": "Vehicle fuel logs" },
+    "/maintenance_logs/{logId}": { "schema": "MaintenanceLog", "description": "Vehicle maintenance logs" },
+    "/traffic_fine_logs/{logId}": { "schema": "TrafficFineLog", "description": "Traffic fine logs" },
+    "/hiring_applications/{applicationId}": { "schema": "HiringApplication", "description": "Hiring applications" },
+    "/theory_tests/{testId}": { "schema": "TheoryTest", "description": "Hiring theory tests" },
+    "/oral_interviews/{interviewId}": { "schema": "OralInterview", "description": "Hiring oral interviews" },
+    "/practical_assessments/{assessmentId}": { "schema": "PracticalAssessment", "description": "Hiring practical assessments" },
+    "/attendance_records/{recordId}": { "schema": "AttendanceRecord", "description": "Daily attendance logs" },
+    "/disciplinary_incidents/{incidentId}": { "schema": "DisciplinaryIncident", "description": "Disciplinary incidents" },
+    "/tenants/{tenantId}": { "schema": "Tenant", "description": "Tenant details" },
+    "/branches/{branchId}": { "schema": "Branch", "description": "Branch details" },
+    "/staff/{staffId}": { "schema": "Staff", "description": "Staff profiles" },
+    "/products/{productId}": { "schema": "Product", "description": "Product definitions" },
+    "/product_batches/{batchId}": { "schema": "ProductBatch", "description": "Product stock batches" },
+    "/inventory_movements/{movementId}": { "schema": "InventoryMovement", "description": "Inventory movement records" },
+    "/operational_inventory/{inventoryId}": { "schema": "OperationalInventory", "description": "Operational inventory items" },
+    "/operational_inventory_usage/{usageId}": { "schema": "OperationalInventoryUsage", "description": "Operational inventory usage logs" },
+    "/supplier_registry/{supplierId}": { "schema": "SupplierRegistry", "description": "Supplier registry" },
+    "/supplier_representatives/{repId}": { "schema": "SupplierRepresentative", "description": "Supplier representatives" },
+    "/stock_orders/{orderId}": { "schema": "StockOrder", "description": "Stock orders" },
+    "/stock_order_lines/{lineId}": { "schema": "StockOrderLine", "description": "Stock order lines" },
+    "/transfer_invoices/{transferId}": { "schema": "TransferInvoice", "description": "Transfer invoices" },
+    "/transfer_invoice_lines/{lineId}": { "schema": "TransferInvoiceLine", "description": "Transfer invoice lines" },
+    "/receipt_verifications/{verificationId}": { "schema": "ReceiptVerification", "description": "Receipt verifications" },
+    "/grn_records/{grnId}": { "schema": "GRNRecord", "description": "GRN records" },
+    "/grn_lines/{lineId}": { "schema": "GRNLine", "description": "GRN lines" },
+    "/unsupplied_lines/{lineId}": { "schema": "UnsuppliedLine", "description": "Unsupplied lines" },
+    "/quotation_sessions/{sessionId}": { "schema": "QuotationSession", "description": "Quotation sessions" },
+    "/finance_ledger/{entryId}": { "schema": "FinanceLedger", "description": "Finance ledger" },
+    "/eod_reconciliations/{reconciliationId}": { "schema": "EODReconciliation", "description": "EOD reconciliations" },
+    "/branch_expenses/{expenseId}": { "schema": "BranchExpense", "description": "Branch expenses" },
+    "/cash_requisitions/{requisitionId}": { "schema": "CashRequisition", "description": "Cash requisitions" },
+    "/credit_receivables/{receivableId}": { "schema": "CreditReceivable", "description": "Credit receivables" },
+    "/supplier_payables/{payableId}": { "schema": "SupplierPayable", "description": "Supplier payables" },
+    "/banking_records/{recordId}": { "schema": "BankingRecord", "description": "Banking deposit records" },
+    "/client_credit_ledger/{entryId}": { "schema": "ClientCreditLedgerEntry", "description": "Client credit ledger" },
+    "/institution_credit_ledger/{entryId}": { "schema": "InstitutionCreditLedgerEntry", "description": "Institution credit ledger" },
+    "/supplier_credit_ledger/{entryId}": { "schema": "SupplierCreditLedgerEntry", "description": "Supplier credit ledger" },
+    "/financial_metrics/{metricId}": { "schema": "FinancialMetrics", "description": "Financial metrics and reporting" },
+    "/controlled_drug_register/{entryId}": { "schema": "ControlledDrugEntry", "description": "Controlled drug register entries" },
+    "/expiry_logs/{logId}": { "schema": "ExpiryLogEntry", "description": "Inventory expiry logs" },
+    "/quarantine_logs/{logId}": { "schema": "QuarantineLogEntry", "description": "Quarantine logs" },
+    "/room_temp_logs/{logId}": { "schema": "RoomTempLogEntry", "description": "Room temperature logs" },
+    "/fridge_temp_logs/{logId}": { "schema": "FridgeTempLogEntry", "description": "Fridge temperature logs" },
+    "/cleaning_tasks/{taskId}": { "schema": "CleaningTask", "description": "Cleaning task definitions" },
+    "/cleaning_logs/{logId}": { "schema": "CleaningLogEntry", "description": "Cleaning log entries" },
+    "/recalls/{recallId}": { "schema": "Recall", "description": "Product recall records" },
+    "/premises_licenses/{licenseId}": { "schema": "PremisesLicense", "description": "Premises license records" },
+    "/cme_sessions/{sessionId}": { "schema": "CMESession", "description": "CME sessions" },
+    "/cme_attendance/{attendanceId}": { "schema": "CMEAttendance", "description": "CME attendance records" },
+    "/appraisal_cycles/{cycleId}": { "schema": "AppraisalCycle", "description": "Appraisal cycles" },
+    "/appraisals/{appraisalId}": { "schema": "Appraisal", "description": "Staff appraisal records" },
+    "/temperature_logs/{logId}": { "schema": "RoomTempLogEntry", "description": "Legacy temperature logs (mapped to RoomTempLogEntry)" },
+    "/quarantine_log/{logId}": { "schema": "QuarantineLogEntry", "description": "Legacy quarantine log" },
+    "/recall_log/{logId}": { "schema": "Recall", "description": "Legacy recall log" },
+    "/cleaning_log/{logId}": { "schema": "CleaningLogEntry", "description": "Legacy cleaning log" },
+    "/premises_licences/{licenceId}": { "schema": "PremisesLicense", "description": "Legacy premises licences" },
+    "/appraisal_records/{recordId}": { "schema": "Appraisal", "description": "Legacy appraisal records" },
+    "/clients/{clientId}": { "schema": "Client", "description": "Clients" },
+    "/institutions/{institutionId}": { "schema": "Institution", "description": "Institutions" },
+    "/prescribers/{prescriberId}": { "schema": "Prescriber", "description": "Prescribers" },
+    "/pos_receipts/{receiptId}": { "schema": "POSReceipt", "description": "POS receipts" },
+    "/leave_requests/{requestId}": { "schema": "LeaveRequest", "description": "Leave requests" },
+    "/advance_requests/{requestId}": { "schema": "SalaryAdvanceRequest", "description": "Salary advance requests" },
+    "/payslips/{payslipId}": { "schema": "Payslip", "description": "Payslips" },
+    "/cme_records/{recordId}": { "schema": "CMERecord", "description": "CME records" },
+    "/appraisal_scores/{scoreId}": { "schema": "AppraisalScore", "description": "Appraisal scores" },
+    "/system_settings/{settingsId}": { "schema": "SystemSettings", "description": "Global system settings" },
+    "/master_registries/{registryId}": { "schema": "MasterRegistry", "description": "Dropdown master registries" },
+    "/global_audit_logs/{logId}": { "schema": "GlobalAuditLog", "description": "Immutable system audit logs" },
+    "/pending_activations/{activationId}": { "schema": "PendingActivation", "description": "Staff account activation queue" }
+  }
+}

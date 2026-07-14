@@ -1,0 +1,10 @@
+{
+  "name": "PharmHelm Pro ERP Platform",
+  "description": "A multi-tenant SaaS pharmacy ERP platform with subdomain routing, tenant management console (TMC), and subscription-based access control.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

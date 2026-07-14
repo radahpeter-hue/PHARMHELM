@@ -1,0 +1,64 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-jakarta: "Plus Jakarta Sans", sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-pharm-primary: #0F766E;
+  --color-pharm-secondary: #16a34a;
+  --color-pharm-dark: #0a0a0a;
+  --color-pharm-card: #151619;
+}
+
+@layer base {
+  body {
+    @apply bg-pharm-dark text-white font-sans antialiased;
+  }
+  input, select, textarea {
+    @apply text-zinc-900;
+  }
+}
+
+.pharm-sidebar {
+  @apply bg-pharm-dark border-r border-white/10 flex flex-col h-screen transition-all duration-300;
+}
+
+.pharm-nav-item {
+  @apply flex items-center gap-3 px-4 py-3 text-white/60 hover:text-white hover:bg-white/5 transition-colors rounded-lg mx-2;
+}
+
+.pharm-nav-item.active {
+  @apply text-white bg-pharm-primary/20 border-l-4 border-pharm-primary;
+}
+
+.pharm-card {
+  @apply bg-pharm-card border border-white/10 rounded-xl overflow-hidden shadow-xl;
+}
+
+.pharm-input {
+  @apply bg-white/5 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:border-pharm-primary text-white transition-colors;
+}
+
+.pharm-btn-primary {
+  @apply bg-pharm-primary hover:bg-pharm-primary/80 text-white font-medium px-6 py-2 rounded-lg transition-colors disabled:opacity-50;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
