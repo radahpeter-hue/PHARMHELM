@@ -22,8 +22,9 @@ export default function TenantLogin() {
 
   const primaryColor = tenant?.brand_colour || '#0c5252';
 
-  // Dynamic Greeting Logic
+  // Dynamic Greeting Logic & Title Setup
   useEffect(() => {
+    document.title = "PharmHelm Workspace | Login";
     const hour = new Date().getHours();
     if (hour >= 5 && hour < 12) {
       setGreeting('Good morning, Pharmacist');
@@ -334,6 +335,7 @@ export default function TenantLogin() {
         <div className="flex gap-4 mt-2">
           <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href="#">Privacy Policy</a>
           <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href="#">Terms of Service</a>
+          <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors font-bold" href="https://aboutus.pharmhelm.com" target="_blank" rel="noopener noreferrer">About Us</a>
           <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href="#">Security Standards</a>
         </div>
       </footer>

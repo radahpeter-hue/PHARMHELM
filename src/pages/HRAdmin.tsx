@@ -38,7 +38,8 @@ const HRAdmin: React.FC = () => {
   const { tenant } = useTenant();
   const [activeTab, setActiveTab] = useState<'staff' | 'roles' | 'attendance' | 'payroll' | 'leave_advance' | 'branches' | 'recruitment' | 'trainees' | 'performance' | 'reports' | 'settings'>('staff');
 
-  const isManagement = profile?.role === 'owner' || profile?.role === 'CEO' || profile?.role === 'HR Head';
+  const userRoles = [profile?.role || 'staff', ...(profile?.secondaryRoles || [])];
+  const isManagement = userRoles.some(r => ['owner', 'CEO', 'CEO / MD', 'HR Head', 'admin'].includes(r));
   const isBasic = tenant?.subscription_tier === 'basic';
 
   return (

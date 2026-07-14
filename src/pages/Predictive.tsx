@@ -80,6 +80,12 @@ const Predictive: React.FC = () => {
   const [activePanel, setActivePanel] = useState<'diagnostic' | 'planning' | 'scenario'>('diagnostic');
   const [saving, setSaving] = useState(false);
 
+  // Live collections state
+  const [batches, setBatches] = useState<any[]>([]);
+  const [sales, setSales] = useState<any[]>([]);
+  const [expenses, setExpenses] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+
   // Panel 1: Diagnostic State
   const [state, setState] = useState<PredictiveState>({
     inventoryValue: 0,
@@ -103,6 +109,56 @@ const Predictive: React.FC = () => {
     }
   }, [profile?.tenantId, activeBranch]);
 
+  // Subscribe to live collections for calculations
+  useEffect(() => {
+    if (profile?.tenantId && selectedBranchId) {
+      const unsubBatches = firestoreService.subscribeToCollectionGroup('product_batches', profile.tenantId, selectedBranchId, setBatches);
+      const unsubSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
+        setSales(data.filter(s => s.branchId === selectedBranchId));
+      });
+      const unsubExpenses = firestoreService.subscribeToCollection('branch_expenses', profile.tenantId, (data) => {
+        setExpenses(data.filter(e => e.branchId === selectedBranchId));
+      });
+      const unsubProducts = firestoreService.subscribeToCollection('products', profile.tenantId, setProducts);
+
+      return () => {
+        unsubBatches();
+        unsubSales();
+        unsubExpenses();
+        unsubProducts();
+      };
+    }
+  }, [profile?.tenantId, selectedBranchId]);
+
+  // Calculate live metrics based on database contents
+  const liveMetrics = useMemo(() => {
+    const inventoryValue = batches.reduce((sum, b) => sum + (b.quantity || 0) * (b.purchasePrice || 0), 0);
+    const totalSales = sales.reduce((sum, s) => sum + (s.total || s.totalAmount || 0), 0);
+    const fixedCosts = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+
+    const totalCogs = sales.reduce((sum, s) => {
+      if (s.items) {
+        return sum + s.items.reduce((itemSum: number, item: any) => {
+          const prod = products.find(p => p.id === item.productId || p.id === item.id);
+          const cost = prod?.purchase_price || item.price * 0.75;
+          return itemSum + cost * (item.quantity || 1);
+        }, 0);
+      }
+      return sum + (s.total || s.totalAmount || 0) * 0.75;
+    }, 0);
+
+    const markup = totalCogs > 0 ? (totalSales - totalCogs) / totalCogs : 0.33;
+    const turnover = inventoryValue > 0 ? totalCogs / inventoryValue : 0.8;
+
+    return {
+      inventoryValue,
+      totalSales,
+      fixedCosts,
+      markup,
+      turnover
+    };
+  }, [batches, sales, expenses, products]);
+
   useEffect(() => {
     if (selectedBranchId && profile?.tenantId) {
       // Fetch predictive settings for this branch
@@ -118,14 +174,14 @@ const Predictive: React.FC = () => {
             const data = snapshot.docs[0].data() as PredictiveState;
             setState(data);
           } else {
-            // Default values if none exist
+            // Default values generated from live database metrics
             setState({
-              inventoryValue: 450000000,
-              totalSales: 120000000,
-              turnover: 0.8,
-              markup: 0.35,
-              fixedCosts: 25000000,
-              desiredProfit: 15000000
+              inventoryValue: liveMetrics.inventoryValue || 15000000,
+              totalSales: liveMetrics.totalSales || 5000000,
+              turnover: liveMetrics.turnover || 0.8,
+              markup: liveMetrics.markup || 0.33,
+              fixedCosts: liveMetrics.fixedCosts || 1200000,
+              desiredProfit: 800000
             });
           }
         } catch (error) {
@@ -134,7 +190,7 @@ const Predictive: React.FC = () => {
       };
       fetchSettings();
     }
-  }, [selectedBranchId, profile?.tenantId]);
+  }, [selectedBranchId, profile?.tenantId, liveMetrics]);
 
   const handleUpdateModel = async () => {
     if (!selectedBranchId || !profile?.tenantId) return;

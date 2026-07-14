@@ -87,7 +87,8 @@ const Dashboard: React.FC = () => {
   const inTransitCount = batches.filter(b => b.batch_status === 'in_transit').length;
   const alertCount = zeroStockCount + belowMinCount + expiredCount;
 
-  const isManagement = profile?.role === 'ceo' || profile?.role === 'finance_head' || profile?.role === 'IT Head' || profile?.role === 'owner';
+  const userRoles = [profile?.role || 'staff', ...(profile?.secondaryRoles || [])];
+  const isManagement = userRoles.some(r => ['ceo', 'CEO', 'CEO / MD', 'finance_head', 'Finance Head', 'IT Head', 'owner'].includes(r));
 
   const chartData = React.useMemo(() => {
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

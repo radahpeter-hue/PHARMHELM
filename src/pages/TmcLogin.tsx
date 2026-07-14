@@ -16,8 +16,9 @@ export default function TmcLogin() {
   const [shake, setShake] = useState(false);
   const [greeting, setGreeting] = useState('Good morning, Administrator');
 
-  // Dynamic Greeting Logic
+  // Dynamic Greeting Logic & Title Setup
   useEffect(() => {
+    document.title = "PharmHelm Tenant Management Console | Login";
     const hour = new Date().getHours();
     if (hour >= 12 && hour < 17) {
       setGreeting('Good afternoon, Administrator');
@@ -250,6 +251,8 @@ export default function TmcLogin() {
               <a className="text-[12px] text-[#404849] hover:text-[#003436] transition-colors" href="#">Security Standards</a>
               <div className="w-1.5 h-1.5 rounded-full bg-[#bfc8c8]"></div>
               <a className="text-[12px] text-[#404849] hover:text-[#003436] transition-colors" href="#">Support</a>
+              <div className="w-1.5 h-1.5 rounded-full bg-[#bfc8c8]"></div>
+              <a className="text-[12px] text-[#404849] hover:text-[#003436] transition-colors font-bold" href="https://aboutus.pharmhelm.com" target="_blank" rel="noopener noreferrer">About Us</a>
             </div>
           </div>
         </div>

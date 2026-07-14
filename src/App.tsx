@@ -185,6 +185,7 @@ export default function App() {
         <Route path="/tenant/:tenantSlug/app/clients" element={<TenantProtectedRoute><Clients /></TenantProtectedRoute>} />
         <Route path="/tenant/:tenantSlug/app/stock" element={<TenantProtectedRoute><StockInOut /></TenantProtectedRoute>} />
         <Route path="/tenant/:tenantSlug/app/procurement" element={<TenantProtectedRoute><Procurement /></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/logistics" element={<TenantProtectedRoute><Logistics /></TenantProtectedRoute>} />
         <Route path="/tenant/:tenantSlug/app/finance" element={<TenantProtectedRoute><Finance /></TenantProtectedRoute>} />
         <Route path="/tenant/:tenantSlug/app/qa" element={<TenantProtectedRoute><QACompliance /></TenantProtectedRoute>} />
         <Route path="/tenant/:tenantSlug/app/hr" element={<TenantProtectedRoute><HRAdmin /></TenantProtectedRoute>} />

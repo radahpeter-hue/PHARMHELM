@@ -73,7 +73,8 @@ const Finance: React.FC = () => {
     }
   }, [profile?.tenantId]);
 
-  const isManagement = profile?.role === 'owner' || profile?.role === 'CEO' || profile?.role === 'Finance Head';
+  const userRoles = [profile?.role || 'staff', ...(profile?.secondaryRoles || [])];
+  const isManagement = userRoles.some(r => ['owner', 'CEO', 'CEO / MD', 'Finance Head', 'admin'].includes(r));
 
   return (
     <div className="space-y-6">
@@ -2771,7 +2772,10 @@ const PettyCashManagement: React.FC = () => {
                       </button>
                     </>
                   )}
-                  {req.status === 'finance_approved' && (profile?.role === 'CEO' || profile?.role === 'CEO / MD' || profile?.role === 'owner' || profile?.role === 'admin') && (
+                  {req.status === 'finance_approved' && (
+                    ['CEO', 'CEO / MD', 'owner', 'admin'].includes(profile?.role || '') ||
+                    (profile?.secondaryRoles || []).some(r => ['CEO', 'CEO / MD', 'owner', 'admin'].includes(r))
+                  ) && (
                     <>
                       <button 
                         onClick={() => handleApproveCEO(req.id)}

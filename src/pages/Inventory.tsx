@@ -32,7 +32,8 @@ const Inventory: React.FC = () => {
   const [settings, setSettings] = useState<any>(null);
   const [branchBatches, setBranchBatches] = useState<ProductBatch[]>([]);
 
-  const isCEO = profile?.role === 'CEO' || profile?.role === 'ceo' || profile?.role === 'owner' || profile?.role === 'admin';
+  const userRoles = [profile?.role || 'staff', ...(profile?.secondaryRoles || [])];
+  const isCEO = userRoles.some(r => ['CEO', 'CEO / MD', 'ceo', 'owner', 'admin'].includes(r));
 
   useEffect(() => {
     if (profile?.tenantId) {

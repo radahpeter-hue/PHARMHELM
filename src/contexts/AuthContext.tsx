@@ -526,9 +526,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             localStorage.setItem('auth_profile', JSON.stringify(currentProfile));
             setPlatformProfile(null);
 
-            // Inject permissions based on Role Registry schema definitions
-            const resolvedRole = currentProfile.role || 'staff';
-            const rolePerms = ROLE_REGISTRY[resolvedRole] || {
+            // Inject permissions based on Role Registry schema definitions (merging primary and secondary roles)
+            const primaryRole = currentProfile.role || 'staff';
+            const secondaryRolesList = currentProfile.secondaryRoles || [];
+            const allUserRoles = [primaryRole, ...secondaryRolesList];
+
+            const mergedPerms: RolePermissions = {
               sales: { access: 'none' },
               inventory: { access: 'none' },
               clients: { access: 'none' },
@@ -543,7 +546,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               marketing: { access: 'none' },
               settings: { access: 'none' }
             };
-            setPermissions(rolePerms);
+
+            const accessPriority: Record<string, number> = { none: 0, view: 1, operate: 2, all: 3 };
+
+            allUserRoles.forEach(role => {
+              const rolePerms = ROLE_REGISTRY[role];
+              if (rolePerms) {
+                Object.keys(rolePerms).forEach(modKey => {
+                  const module = modKey as keyof RolePermissions;
+                  const currentAccess = mergedPerms[module]?.access || 'none';
+                  const roleAccess = rolePerms[module]?.access || 'none';
+                  if (accessPriority[roleAccess] > accessPriority[currentAccess]) {
+                    mergedPerms[module] = { access: roleAccess };
+                  }
+                });
+              }
+            });
+
+            // Specific request: give CEO / CEO MD role access everywhere in the system
+            const hasCeoRole = allUserRoles.some(r => r === 'CEO' || r === 'CEO / MD' || r === 'owner');
+            if (hasCeoRole) {
+              Object.keys(mergedPerms).forEach(modKey => {
+                const module = modKey as keyof RolePermissions;
+                mergedPerms[module] = { access: 'all' };
+              });
+            }
+
+            setPermissions(mergedPerms);
 
             // Load settings
             let isMultiBranch = false;
@@ -557,7 +586,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setMultiBranchMode(isMultiBranch);
 
             // Fetch branches
-            const isAllBranchRole = ['owner', 'CEO', 'CEO / MD', 'IT Head', 'IT Support Staff', 'admin'].includes(currentProfile.role);
+            const allRoles = [currentProfile.role || 'staff', ...(currentProfile.secondaryRoles || [])];
+            const isAllBranchRole = allRoles.some(r => ['owner', 'CEO', 'CEO / MD', 'IT Head', 'IT Support Staff', 'admin'].includes(r));
             if (isAllBranchRole) {
               const bSnap = await getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenant.id)));
               const branches = bSnap.docs.map(d => ({ ...d.data(), id: d.id } as Branch));
