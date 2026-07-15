@@ -103,7 +103,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           const isDateValid = (!tenantData.subscription_start || todayStr >= tenantData.subscription_start) &&
                               (!tenantData.subscription_end || todayStr <= tenantData.subscription_end);
 
-          if (!isStatusActive || !isDateValid) {
+          if (tenantData.status === 'deleted' || (tenantData as any).deleted === true) {
+            setError('ACCOUNT_REMOVED');
+            setTenant(null);
+          } else if (!isStatusActive || !isDateValid) {
             setError('SUBSCRIPTION_EXPIRED');
             setTenant({ ...tenantData, id: querySnapshot.docs[0].id });
           } else if (tenantData.status === 'suspended') {

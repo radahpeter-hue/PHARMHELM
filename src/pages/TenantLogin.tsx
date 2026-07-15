@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
 import { ThreeCapsule } from '../components/ThreeCapsule';
 import { toast } from 'sonner';
+import { AlertCircle } from 'lucide-react';
 
 export default function TenantLogin() {
   const { signIn } = useAuth();
@@ -124,6 +125,32 @@ export default function TenantLogin() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#fbf9f8]">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-500"></div>
+      </div>
+    );
+  }
+
+  if (tenantError === 'ACCOUNT_REMOVED') {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#05192d] p-4 text-white font-sans selection:bg-[#b0f0d6] selection:text-[#003527]">
+        <div className="max-w-lg w-full bg-white/5 backdrop-blur-xl p-10 rounded-[32px] border border-white/10 shadow-2xl text-center space-y-6 animate-in fade-in zoom-in duration-200">
+          <div className="h-20 w-20 bg-red-950/30 rounded-3xl flex items-center justify-center mx-auto border border-red-900/50">
+            <AlertCircle className="text-red-400" size={40} />
+          </div>
+          <h1 className="text-2xl font-black text-white tracking-tight">Account Removed</h1>
+          <p className="text-zinc-300 text-sm leading-relaxed font-medium">
+            The PharmHelm Pro workspace for this organization has been removed. 
+            If you believe this is an error or need to restore this environment, 
+            please contact the platform administrator.
+          </p>
+          <div className="pt-2">
+            <a 
+              href="mailto:pharmhelmpro@gmail.com" 
+              className="inline-block px-8 py-3 bg-[#064e3b] text-white font-bold text-xs uppercase tracking-widest rounded-xl hover:brightness-125 transition-all shadow-lg"
+            >
+              Contact Administrator
+            </a>
+          </div>
+        </div>
       </div>
     );
   }
@@ -333,9 +360,9 @@ export default function TenantLogin() {
         <div className="font-label-md text-label-md text-primary mb-2" style={{ color: primaryColor }}>PharmHelm</div>
         <p className="font-caption text-caption text-[#3f4848]">© 2026 PharmHelm. HIPAA Compliant Enterprise Systems.</p>
         <div className="flex gap-4 mt-2">
-          <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href="#">Privacy Policy</a>
+          <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href="https://privacy.pharmhelm.com" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
           <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href="#">Terms of Service</a>
-          <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors font-bold" href="https://aboutus.pharmhelm.com" target="_blank" rel="noopener noreferrer">About Us</a>
+          <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors font-bold" href="https://about.pharmhelm.com" target="_blank" rel="noopener noreferrer">About Us</a>
           <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href="#">Security Standards</a>
         </div>
       </footer>

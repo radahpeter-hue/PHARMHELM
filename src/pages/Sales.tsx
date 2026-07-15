@@ -688,10 +688,11 @@ const Sales: React.FC = () => {
         const collection = selectedPatient.isStaff ? 'staff' : 'clients';
         
         await firestoreService.updateDocument(collection, selectedPatient.id, {
+          welfare_spent: (selectedPatient.welfare_spent || 0) + welfareUsed,
           welfare_used_ytd: (selectedPatient.welfare_used_ytd || 0) + welfareUsed
         });
 
-        await firestoreService.addDocument('welfare_records', {
+        await firestoreService.addDocument('welfare', {
           tenantId: profile.tenantId,
           staffId: selectedPatient.id,
           isStaff: selectedPatient.isStaff,
@@ -1915,7 +1916,7 @@ const Sales: React.FC = () => {
                     { id: 'card', label: 'Card / POS', icon: CreditCard },
                     { id: 'insurance', label: 'Insurance', icon: ShieldCheck },
                     { id: 'institutional_credit', label: 'Inst. Credit', icon: Building2 },
-                    { id: 'staff_welfare', label: 'Staff Welfare', icon: User, disabled: !isEmployee }
+                    { id: 'staff_welfare', label: 'Staff Welfare', icon: User, disabled: !isEmployee || totalAmount > welfareBalance }
                   ].map(method => (
                     <button
                       key={method.id}
@@ -1932,7 +1933,12 @@ const Sales: React.FC = () => {
                       <method.icon size={24} />
                       <span className="text-[10px] font-black uppercase leading-tight">{method.label}</span>
                       {method.id === 'staff_welfare' && isEmployee && (
-                        <span className="text-[8px] text-emerald-600 font-bold">Bal: {(welfareBalance || 0).toLocaleString()}</span>
+                        <span className={cn(
+                          "text-[8px] font-bold block",
+                          totalAmount > welfareBalance ? "text-red-500" : "text-emerald-600"
+                        )}>
+                          Bal: {(welfareBalance || 0).toLocaleString()} {totalAmount > welfareBalance && ' (Insufficient)'}
+                        </span>
                       )}
                     </button>
                   ))}

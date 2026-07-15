@@ -3423,6 +3423,7 @@ const LegacyCashBankingOversight: React.FC = () => {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [bankingFormOpen, setBankingFormOpen] = useState(false);
   const [bankingLogs, setBankingLogs] = useState<any[]>([]);
+  const [welfare, setWelfare] = useState<any[]>([]);
   const [oversightTab, setOversightTab] = useState<'physical_cash' | 'bank_transfers'>('physical_cash');
   
   const [formData, setFormData] = useState({
@@ -3449,6 +3450,7 @@ const LegacyCashBankingOversight: React.FC = () => {
       const unsubInvs = firestoreService.subscribeToCollection('procurement_invoices', profile.tenantId, setProcurementInvoices);
       const unsubBranches = firestoreService.subscribeToCollection('branches', profile.tenantId, setBranches);
       const unsubBLogs = firestoreService.subscribeToCollection('banking_transactions', profile.tenantId, setBankingLogs);
+      const unsubWelfare = firestoreService.subscribeToCollection('welfare', profile.tenantId, setWelfare);
 
       return () => {
         unsubRecs();
@@ -3457,6 +3459,7 @@ const LegacyCashBankingOversight: React.FC = () => {
         unsubInvs();
         unsubBranches();
         unsubBLogs();
+        unsubWelfare();
       };
     }
   }, [profile?.tenantId]);
@@ -3543,10 +3546,15 @@ const LegacyCashBankingOversight: React.FC = () => {
     .filter(r => r.status === 'Verified')
     .reduce((sum, r) => sum + (r.institutional_credit_actual || 0), 0);
 
-  // Staff Welfare totals logged at EOD (verified)
-  const staffWelfareTotal = filteredRecs
-    .filter(r => r.status === 'Verified')
-    .reduce((sum, r) => sum + (r.staff_welfare_actual || 0), 0);
+  const totalWelfareFundInflow = pettyCashLedger
+    .filter(entry => entry.category === 'Staff Welfare' && entry.type === 'withdrawal')
+    .reduce((sum, entry) => sum + (entry.amount || 0), 0);
+
+  const totalWelfareFundOutflow = welfare
+    .filter(w => w.status === 'approved' || w.status === 'completed')
+    .reduce((sum, w) => sum + (w.amount || 0), 0);
+
+  const welfareFundBalance = totalWelfareFundInflow - totalWelfareFundOutflow;
 
   return (
     <div className="space-y-6">
@@ -3627,10 +3635,10 @@ const LegacyCashBankingOversight: React.FC = () => {
           <p className="text-[10px] text-zinc-400 mt-1">Verified EOD credit sales total</p>
         </div>
         <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm relative overflow-hidden">
-          <p className="text-[10px] font-black text-violet-600 bg-violet-50 px-2.5 py-0.5 rounded w-fit uppercase tracking-widest mb-2">EOD Welfare</p>
-          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Staff Welfare Total</p>
-          <h3 className="text-xl font-black text-zinc-900">UGX {staffWelfareTotal.toLocaleString()}</h3>
-          <p className="text-[10px] text-zinc-400 mt-1">Verified EOD staff deductions</p>
+          <p className="text-[10px] font-black text-violet-600 bg-violet-50 px-2.5 py-0.5 rounded w-fit uppercase tracking-widest mb-2">Welfare Fund</p>
+          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Welfare Fund Balance</p>
+          <h3 className="text-xl font-black text-zinc-900">UGX {welfareFundBalance.toLocaleString()}</h3>
+          <p className="text-[10px] text-zinc-400 mt-1">Total funded minus live expenditures</p>
         </div>
       </div>
 

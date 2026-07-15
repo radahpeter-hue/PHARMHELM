@@ -70,6 +70,35 @@ const Welfare: React.FC = () => {
     }
   };
 
+  const handleUpdateWelfareLimit = async (staffMember: Staff, newLimit: number) => {
+    if (!profile?.tenantId) return;
+    const oldLimit = staffMember.welfare_limit || 50000;
+    const difference = newLimit - oldLimit;
+
+    try {
+      await firestoreService.updateDocument('staff', staffMember.id, {
+        welfare_limit: newLimit
+      });
+
+      if (difference !== 0) {
+        await firestoreService.addDocument('petty_cash_ledger', {
+          tenantId: profile.tenantId,
+          amount: Math.abs(difference),
+          type: difference > 0 ? 'withdrawal' : 'incoming',
+          category: 'Staff Welfare',
+          notes: `Welfare limit adjustment for ${staffMember.full_name || staffMember.username} (${oldLimit.toLocaleString()} -> ${newLimit.toLocaleString()})`,
+          date: new Date().toISOString(),
+          created_by_name: profile.full_name || 'HR Administrator'
+        });
+      }
+
+      toast.success(`Welfare limit successfully adjusted for ${staffMember.full_name || staffMember.username}`);
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to adjust welfare limit.');
+    }
+  };
+
   const renderContent = () => {
     switch (activeTab) {
       case 'portal':
@@ -95,11 +124,11 @@ const Welfare: React.FC = () => {
                     </div>
                     <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
                       <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Welfare Used</p>
-                      <p className="text-xl font-black">UGX {(profile as any)?.welfare_used_ytd?.toLocaleString() || 0}</p>
+                      <p className="text-xl font-black">UGX {(profile?.welfare_spent || (profile as any)?.welfare_used_ytd || 0).toLocaleString()}</p>
                     </div>
                     <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
-                      <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Status</p>
-                      <p className="text-xl font-black text-emerald-400">Active</p>
+                      <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Welfare Balance</p>
+                      <p className="text-xl font-black text-emerald-300">UGX {((profile?.welfare_limit || 50000) - (profile?.welfare_spent || (profile as any)?.welfare_used_ytd || 0)).toLocaleString()}</p>
                     </div>
                   </div>
                 </div>
@@ -163,11 +192,70 @@ const Welfare: React.FC = () => {
       case 'payslips': return <PayslipTab />;
       case 'cme': return <CMETab />;
       case 'performance': return <AppraisalTab />;
+      case 'welfare_log' as any:
+        return <WelfareLogTab staffId={profile?.id || profile?.uid || ''} welfare={welfare} />;
       case 'admin_welfare':
       case 'admin_csr':
         return (
-          <div className="bg-white rounded-[32px] border border-zinc-200 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
+          <div className="space-y-6">
+            {activeTab === 'admin_welfare' && (
+              <div className="bg-white rounded-[32px] border border-zinc-200 shadow-sm p-6 space-y-6">
+                <div>
+                  <h3 className="text-lg font-black text-zinc-900 uppercase tracking-tight">Staff Welfare Allocations</h3>
+                  <p className="text-zinc-500 text-xs font-medium">Assign and manage welfare balances for staff members. Allocating limits will withdraw funds from the HQ Petty Cash balance.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {staff.map((s) => {
+                    const limit = s.welfare_limit || 50000;
+                    const spent = s.welfare_spent || 0;
+                    const balance = limit - spent;
+                    
+                    return (
+                      <div key={s.id} className="p-5 bg-zinc-50 border border-zinc-200 rounded-3xl space-y-4">
+                        <div>
+                          <p className="font-bold text-sm text-zinc-900">{s.full_name || s.username}</p>
+                          <p className="text-[10px] text-zinc-400 font-mono">ROLE: {s.role}</p>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-center text-xs font-sans">
+                          <div className="p-2 bg-white rounded-xl border border-zinc-100">
+                            <p className="text-[8px] font-black text-zinc-400 uppercase tracking-wider mb-0.5">Limit</p>
+                            <p className="font-bold text-zinc-800">UGX {limit.toLocaleString()}</p>
+                          </div>
+                          <div className="p-2 bg-white rounded-xl border border-zinc-100">
+                            <p className="text-[8px] font-black text-zinc-400 uppercase tracking-wider mb-0.5">Spent</p>
+                            <p className="font-bold text-zinc-850">UGX {spent.toLocaleString()}</p>
+                          </div>
+                          <div className="p-2 bg-emerald-50 rounded-xl border border-emerald-100">
+                            <p className="text-[8px] font-black text-emerald-600 uppercase tracking-wider mb-0.5">Balance</p>
+                            <p className="font-bold text-emerald-700">UGX {balance.toLocaleString()}</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            const newLimit = window.prompt(`Set new Welfare Limit for ${s.full_name || s.username}:`, limit.toString());
+                            if (newLimit !== null) {
+                              const val = parseFloat(newLimit);
+                              if (!isNaN(val) && val >= 0) {
+                                handleUpdateWelfareLimit(s, val);
+                              } else {
+                                toast.error('Invalid limit amount entered.');
+                              }
+                            }
+                          }}
+                          className="w-full py-2.5 bg-zinc-900 hover:bg-zinc-850 text-white rounded-xl font-bold uppercase text-[9px] tracking-wider transition-all"
+                        >
+                          Adjust Limit
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="bg-white rounded-[32px] border border-zinc-200 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-zinc-50/50 border-b border-zinc-100">
@@ -253,7 +341,8 @@ const Welfare: React.FC = () => {
               </table>
             </div>
           </div>
-        );
+        </div>
+      );
       default: return null;
     }
   };
@@ -341,6 +430,16 @@ const Welfare: React.FC = () => {
         >
           <Award size={14} />
           Performance
+        </button>
+        <button 
+          onClick={() => setActiveTab('welfare_log' as any)}
+          className={cn(
+            "flex items-center gap-2 px-4 py-2 rounded-xl transition-all text-[10px] font-black uppercase tracking-widest",
+            activeTab === 'welfare_log' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:bg-white/50"
+          )}
+        >
+          <Gift size={14} />
+          Welfare Log
         </button>
         {isAdmin && (
           <>
@@ -499,6 +598,70 @@ const WelfareModal: React.FC<{ type: string; isOpen: boolean; onClose: () => voi
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+};
+
+const WelfareLogTab: React.FC<{ staffId: string; welfare: WelfareRecord[] }> = ({ staffId, welfare }) => {
+  const myLogs = welfare.filter(w => w.staffId === staffId);
+
+  return (
+    <div className="bg-white rounded-[32px] border border-zinc-200 shadow-sm overflow-hidden p-6 space-y-6 animate-in fade-in duration-300">
+      <div>
+        <h3 className="text-lg font-black text-zinc-900 uppercase tracking-tight">Welfare Transactions Log</h3>
+        <p className="text-zinc-500 text-xs font-medium">Log of transactions and deductions from your allocated welfare amounts.</p>
+      </div>
+
+      <div className="border border-zinc-150 rounded-2xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="bg-zinc-50 border-b border-zinc-150 font-bold text-zinc-500">
+                <th className="px-6 py-3 uppercase tracking-wider">Date</th>
+                <th className="px-6 py-3 uppercase tracking-wider">Type</th>
+                <th className="px-6 py-3 uppercase tracking-wider">Amount</th>
+                <th className="px-6 py-3 uppercase tracking-wider">Notes</th>
+                <th className="px-6 py-3 uppercase tracking-wider">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {myLogs.map((log) => (
+                <tr key={log.id} className="hover:bg-zinc-50/20">
+                  <td className="px-6 py-4 font-mono text-[11px] text-zinc-600">
+                    {log.date ? new Date(log.date).toLocaleString() : 'N/A'}
+                  </td>
+                  <td className="px-6 py-4 font-bold text-zinc-800 uppercase tracking-wider">
+                    {log.type}
+                  </td>
+                  <td className="px-6 py-4 font-bold text-zinc-950">
+                    UGX {(log.amount || 0).toLocaleString()}
+                  </td>
+                  <td className="px-6 py-4 text-zinc-500">
+                    {log.notes || 'No description'}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={cn(
+                      "px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider",
+                      log.status === 'approved' ? "bg-emerald-50 text-emerald-600" :
+                      log.status === 'pending' ? "bg-amber-50 text-amber-600" :
+                      "bg-red-50 text-red-600"
+                    )}>
+                      {log.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {myLogs.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-6 py-8 text-center text-zinc-400 italic">
+                    No welfare transactions logged yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

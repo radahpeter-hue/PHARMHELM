@@ -17,7 +17,7 @@ export interface Tenant {
   subscription_end: string;
   modules_enabled: string[];
   deployment_mode: 'single_branch' | 'multi_branch';
-  status: 'active' | 'inactive' | 'suspended';
+  status: 'active' | 'inactive' | 'suspended' | 'deleted';
   created_at: string;
   created_by: string;
   acronym?: string;
@@ -106,6 +106,8 @@ export interface Staff {
   expected_work_hours_per_day?: number;
   expected_days_per_month?: number;
   secondaryRoles?: string[];
+  welfare_limit?: number;
+  welfare_spent?: number;
 }
 
 export interface PlatformUser {

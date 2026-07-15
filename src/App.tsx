@@ -25,6 +25,8 @@ import SettingsPage from './pages/Settings';
 import PlatformAdmin from './pages/PlatformAdmin';
 import TmcLogin from './pages/TmcLogin';
 import TenantLogin from './pages/TenantLogin';
+import { AboutPage } from './pages/AboutPage';
+import { PrivacyPage } from './pages/PrivacyPage';
 
 // Protected Route for TMC
 const TmcProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -82,6 +84,32 @@ const TenantProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childre
       );
     }
 
+    if (tenantError === 'ACCOUNT_REMOVED') {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-[#05192d] p-4 text-white font-sans selection:bg-[#b0f0d6] selection:text-[#003527]">
+          <div className="max-w-lg w-full bg-white/5 backdrop-blur-xl p-10 rounded-[32px] border border-white/10 shadow-2xl text-center space-y-6">
+            <div className="h-20 w-20 bg-red-950/30 rounded-3xl flex items-center justify-center mx-auto border border-red-900/50">
+              <AlertCircle className="text-red-400" size={40} />
+            </div>
+            <h1 className="text-2xl font-black text-white tracking-tight">Account Removed</h1>
+            <p className="text-zinc-300 text-sm leading-relaxed font-medium">
+              The PharmHelm Pro workspace for this organization has been removed. 
+              If you believe this is an error or need to restore this environment, 
+              please contact the platform administrator.
+            </p>
+            <div className="pt-2">
+              <a 
+                href="mailto:pharmhelmpro@gmail.com" 
+                className="inline-block px-8 py-3 bg-[#064e3b] text-white font-bold text-xs uppercase tracking-widest rounded-xl hover:brightness-125 transition-all shadow-lg"
+              >
+                Contact Administrator
+              </a>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
         <div className="max-w-md w-full bg-white p-8 rounded-3xl border border-red-100 shadow-xl text-center">
@@ -131,12 +159,19 @@ const TmcSubdomainGuard: React.FC<{ children: React.ReactNode }> = ({ children }
   return <>{children}</>;
 };
 
-// Root Router Component
 export default function App() {
   const { isPlatformAdmin, tenantSlug } = useTenant();
   const { user } = useAuth();
 
-  const hostname = window.location.hostname;
+  const hostname = window.location.hostname.toLowerCase();
+  
+  if (hostname.includes('about.')) {
+    return <AboutPage />;
+  }
+  if (hostname.includes('privacy.')) {
+    return <PrivacyPage />;
+  }
+
   const parts = hostname.split('.');
   let isSubdomainTenant = false;
   let extractedSlug = '';
@@ -168,6 +203,10 @@ export default function App() {
     <Router>
       <Toaster position="top-center" />
       <Routes>
+        {/* Public info routes */}
+        <Route path="/about" element={<AboutPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+
         {/* Portal Entry Redirection */}
         <Route path="/" element={getRootRedirect()} />
 

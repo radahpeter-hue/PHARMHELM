@@ -63,6 +63,14 @@ const PlatformAdmin = () => {
   const [quickAccessTenant, setQuickAccessTenant] = useState<Tenant | null>(null);
   const [editingHandler, setEditingHandler] = useState<any | null>(null);
 
+  // Deletion Re-authentication & Retention states
+  const [showReauthModal, setShowReauthModal] = useState(false);
+  const [reauthTenant, setReauthTenant] = useState<any | null>(null);
+  const [reauthEmail, setReauthEmail] = useState('');
+  const [reauthPassword, setReauthPassword] = useState('');
+  const [reauthSaving, setReauthSaving] = useState(false);
+  const [retentionPeriod, setRetentionPeriod] = useState('365');
+
   // 1. Accounts Module States
   const [selectedTenantForAccounts, setSelectedTenantForAccounts] = useState<string>('');
   const [staffAccounts, setStaffAccounts] = useState<any[]>([]);
@@ -296,6 +304,23 @@ const PlatformAdmin = () => {
           tenantList = tenantList.filter(t => assignedIds.includes(t.id) || assignedIds.includes(t.slug));
         }
         
+        // Check for Auto-Delete (Step 2c)
+        const nowCheck = new Date();
+        tenantList.forEach(async (t) => {
+          if ((t.status === 'deleted' || (t as any).deleted === true) && t.deleted_expires_at) {
+            const expDate = new Date(t.deleted_expires_at);
+            if (nowCheck >= expDate) {
+              console.log(`Auto-deleting tenant ${t.name} (expired retention period)...`);
+              try {
+                await performCascadeDelete(t.id);
+                toast.info(`Tenant ${t.name} auto-deleted (retention period expired).`);
+              } catch (e) {
+                console.error(`Failed to auto-delete tenant ${t.name}:`, e);
+              }
+            }
+          }
+        });
+
         setTenants(tenantList);
         setLoading(false);
 
@@ -320,6 +345,57 @@ const PlatformAdmin = () => {
 
   const fetchTenants = async () => {
     // Handled in real-time by the useEffect snapshot listener
+  };
+
+  const performCascadeDelete = async (tenantId: string) => {
+    const subCollections = [
+      'staff', 'clients', 'products', 'product_batches', 'sales', 
+      'eod_reconciliations', 'petty_cash_ledger', 'welfare', 'csr', 
+      'stock_orders', 'stock_order_lines', 'fuel_logs', 'maintenance_logs', 
+      'traffic_fine_logs', 'logistics_expenses', 'payroll', 
+      'marketing_expenses', 'sourcing_lines', 'welfare_records'
+    ];
+
+    for (const colName of subCollections) {
+      try {
+        const q = query(collection(db, colName), where('tenantId', '==', tenantId));
+        const snap = await getDocs(q);
+        for (const d of snap.docs) {
+          await deleteDoc(doc(db, colName, d.id));
+        }
+      } catch (err) {
+        console.error(`Error purging ${colName}:`, err);
+      }
+    }
+
+    try {
+      await deleteDoc(doc(db, 'system_settings', tenantId));
+    } catch (_) {}
+
+    await deleteDoc(doc(db, 'tenants', tenantId));
+  };
+
+  const handleReauthPermanentDelete = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reauthTenant) return;
+    setReauthSaving(true);
+    try {
+      const credential = EmailAuthProvider.credential(reauthEmail, reauthPassword);
+      await reauthenticateWithCredential(auth.currentUser!, credential);
+
+      await performCascadeDelete(reauthTenant.id);
+
+      toast.success(`Tenant ${reauthTenant.name} has been permanently deleted.`);
+      setShowReauthModal(false);
+      setReauthTenant(null);
+      setReauthEmail('');
+      setReauthPassword('');
+    } catch (err: any) {
+      console.error(err);
+      toast.error(`Re-authentication failed: ${err.message || 'Incorrect credentials.'}`);
+    } finally {
+      setReauthSaving(false);
+    }
   };
 
   const fetchStaffAccounts = async (tenantId: string) => {
@@ -1123,58 +1199,36 @@ const PlatformAdmin = () => {
                           <div className="flex justify-end gap-3 col-span-2">
                             <button 
                               onClick={async () => {
-                                try {
-                                  await updateDoc(doc(db, 'tenants', tenant.id), {
-                                    deleted: false,
-                                    deleted_at: null,
-                                    deletedAt: null,
-                                    deleted_expires_at: null,
-                                    status: 'active',
-                                    subscription_status: 'active',
-                                    slug: tenant.original_slug || tenant.slug
-                                  });
-                                  toast.success('Tenant recovered successfully!');
-                                  fetchTenants();
-                                } catch (e) {
-                                  toast.error('Failed to recover tenant.');
+                                if (window.confirm(`Are you sure you want to restore ${tenant.name}? Its subdomain and slug will immediately go live again.`)) {
+                                  try {
+                                    await updateDoc(doc(db, 'tenants', tenant.id), {
+                                      deleted: false,
+                                      deleted_at: null,
+                                      deletedAt: null,
+                                      deleted_expires_at: null,
+                                      deletedBy: null,
+                                      autoPurgeDate: null,
+                                      status: 'active',
+                                      subscription_status: 'active',
+                                      slug: tenant.original_slug || tenant.slug
+                                    });
+                                    toast.success('Tenant recovered successfully!');
+                                    fetchTenants();
+                                  } catch (e) {
+                                    toast.error('Failed to recover tenant.');
+                                  }
                                 }
                               }}
                               className="px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-lg hover:bg-emerald-100 transition-all"
                             >
                               Recover
                             </button>
-                             <button 
-                              onClick={async () => {
-                                if (window.confirm(`Are you absolutely sure you want to permanently delete ${tenant.name} and purge all associated settings? This cannot be undone.`)) {
-                                  try {
-                                    // 1. Delete tenant doc
-                                    await deleteDoc(doc(db, 'tenants', tenant.id));
-                                    
-                                    // 2. Delete system settings
-                                    try {
-                                      await deleteDoc(doc(db, 'system_settings', tenant.id));
-                                    } catch (_) {}
-
-                                    // 3. Purge sub-collections where tenantId == tenant.id
-                                    const subCollections = ['staff', 'branches', 'pending_activations', 'products', 'product_batches', 'sales'];
-                                    for (const colName of subCollections) {
-                                      try {
-                                        const q = query(collection(db, colName), where('tenantId', '==', tenant.id));
-                                        const snap = await getDocs(q);
-                                        for (const d of snap.docs) {
-                                          await deleteDoc(doc(db, colName, d.id));
-                                        }
-                                      } catch (err) {
-                                        console.error(`Error purging ${colName}:`, err);
-                                      }
-                                    }
-
-                                    toast.success('Tenant deleted permanently with all configurations.');
-                                    fetchTenants();
-                                  } catch (e) {
-                                    toast.error('Failed to permanently delete tenant.');
-                                  }
-                                }
+                            <button 
+                              onClick={() => {
+                                setReauthTenant(tenant);
+                                setReauthEmail(auth.currentUser?.email || '');
+                                setReauthPassword('');
+                                setShowReauthModal(true);
                               }}
                               className="px-3 py-1.5 bg-red-50 text-red-700 text-xs font-bold rounded-lg hover:bg-red-100 transition-all"
                             >
@@ -2691,6 +2745,71 @@ const PlatformAdmin = () => {
           }}
         />
       )}
+
+      {/* Permanent Delete Re-auth Modal */}
+      {showReauthModal && (
+        <div className="fixed inset-0 bg-[#141414]/80 backdrop-blur-sm flex items-center justify-center p-4 z-[70]">
+          <div className="bg-white rounded-[2rem] p-8 max-w-md w-full border border-zinc-200 shadow-2xl space-y-6">
+            <div className="text-center">
+              <div className="h-16 w-16 bg-red-50 text-red-600 rounded-3xl flex items-center justify-center mx-auto mb-4">
+                <ShieldAlert size={36} />
+              </div>
+              <h3 className="text-xl font-black text-zinc-900 uppercase tracking-tight">Confirm Permanent Deletion</h3>
+              <p className="text-xs text-zinc-500 mt-2">
+                This is a highly destructive administrative action. Please verify your credentials to permanently purge <strong>{reauthTenant?.name}</strong>.
+              </p>
+            </div>
+
+            <form onSubmit={handleReauthPermanentDelete} className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Email Address</label>
+                <input 
+                  type="email" 
+                  required 
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none font-medium"
+                  placeholder="Enter your administrative email"
+                  value={reauthEmail}
+                  onChange={(e) => setReauthEmail(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Password</label>
+                <input 
+                  type="password" 
+                  required 
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none"
+                  placeholder="Enter your password"
+                  value={reauthPassword}
+                  onChange={(e) => setReauthPassword(e.target.value)}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setShowReauthModal(false);
+                    setReauthTenant(null);
+                    setReauthEmail('');
+                    setReauthPassword('');
+                  }}
+                  className="flex-1 py-3.5 bg-zinc-100 text-zinc-700 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  disabled={reauthSaving}
+                  className="flex-1 py-3.5 bg-red-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-red-700 disabled:bg-zinc-200 transition-all shadow-lg shadow-red-500/20"
+                >
+                  {reauthSaving ? 'Purging...' : 'Confirm Purge'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -2716,7 +2835,7 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess }: { tenant
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmSlug, setDeleteConfirmSlug] = useState('');
-  const [deletePassword, setDeletePassword] = useState('');
+  const [retentionPeriod, setRetentionPeriod] = useState('365');
   const [activeModalTab, setActiveModalTab] = useState<'details' | 'predictive'>('details');
   const [predictiveData, setPredictiveData] = useState<any[]>([]);
   const [loadingPredictive, setLoadingPredictive] = useState(false);
@@ -2757,59 +2876,26 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess }: { tenant
   };
 
   const handleDelete = async () => {
-    const isSuperUser = platformEmail === 'peterssentongo61@gmail.com' || 
-                        platformEmail === 'peter.sentongo@pharmhelm' ||
-                        localStorage.getItem('auth_username') === 'peter.sentongo@pharmhelm' ||
-                        localStorage.getItem('auth_username') === 'peterssentongo61@gmail.com' ||
-                        localStorage.getItem('auth_bypass_email') === 'peterssentongo61@gmail.com' ||
-                        localStorage.getItem('auth_bypass_email') === 'peter.sentongo@pharmhelm';
-    if (!isSuperUser) {
-      toast.error('Unauthorized: Only the super platform administrator can delete tenants.');
-      return;
-    }
-
     setSaving(true);
-    let verified = false;
-
-    // Method 1: Check master administrative bypass password
-    if (deletePassword === 'radah@excellentsteward75') {
-      verified = true;
-    }
-
-    // Method 2: Check current user credentials via Firebase Auth
-    if (!verified && auth.currentUser && auth.currentUser.email) {
-      try {
-        const credential = EmailAuthProvider.credential(auth.currentUser.email, deletePassword);
-        await reauthenticateWithCredential(auth.currentUser, credential);
-        verified = true;
-      } catch (e) {
-        console.warn('Firebase Auth re-authentication failed:', e);
-      }
-    }
-
-    if (!verified) {
-      toast.error('Incorrect administrative delete password.');
-      setSaving(false);
-      return;
-    }
-
     try {
       const now = new Date();
       const expires = new Date();
-      expires.setFullYear(expires.getFullYear() + 1);
+      expires.setDate(expires.getDate() + parseInt(retentionPeriod));
 
       await updateDoc(doc(db, 'tenants', tenant.id), {
         deleted: true,
         deleted_at: now.toISOString(),
         deletedAt: now.toISOString(),
         deleted_expires_at: expires.toISOString(),
+        autoPurgeDate: expires.toISOString(),
+        deletedBy: auth.currentUser?.uid || '',
         status: 'deleted',
         subscription_status: 'expired',
         slug: tenant.slug.includes('_deleted_') ? tenant.slug : tenant.slug + '_deleted_' + Date.now(),
         original_slug: tenant.original_slug || tenant.slug
       });
 
-      toast.success('Tenant soft-deleted and subdomain inactivated/released.');
+      toast.success('Tenant moved to Bin.');
       onSuccess();
     } catch (error) {
       console.error('Error soft-deleting tenant:', error);
@@ -2818,7 +2904,6 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess }: { tenant
       setSaving(false);
       setShowDeleteConfirm(false);
       setDeleteConfirmSlug('');
-      setDeletePassword('');
     }
   };
 
@@ -3176,29 +3261,31 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess }: { tenant
         {showDeleteConfirm && (
           <div className="absolute inset-0 bg-white/95 backdrop-blur-md flex items-center justify-center p-8 z-[60]">
             <div className="max-w-md w-full text-center space-y-6">
-              <div className="h-20 w-20 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mx-auto">
+              <div className="h-20 w-20 bg-amber-50 text-amber-600 rounded-3xl flex items-center justify-center mx-auto">
                 <AlertTriangle size={40} />
               </div>
               <div>
-                <h3 className="text-2xl font-bold text-[#141414]">Critical Action Required</h3>
+                <h3 className="text-2xl font-bold text-[#141414]">Move to Bin</h3>
                 <p className="text-sm text-[#141414]/60 mt-2">
-                  You are about to permanently delete <span className="font-bold text-[#141414]">{tenant.name}</span>. 
-                  This action cannot be undone, will terminate all access for this tenant, and automatically inactivate the subdomain.
+                  Are you sure you want to delete <span className="font-bold text-[#141414]">{tenant.name}</span>'s account? It will move to the Bin and can be restored or permanently deleted from there.
                 </p>
               </div>
               
               <div className="space-y-4 text-left">
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-[#141414]/40 uppercase tracking-widest block">
-                    Administrative Delete Password
+                    Bin Retention Period
                   </label>
-                  <input 
-                    type="password"
-                    className="w-full px-4 py-2.5 bg-red-50 border border-red-100 rounded-xl outline-none focus:ring-2 focus:ring-red-500/20 transition-all text-sm font-bold"
-                    placeholder="Enter platform delete password"
-                    value={deletePassword}
-                    onChange={(e) => setDeletePassword(e.target.value)}
-                  />
+                  <select 
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none text-sm font-bold"
+                    value={retentionPeriod}
+                    onChange={(e) => setRetentionPeriod(e.target.value)}
+                  >
+                    <option value="30">30 Days</option>
+                    <option value="90">90 Days</option>
+                    <option value="180">180 Days</option>
+                    <option value="365">1 Year (Default)</option>
+                  </select>
                 </div>
               </div>
 
@@ -3207,7 +3294,6 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess }: { tenant
                   onClick={() => {
                     setShowDeleteConfirm(false);
                     setDeleteConfirmSlug('');
-                    setDeletePassword('');
                   }}
                   className="flex-1 py-4 text-sm font-bold text-[#141414]/40 hover:text-[#141414] transition-all"
                 >
@@ -3215,10 +3301,10 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess }: { tenant
                 </button>
                 <button 
                   onClick={handleDelete}
-                  disabled={!deletePassword || saving}
-                  className="flex-1 py-4 bg-red-500 text-white rounded-xl font-bold hover:bg-red-600 disabled:bg-zinc-200 transition-all shadow-lg shadow-red-500/20 text-xs uppercase tracking-widest"
+                  disabled={saving}
+                  className="flex-1 py-4 bg-amber-500 text-white rounded-xl font-bold hover:bg-amber-650 transition-all shadow-lg shadow-amber-500/20 text-xs uppercase tracking-widest"
                 >
-                  {saving ? 'Deleting...' : 'Soft Delete Tenant'}
+                  {saving ? 'Deleting...' : 'Move to Bin'}
                 </button>
               </div>
             </div>

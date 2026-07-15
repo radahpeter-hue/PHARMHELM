@@ -252,7 +252,7 @@ export default function TmcLogin() {
               <div className="w-1.5 h-1.5 rounded-full bg-[#bfc8c8]"></div>
               <a className="text-[12px] text-[#404849] hover:text-[#003436] transition-colors" href="#">Support</a>
               <div className="w-1.5 h-1.5 rounded-full bg-[#bfc8c8]"></div>
-              <a className="text-[12px] text-[#404849] hover:text-[#003436] transition-colors font-bold" href="https://aboutus.pharmhelm.com" target="_blank" rel="noopener noreferrer">About Us</a>
+              <a className="text-[12px] text-[#404849] hover:text-[#003436] transition-colors font-bold" href="https://about.pharmhelm.com" target="_blank" rel="noopener noreferrer">About Us</a>
             </div>
           </div>
         </div>
