@@ -13,6 +13,14 @@ export default function TenantLogin() {
   const params = useParams<{ tenantSlug?: string }>();
 
   const [username, setUsername] = useState('');
+  
+  const getPublicLink = (path: string) => {
+    const host = window.location.hostname.toLowerCase();
+    if (host.includes('localhost') || host.includes('web.app') || host.includes('firebaseapp.com')) {
+      return `${window.location.protocol}//${window.location.host}${path}`;
+    }
+    return `https://pharmhelm.com${path}`;
+  };
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -360,9 +368,9 @@ export default function TenantLogin() {
         <div className="font-label-md text-label-md text-primary mb-2" style={{ color: primaryColor }}>PharmHelm</div>
         <p className="font-caption text-caption text-[#3f4848]">© 2026 PharmHelm. HIPAA Compliant Enterprise Systems.</p>
         <div className="flex gap-4 mt-2">
-          <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href="https://pharmhelm.com/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+          <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href={getPublicLink('/privacy')} target="_blank" rel="noopener noreferrer">Privacy Policy</a>
           <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href="#">Terms of Service</a>
-          <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors font-bold" href="https://pharmhelm.com" target="_blank" rel="noopener noreferrer">About Us</a>
+          <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors font-bold" href={getPublicLink('/about')} target="_blank" rel="noopener noreferrer">About Us</a>
           <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href="#">Security Standards</a>
         </div>
       </footer>

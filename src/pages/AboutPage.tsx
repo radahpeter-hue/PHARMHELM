@@ -414,7 +414,7 @@ export const AboutPage: React.FC = () => {
             <div className="space-y-4">
               <p className="text-[11px] font-extrabold text-[#95d3ba] uppercase tracking-[0.2em]">Compliance</p>
               <div className="flex flex-wrap gap-4 text-xs font-bold text-white/80">
-                <a className="hover:text-white transition-colors" href="https://privacy.pharmhelm.com">Privacy Policy</a>
+                <a className="hover:text-white transition-colors" href="/privacy">Privacy Policy</a>
                 <span className="text-white/20">|</span>
                 <span className="text-white/50 cursor-default">Terms of Service</span>
               </div>

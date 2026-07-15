@@ -7,6 +7,14 @@ export default function TmcLogin() {
   const { signIn } = useAuth();
   const navigate = useNavigate();
 
+  const getPublicLink = (path: string) => {
+    const host = window.location.hostname.toLowerCase();
+    if (host.includes('localhost') || host.includes('web.app') || host.includes('firebaseapp.com')) {
+      return `${window.location.protocol}//${window.location.host}${path}`;
+    }
+    return `https://pharmhelm.com${path}`;
+  };
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -252,7 +260,7 @@ export default function TmcLogin() {
               <div className="w-1.5 h-1.5 rounded-full bg-[#bfc8c8]"></div>
               <a className="text-[12px] text-[#404849] hover:text-[#003436] transition-colors" href="#">Support</a>
               <div className="w-1.5 h-1.5 rounded-full bg-[#bfc8c8]"></div>
-              <a className="text-[12px] text-[#404849] hover:text-[#003436] transition-colors font-bold" href="https://pharmhelm.com" target="_blank" rel="noopener noreferrer">About Us</a>
+              <a className="text-[12px] text-[#404849] hover:text-[#003436] transition-colors font-bold" href={getPublicLink('/about')} target="_blank" rel="noopener noreferrer">About Us</a>
             </div>
           </div>
         </div>
