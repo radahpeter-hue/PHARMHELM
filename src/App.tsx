@@ -186,6 +186,13 @@ export default function App() {
 
   // Root redirect handler based on active domains
   const getRootRedirect = () => {
+    const host = window.location.hostname.toLowerCase();
+    const isMainDomain = host === 'pharmhelm.com' || host === 'www.pharmhelm.com';
+
+    if (isMainDomain) {
+      return <AboutPage />;
+    }
+
     if (isSubdomainTenant) {
       const slug = extractedSlug;
       return user ? <Navigate to={`/tenant/${slug}/app`} replace /> : <Navigate to={`/tenant/${slug}/login`} replace />;
