@@ -64,6 +64,7 @@ export const GlobalExpenseLedger: React.FC = () => {
   const [fineLogs, setFineLogs] = useState<any[]>([]);
   const [logisticsExpenses, setLogisticsExpenses] = useState<any[]>([]);
   const [payrollList, setPayrollList] = useState<any[]>([]);
+  const [marketingExpenses, setMarketingExpenses] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -141,6 +142,13 @@ export const GlobalExpenseLedger: React.FC = () => {
         where('tenantId', '==', profile.tenantId)
       ));
       setPayrollList(payrollSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+
+      // 6. Fetch marketing expenses
+      const marketExpSnap = await getDocs(query(
+        collection(db, 'marketing_expenses'),
+        where('tenantId', '==', profile.tenantId)
+      ));
+      setMarketingExpenses(marketExpSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
 
     } catch (e: any) {
       console.error("Error gathering global expenses:", e);
@@ -257,6 +265,20 @@ export const GlobalExpenseLedger: React.FC = () => {
         department: 'HQ / HR',
         type: 'Payroll',
         loggedBy: 'HR System'
+      });
+    });
+
+    // H. Marketing Expenses
+    marketingExpenses.forEach(e => {
+      list.push({
+        id: e.id,
+        date: e.date || '',
+        category: `Marketing - ${e.category || 'General'}`,
+        description: e.description || 'Marketing campaign cost',
+        amount: e.amount || 0,
+        department: 'Marketing Department',
+        type: 'Management',
+        loggedBy: e.loggedBy || 'Marketing Specialist'
       });
     });
 

@@ -28,6 +28,7 @@ export const CostLedger: React.FC = () => {
   const [fineLogs, setFineLogs] = useState<TrafficFineLog[]>([]);
   const [requisitions, setRequisitions] = useState<any[]>([]); // Logistics Petty Cash
   const [generalExpenses, setGeneralExpenses] = useState<any[]>([]); // General Logistics Expenses
+  const [deptLedger, setDeptLedger] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedFine, setSelectedFine] = useState<TrafficFineLog | null>(null);
@@ -49,6 +50,7 @@ export const CostLedger: React.FC = () => {
     const tQuery = query(collection(db, 'traffic_fine_logs'), where('tenantId', '==', profile.tenantId));
     const reqQuery = query(collection(db, 'petty_cash_requisitions'), where('tenantId', '==', profile.tenantId));
     const gQuery = query(collection(db, 'logistics_expenses'), where('tenantId', '==', profile.tenantId));
+    const dlQuery = query(collection(db, 'departmental_petty_cash_ledger'), where('tenantId', '==', profile.tenantId), where('department', '==', 'Logistics'));
 
     const unsubscribeV = onSnapshot(vQuery, (snapshot) => {
       setVehicles(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Vehicle)));
@@ -81,6 +83,10 @@ export const CostLedger: React.FC = () => {
       setGeneralExpenses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
+    const unsubscribeDL = onSnapshot(dlQuery, (snapshot) => {
+      setDeptLedger(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
     return () => {
       unsubscribeV();
       unsubscribeS();
@@ -89,6 +95,7 @@ export const CostLedger: React.FC = () => {
       unsubscribeT();
       unsubscribeReq();
       unsubscribeG();
+      unsubscribeDL();
     };
   }, [profile?.tenantId]);
 
@@ -97,13 +104,28 @@ export const CostLedger: React.FC = () => {
     const formData = new FormData(e.currentTarget);
     const vehicleId = formData.get('vehicleId') as string;
     
+    // Determine proposed cost
+    let costVal = 0;
+    if (activeTab === 'fuel' || activeTab === 'maintenance' || activeTab === 'general_expenses') {
+      costVal = parseInt(formData.get('cost_ugx') as string) || 0;
+    } else if (activeTab === 'fines') {
+      costVal = parseInt(formData.get('fine_amount_ugx') as string) || 0;
+    }
+
+    // Spending control validation
+    if (logisticsAvailableBalance < costVal) {
+      toast.error(`Insufficient Transport and Logistics petty cash balance. Submit an additional petty cash request or reduce the expense amount. Available: UGX ${logisticsAvailableBalance.toLocaleString()}`);
+      return;
+    }
+
     try {
+      const expenseDate = formData.get('date') as string || new Date().toISOString().split('T')[0];
+
       if (activeTab === 'fuel') {
-        const costVal = parseInt(formData.get('cost_ugx') as string) || 0;
         const station = formData.get('station_name') as string;
         const data = {
           vehicleId,
-          date: formData.get('date') as string,
+          date: expenseDate,
           fuel_amount_litres: parseFloat(formData.get('fuel_amount_litres') as string),
           cost_ugx: costVal,
           mileage_at_refuel: parseInt(formData.get('mileage_at_refuel') as string),
@@ -114,7 +136,7 @@ export const CostLedger: React.FC = () => {
         };
         const docRef = await addDoc(collection(db, 'fuel_logs'), data);
         
-        // Auto deduct from petty cash ledger
+        // Auto deduct from petty cash ledger (global)
         await addDoc(collection(db, 'petty_cash_ledger'), {
           tenantId: profile?.tenantId,
           date: data.date,
@@ -127,14 +149,29 @@ export const CostLedger: React.FC = () => {
           created_at: new Date().toISOString()
         });
 
+        // Log to departmental petty cash ledger
+        await addDoc(collection(db, 'departmental_petty_cash_ledger'), {
+          tenantId: profile?.tenantId,
+          department: 'Logistics',
+          date: data.date,
+          transaction_type: 'Fuel expense',
+          description: `Fuel purchase for vehicle ${vehicleId} at ${station}`,
+          amount_received: 0,
+          amount_spent: costVal,
+          finance_request_ref: `LOG-FL-${docRef.id.slice(-4)}`,
+          expense_category: 'Fuel',
+          vehicle_ref: vehicleId,
+          entered_by: profile?.uid,
+          created_at: new Date().toISOString()
+        });
+
         toast.success('Fuel log added and cost subtracted from petty cash!');
       } else if (activeTab === 'maintenance') {
-        const costVal = parseInt(formData.get('cost_ugx') as string) || 0;
         const provider = formData.get('service_provider') as string;
         const serviceType = formData.get('service_type') as string;
         const data = {
           vehicleId,
-          date: formData.get('date') as string,
+          date: expenseDate,
           service_type: serviceType,
           description: formData.get('description') as string,
           cost_ugx: costVal,
@@ -160,15 +197,30 @@ export const CostLedger: React.FC = () => {
           created_at: new Date().toISOString()
         });
 
+        // Log to departmental petty cash ledger
+        await addDoc(collection(db, 'departmental_petty_cash_ledger'), {
+          tenantId: profile?.tenantId,
+          department: 'Logistics',
+          date: data.date,
+          transaction_type: 'Maintenance expense',
+          description: `${serviceType} service at ${provider} (Vehicle: ${vehicleId})`,
+          amount_received: 0,
+          amount_spent: costVal,
+          finance_request_ref: `LOG-MN-${docRef.id.slice(-4)}`,
+          expense_category: 'Maintenance',
+          vehicle_ref: vehicleId,
+          entered_by: profile?.uid,
+          created_at: new Date().toISOString()
+        });
+
         toast.success('Maintenance log added and cost subtracted from petty cash!');
       } else if (activeTab === 'fines') {
-        const fineVal = parseInt(formData.get('fine_amount_ugx') as string) || 0;
         const reason = formData.get('offence_description') as string;
         const data = {
           vehicleId,
-          date: formData.get('date') as string,
+          date: expenseDate,
           offence_description: reason,
-          fine_amount_ugx: fineVal,
+          fine_amount_ugx: costVal,
           status: 'pending',
           driver_id: formData.get('driver_id') as string,
           notes: formData.get('notes') as string,
@@ -180,7 +232,7 @@ export const CostLedger: React.FC = () => {
         await addDoc(collection(db, 'petty_cash_ledger'), {
           tenantId: profile?.tenantId,
           date: data.date,
-          amount: fineVal,
+          amount: costVal,
           source: `Logistics Cost: Traffic Fine - ${reason}`,
           reference_number: `LOG-FN-${docRef.id.slice(-4)}`,
           type: 'outgoing',
@@ -189,13 +241,28 @@ export const CostLedger: React.FC = () => {
           created_at: new Date().toISOString()
         });
 
+        // Log to departmental petty cash ledger
+        await addDoc(collection(db, 'departmental_petty_cash_ledger'), {
+          tenantId: profile?.tenantId,
+          department: 'Logistics',
+          date: data.date,
+          transaction_type: 'Traffic or parking expense',
+          description: `Traffic fine: ${reason} (Vehicle: ${vehicleId})`,
+          amount_received: 0,
+          amount_spent: costVal,
+          finance_request_ref: `LOG-FN-${docRef.id.slice(-4)}`,
+          expense_category: 'Traffic or parking expense',
+          vehicle_ref: vehicleId,
+          entered_by: profile?.uid,
+          created_at: new Date().toISOString()
+        });
+
         toast.success('Traffic fine logged and cost subtracted from petty cash!');
       } else if (activeTab === 'general_expenses') {
-        const costVal = parseInt(formData.get('cost_ugx') as string) || 0;
         const category = formData.get('category') as string;
         const notes = formData.get('notes') as string;
         const data = {
-          date: formData.get('date') as string,
+          date: expenseDate,
           category,
           cost_ugx: costVal,
           notes,
@@ -218,6 +285,22 @@ export const CostLedger: React.FC = () => {
           created_at: new Date().toISOString()
         });
 
+        // Log to departmental petty cash ledger
+        await addDoc(collection(db, 'departmental_petty_cash_ledger'), {
+          tenantId: profile?.tenantId,
+          department: 'Logistics',
+          date: data.date,
+          transaction_type: 'Trip expense',
+          description: `${category} - ${notes}`,
+          amount_received: 0,
+          amount_spent: costVal,
+          finance_request_ref: `LOG-EXP-${docRef.id.slice(-4)}`,
+          expense_category: category,
+          vehicle_ref: vehicleId || '',
+          entered_by: profile?.uid,
+          created_at: new Date().toISOString()
+        });
+
         toast.success('Other fleet expense logged and cost subtracted from petty cash!');
       }
       setIsModalOpen(false);
@@ -236,12 +319,17 @@ export const CostLedger: React.FC = () => {
     try {
       const reqPayload = {
         tenantId: profile?.tenantId,
+        branch_id: 'HQ',
+        branch_name: 'HQ / Corporate',
         department: 'Logistics',
         amount: parseFloat(reqAmount),
+        amount_requested: parseFloat(reqAmount),
         purpose: `[Logistics-Fleet] ${reqReason}`,
+        reason: `[Logistics-Fleet] ${reqReason}`,
         requisition_date: new Date().toISOString().split('T')[0],
-        status: 'Pending',
+        status: 'pending',
         requested_by_name: profile?.full_name || 'Fleet Manager',
+        logged_by: profile?.uid,
         created_at: new Date().toISOString()
       };
       await addDoc(collection(db, 'petty_cash_requisitions'), reqPayload);
@@ -310,13 +398,11 @@ export const CostLedger: React.FC = () => {
   const totalFineCost = filteredFineLogs.reduce((sum, log) => sum + (log.fine_amount_ugx || 0), 0);
   const totalGeneralExpensesCost = filteredGeneralExpenses.reduce((sum, log) => sum + (log.cost_ugx || 0), 0);
 
-  // Logistics Petty Cash calculations (Starting Float + approved requisition payouts - fuel/maintenance/fines/general)
-  const startingLogisticsFloat = 3500000;
-  const approvedLogisticsPayouts = requisitions
-    .filter(r => r.status === 'approved' || r.status === 'finance_approved')
-    .reduce((sum, r) => sum + (r.amount || 0), 0);
-
-  const logisticsAvailableBalance = startingLogisticsFloat + approvedLogisticsPayouts - (totalFuelCost + totalMaintenanceCost + totalFineCost + totalGeneralExpensesCost);
+  // Logistics Petty Cash calculations based on departmental_petty_cash_ledger (Starting Balance 100,000 UGX + inflows - outflows)
+  const openingBalance = 100000;
+  const totalReceived = deptLedger.reduce((sum, entry) => sum + (entry.amount_received || 0), 0);
+  const totalSpent = deptLedger.reduce((sum, entry) => sum + (entry.amount_spent || 0), 0);
+  const logisticsAvailableBalance = openingBalance + totalReceived - totalSpent;
 
   return (
     <div className="space-y-6">

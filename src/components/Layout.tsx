@@ -3,7 +3,7 @@ import Sidebar from './Sidebar';
 import { Toaster, toast } from 'sonner';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
-import { Building2, ChevronDown, LogOut, User as UserIcon, Settings, RefreshCw } from 'lucide-react';
+import { Building2, ChevronDown, LogOut, User as UserIcon, Settings, RefreshCw, Menu } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 import { clsx, type ClassValue } from 'clsx';
@@ -19,6 +19,7 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const { profile, activeBranch, multiBranchMode, assignedBranches, setActiveBranchId, logout } = useAuth();
@@ -34,11 +35,30 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   return (
     <div className="flex h-screen bg-zinc-50 overflow-hidden">
-      <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
+      {/* Sidebar Mobile Backdrop Overlay */}
+      {mobileOpen && (
+        <div 
+          className="fixed inset-0 z-40 bg-zinc-950/40 backdrop-blur-xs md:hidden transition-all duration-300"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+      <Sidebar 
+        collapsed={collapsed} 
+        setCollapsed={setCollapsed} 
+        mobileOpen={mobileOpen}
+        setMobileOpen={setMobileOpen}
+      />
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top Navigation */}
-        <header className="h-16 bg-white border-b border-zinc-200 flex items-center justify-between px-8 z-20">
-          <div className="flex items-center gap-6">
+        <header className="h-16 bg-white border-b border-zinc-200 flex items-center justify-between px-4 md:px-8 z-20">
+          <div className="flex items-center gap-4 md:gap-6">
+            <button 
+              onClick={() => setMobileOpen(true)}
+              className="md:hidden p-2 text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100 rounded-xl transition-all"
+              title="Open Navigation Menu"
+            >
+              <Menu size={20} />
+            </button>
             <div className="flex items-center gap-4 mr-4">
               {!multiBranchMode && (
                 <div className="text-sm font-medium text-zinc-500">

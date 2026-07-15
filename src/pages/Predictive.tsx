@@ -113,11 +113,11 @@ const Predictive: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId && selectedBranchId) {
       const unsubBatches = firestoreService.subscribeToCollectionGroup('product_batches', profile.tenantId, selectedBranchId, setBatches);
-      const unsubSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
-        setSales(data.filter(s => s.branchId === selectedBranchId));
+      const unsubSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data: any) => {
+        setSales(data.filter((s: any) => s.branchId === selectedBranchId));
       });
-      const unsubExpenses = firestoreService.subscribeToCollection('branch_expenses', profile.tenantId, (data) => {
-        setExpenses(data.filter(e => e.branchId === selectedBranchId));
+      const unsubExpenses = firestoreService.subscribeToCollection('branch_expenses', profile.tenantId, (data: any) => {
+        setExpenses(data.filter((e: any) => e.branchId === selectedBranchId));
       });
       const unsubProducts = firestoreService.subscribeToCollection('products', profile.tenantId, setProducts);
 

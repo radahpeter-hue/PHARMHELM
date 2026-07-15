@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Line
+  CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Line, XAxis, YAxis
 } from 'recharts';
 import { 
   Thermometer, FileCheck, Award, ShieldCheck, 
@@ -29,8 +29,8 @@ export const QAAnalytics: React.FC = () => {
         setProducts(data);
       });
       
-      const unsubFridge = firestoreService.subscribeToCollection('fridge_temp_logs', profile.tenantId, (data) => {
-        const sorted = data.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      const unsubFridge = firestoreService.subscribeToCollection('fridge_temp_logs', profile.tenantId, (data: any) => {
+        const sorted = [...data].sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
         setFridgeLogs(sorted);
       });
 

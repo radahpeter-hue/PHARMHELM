@@ -115,7 +115,39 @@ const Finance: React.FC = () => {
 };
 
 const BranchFinance: React.FC = () => {
+  const { profile, activeBranchId } = useAuth();
   const [activeSubTab, setActiveSubTab] = useState<'eod' | 'expenses' | 'credit' | 'petty_cash'>('eod');
+  const [sales, setSales] = useState<any[]>([]);
+  const [expenses, setExpenses] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (profile?.tenantId && activeBranchId) {
+      const unsubSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data: any[]) => {
+        setSales(data.filter(s => s.branchId === activeBranchId));
+      });
+      const unsubExpenses = firestoreService.subscribeToCollection('branch_expenses', profile.tenantId, (data: any[]) => {
+        setExpenses(data.filter(e => e.branch_id === activeBranchId));
+      });
+      return () => {
+        unsubSales();
+        unsubExpenses();
+      };
+    }
+  }, [profile?.tenantId, activeBranchId]);
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  // 1. Revenue Today
+  const todaySales = sales.filter(s => (s.timestamp || s.created_at || '').startsWith(todayStr));
+  const revenueToday = todaySales.reduce((sum, s) => sum + (s.total || s.totalAmount || 0), 0);
+
+  // 2. Expenses Today
+  const todayExpenses = expenses.filter(e => (e.expense_date || e.created_at || '').startsWith(todayStr));
+  const expensesToday = todayExpenses.reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
+
+  // 3. Credit Raised Today
+  const creditSalesToday = todaySales.filter(s => s.paymentMethod === 'Credit' || s.paymentMethod === 'Insurance');
+  const creditRaisedToday = creditSalesToday.reduce((sum, s) => sum + (s.total || s.totalAmount || 0), 0);
 
   const tabs = [
     { id: 'eod', label: 'EOD Reconciliation', icon: History },
@@ -129,26 +161,26 @@ const BranchFinance: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
           <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Revenue Today</p>
-          <h3 className="text-2xl font-black text-zinc-900">UGX 2,450,000</h3>
+          <h3 className="text-2xl font-black text-zinc-900">UGX {revenueToday.toLocaleString()}</h3>
           <div className="mt-2 flex items-center gap-1 text-emerald-500 text-xs font-bold">
             <TrendingUp size={14} />
-            <span>+12% from yesterday</span>
+            <span>{todaySales.length} transactions completed</span>
           </div>
         </div>
         <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
           <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Expenses Today</p>
-          <h3 className="text-2xl font-black text-zinc-900">UGX 125,000</h3>
+          <h3 className="text-2xl font-black text-zinc-900">UGX {expensesToday.toLocaleString()}</h3>
           <div className="mt-2 flex items-center gap-1 text-amber-500 text-xs font-bold">
             <TrendingDown size={14} />
-            <span>3 entries logged</span>
+            <span>{todayExpenses.length} entries logged today</span>
           </div>
         </div>
         <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
           <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Credit Raised</p>
-          <h3 className="text-2xl font-black text-zinc-900">UGX 450,000</h3>
+          <h3 className="text-2xl font-black text-zinc-900">UGX {creditRaisedToday.toLocaleString()}</h3>
           <div className="mt-2 flex items-center gap-1 text-blue-500 text-xs font-bold">
             <CreditCard size={14} />
-            <span>2 insurance invoices</span>
+            <span>{creditSalesToday.length} credit entries</span>
           </div>
         </div>
       </div>
@@ -2682,6 +2714,23 @@ const PettyCashManagement: React.FC = () => {
         await firestoreService.updateDocument('petty_cash_requisitions', issue.requisition_id, {
           status: 'issued'
         });
+
+        // Add departmental petty cash ledger transaction if this is a departmental request
+        const req = requisitions.find(r => r.id === issue.requisition_id);
+        if (req && req.department) {
+          await firestoreService.addDocument('departmental_petty_cash_ledger', {
+            tenantId: profile!.tenantId,
+            department: req.department,
+            date: new Date().toISOString().split('T')[0],
+            transaction_type: 'Finance issuance',
+            description: `Funds issued by corporate Finance for requisition ${req.requisition_number || req.id.slice(-6)}`,
+            amount_received: issue.amount,
+            amount_spent: 0,
+            finance_request_ref: req.id,
+            entered_by: profile!.uid,
+            created_at: new Date().toISOString()
+          });
+        }
       }
 
       toast.success('Petty cash issued successfully');

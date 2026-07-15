@@ -34,16 +34,33 @@ const EXPENSE_CATEGORIES_MOCK = [
 export const FinanceAnalytics: React.FC = () => {
   const { profile } = useAuth();
   const [sales, setSales] = useState<any[]>([]);
+  const [branchExpenses, setBranchExpenses] = useState<any[]>([]);
+  const [mgmtExpenses, setMgmtExpenses] = useState<any[]>([]);
+  const [payroll, setPayroll] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (profile?.tenantId) {
       setLoading(true);
-      const unsubscribe = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
+      const unsubscribeSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
         setSales(data);
+      });
+      const unsubscribeBranch = firestoreService.subscribeToCollection('branch_expenses', profile.tenantId, (data) => {
+        setBranchExpenses(data);
+      });
+      const unsubscribeMgmt = firestoreService.subscribeToCollection('management_expenses', profile.tenantId, (data) => {
+        setMgmtExpenses(data);
+      });
+      const unsubscribePayroll = firestoreService.subscribeToCollection('payroll', profile.tenantId, (data) => {
+        setPayroll(data);
         setLoading(false);
       });
-      return () => unsubscribe();
+      return () => {
+        unsubscribeSales();
+        unsubscribeBranch();
+        unsubscribeMgmt();
+        unsubscribePayroll();
+      };
     }
   }, [profile?.tenantId]);
 
@@ -51,18 +68,54 @@ export const FinanceAnalytics: React.FC = () => {
     const totalRevenue = sales.reduce((sum, s) => sum + (s.total || s.totalAmount || 0), 0);
     const totalCogs = sales.reduce((sum, s) => sum + (s.total_cost || s.cost || (s.total || s.totalAmount || 0) * 0.6), 0);
     
-    // Scale or hide OpEx if there are no sales
-    const totalOpex = sales.length > 0 ? 7200000 : 0;
+    // Compute dynamic OpEx from real expenses database
+    const totalBranchOpex = branchExpenses.reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
+    const totalMgmtOpex = mgmtExpenses.reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
+    const totalPayroll = payroll.filter(p => p.status === 'paid').reduce((sum, p) => sum + (p.net_salary || 0), 0);
+    const totalOpex = totalBranchOpex + totalMgmtOpex + totalPayroll;
+
     const grossProfit = totalRevenue - totalCogs;
     const netProfit = grossProfit - totalOpex;
     
     const netMarginPct = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : '0.0';
     const expenseRatio = totalRevenue > 0 ? ((totalOpex / totalRevenue) * 100).toFixed(1) : '0.0';
     
-    const statutoryLiability = sales.length > 0 ? 1840000 : 0;
+    // Dynamic statutory liability (typically 18% VAT or standard fallback)
+    const statutoryLiability = Math.round(totalRevenue * 0.18);
     
-    const revenueVsTarget = sales.length > 0 ? REVENUE_VS_TARGET_MOCK : [];
-    const expenseCategories = sales.length > 0 ? EXPENSE_CATEGORIES_MOCK : [];
+    // Group actual categories
+    const catMap = new Map<string, number>();
+    branchExpenses.forEach(e => {
+      const cat = e.category || 'General';
+      catMap.set(cat, (catMap.get(cat) || 0) + (e.amount_ugx || e.amount || 0));
+    });
+    mgmtExpenses.forEach(e => {
+      const cat = e.category || 'General';
+      catMap.set(cat, (catMap.get(cat) || 0) + (e.amount_ugx || e.amount || 0));
+    });
+    if (totalPayroll > 0) {
+      catMap.set('Payroll', totalPayroll);
+    }
+    const expenseCategories = Array.from(catMap.entries()).map(([name, value]) => ({ name, value }));
+    if (expenseCategories.length === 0) {
+      expenseCategories.push({ name: 'Operational Costs', value: 0 });
+    }
+
+    // Weekly sales vs Target pace
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const map = days.reduce((acc, d) => ({ ...acc, [d]: 0 }), {} as Record<string, number>);
+    sales.forEach(s => {
+      try {
+        const d = new Date(s.timestamp || s.created_at);
+        const dayName = days[d.getDay()];
+        map[dayName] += (s.total || s.totalAmount || 0);
+      } catch (e) {}
+    });
+    const revenueVsTarget = days.map(d => ({
+      day: d,
+      revenue: map[d],
+      target: 4000000
+    }));
     
     return {
       totalRevenue,
@@ -76,7 +129,7 @@ export const FinanceAnalytics: React.FC = () => {
       revenueVsTarget,
       expenseCategories
     };
-  }, [sales]);
+  }, [sales, branchExpenses, mgmtExpenses, payroll]);
 
   return (
     <div className="space-y-8">

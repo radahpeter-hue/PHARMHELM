@@ -27,10 +27,13 @@ export const AnalyticsPillar: React.FC<AnalyticsPillarProps> = ({ tenantId, role
   const [selectedProdId, setSelectedProdId] = useState<string>('');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  const [sales, setSales] = useState<any[]>([]);
+
   useEffect(() => {
     if (tenantId) {
       firestoreService.subscribeToCollection<MarketingCampaign>('campaigns', tenantId, setCampaigns);
       firestoreService.subscribeToCollection<Product>('products', tenantId, setProducts);
+      firestoreService.subscribeToCollection('sales', tenantId, setSales);
     }
   }, [tenantId]);
 
@@ -88,15 +91,58 @@ export const AnalyticsPillar: React.FC<AnalyticsPillarProps> = ({ tenantId, role
     toast.success('Full Marketing Campaign ROI report downloaded!');
   };
 
-  // Simulated before and after sales velocity calculator
   const activeCampPairingModel = campaigns.find(c => c.id === selectedCampaignId);
   
-  // Simulated Math factors
-  const beforePacksSimulated = activeCampPairingModel ? Math.floor(activeCampPairingModel.budget / 100000) + 5 : 12;
-  const afterPacksSimulated = activeCampPairingModel ? Math.round(beforePacksSimulated * (activeCampPairingModel.roi || 2.4)) : 28;
-  const percentageIncrease = beforePacksSimulated > 0 
-    ? Math.round(((afterPacksSimulated - beforePacksSimulated) / beforePacksSimulated) * 100) 
-    : 0;
+  const { beforePacksSimulated, afterPacksSimulated, percentageIncrease } = useMemo(() => {
+    if (!activeCampPairingModel) {
+      return { beforePacksSimulated: 12, afterPacksSimulated: 28, percentageIncrease: 133 };
+    }
+    const taggedIds = activeCampPairingModel.tagged_product_ids || [];
+    if (taggedIds.length === 0) {
+      const fallbackBefore = Math.floor(activeCampPairingModel.budget / 100000) + 5;
+      const fallbackAfter = Math.round(fallbackBefore * (activeCampPairingModel.roi || 2.4));
+      return {
+        beforePacksSimulated: fallbackBefore,
+        afterPacksSimulated: fallbackAfter,
+        percentageIncrease: fallbackBefore > 0 ? Math.round(((fallbackAfter - fallbackBefore) / fallbackBefore) * 100) : 0
+      };
+    }
+
+    const campDate = new Date(activeCampPairingModel.start_date || activeCampPairingModel.startDate || activeCampPairingModel.created_at);
+    const preStart = new Date(campDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const postEnd = new Date(campDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    let preQty = 0;
+    let postQty = 0;
+
+    sales.forEach(sale => {
+      const saleDate = new Date(sale.timestamp || sale.created_at || sale.date);
+      if (isNaN(saleDate.getTime())) return;
+
+      const matchedItems = (sale.items || []).filter((item: any) => taggedIds.includes(item.id || item.productId));
+      const qty = matchedItems.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0);
+
+      if (qty > 0) {
+        if (saleDate >= preStart && saleDate < campDate) {
+          preQty += qty;
+        } else if (saleDate >= campDate && saleDate <= postEnd) {
+          postQty += qty;
+        }
+      }
+    });
+
+    const preDaily = preQty / 7;
+    const postDaily = postQty / 7;
+
+    const beforePacks = preDaily > 0 ? Math.round(preDaily) : (Math.floor(activeCampPairingModel.budget / 100000) + 5);
+    const afterPacks = postDaily > 0 ? Math.round(postDaily) : Math.round(beforePacks * (activeCampPairingModel.roi || 2.4));
+    
+    return {
+      beforePacksSimulated: beforePacks,
+      afterPacksSimulated: afterPacks,
+      percentageIncrease: beforePacks > 0 ? Math.round(((afterPacks - beforePacks) / beforePacks) * 100) : 0
+    };
+  }, [activeCampPairingModel, sales]);
 
   return (
     <div className="space-y-6">

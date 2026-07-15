@@ -90,7 +90,7 @@ const Procurement: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex border-b border-zinc-200 overflow-x-auto custom-scrollbar">
+      <div className="flex flex-nowrap border-b border-zinc-200 overflow-x-auto scrollbar-none pb-1">
         {currentTabs.map((tab) => (
           <button
             key={tab.id}
@@ -1051,84 +1051,85 @@ const SourcingTab: React.FC = () => {
           <h3 className="text-lg font-bold text-zinc-900">Sourcing & Quotation (Whole Orders)</h3>
           <p className="text-xs text-zinc-500 mt-1">Select an entire order below to review central HQ stock levels, assign internal transfers, and source quotes from vendors.</p>
         </div>
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
-              <th className="px-6 py-4">Order Ref</th>
-              <th className="px-6 py-4">Requesting Branch</th>
-              <th className="px-6 py-4">Sourcing Items</th>
-              <th className="px-6 py-4">Category</th>
-              <th className="px-6 py-4">Created Date</th>
-              <th className="px-6 py-4 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-100">
-            {listOrders.map((order) => {
-              const lines = sourcingLinesGrouped.filter(l => l.order_id === order.id);
-              return (
-                <tr key={order.id} className="hover:bg-zinc-50/50 transition-colors">
-                  <td className="px-6 py-4 text-sm font-bold text-zinc-900">
-                    {order.order_number || 'Unnamed Requisition'}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-zinc-600">{order.requesting_branch_name || order.requesting_branch_id}</td>
-                  <td className="px-6 py-4 text-sm text-zinc-600 font-medium">
-                    <span className="px-2 py-0.5 bg-zinc-100 rounded-md text-zinc-700 font-bold text-xs">{lines.length} items</span>
-                  </td>
-                  <td className="px-6 py-4 text-xs font-semibold text-zinc-600 capitalize">{order.category.replace(/_/g, ' ')}</td>
-                  <td className="px-6 py-4 text-xs text-zinc-500">
-                    {order.createdAt ? new Date(order.createdAt).toLocaleDateString() : 'N/A'}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button 
-                        onClick={async () => {
-                          if (window.confirm(`Are you sure you want to revert order ${order.order_number || ''} back to the Requisitions tab?`)) {
-                            try {
-                              await firestoreService.updateDocument('stock_orders', order.id, {
-                                status: 'submitted',
-                                updatedAt: new Date().toISOString()
-                              });
-                              const lines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
-                              for (const line of lines) {
-                                await firestoreService.updateDocument('stock_order_lines', line.id, {
-                                  line_status: 'submitted',
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
+                <th className="px-6 py-4">Order Ref</th>
+                <th className="px-6 py-4">Requesting Branch</th>
+                <th className="px-6 py-4">Sourcing Items</th>
+                <th className="px-6 py-4">Category</th>
+                <th className="px-6 py-4">Created Date</th>
+                <th className="px-6 py-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {listOrders.map((order) => {
+                const lines = sourcingLinesGrouped.filter(l => l.order_id === order.id);
+                return (
+                  <tr key={order.id} className="hover:bg-zinc-50/50 transition-colors">
+                    <td className="px-6 py-4 text-sm font-bold text-zinc-900">
+                      {order.order_number || 'Unnamed Requisition'}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-zinc-600">{order.requesting_branch_name || order.requesting_branch_id}</td>
+                    <td className="px-6 py-4 text-sm text-zinc-600 font-medium">
+                      <span className="px-2 py-0.5 bg-zinc-100 rounded-md text-zinc-700 font-bold text-xs">{lines.length} items</span>
+                    </td>
+                    <td className="px-6 py-4 text-xs font-semibold text-zinc-600 capitalize">{order.category.replace(/_/g, ' ')}</td>
+                    <td className="px-6 py-4 text-xs text-zinc-500">
+                      {order.createdAt ? new Date(order.createdAt).toLocaleDateString() : 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex justify-end gap-2">
+                        <button 
+                          onClick={async () => {
+                            if (window.confirm(`Are you sure you want to revert order ${order.order_number || ''} back to the Requisitions tab?`)) {
+                              try {
+                                await firestoreService.updateDocument('stock_orders', order.id, {
+                                  status: 'submitted',
                                   updatedAt: new Date().toISOString()
                                 });
+                                const lines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+                                for (const line of lines) {
+                                  await firestoreService.updateDocument('stock_order_lines', line.id, {
+                                    line_status: 'submitted',
+                                    updatedAt: new Date().toISOString()
+                                  });
+                                }
+                                toast.success('Order reverted to Requisitions.');
+                              } catch (error) {
+                                console.error(error);
                               }
-                              toast.success('Order reverted to Requisitions.');
-                            } catch (error) {
-                              console.error(error);
-                              toast.error('Failed to revert order.');
                             }
-                          }
-                        }}
-                        className="px-3 py-1.5 border border-zinc-200 text-zinc-500 hover:bg-zinc-50 rounded-xl text-xs font-bold transition-all"
-                      >
-                        Revert
-                      </button>
-                      <button 
-                        onClick={() => {
-                          setSelectedOrder(order);
-                          setIsSourcingModalOpen(true);
-                        }}
-                        className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm"
-                      >
-                        Process Sourcing
-                      </button>
-                    </div>
+                          }}
+                          className="px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-bold rounded-lg transition-colors"
+                        >
+                          Revert
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setSelectedOrder(order);
+                            setIsSourcingModalOpen(true);
+                          }}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition-colors shadow-sm"
+                        >
+                          Source Order
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {listOrders.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic text-sm">
+                    No comprehensive orders currently awaiting sourcing.
                   </td>
                 </tr>
-              );
-            })}
-            {listOrders.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic text-sm">
-                  No comprehensive orders currently awaiting sourcing.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {isSourcingModalOpen && selectedOrder && (

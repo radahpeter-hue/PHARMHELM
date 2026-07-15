@@ -118,6 +118,36 @@ export const ROLE_REGISTRY: Record<string, RolePermissions> = {
     marketing: { access: 'all' },
     settings: { access: 'all' }
   },
+  'Marketing Head': {
+    sales: { access: 'view' },
+    inventory: { access: 'view' },
+    clients: { access: 'all' },
+    stock: { access: 'none' },
+    procurement: { access: 'none' },
+    finance: { access: 'none' },
+    qa: { access: 'none' },
+    hr: { access: 'none' },
+    welfare: { access: 'all' },
+    predictive: { access: 'none' },
+    analytics: { access: 'view' },
+    marketing: { access: 'all' },
+    settings: { access: 'none' }
+  },
+  'Marketing Personnel': {
+    sales: { access: 'view' },
+    inventory: { access: 'none' },
+    clients: { access: 'view' },
+    stock: { access: 'none' },
+    procurement: { access: 'none' },
+    finance: { access: 'none' },
+    qa: { access: 'none' },
+    hr: { access: 'none' },
+    welfare: { access: 'all' },
+    predictive: { access: 'none' },
+    analytics: { access: 'none' },
+    marketing: { access: 'operate' },
+    settings: { access: 'none' }
+  },
   'HR Head': {
     sales: { access: 'none' },
     inventory: { access: 'none' },
@@ -550,7 +580,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const accessPriority: Record<string, number> = { none: 0, view: 1, operate: 2, all: 3 };
 
             allUserRoles.forEach(role => {
-              const rolePerms = ROLE_REGISTRY[role];
+              const registryKey = Object.keys(ROLE_REGISTRY).find(k => k.toLowerCase() === role.toLowerCase()) || role;
+              const rolePerms = ROLE_REGISTRY[registryKey];
               if (rolePerms) {
                 Object.keys(rolePerms).forEach(modKey => {
                   const module = modKey as keyof RolePermissions;
@@ -587,7 +618,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             // Fetch branches
             const allRoles = [currentProfile.role || 'staff', ...(currentProfile.secondaryRoles || [])];
-            const isAllBranchRole = allRoles.some(r => ['owner', 'CEO', 'CEO / MD', 'IT Head', 'IT Support Staff', 'admin'].includes(r));
+            const isAllBranchRole = allRoles.some(r => ['owner', 'CEO', 'CEO / MD', 'IT Head', 'IT Support Staff', 'admin', 'Marketing Head', 'Marketing Personnel'].includes(r));
             if (isAllBranchRole) {
               const bSnap = await getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenant.id)));
               const branches = bSnap.docs.map(d => ({ ...d.data(), id: d.id } as Branch));

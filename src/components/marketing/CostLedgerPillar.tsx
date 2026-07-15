@@ -16,6 +16,9 @@ import {
 import { firestoreService } from '../../services/firestore';
 import { Client } from '../../types';
 import { toast } from 'sonner';
+import { db } from '../../firebase';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface CostLedgerPillarProps {
   tenantId: string;
@@ -23,11 +26,13 @@ interface CostLedgerPillarProps {
 }
 
 export const CostLedgerPillar: React.FC<CostLedgerPillarProps> = ({ tenantId, role }) => {
+  const { profile } = useAuth();
   const [expenses, setExpenses] = useState<any[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [requisitions, setRequisitions] = useState<any[]>([]);
   const [campaigns, setCampaigns] = useState<any[]>([]);
   const [outreachEvents, setOutreachEvents] = useState<any[]>([]);
+  const [deptLedger, setDeptLedger] = useState<any[]>([]);
   
   // Predict toggling from settings or local storage
   const [includeInPredictive, setIncludeInPredictive] = useState<boolean>(() => {
@@ -62,6 +67,18 @@ export const CostLedgerPillar: React.FC<CostLedgerPillarProps> = ({ tenantId, ro
         const marketingReqs = data.filter(r => r.department === 'Marketing' || r.purpose?.toLowerCase().includes('marketing'));
         setRequisitions(marketingReqs.sort((a, b) => new Date(b.created_at || b.requisition_date).getTime() - new Date(a.created_at || a.requisition_date).getTime()));
       });
+      // Fetch departmental ledger for Marketing
+      const dlQuery = query(
+        collection(db, 'departmental_petty_cash_ledger'),
+        where('tenantId', '==', tenantId),
+        where('department', '==', 'Marketing')
+      );
+      const unsubscribeDL = onSnapshot(dlQuery, (snapshot) => {
+        setDeptLedger(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
+      return () => {
+        unsubscribeDL();
+      };
     }
   }, [tenantId]);
 
@@ -75,15 +92,36 @@ export const CostLedgerPillar: React.FC<CostLedgerPillarProps> = ({ tenantId, ro
     e.preventDefault();
     if (!amount || !desc) return;
 
+    if (marketingAvailableBalance < amount) {
+      toast.error(`Insufficient Marketing petty cash balance. Submit an additional petty cash request or reduce the expense amount. Available: UGX ${marketingAvailableBalance.toLocaleString()}`);
+      return;
+    }
+
     try {
-      await firestoreService.addDocument('marketing_expenses', {
+      const expDate = new Date().toISOString().split('T')[0];
+      const docRef = await firestoreService.addDocument('marketing_expenses', {
         tenantId,
         category: cat,
         amount: Number(amount),
         description: desc,
-        date: new Date().toISOString().split('T')[0],
+        date: expDate,
         loggedBy: role,
         status: 'approved'
+      });
+
+      // Log to departmental petty cash ledger
+      await firestoreService.addDocument('departmental_petty_cash_ledger', {
+        tenantId,
+        department: 'Marketing',
+        date: expDate,
+        transaction_type: cat === 'Campaign Activity' ? 'Campaign expense' : 'Outreach expense',
+        description: desc,
+        amount_received: 0,
+        amount_spent: Number(amount),
+        expense_category: cat,
+        finance_request_ref: docRef,
+        entered_by: role,
+        created_at: new Date().toISOString()
       });
 
       toast.success('Marketing campaign expense logged successfully');
@@ -104,12 +142,17 @@ export const CostLedgerPillar: React.FC<CostLedgerPillarProps> = ({ tenantId, ro
     try {
       await firestoreService.addDocument('petty_cash_requisitions', {
         tenantId,
+        branch_id: 'HQ',
+        branch_name: 'HQ / Corporate',
         department: 'Marketing',
         amount: parseFloat(reqAmount),
+        amount_requested: parseFloat(reqAmount),
         purpose: `[Marketing-Campaign] ${reqReason}`,
+        reason: `[Marketing-Campaign] ${reqReason}`,
         requisition_date: new Date().toISOString().split('T')[0],
-        status: 'Pending',
+        status: 'pending',
         requested_by_name: role || 'Marketing Specialist',
+        logged_by: profile?.uid,
         created_at: new Date().toISOString()
       });
 
@@ -154,13 +197,11 @@ export const CostLedgerPillar: React.FC<CostLedgerPillarProps> = ({ tenantId, ro
   // Math metrics for current active date frame
   const totalMarketingExpenses = filteredExpenses.reduce((acc, curr) => acc + (curr.amount || 0), 0);
 
-  // Marketing financed balance setup: Initial budget cash allocation + approved requisitions (disbursements)
-  const startingMarketingBudgetFloat = 2500000;
-  const approvedDisbursedAmount = requisitions
-    .filter(r => r.status === 'Approved' || r.status === 'approved' || r.status === 'finance_approved')
-    .reduce((acc, curr) => acc + (curr.amount || 0), 0);
-
-  const totalInflowCash = startingMarketingBudgetFloat + approvedDisbursedAmount;
+  // Marketing financed balance setup: Initial budget cash allocation (UGX 100,000) + approved requisitions (disbursements)
+  const openingBalance = 100000;
+  const totalReceived = deptLedger.reduce((sum, entry) => sum + (entry.amount_received || 0), 0);
+  const totalSpent = deptLedger.reduce((sum, entry) => sum + (entry.amount_spent || 0), 0);
+  const marketingAvailableBalance = openingBalance + totalReceived - totalSpent;
 
   // 1. Allocated Portfolio: Active Campaigns & Active Outreaches
   const activeCampaignsAllocated = campaigns
@@ -176,8 +217,11 @@ export const CostLedgerPillar: React.FC<CostLedgerPillarProps> = ({ tenantId, ro
   // 2. Used Portfolio: Total direct expenses
   const usedPortfolio = expenses.reduce((acc, curr) => acc + (curr.amount || 0), 0);
 
-  // 3. Available Portfolio (Funds Available)
-  const availablePortfolio = totalInflowCash - allocatedPortfolio - usedPortfolio;
+  // 3. Available Portfolio (Funds Available for campaign allocation/expenses)
+  const availablePortfolio = marketingAvailableBalance - allocatedPortfolio;
+
+  // 4. Total Inflow Cash
+  const totalInflowCash = openingBalance + totalReceived;
 
   // PharmPoints Liability
   const totalUnspentPoints = clients.reduce((acc, curr) => acc + (curr.loyalty_points || 0), 0);

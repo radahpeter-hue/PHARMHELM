@@ -395,14 +395,14 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
     'finance head', 'finance officer', 'procurement head', 'procurement officer', 
     'ceo', 'hr head', 'hr support personnel', 'it head', 'it support staff', 
     'logistics head', 'transport & logistics personnel', 'dispenser', 'trainee',
-    'branch manager', 'cleaner'
+    'branch manager', 'cleaner', 'marketing head', 'marketing personnel'
   ];
 
   const allAvailableRoles = [
     'owner', 'admin', 'pharmacist', 'cashier', 'QA Head', 'QA Officer', 
     'Finance Head', 'Finance Officer', 'Procurement Head', 'Procurement Officer', 
     'CEO', 'HR Head', 'HR Support Personnel', 'IT Head', 'IT Support Staff', 
-    'Logistics Head', 'Transport & Logistics Personnel', 'Dispenser', 'Trainee',
+    'Logistics Head', 'Transport & Logistics Personnel', 'Marketing Head', 'Marketing Personnel', 'Dispenser', 'Trainee',
     'branch manager', 'cleaner',
     ...(customRoles || [])
       .map((r: any) => r.name?.trim())

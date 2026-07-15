@@ -11,13 +11,14 @@ import { PersonnelRegister } from '../modules/logistics/PersonnelRegister';
 import { TripManagement } from '../modules/logistics/TripManagement';
 import { CostLedger } from '../modules/logistics/CostLedger';
 import { LogisticsReports } from '../modules/logistics/LogisticsReports';
+import { LogisticsDashboard } from '../modules/logistics/LogisticsDashboard';
 
-type TabType = 'vehicles' | 'personnel' | 'trips' | 'costs' | 'reports';
+type TabType = 'dashboard' | 'vehicles' | 'personnel' | 'trips' | 'costs' | 'reports';
 
 const Logistics: React.FC = () => {
   const { userProfile } = useAuth();
   const { tenant } = useTenant();
-  const [activeTab, setActiveTab] = useState<TabType>('vehicles');
+  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
 
   if (tenant?.subscription_tier === 'basic' || tenant?.subscription_tier === 'standard') {
     return (
@@ -28,11 +29,11 @@ const Logistics: React.FC = () => {
   }
 
   const tabs = [
+    { id: 'dashboard', label: 'Department Dashboard', icon: BarChart3 },
     { id: 'vehicles', label: 'Vehicle Register', icon: Car },
     { id: 'personnel', label: 'Personnel Register', icon: Users },
     { id: 'trips', label: 'Trip Management', icon: Navigation },
     { id: 'costs', label: 'Cost Ledger', icon: DollarSign },
-    { id: 'reports', label: 'Reports & Analytics', icon: BarChart3 },
   ];
 
   return (
@@ -72,11 +73,11 @@ const Logistics: React.FC = () => {
 
         {/* Main Content Area */}
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+          {activeTab === 'dashboard' && <LogisticsDashboard />}
           {activeTab === 'vehicles' && <VehicleRegister />}
           {activeTab === 'personnel' && <PersonnelRegister />}
           {activeTab === 'trips' && <TripManagement />}
           {activeTab === 'costs' && <CostLedger />}
-          {activeTab === 'reports' && <LogisticsReports />}
         </div>
       </div>
     </div>

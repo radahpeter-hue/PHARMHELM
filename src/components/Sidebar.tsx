@@ -33,9 +33,11 @@ function cn(...inputs: ClassValue[]) {
 interface SidebarProps {
   collapsed: boolean;
   setCollapsed: (collapsed: boolean) => void;
+  mobileOpen?: boolean;
+  setMobileOpen?: (open: boolean) => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => {
+const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
   const location = useLocation();
   const { profile, activeBranch, multiBranchMode, logout } = useAuth();
   const { tenant } = useTenant();
@@ -74,8 +76,9 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => {
   return (
     <div 
       className={cn(
-        "h-screen bg-zinc-950 text-zinc-400 border-r border-zinc-800 transition-all duration-300 flex flex-col",
-        collapsed ? "w-20" : "w-64"
+        "fixed inset-y-0 left-0 z-50 md:relative h-screen bg-zinc-950 text-zinc-400 border-r border-zinc-800 transition-all duration-300 flex flex-col",
+        collapsed ? "w-20" : "w-64",
+        mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
       )}
     >
       <div className="p-6 flex items-center justify-between">
@@ -106,6 +109,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => {
             <Link
               key={item.path}
               to={item.path}
+              onClick={() => setMobileOpen?.(false)}
               className={cn(
                 "flex items-center gap-3 px-3 py-2 rounded-lg transition-all group",
                 isActive 
