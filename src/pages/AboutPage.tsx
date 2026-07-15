@@ -1,5 +1,13 @@
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
+import { 
+  ShoppingCart, 
+  Truck, 
+  TrendingUp, 
+  CheckCircle, 
+  UserCheck, 
+  ShieldCheck 
+} from 'lucide-react';
 
 export const AboutPage: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -185,7 +193,7 @@ export const AboutPage: React.FC = () => {
                 {/* POS */}
                 <div className="space-y-8">
                   <div className="p-8 border border-white/10 bg-white/5 backdrop-blur rounded-xl space-y-5 shadow transition-all hover:scale-102">
-                    <span className="material-symbols-outlined text-[#95d3ba] text-5xl">point_of_sale</span>
+                    <ShoppingCart size={48} className="text-[#95d3ba]" />
                     <h3 className="text-xl md:text-2xl text-white font-bold">Point of Sale</h3>
                     <p className="text-white/80 font-medium">Real-time transaction processing with deep integration into financial reporting and compliance.</p>
                   </div>
@@ -204,7 +212,7 @@ export const AboutPage: React.FC = () => {
                 {/* Procurement */}
                 <div className="space-y-8 lg:mt-24">
                   <div className="p-8 border border-white/10 bg-white/5 backdrop-blur rounded-xl space-y-5 shadow transition-all hover:scale-102">
-                    <span className="material-symbols-outlined text-[#95d3ba] text-5xl">local_shipping</span>
+                    <Truck size={48} className="text-[#95d3ba]" />
                     <h3 className="text-xl md:text-2xl text-white font-bold">Procurement</h3>
                     <p className="text-white/80 font-medium">Centralized sourcing and branch fulfillment modules to manage supplier relations at scale.</p>
                   </div>
@@ -272,7 +280,7 @@ export const AboutPage: React.FC = () => {
         <section className="py-20">
           <div className="border border-white/35 bg-white/5 backdrop-blur rounded-3xl p-8 md:p-16 overflow-hidden relative shadow-2xl">
             <div className="absolute top-0 right-0 p-16 opacity-10 hidden md:block">
-              <span className="material-symbols-outlined text-[200px] text-[#95d3ba]">insights</span>
+              <TrendingUp size={200} className="text-[#95d3ba]" />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center relative z-10">
               <div className="space-y-8">
@@ -336,7 +344,7 @@ export const AboutPage: React.FC = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="p-4 border border-white/10 bg-white/5 rounded-lg space-y-2">
                     <div className="flex justify-between items-center text-[#95d3ba] text-xs">
-                      <span className="material-symbols-outlined">check_circle</span>
+                      <CheckCircle size={16} />
                       <span className="text-[10px] px-2 py-0.5 bg-[#95d3ba]/20 rounded-full uppercase font-bold">Completed</span>
                     </div>
                     <p className="text-white font-bold">Cleaning Walls and Ceiling</p>
@@ -344,7 +352,7 @@ export const AboutPage: React.FC = () => {
                   </div>
                   <div className="p-4 border border-white/10 bg-white/5 rounded-lg space-y-2">
                     <div className="flex justify-between items-center text-[#95d3ba] text-xs">
-                      <span className="material-symbols-outlined">check_circle</span>
+                      <CheckCircle size={16} />
                       <span className="text-[10px] px-2 py-0.5 bg-[#95d3ba]/20 rounded-full uppercase font-bold">Completed</span>
                     </div>
                     <p className="text-white font-bold">Sweeping and Mopping</p>
@@ -361,7 +369,7 @@ export const AboutPage: React.FC = () => {
               </div>
               <div className="border border-white/15 bg-white/5 backdrop-blur rounded-xl p-8 flex items-center gap-6 shadow">
                 <div className="p-4 bg-[#064e3b] rounded-full shadow-lg text-white">
-                  <span className="material-symbols-outlined text-3xl">person_check</span>
+                  <UserCheck size={32} className="text-white" />
                 </div>
                 <div>
                   <p className="text-sm font-extrabold text-white mb-1">Employee Self-Service</p>
@@ -378,7 +386,7 @@ export const AboutPage: React.FC = () => {
             <div className="md:w-1/3 flex justify-center">
               <div className="relative">
                 <div className="absolute inset-0 bg-[#95d3ba]/30 blur-3xl rounded-full"></div>
-                <span className="material-symbols-outlined text-[100px] text-[#95d3ba] relative">verified_user</span>
+                <ShieldCheck size={100} className="text-[#95d3ba] relative" />
               </div>
             </div>
             <div className="md:w-2/3 space-y-6">
