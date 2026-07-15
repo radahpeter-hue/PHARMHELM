@@ -868,7 +868,7 @@ const BranchExpenseLog: React.FC = () => {
 
 const BranchCreditView: React.FC = () => {
   const { profile, activeBranchId } = useAuth();
-  const [credits, setCredits] = useState<CreditReceivable[]>([]);
+  const [sales, setSales] = useState<any[]>([]);
   const [dateRange, setDateRange] = useState({ 
     start: new Date().toISOString().split('T')[0], 
     end: new Date().toISOString().split('T')[0] 
@@ -876,15 +876,19 @@ const BranchCreditView: React.FC = () => {
 
   useEffect(() => {
     if (profile?.tenantId && activeBranchId) {
-      firestoreService.subscribeToCollection<CreditReceivable>('credit_receivables', profile.tenantId, (data) => {
-        setCredits(data.filter(c => c.branch_id === activeBranchId));
+      const unsubscribe = firestoreService.subscribeToCollection('sales', profile.tenantId, (data: any[]) => {
+        const filtered = data.filter(s => 
+          s.branchId === activeBranchId && 
+          (s.paymentMethod === 'insurance' || s.paymentMethod === 'institutional_credit')
+        );
+        setSales(filtered);
       });
+      return () => unsubscribe();
     }
   }, [profile?.tenantId, activeBranchId]);
 
-  const filteredCredits = credits.filter(c => {
-    // try payment date, due date or createdAt
-    const rawDate = c.due_date || (c as any).createdAt || '';
+  const filteredCredits = sales.filter(s => {
+    const rawDate = s.timestamp || s.created_at || '';
     const cDate = rawDate.split('T')[0];
     const matchesStart = !dateRange.start || cDate >= dateRange.start;
     const matchesEnd = !dateRange.end || cDate <= dateRange.end;
@@ -928,22 +932,31 @@ const BranchCreditView: React.FC = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100">
-            {filteredCredits.map((credit) => (
-              <tr key={credit.id} className="hover:bg-zinc-50/50 transition-colors">
-                <td className="px-6 py-4 font-bold text-zinc-900">{credit.invoice_number}</td>
-                <td className="px-6 py-4 text-sm text-zinc-600">{credit.client_name}</td>
-                <td className="px-6 py-4 text-sm text-zinc-500">{new Date(credit.due_date).toLocaleDateString()}</td>
-                <td className="px-6 py-4 font-bold text-zinc-900">UGX {(credit.amount_ugx || 0).toLocaleString()}</td>
-                <td className="px-6 py-4">
-                  <span className={cn(
-                    "px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider",
-                    credit.status === 'Paid' ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
-                  )}>
-                    {credit.status}
-                  </span>
-                </td>
-              </tr>
-            ))}
+            {filteredCredits.map((credit) => {
+              const invNum = credit.invoiceNumber || credit.invoice_number || `INV-${credit.id?.slice(-6)}`;
+              const cName = credit.patientName || credit.clientName || 'Walk-in Client';
+              const dateVal = credit.timestamp || credit.created_at || credit.date || '';
+              const displayDate = dateVal ? new Date(dateVal).toLocaleDateString() : 'N/A';
+              const amount = credit.total || credit.totalAmount || 0;
+              const status = credit.creditStatus || 'Unpaid';
+              
+              return (
+                <tr key={credit.id} className="hover:bg-zinc-50/50 transition-colors">
+                  <td className="px-6 py-4 font-bold text-zinc-900">{invNum}</td>
+                  <td className="px-6 py-4 text-sm text-zinc-600">{cName}</td>
+                  <td className="px-6 py-4 text-sm text-zinc-500">{displayDate}</td>
+                  <td className="px-6 py-4 font-bold text-zinc-900">UGX {amount.toLocaleString()}</td>
+                  <td className="px-6 py-4">
+                    <span className={cn(
+                      "px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider",
+                      status === 'Paid' ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+                    )}>
+                      {status}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
             {filteredCredits.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-6 py-12 text-center text-zinc-400 italic">
@@ -2797,57 +2810,67 @@ const PettyCashManagement: React.FC = () => {
             Pending Requisitions
           </h3>
           <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
-            {requisitions.filter(r => r.status !== 'issued' && r.status !== 'received' && r.status !== 'rejected').map((req) => (
-              <div key={req.id} className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
-                <div>
-                  <p className="font-bold text-zinc-900">{req.branch_name}</p>
-                  <p className="text-xs text-zinc-500">UGX {(req.amount_requested || 0).toLocaleString()} • {req.reason}</p>
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mt-1">Status: {req.status.replace('_', ' ')}</p>
+            {requisitions.filter(r => {
+              const statusLower = (r.status || '').toLowerCase();
+              return statusLower !== 'issued' && statusLower !== 'received' && statusLower !== 'rejected';
+            }).map((req) => {
+              const statusLower = (req.status || '').toLowerCase();
+              const reqAmountVal = req.amount_requested || req.amount || 0;
+              const reqReasonText = req.reason || req.purpose || 'Departmental Petty Cash Requisition';
+              const reqBranchName = req.branch_name || (req.department ? `${req.department} Department` : 'HQ / Corporate');
+
+              return (
+                <div key={req.id} className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                  <div>
+                    <p className="font-bold text-zinc-900">{reqBranchName}</p>
+                    <p className="text-xs text-zinc-500">UGX {reqAmountVal.toLocaleString()} • {reqReasonText}</p>
+                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mt-1">Status: {(req.status || '').replace('_', ' ')}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    {statusLower === 'pending' && (profile?.role === 'Finance Head' || profile?.role === 'owner' || profile?.role === 'admin' || (profile?.secondaryRoles || []).includes('Finance Head')) && (
+                      <>
+                        <button 
+                          onClick={() => handleApproveFinance(req.id)}
+                          className="px-3 py-1 bg-amber-100 text-amber-700 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-amber-200 transition-colors"
+                        >
+                          Finance Appr.
+                        </button>
+                        <button 
+                          onClick={() => handleReject(req.id)}
+                          className="px-3 py-1 bg-red-50 text-red-600 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-red-100 transition-colors"
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
+                    {statusLower === 'finance_approved' && (
+                      ['CEO', 'CEO / MD', 'owner', 'admin'].includes(profile?.role || '') ||
+                      (profile?.secondaryRoles || []).some(r => ['CEO', 'CEO / MD', 'owner', 'admin'].includes(r))
+                    ) && (
+                      <>
+                        <button 
+                          onClick={() => handleApproveCEO(req.id)}
+                          className="px-3 py-1 bg-blue-100 text-blue-700 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-blue-200 transition-colors"
+                        >
+                          CEO Appr.
+                        </button>
+                        <button 
+                          onClick={() => handleReject(req.id)}
+                          className="px-3 py-1 bg-red-50 text-red-600 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-red-100 transition-colors"
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
+                    {statusLower === 'approved' && (
+                      <span className="px-3 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-bold uppercase tracking-wider">
+                        Ready to Issue
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  {req.status === 'pending' && (profile?.role === 'Finance Head' || profile?.role === 'owner' || profile?.role === 'admin') && (
-                    <>
-                      <button 
-                        onClick={() => handleApproveFinance(req.id)}
-                        className="px-3 py-1 bg-amber-100 text-amber-700 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-amber-200 transition-colors"
-                      >
-                        Finance Appr.
-                      </button>
-                      <button 
-                        onClick={() => handleReject(req.id)}
-                        className="px-3 py-1 bg-red-50 text-red-600 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-red-100 transition-colors"
-                      >
-                        Reject
-                      </button>
-                    </>
-                  )}
-                  {req.status === 'finance_approved' && (
-                    ['CEO', 'CEO / MD', 'owner', 'admin'].includes(profile?.role || '') ||
-                    (profile?.secondaryRoles || []).some(r => ['CEO', 'CEO / MD', 'owner', 'admin'].includes(r))
-                  ) && (
-                    <>
-                      <button 
-                        onClick={() => handleApproveCEO(req.id)}
-                        className="px-3 py-1 bg-blue-100 text-blue-700 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-blue-200 transition-colors"
-                      >
-                        CEO Appr.
-                      </button>
-                      <button 
-                        onClick={() => handleReject(req.id)}
-                        className="px-3 py-1 bg-red-50 text-red-600 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-red-100 transition-colors"
-                      >
-                        Reject
-                      </button>
-                    </>
-                  )}
-                  {req.status === 'approved' && (
-                    <span className="px-3 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-bold uppercase tracking-wider">
-                      Ready to Issue
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
             {requisitions.filter(r => r.status !== 'issued' && r.status !== 'received' && r.status !== 'rejected').length === 0 && (
               <p className="text-center py-8 text-zinc-400 italic text-sm">No pending requisitions</p>
             )}

@@ -66,6 +66,7 @@ export const GlobalExpenseLedger: React.FC = () => {
   const [payrollList, setPayrollList] = useState<any[]>([]);
   const [marketingExpenses, setMarketingExpenses] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
+  const [staff, setStaff] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Filters state
@@ -150,6 +151,13 @@ export const GlobalExpenseLedger: React.FC = () => {
       ));
       setMarketingExpenses(marketExpSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
 
+      // 7. Fetch all staff members to map raw UIDs to full names
+      const staffSnap = await getDocs(query(
+        collection(db, 'staff'),
+        where('tenantId', '==', profile.tenantId)
+      ));
+      setStaff(staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+
     } catch (e: any) {
       console.error("Error gathering global expenses:", e);
       toast.error("Failed to load global expenses.");
@@ -170,6 +178,16 @@ export const GlobalExpenseLedger: React.FC = () => {
     const bMap = new Map<string, string>();
     branches.forEach(b => bMap.set(b.id, b.name || b.branch_name));
 
+    // Map staff UID -> Full Name
+    const staffMap = new Map<string, string>();
+    staff.forEach(s => {
+      const name = s.full_name || s.displayName || s.name || '';
+      if (name) {
+        staffMap.set(s.id, name);
+        if (s.uid) staffMap.set(s.uid, name);
+      }
+    });
+
     // A. Branch Expenses
     branchExpenses.forEach(e => {
       list.push({
@@ -180,7 +198,7 @@ export const GlobalExpenseLedger: React.FC = () => {
         amount: e.amount_ugx || 0,
         department: bMap.get(e.branch_id) || e.branch_id || 'Branch Expense',
         type: 'Branch',
-        loggedBy: e.logged_by || 'Branch Staff'
+        loggedBy: (e as any).logged_by_name || staffMap.get(e.logged_by || '') || e.logged_by || 'Branch Staff'
       });
     });
 
@@ -194,7 +212,7 @@ export const GlobalExpenseLedger: React.FC = () => {
         amount: e.amount_ugx || e.amount || 0,
         department: e.department || 'HQ',
         type: 'Management',
-        loggedBy: e.logged_by || 'HQ Finance'
+        loggedBy: (e as any).logged_by_name || staffMap.get(e.logged_by || '') || e.logged_by || 'HQ Finance'
       });
     });
 
@@ -208,7 +226,7 @@ export const GlobalExpenseLedger: React.FC = () => {
         amount: e.cost_ugx || 0,
         department: 'Logistics Fleet',
         type: 'Logistics',
-        loggedBy: e.driverName || 'Driver'
+        loggedBy: e.driverName || e.driver_name || staffMap.get(e.entered_by || '') || e.entered_by || 'Driver'
       });
     });
 
@@ -222,7 +240,7 @@ export const GlobalExpenseLedger: React.FC = () => {
         amount: e.cost_ugx || 0,
         department: 'Logistics Fleet',
         type: 'Logistics',
-        loggedBy: e.logged_by || 'Fleet Officer'
+        loggedBy: e.logged_by_name || staffMap.get(e.logged_by || e.entered_by || '') || e.logged_by || 'Fleet Officer'
       });
     });
 
@@ -236,7 +254,7 @@ export const GlobalExpenseLedger: React.FC = () => {
         amount: e.fine_amount_ugx || 0,
         department: 'Logistics Fleet',
         type: 'Logistics',
-        loggedBy: e.logged_by || 'Fleet Driver'
+        loggedBy: e.logged_by_name || staffMap.get(e.logged_by || e.entered_by || '') || e.logged_by || 'Fleet Driver'
       });
     });
 
@@ -250,7 +268,7 @@ export const GlobalExpenseLedger: React.FC = () => {
         amount: e.cost_ugx || 0,
         department: 'Logistics Fleet',
         type: 'Logistics',
-        loggedBy: e.logged_by || 'Fleet Controller'
+        loggedBy: e.logged_by_name || staffMap.get(e.logged_by || e.entered_by || '') || e.logged_by || 'Fleet Controller'
       });
     });
 
@@ -278,14 +296,14 @@ export const GlobalExpenseLedger: React.FC = () => {
         amount: e.amount || 0,
         department: 'Marketing Department',
         type: 'Management',
-        loggedBy: e.loggedBy || 'Marketing Specialist'
+        loggedBy: e.logged_by_name || staffMap.get(e.logged_by || '') || e.loggedBy || 'Marketing Specialist'
       });
     });
 
     // Sort descending by date
     list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     return list;
-  }, [branchExpenses, mgmtExpenses, fuelLogs, maintenanceLogs, fineLogs, logisticsExpenses, payrollList, branches]);
+  }, [branchExpenses, mgmtExpenses, fuelLogs, maintenanceLogs, fineLogs, logisticsExpenses, payrollList, branches, marketingExpenses, staff]);
 
   // Dropdown values arrays
   const typesList = ['All', 'Branch', 'Management', 'Logistics', 'Payroll'];

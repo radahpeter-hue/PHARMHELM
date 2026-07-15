@@ -90,7 +90,7 @@ const Procurement: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex flex-nowrap border-b border-zinc-200 overflow-x-auto scrollbar-none pb-1">
+      <div className="flex flex-nowrap border-b border-zinc-200 overflow-x-auto pb-2">
         {currentTabs.map((tab) => (
           <button
             key={tab.id}
