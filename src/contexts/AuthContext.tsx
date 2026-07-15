@@ -594,8 +594,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }
             });
 
-            // Specific request: give CEO / CEO MD role access everywhere in the system
-            const hasCeoRole = allUserRoles.some(r => r === 'CEO' || r === 'CEO / MD' || r === 'owner');
+            // Specific request: give CEO, Owner, and Admin roles access everywhere in the system
+            const hasCeoRole = allUserRoles.some(role => {
+              const r = role.toLowerCase();
+              return r === 'ceo' || r === 'ceo / md' || r === 'owner' || r === 'admin';
+            });
             if (hasCeoRole) {
               Object.keys(mergedPerms).forEach(modKey => {
                 const module = modKey as keyof RolePermissions;

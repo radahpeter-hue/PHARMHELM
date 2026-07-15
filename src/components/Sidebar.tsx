@@ -39,7 +39,7 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
   const location = useLocation();
-  const { profile, activeBranch, multiBranchMode, logout } = useAuth();
+  const { profile, activeBranch, multiBranchMode, logout, hasPermission } = useAuth();
   const { tenant } = useTenant();
 
   const isHQ = activeBranch?.type === 'HQ' || !multiBranchMode;
@@ -66,10 +66,30 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, 
   ];
 
   const filteredItems = menuItems.filter(item => {
+    // 1. Management restriction
     if (item.management && !isHQ && !isManagement) return false;
+
+    // 2. Subscription tier restriction
     if (tenant?.subscription_tier === 'basic' || tenant?.subscription_tier === 'standard') {
       if (item.path.endsWith('/marketing') || item.path.endsWith('/logistics') || item.path.endsWith('/predictive')) return false;
     }
+
+    // 3. Role-based module permission restriction
+    const pathParts = item.path.split('/');
+    const pathSuffix = pathParts[pathParts.length - 1];
+    
+    if (pathSuffix && pathSuffix !== 'app') {
+      let moduleKey = pathSuffix;
+      if (pathSuffix === 'logistics') {
+        moduleKey = 'procurement';
+      }
+      
+      // Fallback map check for dashboard settings link
+      if (!hasPermission(moduleKey as any, 'view')) {
+        return false;
+      }
+    }
+
     return true;
   });
 

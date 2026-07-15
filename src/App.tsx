@@ -2,7 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import Layout from './components/Layout';
 import BranchSelector from './components/BranchSelector';
-import { useAuth } from './contexts/AuthContext';
+import { useAuth, RolePermissions } from './contexts/AuthContext';
 import { useTenant } from './contexts/TenantContext';
 import { AlertCircle } from 'lucide-react';
 import { Toaster } from 'sonner';
@@ -137,6 +137,32 @@ const TenantProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childre
   return <Layout>{children}</Layout>;
 };
 
+// Role and permission-based route protection
+const PermissionProtectedRoute: React.FC<{ 
+  children: React.ReactNode; 
+  module: keyof RolePermissions; 
+  requiredLevel?: 'view' | 'operate' | 'all';
+}> = ({ children, module, requiredLevel = 'view' }) => {
+  const { hasPermission, loading } = useAuth();
+  const { tenant } = useTenant();
+  const params = useParams<{ tenantSlug?: string }>();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-500"></div>
+      </div>
+    );
+  }
+
+  if (!hasPermission(module, requiredLevel)) {
+    const slug = params.tenantSlug || tenant?.slug || 'radah';
+    return <Navigate to={`/tenant/${slug}/app`} replace />;
+  }
+
+  return <>{children}</>;
+};
+
 // Subdomain guard for TMC portal to redirect subdomain traffic to Tenant portals
 const TmcSubdomainGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const hostname = window.location.hostname;
@@ -226,20 +252,20 @@ export default function App() {
         
         {/* Tenant Application Nested Routes */}
         <Route path="/tenant/:tenantSlug/app" element={<TenantProtectedRoute><Dashboard /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/sales" element={<TenantProtectedRoute><Sales /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/inventory" element={<TenantProtectedRoute><Inventory /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/clients" element={<TenantProtectedRoute><Clients /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/stock" element={<TenantProtectedRoute><StockInOut /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/procurement" element={<TenantProtectedRoute><Procurement /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/logistics" element={<TenantProtectedRoute><Logistics /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/finance" element={<TenantProtectedRoute><Finance /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/qa" element={<TenantProtectedRoute><QACompliance /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/hr" element={<TenantProtectedRoute><HRAdmin /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/welfare" element={<TenantProtectedRoute><Welfare /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/predictive" element={<TenantProtectedRoute><Predictive /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/analytics" element={<TenantProtectedRoute><Analytics /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/marketing" element={<TenantProtectedRoute><Marketing /></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/settings" element={<TenantProtectedRoute><SettingsPage /></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/sales" element={<TenantProtectedRoute><PermissionProtectedRoute module="sales" requiredLevel="view"><Sales /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/inventory" element={<TenantProtectedRoute><PermissionProtectedRoute module="inventory" requiredLevel="view"><Inventory /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/clients" element={<TenantProtectedRoute><PermissionProtectedRoute module="clients" requiredLevel="view"><Clients /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/stock" element={<TenantProtectedRoute><PermissionProtectedRoute module="stock" requiredLevel="view"><StockInOut /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/procurement" element={<TenantProtectedRoute><PermissionProtectedRoute module="procurement" requiredLevel="view"><Procurement /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/logistics" element={<TenantProtectedRoute><PermissionProtectedRoute module="procurement" requiredLevel="view"><Logistics /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/finance" element={<TenantProtectedRoute><PermissionProtectedRoute module="finance" requiredLevel="view"><Finance /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/qa" element={<TenantProtectedRoute><PermissionProtectedRoute module="qa" requiredLevel="view"><QACompliance /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/hr" element={<TenantProtectedRoute><PermissionProtectedRoute module="hr" requiredLevel="view"><HRAdmin /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/welfare" element={<TenantProtectedRoute><PermissionProtectedRoute module="welfare" requiredLevel="view"><Welfare /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/predictive" element={<TenantProtectedRoute><PermissionProtectedRoute module="predictive" requiredLevel="view"><Predictive /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/analytics" element={<TenantProtectedRoute><PermissionProtectedRoute module="analytics" requiredLevel="view"><Analytics /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/marketing" element={<TenantProtectedRoute><PermissionProtectedRoute module="marketing" requiredLevel="view"><Marketing /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/settings" element={<TenantProtectedRoute><PermissionProtectedRoute module="settings" requiredLevel="view"><SettingsPage /></PermissionProtectedRoute></TenantProtectedRoute>} />
 
         {/* Catch-all fallback */}
         <Route path="*" element={getRootRedirect()} />
