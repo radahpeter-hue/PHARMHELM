@@ -4,6 +4,9 @@ import { Product, ProductBatch, InventoryMovement } from '../../types';
 import { firestoreService } from '../../services/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'sonner';
+import { db } from '../../firebase';
+import { doc, runTransaction } from 'firebase/firestore';
+import { logMovementAndAggregateInTx, getBranchProductBatchRefs } from '../../services/consumptionService';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -212,14 +215,63 @@ const AdjustmentModal: React.FC<{ isOpen: boolean; onClose: () => void; products
     if (!batch) return;
 
     const adjustmentAmount = formData.newQuantity - batch.quantity;
+    if (adjustmentAmount === 0) {
+      toast.info('No quantity changes.');
+      return;
+    }
 
     try {
-      // 1. Update batch quantity
-      await firestoreService.updateDocument('product_batches', batch.id, {
-        quantity: formData.newQuantity
+      // Pre-fetch batch refs outside transaction (required for Web SDK)
+      const batchRefs = await getBranchProductBatchRefs(
+        profile.tenantId,
+        activeBranchId,
+        selectedProductId
+      );
+
+      // Perform updates inside a Firestore transaction for atomicity
+      await runTransaction(db, async (transaction) => {
+        // 1. Update batch quantity
+        const batchDocRef = doc(db, 'product_batches', batch.id);
+        transaction.update(batchDocRef, {
+          quantity: formData.newQuantity,
+          lastUpdated: new Date().toISOString()
+        });
+
+        // 2. Determine detailed event type based on reason
+        const reasonLower = (formData.reason || '').toLowerCase();
+        let eventType: any = adjustmentAmount > 0 ? 'POSITIVE_ADJUSTMENT' : 'NEGATIVE_ADJUSTMENT';
+
+        if (adjustmentAmount < 0) {
+          if (reasonLower.includes('expire') || reasonLower.includes('expiry')) {
+            eventType = 'EXPIRY';
+          } else if (reasonLower.includes('damage') || reasonLower.includes('broken')) {
+            eventType = 'DAMAGE';
+          } else if (reasonLower.includes('write') || reasonLower.includes('loss') || reasonLower.includes('theft') || reasonLower.includes('stolen') || reasonLower.includes('missing')) {
+            eventType = 'WRITE_OFF';
+          }
+        }
+
+        // 3. Log movement event & aggregate daily summary in transaction
+        await logMovementAndAggregateInTx(transaction, batchRefs, {
+          tenantId: profile.tenantId,
+          branchId: activeBranchId,
+          productId: selectedProductId,
+          eventType,
+          quantityDeltaBaseUnits: adjustmentAmount,
+          consumptionDeltaBaseUnits: 0, // Stock adjustments do not count as customer consumption
+          isExceptional: false,
+          exceptionalReason: null,
+          sourceCollection: 'product_batches',
+          sourceDocumentId: batch.id,
+          sourceLineId: null,
+          reversalOfEventId: null,
+          createdBy: profile.uid || 'system',
+          effectiveAt: new Date(),
+          timezone: 'Africa/Kampala'
+        });
       });
 
-      // 2. Log movement
+      // 4. Log compatibility movement document
       const movement: Omit<InventoryMovement, 'id'> = {
         tenantId: profile.tenantId,
         branchId: activeBranchId || '',
@@ -238,12 +290,20 @@ const AdjustmentModal: React.FC<{ isOpen: boolean; onClose: () => void; products
         receiver: 'System',
         notes: formData.reason
       };
-
       await firestoreService.addDocument('inventory_movements', movement);
-      
+
+      // 5. Update main product stock count
+      const product = products.find(p => p.id === selectedProductId);
+      if (product) {
+        await firestoreService.updateDocument('products', selectedProductId, {
+          stock: Math.max(0, (product.stock || 0) + adjustmentAmount)
+        });
+      }
+
       toast.success('Stock adjusted successfully');
       onClose();
     } catch (error) {
+      console.error(error);
       toast.error('Failed to adjust stock');
     }
   };

@@ -8,6 +8,12 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { firestoreService } from '../services/firestore';
 import { 
+  logMovementAndAggregateInTx, 
+  getBranchProductBatchRefs, 
+  getBaseUnitMultiplier,
+  logSaleMovements
+} from '../services/consumptionService';
+import { 
   Product, Sale, SaleItem, SaleContext, PaymentMethodType, 
   Staff, Branch, ProductBatch, BillableService, 
   InstitutionRegistry, EODReconciliation, Client, SystemSettings,
@@ -65,6 +71,8 @@ const Sales: React.FC = () => {
   
   const [discountPercentage, setDiscountPercentage] = useState<number>(0);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [isExceptionalConsumption, setIsExceptionalConsumption] = useState(false);
+  const [exceptionalConsumptionReason, setExceptionalConsumptionReason] = useState('');
   const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
   const [editingService, setEditingService] = useState<BillableService | null>(null);
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
@@ -515,6 +523,8 @@ const Sales: React.FC = () => {
       return;
     }
 
+    setIsExceptionalConsumption(false);
+    setExceptionalConsumptionReason('');
     setIsCheckoutOpen(true);
   };
 
@@ -608,6 +618,9 @@ const Sales: React.FC = () => {
           };
           await firestoreService.addDocument('sale_revisions', revision);
 
+          // Log reversal of old sale items
+          await logSaleMovements(editingSaleId, originalSale, true, `sales_${editingSaleId}`, profile.uid);
+
           // 3. Update sale document
           await firestoreService.updateDocument('sales', editingSaleId, {
             items: itemsWithVat,
@@ -629,8 +642,23 @@ const Sales: React.FC = () => {
             prescriberId: selectedPrescriber?.id || null,
             prescriberName: selectedPrescriber?.full_name || null,
             lastEditedAt: new Date().toISOString(),
-            lastEditedBy: profile.uid
+            lastEditedBy: profile.uid,
+            isExceptionalConsumption,
+            exceptionalConsumptionReason: isExceptionalConsumption ? exceptionalConsumptionReason : null
           });
+
+          // Log new sale items
+          const updatedSaleData: Sale = {
+            ...originalSale,
+            items: itemsWithVat,
+            isExceptionalConsumption,
+            exceptionalConsumptionReason: isExceptionalConsumption ? exceptionalConsumptionReason : null,
+            timestamp: new Date().toISOString(),
+            subtotal,
+            total: finalTotal,
+            totalAmount: finalTotal
+          };
+          await logSaleMovements(editingSaleId, updatedSaleData, false, null, profile.uid);
 
           // 4. Create Audit Log
           const auditLog: AuditLog = {
@@ -676,10 +704,15 @@ const Sales: React.FC = () => {
           servedBy: profile?.uid,
           patientName: selectedPatient?.full_name,
           institutionName: selectedInstitution?.supplier_name,
-          prescriberName: selectedPrescriber?.full_name
+          prescriberName: selectedPrescriber?.full_name,
+          isExceptionalConsumption,
+          exceptionalConsumptionReason: isExceptionalConsumption ? exceptionalConsumptionReason : null
         };
 
-        await firestoreService.addDocument('sales', saleData);
+        const newSaleId = await firestoreService.addDocument('sales', saleData);
+        if (newSaleId) {
+          await logSaleMovements(newSaleId, { ...saleData, id: newSaleId }, false, null, profile.uid);
+        }
       }
       
       // Handle Welfare Payment posting
@@ -1908,6 +1941,45 @@ const Sales: React.FC = () => {
                   <p className="text-sm text-zinc-500">Select payment method to finish.</p>
                 </div>
 
+                {/* Exceptional Consumption Toggle & Input */}
+                <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-200/60 space-y-3">
+                  <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={isExceptionalConsumption}
+                      onChange={(e) => {
+                        setIsExceptionalConsumption(e.target.checked);
+                        if (!e.target.checked) setExceptionalConsumptionReason('');
+                      }}
+                      className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4 border-zinc-300"
+                    />
+                    <span className="text-xs font-bold text-zinc-700 uppercase tracking-wide">
+                      Exceptional Bulk/Special Order
+                    </span>
+                  </label>
+                  {isExceptionalConsumption && (
+                    <div className="space-y-1">
+                      <span className="text-[9px] font-black uppercase text-zinc-400 tracking-wider">
+                        Reason for Exception
+                      </span>
+                      <select
+                        value={exceptionalConsumptionReason}
+                        onChange={(e) => setExceptionalConsumptionReason(e.target.value)}
+                        required
+                        className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs outline-none focus:ring-1 focus:ring-emerald-500"
+                      >
+                        <option value="">-- Select Reason --</option>
+                        <option value="Institutional bulk order">Institutional bulk order</option>
+                        <option value="Tender supply">Tender supply</option>
+                        <option value="Emergency bulk issue">Emergency bulk issue</option>
+                        <option value="Promotional campaign">Promotional campaign</option>
+                        <option value="One-off special customer order">One-off special customer order</option>
+                        <option value="Management-authorised abnormal issue">Management-authorised abnormal issue</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   {[
                     { id: 'cash', label: 'Cash', icon: Banknote },
@@ -2014,6 +2086,9 @@ const Sales: React.FC = () => {
             if (!sale) return;
             
             try {
+              // Log reversal movements
+              await logSaleMovements(saleId, sale, true, `sales_${saleId}`, profile?.uid || 'system');
+
               // 1. Update sale status
               await firestoreService.updateDocument('sales', saleId, {
                 status: 'voided',

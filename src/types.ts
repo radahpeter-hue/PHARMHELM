@@ -309,6 +309,90 @@ export interface InventoryMovement {
   notes?: string;
 }
 
+export interface InventoryMovementEvent {
+  id?: string;
+  tenantId: string;
+  branchId: string;
+  productId: string;
+
+  eventId: string;
+  eventType:
+    | 'SALE'
+    | 'DISPENSING'
+    | 'SALE_REVERSAL'
+    | 'RETURN_TO_STOCK'
+    | 'TRANSFER_IN'
+    | 'TRANSFER_OUT'
+    | 'WRITE_OFF'
+    | 'EXPIRY'
+    | 'DAMAGE'
+    | 'POSITIVE_ADJUSTMENT'
+    | 'NEGATIVE_ADJUSTMENT'
+    | 'STOCKOUT_START'
+    | 'STOCKOUT_END';
+
+  quantityDeltaBaseUnits: number;
+  consumptionDeltaBaseUnits: number;
+
+  isExceptional: boolean;
+  exceptionalReason: string | null;
+
+  sourceCollection: string;
+  sourceDocumentId: string;
+  sourceLineId: string | null;
+  reversalOfEventId: string | null;
+
+  effectiveAt: any; // Firestore Timestamp
+  dateKey: string;
+
+  createdBy: string;
+  createdAt: any; // Firestore Timestamp
+}
+
+export interface BranchConsumptionDaily {
+  id?: string;
+  tenantId: string;
+  branchId: string;
+  productId: string;
+  dateKey: string; // YYYY-MM-DD
+
+  baseUnitId?: string;
+  baseUnitName?: string;
+
+  openingUsableStock: number | null;
+  closingUsableStock: number | null;
+
+  ordinaryUnitsSold: number;
+  ordinaryUnitsDispensed: number;
+  unitsReturnedToStock: number;
+
+  unitsTransferredIn: number;
+  unitsTransferredOut: number;
+
+  unitsWrittenOff: number;
+  positiveAdjustments: number;
+  negativeAdjustments: number;
+
+  exceptionalUnits: number;
+  validConsumptionUnits: number;
+
+  transactionCount: number;
+  consumptionTransactionCount: number;
+
+  operatingMinutes: number | null;
+  inStockMinutes: number | null;
+  stockoutMinutes: number | null;
+  wasStockedAllDay: boolean | null;
+
+  firstStockoutAt: any | null; // Firestore Timestamp
+  lastRestockedAt: any | null; // Firestore Timestamp
+
+  createdAt: any; // Firestore Timestamp
+  updatedAt: any; // Firestore Timestamp
+  aggregationVersion: number;
+}
+
+
 export interface OperationalInventory {
   id: string;
   tenantId: string;
@@ -380,6 +464,11 @@ export interface Sale {
   status: 'completed' | 'voided' | 'returned' | 'active';
   context?: SaleContext;
   servedBy?: string;
+  isExceptionalConsumption?: boolean;
+  exceptionalConsumptionReason?: string | null;
+  voidedAt?: string;
+  voidedBy?: string;
+  voidReason?: string;
 }
 
 export interface SaleItem {

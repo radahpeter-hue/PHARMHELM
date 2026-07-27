@@ -23,7 +23,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { firestoreService } from '../services/firestore';
 import { Product, StockOrder, StockOrderLine, TransferInvoice, Branch, ProductBatch, TransferInvoiceLine, Sale, OperationalInventory } from '../types';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, runTransaction } from 'firebase/firestore';
+import { logMovementAndAggregateInTx, getBranchProductBatchRefs } from '../services/consumptionService';
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -1474,6 +1475,17 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         }
       });
 
+      // Pre-fetch receiving branch batch references for all products
+      const uniqueProductIds = Array.from(new Set<string>(invoiceLines.map(line => String(line.product_id))));
+      const branchBatchRefsMap: Record<string, { ref: any; id: string }[]> = {};
+      for (const pId of uniqueProductIds) {
+        branchBatchRefsMap[pId] = await getBranchProductBatchRefs(
+          profile.tenantId,
+          activeBranchId!,
+          pId
+        );
+      }
+
       await firestoreService.runTransaction(async (transaction) => {
         let hasQueries = false;
         const queriedLines: any[] = [];
@@ -1563,6 +1575,26 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
                 updatedAt: new Date().toISOString()
               });
             }
+
+            // Log TRANSFER_IN movement event & update summaries
+            const batchRefs = branchBatchRefsMap[line.product_id] || [];
+            await logMovementAndAggregateInTx(transaction, batchRefs, {
+              tenantId: profile.tenantId,
+              branchId: activeBranchId!,
+              productId: line.product_id,
+              eventType: 'TRANSFER_IN',
+              quantityDeltaBaseUnits: totalUnitsAccepted,
+              consumptionDeltaBaseUnits: 0,
+              isExceptional: false,
+              exceptionalReason: null,
+              sourceCollection: 'transfer_invoices',
+              sourceDocumentId: selectedInvoice.id,
+              sourceLineId: line.id,
+              reversalOfEventId: null,
+              createdBy: profile.uid || 'system',
+              effectiveAt: new Date(),
+              timezone: 'Africa/Kampala'
+            });
           }
         }
 
@@ -2453,6 +2485,17 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         if (batch) batchMap[batch.id] = batch;
       });
 
+      // Pre-fetch source branch batch refs for all products in transfer
+      const uniqueProductIds = Array.from(new Set<string>(transferLines.map(line => String(line.product_id))));
+      const branchBatchRefsMap: Record<string, { ref: any; id: string }[]> = {};
+      for (const pId of uniqueProductIds) {
+        branchBatchRefsMap[pId] = await getBranchProductBatchRefs(
+          profile?.tenantId!,
+          activeBranchId || 'main',
+          pId
+        );
+      }
+
       await firestoreService.runTransaction(async (transaction) => {
         const transferData: Partial<TransferInvoice> = {
           tenantId: profile?.tenantId,
@@ -2492,12 +2535,32 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
             transaction.update(batchRef, {
               quantity: newQty,
               lastUpdated: new Date().toISOString()
-                });
-              } else {
-                throw new Error(`Batch ${line.batch_number} not found in inventory.`);
-              }
-            }
-          });
+            });
+
+            // Log TRANSFER_OUT movement event & update summaries
+            const batchRefs = branchBatchRefsMap[line.product_id!] || [];
+            await logMovementAndAggregateInTx(transaction, batchRefs, {
+              tenantId: profile?.tenantId!,
+              branchId: activeBranchId || 'main',
+              productId: line.product_id!,
+              eventType: 'TRANSFER_OUT',
+              quantityDeltaBaseUnits: -(line.qty_dispatched || 0),
+              consumptionDeltaBaseUnits: 0,
+              isExceptional: false,
+              exceptionalReason: null,
+              sourceCollection: 'transfer_invoices',
+              sourceDocumentId: transferRef.id,
+              sourceLineId: line.batch_id!,
+              reversalOfEventId: null,
+              createdBy: profile?.uid || 'system',
+              effectiveAt: new Date(),
+              timezone: 'Africa/Kampala'
+            });
+          } else {
+            throw new Error(`Batch ${line.batch_number} not found in inventory.`);
+          }
+        }
+      });
 
       toast.success("Transfer dispatched and inventory updated.");
       setTransferLines([]);
@@ -3317,6 +3380,17 @@ const FulfillmentModal: React.FC<{ order: StockOrder; onClose: () => void; onSuc
     }
 
     try {
+      // Pre-fetch HQ branch batch references for all products in transfer
+      const uniqueProductIds = Array.from(new Set<string>(orderLines.map(line => String(line.product_id))));
+      const branchBatchRefsMap: Record<string, { ref: any; id: string }[]> = {};
+      for (const pId of uniqueProductIds) {
+        branchBatchRefsMap[pId] = await getBranchProductBatchRefs(
+          profile.tenantId,
+          'HQ',
+          pId
+        );
+      }
+
       await firestoreService.runTransaction(async (transaction) => {
         const transferData: any = {
           tenantId: profile.tenantId,
@@ -3366,6 +3440,26 @@ const FulfillmentModal: React.FC<{ order: StockOrder; onClose: () => void; onSuc
           transaction.update(batchRef, {
             quantity: newQty,
             lastUpdated: new Date().toISOString()
+          });
+
+          // Log TRANSFER_OUT movement event & update summaries for HQ
+          const batchRefs = branchBatchRefsMap[line.product_id] || [];
+          await logMovementAndAggregateInTx(transaction, batchRefs, {
+            tenantId: profile.tenantId,
+            branchId: 'HQ',
+            productId: line.product_id,
+            eventType: 'TRANSFER_OUT',
+            quantityDeltaBaseUnits: -totalUnitsToDeduct,
+            consumptionDeltaBaseUnits: 0,
+            isExceptional: false,
+            exceptionalReason: null,
+            sourceCollection: 'transfer_invoices',
+            sourceDocumentId: transferRef.id,
+            sourceLineId: fData.batchId,
+            reversalOfEventId: null,
+            createdBy: profile.uid || 'system',
+            effectiveAt: new Date(),
+            timezone: 'Africa/Kampala'
           });
         }
       });
