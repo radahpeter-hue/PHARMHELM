@@ -17,6 +17,7 @@ import {
   ChevronDown,
   Eye,
   Download,
+  RotateCw,
   X
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -29,10 +30,12 @@ import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { format } from 'date-fns';
+import { AutoGenerateOrderModal } from '../components/inventory/AutoGenerateOrderModal';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
 
 const StockInOut: React.FC = () => {
   const { profile, activeBranchId, activeBranch, assignedBranches, setActiveBranchId } = useAuth();
@@ -344,6 +347,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const [orderLines, setOrderLines] = useState<Partial<StockOrderLine>[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showAutoGenerateModal, setShowAutoGenerateModal] = useState(false);
 
   // New states for loading saved draft orders
   const [drafts, setDrafts] = useState<StockOrder[]>([]);
@@ -716,35 +720,25 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
           {genMethod === 'auto_generated' && (
             <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-4 animate-fade-in">
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-                <span className="text-xs text-zinc-600 font-bold uppercase tracking-wider">Historical Period:</span>
-                <div className="flex items-center gap-1">
-                  <select
-                    value={consumptionPeriod}
-                    onChange={(e) => setConsumptionPeriod(parseInt(e.target.value) as any)}
-                    className="px-3 py-1.5 bg-white border border-zinc-200 rounded-lg focus:ring-2 focus:ring-emerald-500/20 outline-none text-xs font-semibold"
-                  >
-                    <option value={2}>Last 2 Months of sales</option>
-                    <option value={3}>Last 3 Months of sales</option>
-                    <option value={6}>Last 6 Months of sales</option>
-                  </select>
-                </div>
+                <span className="text-xs text-zinc-600 font-bold uppercase tracking-wider">Replenishment Engine:</span>
+                <span className="text-xs text-zinc-550 block">Calculate stock requirements using core deterministic forecasting model.</span>
               </div>
               <button 
-                onClick={handleAutoGenerate}
-                disabled={isGenerating}
-                className="w-full sm:w-auto px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs uppercase tracking-widest transition-colors disabled:opacity-50 inline-flex items-center justify-center gap-2 shadow-md shadow-emerald-600/10"
+                onClick={() => setShowAutoGenerateModal(true)}
+                className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs uppercase tracking-widest transition-colors inline-flex items-center justify-center gap-2 shadow-md shadow-emerald-600/10"
               >
-                {isGenerating ? (
-                  <>
-                    <span className="w-3 h-3 border-2 border-white/50 border-t-white rounded-full animate-spin"></span>
-                    Calculating...
-                  </>
-                ) : (
-                  'Go / Generate Suggestions'
-                )}
+                <RotateCw size={14} className="animate-spin-slow" />
+                Launch Replenishment Console
               </button>
             </div>
           )}
+
+          <AutoGenerateOrderModal 
+            isOpen={showAutoGenerateModal} 
+            onClose={() => setShowAutoGenerateModal(false)} 
+            branches={branches} 
+          />
+
 
           {orderType === 'emergency' && (
             <div className="p-3 bg-red-50 border border-red-100 rounded-xl flex items-center gap-3 text-red-600 animate-pulse">

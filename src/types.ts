@@ -1483,3 +1483,114 @@ export interface ForecastCalculationOutput {
   manualReviewReasons: string[];
   warnings: string[];
 }
+
+export interface BranchReplenishmentSnapshot {
+  id?: string;
+  tenantId: string;
+  branchId: string;
+  productId: string;
+  calculatedAt: string;
+  dataVersion: number;
+  projectedDailyConsumption: number;
+  projectedConsumption: number;
+  leadTimeStock: number;
+  safetyBuffer: number;
+  protectedRequirement: number;
+  expiryAdjustedUsableStock: number;
+  confirmedOutboundCommitments: number;
+  transferableExcess: number;
+  confidenceScore: number;
+  staleAfter: string;
+}
+
+export interface InventoryTransferReservation {
+  id?: string;
+  tenantId: string;
+  sourceBranchId: string;
+  destinationBranchId: string;
+  productId: string;
+  batchId: string | null;
+  autoGenerateRunId: string;
+  requestedQuantityBaseUnits: number;
+  reservedQuantityBaseUnits: number;
+  status: 'PENDING' | 'ACTIVE' | 'CONVERTED' | 'RELEASED' | 'EXPIRED' | 'CANCELLED';
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+  convertedTransferRequestId: string | null;
+}
+
+export interface AutoGenerateOrderRun {
+  id?: string;
+  tenantId: string;
+  runId: string;
+  branchId: string;
+  status: 'CALCULATING' | 'READY' | 'DRAFT' | 'SUBMITTING' | 'SUBMITTED' | 'PARTIALLY_SUBMITTED' | 'FAILED' | 'CANCELLED' | 'EXPIRED';
+  configuration: {
+    analysisStartDate: string;
+    analysisEndDate: string;
+    forecastCoverageDays: number;
+    requiredDeliveryDate: string;
+    safetyPolicy: string;
+    leadTimeMethod: string;
+    checkCentralStore: boolean;
+    checkOtherBranches: boolean;
+    includeExceptionalConsumption: boolean;
+    applySeasonality: boolean;
+    budgetCeiling?: number | null;
+    temporaryDemandMultiplier?: number | null;
+  };
+  calculationVersion: number;
+  productCountAnalysed: number;
+  externalLineCount: number;
+  internalLineCount: number;
+  manualReviewCount: number;
+  generatedBy: string;
+  generatedAt: string;
+  updatedAt: string;
+  submissionIdempotencyKey: string | null;
+  submittedAt: string | null;
+}
+
+export interface AutoGenerateOrderLine {
+  id?: string;
+  tenantId: string;
+  runId: string;
+  productId: string;
+  productName: string;
+  sku: string;
+  genericName: string;
+  dosageForm?: string;
+  baseUnit: string;
+  purchasePack: string;
+  unitsPerPack: number;
+  venClass?: string;
+  movementClass?: string;
+  
+  // Original outputs
+  originalRecommendationBaseUnits: number;
+  originalPurchasePacks: number;
+  originalInternalAllocation: number;
+  originalCentralAllocation: number;
+  originalDonorAllocations: { branchId: string; qtyBaseUnits: number }[];
+
+  // Final outputs
+  finalRecommendationBaseUnits: number;
+  finalPurchasePacks: number;
+  finalInternalAllocation: number;
+  finalCentralAllocation: number;
+  finalDonorAllocations: { branchId: string; qtyBaseUnits: number }[];
+
+  calculationInputs: any;
+  calculationOutputs: any;
+  confidenceScore: number;
+  warnings: string[];
+  explanation: string;
+
+  wasOverridden: boolean;
+  overrideReason: string | null;
+  overriddenBy: string | null;
+  overriddenAt: string | null;
+  isManualAdd?: boolean;
+}
+
