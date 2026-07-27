@@ -43,12 +43,18 @@ interface AutoGenerateOrderModalProps {
   isOpen: boolean;
   onClose: () => void;
   branches: Branch[];
+  initialCoverageDays: number;
+  initialProductScope: string;
+  initialCategory: string;
 }
 
 export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({ 
   isOpen, 
   onClose,
-  branches
+  branches,
+  initialCoverageDays,
+  initialProductScope,
+  initialCategory
 }) => {
   const { profile, activeBranchId } = useAuth();
   
@@ -61,17 +67,21 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   
   // Config parameters
   const [selectedBranchId, setSelectedBranchId] = useState(activeBranchId || '');
-  const [lookbackDays, setLookbackDays] = useState(30);
+  const [lookbackDays, setLookbackDays] = useState(90); // default 90 days historical lookback
   const [coverageDays, setCoverageDays] = useState(30);
+  const [productScope, setProductScope] = useState('medicines');
+  const [categoryScope, setCategoryScope] = useState('sellable_non_cosmetic');
+  
   const [deliveryDate, setDeliveryDate] = useState('');
   const [leadTimeMethod, setLeadTimeMethod] = useState<'MANUAL' | 'OBSERVED_MEDIAN' | 'HIGHER_OF_MANUAL_AND_OBSERVED' | 'TENANT_DEFAULT'>('HIGHER_OF_MANUAL_AND_OBSERVED');
   const [safetyPolicy, setSafetyPolicy] = useState('TENANT_DEFAULT');
   const [checkCentralStore, setCheckCentralStore] = useState(true);
   const [checkOtherBranches, setCheckOtherBranches] = useState(true);
-  const [includeExceptional, setIncludeExceptional] = useState(false);
+  const [excludeExceptional, setExcludeExceptional] = useState(true); // default Yes (exclude)
   const [applySeasonality, setApplySeasonality] = useState(false);
   const [budgetCeiling, setBudgetCeiling] = useState<number | ''>('');
   const [tempMultiplier, setTempMultiplier] = useState<number>(1.0);
+  const [overrideReasonText, setOverrideReasonText] = useState('');
 
   // Results state
   const [runId, setRunId] = useState<string>('');
@@ -92,6 +102,19 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   const [revalChanges, setRevalChanges] = useState<any[]>([]);
   const [showRevalDialog, setShowRevalDialog] = useState(false);
 
+  // Sync initial state values carried forward from parent InitiateOrder screen
+  useEffect(() => {
+    if (isOpen) {
+      setStep('config');
+      setCoverageDays(initialCoverageDays);
+      setProductScope(initialProductScope);
+      setCategoryScope(initialCategory);
+      if (activeBranchId) {
+        setSelectedBranchId(activeBranchId);
+      }
+    }
+  }, [isOpen, initialCoverageDays, initialProductScope, initialCategory, activeBranchId]);
+
   // Fetch products on load
   useEffect(() => {
     if (profile?.tenantId && isOpen) {
@@ -106,10 +129,55 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Step 2: Engine calculations trigger
+  // Filter products by selected product scope
+  const getFilteredProducts = () => {
+    const activeProducts = allProducts.filter(p => p.status !== 'inactive');
+    
+    switch (productScope) {
+      case 'medicines':
+        return activeProducts.filter(p => p.category === 'sellable_non_cosmetic');
+      case 'supplies':
+        return activeProducts.filter(p => {
+          const name = p.name.toLowerCase();
+          return name.includes('supply') || name.includes('syringe') || name.includes('bandage') || name.includes('glove') || name.includes('needle') || p.category === 'supplies';
+        });
+      case 'laboratory':
+        return activeProducts.filter(p => {
+          const name = p.name.toLowerCase();
+          return name.includes('lab') || name.includes('test kit') || name.includes('reagent') || name.includes('tube') || name.includes('strip');
+        });
+      case 'surgical':
+        return activeProducts.filter(p => {
+          const name = p.name.toLowerCase();
+          return name.includes('surgical') || name.includes('scalpel') || name.includes('suture') || name.includes('blade') || name.includes('catheter');
+        });
+      case 'cold_chain':
+        return activeProducts.filter(p => {
+          const name = p.name.toLowerCase();
+          return name.includes('vaccine') || name.includes('insulin') || name.includes('cold') || name.includes('injection') || (p as any).storageCondition === 'refrigerated';
+        });
+      case 'controlled':
+        return activeProducts.filter(p => {
+          const name = p.name.toLowerCase();
+          return p.prescriptionCategory === 'controlled' || name.includes('morphine') || name.includes('pethidine') || name.includes('diazepam') || name.includes('narcotic');
+        });
+      case 'category':
+        return activeProducts.filter(p => p.category === categoryScope);
+      case 'all':
+      default:
+        return activeProducts;
+    }
+  };
+
+  // Step 5: Run optimal calculations
   const runGenerationEngine = async () => {
     if (!selectedBranchId) {
       toast.error('Please select a target branch.');
+      return;
+    }
+
+    if (tempMultiplier !== 1.0 && !overrideReasonText.trim()) {
+      toast.error('Please enter a reason for the demand multiplier adjustment.');
       return;
     }
 
@@ -139,11 +207,14 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
       setProgress(35);
       setProgressMsg('Evaluating daily consumption summaries...');
 
-      // Find sellable products
-      const activeProducts = allProducts.filter(p => p.status !== 'inactive');
+      // Filter products based on selected scope
+      const targetProducts = getFilteredProducts();
+      if (targetProducts.length === 0) {
+        throw new Error('No products found matching the selected product scope.');
+      }
       
       setProgress(50);
-      setProgressMsg(`Running Core Forecasting models on ${activeProducts.length} items...`);
+      setProgressMsg(`Running Core Forecasting models on ${targetProducts.length} items...`);
 
       const tempRunId = `run_${Date.now()}`;
       const results: AutoGenerateOrderLine[] = [];
@@ -152,10 +223,10 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
       let internalCount = 0;
       let manualCount = 0;
 
-      for (let i = 0; i < activeProducts.length; i++) {
-        const product = activeProducts[i];
+      for (let i = 0; i < targetProducts.length; i++) {
+        const product = targetProducts[i];
         
-        // 1. Core Forecasting
+        // Core Forecasting
         const forecast = await calculateProductForecast({
           tenantId,
           branchId: selectedBranchId,
@@ -164,12 +235,11 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
           analysisEndDate,
           forecastCoverageDays: coverageDays,
           leadTimeMethod,
-          includeExceptionalConsumption: includeExceptional,
+          includeExceptionalConsumption: !excludeExceptional, // opposite of exclude unusual sales
           temporaryDemandMultiplier: tempMultiplier,
           useSeasonality: applySeasonality
         }, product, settings);
 
-        // Calculate suggested purchase packs
         const unitsPerPack = product.unitsPerPack || 1;
         
         let originalRecommendationBaseUnits = 0;
@@ -178,7 +248,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
         let originalDonorAllocations: { branchId: string; branchName: string; qtyBaseUnits: number }[] = [];
 
         if (forecast.calculationAllowed && forecast.grossNetRequirement > 0) {
-          // 2. Network Fulfilment calculations
+          // Network Fulfilment allocations
           const allocation = await getNetworkFulfilmentRecommendations({
             tenantId,
             branchId: selectedBranchId,
@@ -259,7 +329,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
           calculationOutputs: forecast,
           confidenceScore: forecast.confidenceScore,
           warnings: forecast.warnings,
-          explanation: `Projected daily requirement is ${forecast.projectedDailyConsumption.toFixed(2)} units. Gross requirement: ${forecast.grossNetRequirement.toFixed(0)} units.`,
+          explanation: `Projected daily consumption is ${forecast.projectedDailyConsumption.toFixed(2)} units. Gross requirement: ${forecast.grossNetRequirement.toFixed(0)} units.`,
           wasOverridden: false,
           overrideReason: null,
           overriddenBy: null,
@@ -268,9 +338,8 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
         results.push(runLine);
 
-        // Update progress dynamically
         if (i % 5 === 0) {
-          const progVal = Math.min(90, Math.floor(50 + (i / activeProducts.length) * 35));
+          const progVal = Math.min(90, Math.floor(50 + (i / targetProducts.length) * 35));
           setProgress(progVal);
         }
       }
@@ -293,13 +362,13 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
           leadTimeMethod,
           checkCentralStore,
           checkOtherBranches,
-          includeExceptionalConsumption: includeExceptional,
+          includeExceptionalConsumption: !excludeExceptional,
           applySeasonality,
           budgetCeiling: budgetCeiling === '' ? null : budgetCeiling,
           temporaryDemandMultiplier: tempMultiplier
         },
         calculationVersion: 1,
-        productCountAnalysed: activeProducts.length,
+        productCountAnalysed: targetProducts.length,
         externalLineCount: externalCount,
         internalLineCount: internalCount,
         manualReviewCount: manualCount,
@@ -356,8 +425,27 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
   // Remove Product Line
   const handleRemoveLine = (lineId: string) => {
-    if (window.confirm('Are you sure you want to remove this suggestion?')) {
-      setLines(lines.filter(l => l.productId !== lineId));
+    const reason = window.prompt('Enter reason for exclusion:');
+    if (reason !== null) {
+      const updated = lines.map(line => {
+        if (line.productId === lineId) {
+          return {
+            ...line,
+            finalPurchasePacks: 0,
+            finalRecommendationBaseUnits: 0,
+            finalInternalAllocation: 0,
+            finalCentralAllocation: 0,
+            finalDonorAllocations: [],
+            wasOverridden: true,
+            overrideReason: reason || 'Excluded by operator',
+            overriddenBy: profile?.email || 'User',
+            overriddenAt: new Date().toISOString()
+          };
+        }
+        return line;
+      });
+      setLines(updated);
+      toast.success('Product suggestion excluded.');
     }
   };
 
@@ -432,7 +520,6 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
         setRevalChanges(res.warnings);
         setShowRevalDialog(true);
       } else {
-        // Safe to submit immediately
         await executeFinalSubmission();
       }
     } catch (e: any) {
@@ -446,9 +533,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   const executeFinalSubmission = async () => {
     setSubmitting(true);
     try {
-      // First save overrides of lines back to firestore
       for (const line of lines) {
-        // Query to find line id matching productId
         const linesSnap = await getDocs(
           query(
             collection(db, 'autoGenerateOrderLines'),
@@ -460,7 +545,6 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
           const docId = linesSnap.docs[0].id;
           await setDoc(doc(db, 'autoGenerateOrderLines', docId), line);
         } else {
-          // Manual adds don't have firestore records yet, add them
           await addDoc(collection(db, 'autoGenerateOrderLines'), line);
         }
       }
@@ -508,51 +592,37 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
         {step === 'config' && (
           <div className="p-8 flex-1 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="space-y-6">
-              <h3 className="text-lg font-bold text-zinc-900 border-b pb-2">replenishment config</h3>
+              <h3 className="text-sm font-bold text-zinc-800 uppercase tracking-wider border-b pb-2">carried-forward properties</h3>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-600">Requesting Branch</label>
-                  <select 
-                    value={selectedBranchId}
-                    onChange={(e) => setSelectedBranchId(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold"
-                  >
-                    <option value="">Select Branch</option>
-                    {branches.map(b => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
-                    ))}
-                  </select>
+                  <label className="text-xs font-semibold text-zinc-600">Operating Branch</label>
+                  <input 
+                    type="text" 
+                    value={branches.find(b => b.id === selectedBranchId)?.name || 'Current Branch'}
+                    disabled
+                    className="w-full px-4 py-2.5 bg-zinc-100 border border-zinc-200 rounded-xl outline-none text-sm font-bold text-zinc-600 cursor-not-allowed"
+                  />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-600">Forecast Coverage Days</label>
-                  <select 
-                    value={coverageDays}
-                    onChange={(e) => setCoverageDays(Number(e.target.value))}
-                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold"
-                  >
-                    <option value={14}>14 Days Cover</option>
-                    <option value={30}>30 Days Cover</option>
-                    <option value={45}>45 Days Cover</option>
-                    <option value={60}>60 Days Cover</option>
-                    <option value={90}>90 Days Cover</option>
-                  </select>
+                  <label className="text-xs font-semibold text-zinc-600">Forecast Coverage Period</label>
+                  <input 
+                    type="text" 
+                    value={`${coverageDays} Days`}
+                    disabled
+                    className="w-full px-4 py-2.5 bg-zinc-100 border border-zinc-200 rounded-xl outline-none text-sm font-bold text-zinc-600 cursor-not-allowed"
+                  />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-600">Analysis Lookback</label>
-                  <select 
-                    value={lookbackDays}
-                    onChange={(e) => setLookbackDays(Number(e.target.value))}
-                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold"
-                  >
-                    <option value={14}>Last 14 Days</option>
-                    <option value={30}>Last 30 Days (Default)</option>
-                    <option value={60}>Last 60 Days</option>
-                    <option value={90}>Last 90 Days</option>
-                    <option value={180}>Last 180 Days</option>
-                  </select>
+                  <label className="text-xs font-semibold text-zinc-600">Product Scope Selected</label>
+                  <input 
+                    type="text" 
+                    value={productScope.toUpperCase().replace('_', ' ')}
+                    disabled
+                    className="w-full px-4 py-2.5 bg-zinc-100 border border-zinc-200 rounded-xl outline-none text-sm font-bold text-zinc-600 cursor-not-allowed"
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-zinc-600">Required Delivery Date</label>
@@ -570,89 +640,65 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-600">Lead-Time Method</label>
+                  <label className="text-xs font-semibold text-zinc-600">Historical Analysis Period</label>
+                  <select 
+                    value={lookbackDays}
+                    onChange={(e) => setLookbackDays(Number(e.target.value))}
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold"
+                  >
+                    <option value={30}>Previous 30 Days</option>
+                    <option value={60}>Previous 60 Days</option>
+                    <option value={90}>Previous 90 Days (Recommended)</option>
+                    <option value={180}>Previous 180 Days</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-zinc-600">Lead-Time Calculation Method</label>
                   <select 
                     value={leadTimeMethod}
                     onChange={(e) => setLeadTimeMethod(e.target.value as any)}
                     className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold"
                   >
-                    <option value="TENANT_DEFAULT">Tenant Defaults</option>
-                    <option value="MANUAL">Manual Configuration</option>
-                    <option value="OBSERVED_MEDIAN">Observed Medians (GRNs)</option>
-                    <option value="HIGHER_OF_MANUAL_AND_OBSERVED">Higher of Manual & Observed</option>
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-600">Safety Policy</label>
-                  <select 
-                    value={safetyPolicy}
-                    onChange={(e) => setSafetyPolicy(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold"
-                  >
-                    <option value="TENANT_DEFAULT">Tenant Policy Cover</option>
-                    <option value="VEN">VEN Priority Buffer</option>
-                    <option value="FAST">Fast Mover Multiplier</option>
+                    <option value="HIGHER_OF_MANUAL_AND_OBSERVED">Use higher of: Stored & Observed (Default)</option>
+                    <option value="TENANT_DEFAULT">Tenant Config default</option>
+                    <option value="MANUAL">Stored manual supplier lead times</option>
+                    <option value="OBSERVED_MEDIAN">Observed historical medians</option>
                   </select>
                 </div>
               </div>
             </div>
 
             <div className="space-y-6">
-              <h3 className="text-lg font-bold text-zinc-900 border-b pb-2">replenishment methods & constraints</h3>
-              <div className="space-y-4">
-                <label className="flex items-center gap-3 p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 cursor-pointer transition-colors border border-zinc-150">
-                  <input 
-                    type="checkbox" 
-                    checked={checkCentralStore}
-                    onChange={(e) => setCheckCentralStore(e.target.checked)}
-                    className="w-4.5 h-4.5 text-emerald-600 border-zinc-300 rounded focus:ring-emerald-500"
-                  />
-                  <div>
-                    <span className="text-sm font-bold text-zinc-800 block">Check Central HQ Store</span>
-                    <span className="text-xs text-zinc-500 block">Exempts stock from external order if available at HQ store.</span>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-3 p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 cursor-pointer transition-colors border border-zinc-150">
-                  <input 
-                    type="checkbox" 
-                    checked={checkOtherBranches}
-                    onChange={(e) => setCheckOtherBranches(e.target.checked)}
-                    className="w-4.5 h-4.5 text-emerald-600 border-zinc-300 rounded focus:ring-emerald-500"
-                  />
-                  <div>
-                    <span className="text-sm font-bold text-zinc-800 block">Scan Interbranch Networks</span>
-                    <span className="text-xs text-zinc-500 block">Safeguards other branch inventory and transfers excess allocations.</span>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-3 p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 cursor-pointer transition-colors border border-zinc-150">
-                  <input 
-                    type="checkbox" 
-                    checked={includeExceptional}
-                    onChange={(e) => setIncludeExceptional(e.target.checked)}
-                    className="w-4.5 h-4.5 text-emerald-600 border-zinc-300 rounded focus:ring-emerald-500"
-                  />
-                  <div>
-                    <span className="text-sm font-bold text-zinc-800 block">Include Exceptional Demands</span>
-                    <span className="text-xs text-zinc-500 block">Keeps erratic campaigns or high-bulk clinic requisitions in calculation.</span>
-                  </div>
-                </label>
-              </div>
-
+              <h3 className="text-sm font-bold text-zinc-800 uppercase tracking-wider border-b pb-2">forecasting parameters</h3>
+              
               <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-zinc-600">Safety-Stock Policy</label>
+                  <select 
+                    value={safetyPolicy}
+                    onChange={(e) => setSafetyPolicy(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold"
+                  >
+                    <option value="TENANT_DEFAULT">Use product or tenant policy (Default)</option>
+                    <option value="VEN">VEN Priority Overrides</option>
+                    <option value="FAST">Fast mover priority cover</option>
+                  </select>
+                </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-zinc-600">Budget Ceiling (UGX)</label>
                   <input 
                     type="number" 
                     value={budgetCeiling}
                     onChange={(e) => setBudgetCeiling(e.target.value === '' ? '' : Number(e.target.value))}
-                    placeholder="None limit"
+                    placeholder="No budget ceiling"
                     className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-600">Temp Demand Multiplier</label>
+                  <label className="text-xs font-semibold text-zinc-600">Temporary Demand Multiplier</label>
                   <input 
                     type="number" 
                     step="0.1"
@@ -660,6 +706,51 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                     onChange={(e) => setTempMultiplier(Number(e.target.value))}
                     className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold"
                   />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-zinc-600">Reason for Adjustment</label>
+                  <input 
+                    type="text" 
+                    placeholder="Required if multiplier != 1.0"
+                    value={overrideReasonText}
+                    onChange={(e) => setOverrideReasonText(e.target.value)}
+                    disabled={tempMultiplier === 1.0}
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold disabled:bg-zinc-100 disabled:cursor-not-allowed"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={checkCentralStore}
+                      onChange={(e) => setCheckCentralStore(e.target.checked)}
+                      className="w-4 h-4 text-emerald-600 border-zinc-300 rounded focus:ring-emerald-500"
+                    />
+                    <span className="text-xs font-bold text-zinc-700">Check Central Store</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={checkOtherBranches}
+                      onChange={(e) => setCheckOtherBranches(e.target.checked)}
+                      className="w-4 h-4 text-emerald-600 border-zinc-300 rounded focus:ring-emerald-500"
+                    />
+                    <span className="text-xs font-bold text-zinc-700">Check Other Branches</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={excludeExceptional}
+                      onChange={(e) => setExcludeExceptional(e.target.checked)}
+                      className="w-4 h-4 text-emerald-600 border-zinc-300 rounded focus:ring-emerald-500"
+                    />
+                    <span className="text-xs font-bold text-zinc-700">Exclude unusual/one-off sales</span>
+                  </label>
                 </div>
               </div>
             </div>
@@ -673,7 +764,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                 className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm transition-colors inline-flex items-center gap-2"
               >
                 <Play size={16} fill="white" />
-                Launch Calculations
+                Generate Optimal Order
               </button>
             </div>
           </div>
@@ -698,7 +789,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
         {step === 'results' && (
           <div className="flex-1 overflow-hidden flex flex-col">
-            {/* Quick stats cards */}
+            {/* Stats Summary Panel */}
             <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-4 bg-zinc-50/50 border-b border-zinc-100">
               <div className="bg-white p-4 rounded-2xl border border-zinc-200 shadow-sm flex items-center gap-3">
                 <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
@@ -749,20 +840,20 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
               </div>
             </div>
 
-            {/* Results sections tabs */}
+            {/* Step 6: Review Screen Divided into Tabs */}
             <div className="px-6 py-2 border-b flex items-center justify-between">
               <div className="flex gap-2">
                 <button 
                   onClick={() => setActiveTab('external')}
                   className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${activeTab === 'external' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'}`}
                 >
-                  A. External Purchase Draft ({lines.filter(l => l.finalPurchasePacks > 0).length})
+                  A. External Purchase Required ({lines.filter(l => l.finalPurchasePacks > 0).length})
                 </button>
                 <button 
                   onClick={() => setActiveTab('internal')}
                   className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${activeTab === 'internal' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'}`}
                 >
-                  B. Internal Fulfilment ({lines.filter(l => l.finalInternalAllocation > 0).length})
+                  B. Available Internally ({lines.filter(l => l.finalInternalAllocation > 0).length})
                 </button>
                 <button 
                   onClick={() => setActiveTab('review')}
@@ -774,7 +865,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                   onClick={() => setActiveTab('excluded')}
                   className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${activeTab === 'excluded' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'}`}
                 >
-                  D. Excluded ({lines.filter(l => l.finalPurchasePacks === 0 && l.finalInternalAllocation === 0).length})
+                  D. Excluded Products ({lines.filter(l => l.finalPurchasePacks === 0 && l.finalInternalAllocation === 0).length})
                 </button>
               </div>
 
@@ -783,12 +874,12 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                   onClick={() => setShowAddProduct(true)}
                   className="px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-bold rounded-lg text-xs inline-flex items-center gap-1.5 transition-colors"
                 >
-                  <Plus size={14} /> Add Product
+                  <Plus size={14} /> Add Product Manually
                 </button>
               </div>
             </div>
 
-            {/* Tables Area */}
+            {/* Tab tables */}
             <div className="flex-1 overflow-y-auto p-6">
               {activeTab === 'external' && (
                 <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
@@ -797,11 +888,11 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                       <tr className="bg-zinc-50 text-zinc-600 font-bold border-b border-zinc-200">
                         <th className="p-3">Product Name</th>
                         <th className="p-3">Usable Stock</th>
-                        <th className="p-3">Incoming</th>
-                        <th className="p-3">Projected Cover</th>
-                        <th className="p-3">Requirement</th>
-                        <th className="p-3">Suggested Packs</th>
-                        <th className="p-3">Unit Cost</th>
+                        <th className="p-3">Projected Demand</th>
+                        <th className="p-3">Safety Stock</th>
+                        <th className="p-3">Confirmed Incoming</th>
+                        <th className="p-3 font-bold text-zinc-900">Suggested Packs</th>
+                        <th className="p-3">Cost per Pack</th>
                         <th className="p-3">Total Cost</th>
                         <th className="p-3">Confidence</th>
                         <th className="p-3 text-right">Actions</th>
@@ -812,11 +903,20 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                         const cost = line.finalPurchasePacks * ((line.calculationInputs as any)?.costPricePerPack || 0);
                         return (
                           <tr key={line.productId} className="border-b border-zinc-150 hover:bg-zinc-50/50">
-                            <td className="p-3 font-semibold text-zinc-900">{line.productName}</td>
+                            <td className="p-3 font-semibold text-zinc-900">
+                              <div>
+                                {line.productName}
+                                {line.wasOverridden && (
+                                  <span className="ml-2 text-[10px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.5 rounded">
+                                    Edited
+                                  </span>
+                                )}
+                              </div>
+                            </td>
                             <td className="p-3 text-zinc-600">{line.calculationOutputs?.expiryAdjustedUsableStock || 0}</td>
-                            <td className="p-3 text-zinc-600">{line.calculationOutputs?.confirmedIncoming || 0}</td>
                             <td className="p-3 text-zinc-600">{line.calculationOutputs?.projectedConsumption?.toFixed(0) || 0}</td>
-                            <td className="p-3 font-bold text-zinc-900">{line.finalRecommendationBaseUnits}</td>
+                            <td className="p-3 text-zinc-600">{line.calculationOutputs?.safetyBufferStock?.toFixed(0) || 0}</td>
+                            <td className="p-3 text-zinc-600">{line.calculationOutputs?.confirmedIncoming || 0}</td>
                             <td className="p-3">
                               <input 
                                 type="number" 
@@ -932,6 +1032,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                         <th className="p-3">Usable Stock</th>
                         <th className="p-3">Incoming Commitments</th>
                         <th className="p-3">Gross Requirement</th>
+                        <th className="p-3">Exclusion Reason</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -941,6 +1042,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                           <td className="p-3 text-zinc-400">{line.calculationOutputs?.expiryAdjustedUsableStock || 0}</td>
                           <td className="p-3 text-zinc-400">{line.calculationOutputs?.confirmedIncoming || 0}</td>
                           <td className="p-3 text-zinc-400">{line.calculationOutputs?.grossNetRequirement || 0}</td>
+                          <td className="p-3 text-zinc-500 text-xs">{line.overrideReason || 'Stock sufficient / zero requirement'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -970,7 +1072,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
           </div>
         )}
 
-        {/* Step 4: Success Screen */}
+        {/* Step 8: Success Screen */}
         {step === 'success' && (
           <div className="p-12 flex-1 flex flex-col items-center justify-center space-y-6 animate-fade-in">
             <div className="w-16 h-16 bg-green-50 rounded-full flex items-center justify-center text-green-600 shadow-md">

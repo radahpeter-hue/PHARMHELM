@@ -340,6 +340,9 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const [orderType, setOrderType] = useState<'monthly' | 'weekly' | 'emergency'>('monthly');
   const [category, setCategory] = useState<'sellable_non_cosmetic' | 'sellable_cosmetic' | 'non_sellable'>('sellable_non_cosmetic');
   const [genMethod, setGenMethod] = useState<'manual' | 'auto_generated'>('manual');
+  const [coveragePeriod, setCoveragePeriod] = useState<'1_month' | '2_months' | '3_months' | 'custom'>('1_month');
+  const [customCoverageDays, setCustomCoverageDays] = useState<number>(30);
+  const [productScope, setProductScope] = useState<string>('medicines');
   const [consumptionPeriod, setConsumptionPeriod] = useState<2 | 3 | 6>(3);
   const [products, setProducts] = useState<Product[]>([]);
   const [operationalInventory, setOperationalInventory] = useState<OperationalInventory[]>([]);
@@ -679,44 +682,80 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       <div className="lg:col-span-2 space-y-6">
         <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Step 2: Order coverage period */}
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-zinc-700">Order Type</label>
+              <label className="text-sm font-semibold text-zinc-700">Order Coverage Period</label>
               <select 
-                value={orderType} 
-                onChange={(e) => setOrderType(e.target.value as any)}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                value={coveragePeriod} 
+                onChange={(e) => setCoveragePeriod(e.target.value as any)}
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold"
               >
-                <option value="monthly">Monthly Order</option>
-                <option value="weekly">Weekly Replenishment</option>
-                <option value="emergency">Emergency Order</option>
+                <option value="1_month">1 Month (30 days)</option>
+                <option value="2_months">2 Months (60 days)</option>
+                <option value="3_months">3 Months (90 days)</option>
+                <option value="custom">Custom Period</option>
               </select>
+              {coveragePeriod === 'custom' && (
+                <div className="mt-2 animate-fade-in">
+                  <label className="text-xs text-zinc-500 font-bold block mb-1">Coverage Days</label>
+                  <input 
+                    type="number"
+                    value={customCoverageDays}
+                    onChange={(e) => setCustomCoverageDays(Number(e.target.value))}
+                    className="w-full px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-xs font-semibold"
+                  />
+                </div>
+              )}
             </div>
+
+            {/* Step 2: Product scope */}
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-zinc-700">Category</label>
+              <label className="text-sm font-semibold text-zinc-700">Product Scope</label>
               <select 
-                value={category} 
-                onChange={(e) => handleCategoryChange(e.target.value as any)}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                value={productScope} 
+                onChange={(e) => setProductScope(e.target.value)}
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold"
               >
-                <option value="sellable_non_cosmetic">Sellable Non-Cosmetic</option>
-                <option value="sellable_cosmetic">Sellable Cosmetic</option>
-                <option value="non_sellable">Non-Sellable (Operational)</option>
+                <option value="all">All Products</option>
+                <option value="medicines">Medicines</option>
+                <option value="supplies">Medical Supplies</option>
+                <option value="laboratory">Laboratory Products</option>
+                <option value="surgical">Surgical Products</option>
+                <option value="cold_chain">Cold-Chain Products</option>
+                <option value="controlled">Controlled Medicines</option>
+                <option value="category">Selected Category</option>
               </select>
+              {productScope === 'category' && (
+                <div className="mt-2 animate-fade-in">
+                  <label className="text-xs text-zinc-500 font-bold block mb-1">Category Type</label>
+                  <select 
+                    value={category} 
+                    onChange={(e) => handleCategoryChange(e.target.value as any)}
+                    className="w-full px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-xs font-semibold"
+                  >
+                    <option value="sellable_non_cosmetic">Sellable Non-Cosmetic</option>
+                    <option value="sellable_cosmetic">Sellable Cosmetic</option>
+                    <option value="non_sellable">Non-Sellable (Operational)</option>
+                  </select>
+                </div>
+              )}
             </div>
+
+            {/* Step 3: Order Method */}
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-zinc-700">Method</label>
+              <label className="text-sm font-semibold text-zinc-700">Preparation Method</label>
               <select 
                 value={genMethod} 
                 onChange={(e) => setGenMethod(e.target.value as any)}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold"
               >
-                <option value="manual">Manual Build</option>
-                <option value="auto_generated">Auto-Generate</option>
+                <option value="manual">Manual Order</option>
+                <option value="auto_generated">Auto-Generate Order</option>
               </select>
             </div>
           </div>
 
-          {/* Autogenerate suggestions based on history row - redesigning to be fully supportive on laptop/tablet screens */}
+          {/* Step 4: Auto-Generate order banner triggers modal */}
           {genMethod === 'auto_generated' && (
             <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-4 animate-fade-in">
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
@@ -736,9 +775,11 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
           <AutoGenerateOrderModal 
             isOpen={showAutoGenerateModal} 
             onClose={() => setShowAutoGenerateModal(false)} 
-            branches={branches} 
+            branches={branches}
+            initialCoverageDays={coveragePeriod === '1_month' ? 30 : coveragePeriod === '2_months' ? 60 : coveragePeriod === '3_months' ? 90 : customCoverageDays}
+            initialProductScope={productScope}
+            initialCategory={category}
           />
-
 
           {orderType === 'emergency' && (
             <div className="p-3 bg-red-50 border border-red-100 rounded-xl flex items-center gap-3 text-red-600 animate-pulse">
