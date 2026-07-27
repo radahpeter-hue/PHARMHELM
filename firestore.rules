@@ -409,6 +409,11 @@ service cloud.firestore {
       allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
     }
 
+    match /replenishmentEngineSettings/{settingsId} {
+      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+    }
+
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);

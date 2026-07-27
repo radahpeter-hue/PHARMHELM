@@ -1408,3 +1408,78 @@ export interface BillableService {
   price: number;
   defaultFee?: number;
 }
+
+export interface ReplenishmentEngineSettings {
+  tenantId: string;
+  defaultLookbackDays: number;
+  defaultCoverageDays: number;
+  defaultLeadTimeDays: number;
+  defaultSafetyDays: number;
+  trendWeight: number;
+  trendMinimumMultiplier: number;
+  trendMaximumMultiplier: number;
+  stockoutAdjustmentCap: number;
+  minimumValidHistoryDays: number;
+  seasonalityEnabled: boolean;
+  seasonalityMinimumMonths: number;
+  currentPeriodWeight: number;
+  historicalPeriodWeight: number;
+  observedLeadTimeDeliveryCount: number;
+  minimumLeadTimeObservations: number;
+  leadTimeMethod: 'MANUAL' | 'OBSERVED_MEDIAN' | 'HIGHER_OF_MANUAL_AND_OBSERVED' | 'TENANT_DEFAULT';
+  confidenceHighThreshold: number;
+  confidenceModerateThreshold: number;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface ForecastCalculationInput {
+  tenantId: string;
+  branchId: string;
+  productIds?: string[];
+  analysisStartDate: string;
+  analysisEndDate: string;
+  forecastCoverageDays: number;
+  leadTimeMethod?: string;
+  manualLeadTimeOverrideDays?: number | null;
+  safetyPolicy?: string;
+  safetyDaysOverride?: number | null;
+  includeExceptionalConsumption: boolean;
+  temporaryDemandMultiplier?: number | null;
+  useSeasonality: boolean;
+}
+
+export interface ForecastCalculationOutput {
+  tenantId: string;
+  branchId: string;
+  productId: string;
+  analysisPeriod: {
+    startDate: string;
+    endDate: string;
+    totalDays: number;
+    validStockedDays: number;
+  };
+  actualConsumption: number;
+  adjustedConsumption: number;
+  adc: number;
+  earlierHalfAdc: number;
+  recentHalfAdc: number;
+  trendMultiplier: number;
+  seasonalityStatus: string;
+  projectedDailyConsumption: number;
+  projectedConsumption: number;
+  effectiveLeadTimeDays: number;
+  leadTimeSource: string;
+  leadTimeStock: number;
+  effectiveSafetyDays: number;
+  safetyBuffer: number;
+  targetStockLevel: number;
+  expiryAdjustedUsableStock: number;
+  confirmedIncoming: number;
+  grossNetRequirement: number;
+  confidenceScore: number;
+  confidenceLabel: string;
+  calculationAllowed: boolean;
+  manualReviewReasons: string[];
+  warnings: string[];
+}
