@@ -434,6 +434,14 @@ service cloud.firestore {
       allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
     }
 
+    match /pos_quotations/{quotationId} {
+      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId) || isAdmin());
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && request.resource.data.status == 'Draft';
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (request.resource.data.status in ['Converted', 'Expired']);
+      allow delete: if false; // quotations are never hard-deleted
+    }
+
+
 
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {

@@ -19,7 +19,9 @@ import {
   StockOrder,
   StockOrderLine,
   TransferInvoice,
-  ReplenishmentEngineSettings
+  ReplenishmentEngineSettings,
+  AutoGenerateOrderRun,
+  AutoGenerateOrderLine
 } from '../src/types';
 import { calculateProductForecast } from '../src/services/forecastingService';
 import { 
@@ -105,7 +107,7 @@ async function setupTestData() {
   await setDoc(doc(db, 'replenishmentEngineSettings', `${TEST_TENANT}_settings`), settings);
 
   // 2. Product
-  const product: Product = {
+  const product: any = {
     id: TEST_PRODUCT,
     tenantId: TEST_TENANT,
     productId: TEST_PRODUCT,
@@ -146,7 +148,7 @@ async function setupTestData() {
   for (let i = 0; i <= 30; i++) {
     const dateKey = tempDate.toISOString().split('T')[0];
     
-    const cDonor1: BranchConsumptionDaily = {
+    const cDonor1: any = {
       tenantId: TEST_TENANT,
       branchId: TEST_BRANCH_DONOR_1,
       productId: TEST_PRODUCT,
@@ -158,7 +160,7 @@ async function setupTestData() {
     };
     await setDoc(doc(db, 'branchConsumptionDaily', `${TEST_TENANT}_${TEST_BRANCH_DONOR_1}_${TEST_PRODUCT}_${dateKey}`), cDonor1);
 
-    const cDonor2: BranchConsumptionDaily = {
+    const cDonor2: any = {
       tenantId: TEST_TENANT,
       branchId: TEST_BRANCH_DONOR_2,
       productId: TEST_PRODUCT,
@@ -174,7 +176,7 @@ async function setupTestData() {
   }
 
   // 5. Product Batches usable stock setup
-  const batchD1: ProductBatch = {
+  const batchD1: any = {
     id: `batch_${TEST_BRANCH_DONOR_1}`,
     tenantId: TEST_TENANT,
     branchId: TEST_BRANCH_DONOR_1,
@@ -186,7 +188,7 @@ async function setupTestData() {
   };
   await setDoc(doc(db, 'product_batches', batchD1.id), batchD1);
 
-  const batchD2: ProductBatch = {
+  const batchD2: any = {
     id: `batch_${TEST_BRANCH_DONOR_2}`,
     tenantId: TEST_TENANT,
     branchId: TEST_BRANCH_DONOR_2,
@@ -198,7 +200,7 @@ async function setupTestData() {
   };
   await setDoc(doc(db, 'product_batches', batchD2.id), batchD2);
 
-  const batchHQ: ProductBatch = {
+  const batchHQ: any = {
     id: `batch_${TEST_BRANCH_HQ}`,
     tenantId: TEST_TENANT,
     branchId: TEST_BRANCH_HQ,

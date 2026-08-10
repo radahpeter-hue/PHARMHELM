@@ -5,11 +5,13 @@ import {
 } from 'recharts';
 import { 
   TrendingUp, TrendingDown, DollarSign, ShoppingCart, 
-  Percent, Target, Users, AlertTriangle, RefreshCw, Clock
+  Percent, Target, Users, AlertTriangle, RefreshCw, Clock, FileText
 } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { useAuth } from '../../contexts/AuthContext';
 import { firestoreService } from '../../services/firestore';
+import { db } from '../../firebase';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
@@ -26,6 +28,20 @@ export const POSAnalytics: React.FC = () => {
         setLoading(false);
       });
       return () => unsubscribe();
+    }
+  }, [profile?.tenantId]);
+
+  const [quotations, setQuotations] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (profile?.tenantId) {
+      const q = query(
+        collection(db, 'pos_quotations'),
+        where('tenantId', '==', profile.tenantId)
+      );
+      getDocs(q).then((snap) => {
+        setQuotations(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }).catch(err => console.warn('Failed to load quotations for analytics:', err));
     }
   }, [profile?.tenantId]);
 
@@ -208,6 +224,56 @@ export const POSAnalytics: React.FC = () => {
   })) : [
     { name: 'Walk-In Customer Standard Prescription', units: sales.length, revenue: totalSalesVal, profit: Math.round(totalSalesVal * 0.4) }
   ];
+
+  // Quote performance calculations
+  const quotesCount = quotations.length;
+  const converted = quotations.filter(q => q.status === 'Converted');
+  const expired = quotations.filter(q => q.status === 'Expired' || (q.status === 'Draft' && q.validityDate?.toDate() < new Date()));
+  const totalResolved = converted.length + expired.length;
+  const conversionRate = totalResolved > 0 ? Math.round((converted.length / totalResolved) * 100) : 0;
+
+  let totalConvertDays = 0;
+  let convertCount = 0;
+  converted.forEach(q => {
+    const start = q.createdAt?.toDate();
+    const end = q.convertedAt?.toDate() || (q.convertedAt ? new Date(q.convertedAt) : null);
+    if (start && end) {
+      const diffTime = Math.abs(end.getTime() - start.getTime());
+      const diffDays = diffTime / (1000 * 60 * 60 * 24);
+      totalConvertDays += diffDays;
+      convertCount++;
+    }
+  });
+  const avgTimeToConvert = convertCount > 0 ? (totalConvertDays / convertCount).toFixed(1) : 'N/A';
+
+  const totalQuotedValue = converted.reduce((sum, q) => sum + (q.grandTotal || 0), 0);
+  const totalConvertedValue = converted.reduce((sum, q) => sum + (q.convertedValue || q.grandTotal || 0), 0);
+
+  const staffQuotesMap: Record<string, { total: number; converted: number; name: string }> = {};
+  quotations.forEach(q => {
+    const author = q.createdBy || 'unknown';
+    const authorName = q.createdByName || 'Staff';
+    if (!staffQuotesMap[author]) {
+      staffQuotesMap[author] = { total: 0, converted: 0, name: authorName };
+    }
+    const displayStatus = (q.status === 'Draft' && q.validityDate?.toDate() < new Date()) ? 'Expired' : q.status;
+    if (displayStatus === 'Converted') {
+      staffQuotesMap[author].converted++;
+      staffQuotesMap[author].total++;
+    } else if (displayStatus === 'Expired') {
+      staffQuotesMap[author].total++;
+    }
+  });
+  const staffRankings = Object.values(staffQuotesMap)
+    .map(item => ({
+      name: item.name,
+      rate: item.total > 0 ? Math.round((item.converted / item.total) * 100) : 0,
+      total: item.total,
+      converted: item.converted
+    }))
+    .sort((a, b) => b.rate - a.rate);
+
+  const totalExpiredValue = expired.reduce((sum, q) => sum + (q.grandTotal || 0), 0);
 
   return (
     <div className="space-y-8 animate-in fade-in">
@@ -450,6 +516,108 @@ export const POSAnalytics: React.FC = () => {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+
+        {/* Quote Performance Panel */}
+        <div className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
+              <FileText size={20} />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-zinc-900">Quotation Performance Intelligence</h3>
+              <p className="text-sm text-zinc-500 font-medium">Analytics for price quotes, conversion rates, and missed revenues</p>
+            </div>
+          </div>
+          
+          {/* Statistics Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div className="p-5 bg-zinc-50 rounded-2xl border border-zinc-100 flex flex-col justify-between">
+              <span className="text-[10px] text-zinc-400 font-extrabold uppercase tracking-wider block">Total Quotations</span>
+              <span className="text-2xl font-black text-zinc-900 mt-2 block">{quotesCount}</span>
+              <span className="text-[10px] text-zinc-500 font-medium block mt-1">Generated in active branch</span>
+            </div>
+
+            <div className="p-5 bg-zinc-50 rounded-2xl border border-zinc-100 flex flex-col justify-between">
+              <span className="text-[10px] text-zinc-400 font-extrabold uppercase tracking-wider block">Conversion Rate</span>
+              <span className="text-2xl font-black text-emerald-600 mt-2 block">{conversionRate}%</span>
+              <span className="text-[10px] text-zinc-500 font-medium block mt-1">Converted vs Expired quotes</span>
+            </div>
+
+            <div className="p-5 bg-zinc-50 rounded-2xl border border-zinc-100 flex flex-col justify-between">
+              <span className="text-[10px] text-zinc-400 font-extrabold uppercase tracking-wider block">Avg Time To Convert</span>
+              <span className="text-2xl font-black text-blue-600 mt-2 block">
+                {avgTimeToConvert === 'N/A' ? 'N/A' : `${avgTimeToConvert} Days`}
+              </span>
+              <span className="text-[10px] text-zinc-500 font-medium block mt-1">Quotation creation to POS sale</span>
+            </div>
+
+            <div className="p-5 bg-amber-50/50 rounded-2xl border border-amber-200/60 flex flex-col justify-between">
+              <span className="text-[10px] text-amber-700 font-extrabold uppercase tracking-wider block">Expired Quotations Value</span>
+              <span className="text-2xl font-black text-amber-600 mt-2 block">UGX {totalExpiredValue.toLocaleString()}</span>
+              <span className="text-[10px] text-amber-500 font-semibold block mt-1">Missed revenue opportunity</span>
+            </div>
+          </div>
+
+          {/* Details Metrics */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-4">
+            {/* Quote Drift Table */}
+            <div className="space-y-4">
+              <h4 className="text-xs font-black text-zinc-400 uppercase tracking-widest font-mono">Quotation Price & Volume Drift</h4>
+              <div className="p-5 bg-zinc-50 rounded-2xl border border-zinc-100 space-y-4 font-sans text-xs">
+                <div className="flex justify-between items-center border-b border-zinc-100 pb-3">
+                  <span className="text-zinc-500 font-medium">Sum of Quoted Value (Converted Only)</span>
+                  <span className="font-bold text-zinc-950">UGX {totalQuotedValue.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between items-center border-b border-zinc-100 pb-3">
+                  <span className="text-zinc-500 font-medium">Sum of Actual POS Receipt Value</span>
+                  <span className="font-bold text-zinc-950">UGX {totalConvertedValue.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-zinc-500 font-medium">Value Drift Variance</span>
+                  <span className={`font-extrabold font-mono ${
+                    (totalConvertedValue - totalQuotedValue) >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                  }`}>
+                    UGX {(totalConvertedValue - totalQuotedValue).toLocaleString()} ({
+                      totalQuotedValue > 0 ? `${(((totalConvertedValue - totalQuotedValue) / totalQuotedValue) * 100).toFixed(1)}%` : '0%'
+                    })
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Top Conversion Staff */}
+            <div className="space-y-4">
+              <h4 className="text-xs font-black text-zinc-400 uppercase tracking-widest font-mono">Top Staff Conversion Rankings</h4>
+              <div className="border border-zinc-150 rounded-2xl overflow-hidden text-xs">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-zinc-50 border-b border-zinc-150 text-zinc-500 font-bold">
+                      <th className="p-3">Staff Name</th>
+                      <th className="p-3 text-center">Resolved Quotes</th>
+                      <th className="p-3 text-center">Converted</th>
+                      <th className="p-3 text-right">Conversion Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {staffRankings.slice(0, 5).map((s, idx) => (
+                      <tr key={idx} className="hover:bg-zinc-50/50">
+                        <td className="p-3 font-semibold text-zinc-800">{s.name}</td>
+                        <td className="p-3 text-center text-zinc-650">{s.total}</td>
+                        <td className="p-3 text-center text-zinc-650">{s.converted}</td>
+                        <td className="p-3 text-right font-bold text-emerald-600">{s.rate}%</td>
+                      </tr>
+                    ))}
+                    {staffRankings.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="p-4 text-center text-zinc-400 italic">No quotations conversions recorded.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       </div>

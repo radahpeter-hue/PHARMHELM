@@ -3,7 +3,7 @@ import {
   Search, ShoppingCart, Plus, Minus, Trash2, CreditCard, Banknote, 
   Smartphone, Receipt, Package, User, Building2, Stethoscope, 
   Truck, Percent, Check, X, ChevronRight, ChevronDown, Video, Printer, ShieldCheck,
-  History, Filter, Calendar, ArrowLeft, AlertCircle, RotateCcw, Edit2
+  History, Filter, Calendar, ArrowLeft, AlertCircle, RotateCcw, Edit2, FileText
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { firestoreService } from '../services/firestore';
@@ -25,6 +25,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { where, query, collection } from 'firebase/firestore';
+import { QuotationPreview } from '../components/sales/QuotationPreview';
+import { A4InvoiceTemplate } from '../components/sales/A4InvoiceTemplate';
+import { QuotationsLog } from '../components/sales/QuotationsLog';
+
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -43,7 +47,7 @@ function generateUUID() {
 
 const Sales: React.FC = () => {
   const { profile, activeBranchId, activeBranch } = useAuth();
-  const [view, setView] = useState<'pos' | 'ledger'>('pos');
+  const [view, setView] = useState<'pos' | 'ledger' | 'quotations'>('pos');
   const [products, setProducts] = useState<Product[]>([]);
   const [batches, setBatches] = useState<ProductBatch[]>([]);
   const [services, setServices] = useState<BillableService[]>([]);
@@ -78,6 +82,11 @@ const Sales: React.FC = () => {
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
   const [isReceiptEditModalOpen, setIsReceiptEditModalOpen] = useState(false);
   const [selectedReceipt, setSelectedReceipt] = useState<Sale | null>(null);
+
+  const [showQuotationModal, setShowQuotationModal] = useState(false);
+  const [resumedQuotationId, setResumedQuotationId] = useState<string | null>(null);
+  const [showA4InvoiceModal, setShowA4InvoiceModal] = useState(false);
+  const [selectedA4ReceiptId, setSelectedA4ReceiptId] = useState<string | null>(null);
 
   // Direct Ledger Edit states
   const [ledgerEditingSale, setLedgerEditingSale] = useState<Sale | null>(null);
@@ -528,7 +537,7 @@ const Sales: React.FC = () => {
     setIsCheckoutOpen(true);
   };
 
-  const completeSale = async () => {
+  const completeSale = async (alsoGenerateA4: boolean = false) => {
     if (!profile) return;
 
     // Check if any cart item's price is below cost price of that specific batch
@@ -569,6 +578,7 @@ const Sales: React.FC = () => {
       });
 
       const finalTotal = totalAmount;
+      let finalReceiptId = editingSaleId;
 
       if (editingSaleId) {
         const originalSale = sales.find(s => s.id === editingSaleId);
@@ -711,6 +721,7 @@ const Sales: React.FC = () => {
 
         const newSaleId = await firestoreService.addDocument('sales', saleData);
         if (newSaleId) {
+          finalReceiptId = newSaleId;
           await logSaleMovements(newSaleId, { ...saleData, id: newSaleId }, false, null, profile.uid);
         }
       }
@@ -780,12 +791,35 @@ const Sales: React.FC = () => {
         }
       }
 
+      // Link with resumed quotation if applicable
+      if (resumedQuotationId) {
+        try {
+          await firestoreService.updateDocument('pos_quotations', resumedQuotationId, {
+            status: 'Converted',
+            convertedReceiptId: finalReceiptId || receiptNumber,
+            convertedAt: new Date().toISOString(),
+            convertedValue: finalTotal
+          });
+        } catch (e) {
+          console.warn('Failed to update resumed quotation status:', e);
+        }
+        setResumedQuotationId(null);
+      }
+
+      // Check if we also want to display A4 invoice preview immediately
+      if (alsoGenerateA4 && finalReceiptId) {
+        setSelectedA4ReceiptId(finalReceiptId);
+        setShowA4InvoiceModal(true);
+      }
+
       toast.success(`${editingSaleId ? 'Sale updated' : 'Sale completed'}! Receipt: ${receiptNumber}`);
       setCart([]);
       setDiscountPercentage(0);
       setSelectedPatient(null);
       setSelectedInstitution(null);
       setSelectedPrescriber(null);
+      setContext('walk-in');
+      setPaymentMethod('cash');
       setIsCheckoutOpen(false);
       setEditingSaleId(null);
     } catch (error) {
@@ -1122,14 +1156,30 @@ const Sales: React.FC = () => {
             <Receipt className="w-4 h-4" />
             Receipt Ledger
           </button>
+          <button
+            onClick={() => setView('quotations')}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
+              view === 'quotations' 
+                ? "bg-white text-zinc-900 shadow-sm border border-zinc-200" 
+                : "text-zinc-500 hover:text-zinc-700"
+            )}
+          >
+            <FileText className="w-4 h-4" />
+            Quotations
+          </button>
         </div>
       </div>
 
-      {view === 'pos' ? (
+      {view === 'pos' && (
         <div className="flex-1 flex flex-col gap-6 overflow-visible lg:overflow-hidden animate-fade-in">
           {/* Top Bar: Context Selection & Receipt Ledger Toggle */}
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-2 rounded-2xl border border-zinc-200 shadow-sm">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 w-full bg-zinc-50/50 p-4 rounded-3xl border border-zinc-200/60 shadow-sm">
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] text-zinc-400 font-extrabold uppercase tracking-wider">Transaction Mode</span>
+              <span className="text-xs font-semibold text-zinc-650">Select active billing and patient context</span>
+            </div>
+            <div className="flex items-center gap-2 bg-white p-1 rounded-2xl border border-zinc-150 shadow-inner w-full md:w-auto">
               {[
                 { id: 'walk-in', label: 'Walk-In', icon: User },
                 { id: 'telepharmacy', label: 'Telepharmacy', icon: Video },
@@ -1139,16 +1189,17 @@ const Sales: React.FC = () => {
                   key={ctx.id}
                   onClick={() => {
                     setContext(ctx.id as SaleContext);
-                    toast.info(`Switched context to ${ctx.label}`);
+                    toast.info(`Switched transaction context to ${ctx.label}`);
                   }}
+                  type="button"
                   className={cn(
-                    "flex items-center gap-2.5 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200",
+                    "flex-1 md:flex-none flex items-center justify-center gap-2.5 px-6 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 outline-none select-none",
                     context === ctx.id 
-                      ? "bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 scale-[1.02]" 
+                      ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/15 scale-[1.02]" 
                       : "text-zinc-550 hover:bg-zinc-50 hover:text-zinc-900"
                   )}
                 >
-                  <ctx.icon size={16} strokeWidth={2.5} />
+                  <ctx.icon size={14} strokeWidth={3} />
                   <span>{ctx.label}</span>
                 </button>
               ))}
@@ -1444,11 +1495,21 @@ const Sales: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex justify-end pt-2 border-t border-zinc-150/40">
+                <div className="flex flex-col sm:flex-row justify-end gap-3 pt-2 border-t border-zinc-150/40 w-full">
+                  <button 
+                    type="button"
+                    onClick={() => setShowQuotationModal(true)}
+                    disabled={cart.length === 0}
+                    className="w-full sm:w-auto px-6 py-4 bg-zinc-100 hover:bg-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 text-zinc-700 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                  >
+                    <FileText size={16} strokeWidth={3} />
+                    <span>Generate Quotation</span>
+                  </button>
+                  
                   <button 
                     onClick={handleCheckout}
                     disabled={cart.length === 0}
-                    className="w-full md:w-72 py-4 bg-emerald-500 hover:bg-emerald-600 disabled:bg-zinc-300 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg hover:shadow-emerald-500/20 active:scale-[0.98] flex items-center justify-center gap-2"
+                    className="w-full sm:w-72 py-4 bg-emerald-500 hover:bg-emerald-600 disabled:bg-zinc-300 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg hover:shadow-emerald-500/20 active:scale-[0.98] flex items-center justify-center gap-2"
                   >
                     <Receipt size={16} strokeWidth={3} />
                     <span>Checkout Now (F12)</span>
@@ -2051,18 +2112,40 @@ const Sales: React.FC = () => {
                     <p className="text-[10px] text-zinc-400 font-medium">Payment Method: <span className="text-zinc-900 font-bold uppercase">{paymentMethod.replace('_', ' ')}</span></p>
                   </div>
 
-                  <button 
-                    onClick={completeSale}
-                    disabled={isProcessing}
-                    className="w-full py-4 bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-400 text-white rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-2"
-                  >
-                    {isProcessing ? (
-                      <div className="h-5 w-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    ) : (
-                      <Printer size={20} />
-                    )}
-                    Print & Complete
-                  </button>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => completeSale(false)}
+                      disabled={isProcessing}
+                      className="flex-1 py-4 bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-400 text-white rounded-2xl font-bold text-xs transition-all flex items-center justify-center gap-1.5"
+                    >
+                      {isProcessing ? (
+                        <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <Printer size={16} />
+                      )}
+                      Print & Complete
+                    </button>
+                    
+                    <button 
+                      onClick={() => completeSale(true)}
+                      disabled={isProcessing || (!selectedPatient && !selectedInstitution)}
+                      type="button"
+                      className={cn(
+                        "flex-1 py-4 font-bold text-xs transition-all rounded-2xl flex items-center justify-center gap-1.5 border border-zinc-200",
+                        (selectedPatient || selectedInstitution)
+                          ? "bg-white text-zinc-700 hover:bg-zinc-50 cursor-pointer animate-pulse"
+                          : "bg-zinc-100 text-zinc-450 cursor-not-allowed opacity-60"
+                      )}
+                      title={
+                        (selectedPatient || selectedInstitution)
+                          ? "Print A4 Invoice"
+                          : "A4 invoice requires a linked client or institution"
+                      }
+                    >
+                      <FileText size={16} />
+                      Also Generate A4
+                    </button>
+                  </div>
                   <button 
                     onClick={() => setIsCheckoutOpen(false)}
                     className="w-full py-3 text-zinc-400 hover:text-zinc-600 text-sm font-bold transition-all"
@@ -2076,8 +2159,11 @@ const Sales: React.FC = () => {
         )}
       </AnimatePresence>
         </div>
-      ) : (
+      )}
+
+      {view === 'ledger' && (
         <ReceiptLedger 
+
           sales={sales} 
           staff={staff}
           systemSettings={systemSettings}
@@ -2150,6 +2236,10 @@ const Sales: React.FC = () => {
             toast.info(`Editing Sale ${sale.receiptNumber} directly in Ledger`);
           }}
           onEditInPOS={loadSaleIntoPOS}
+          onPrintA4={(receiptId) => {
+            setSelectedA4ReceiptId(receiptId);
+            setShowA4InvoiceModal(true);
+          }}
         />
       )}
 
@@ -2647,6 +2737,74 @@ const Sales: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {view === 'quotations' && (
+        <QuotationsLog 
+          activeBranchId={activeBranchId || 'main'}
+          activeBranch={activeBranch}
+          systemSettings={systemSettings}
+          profile={profile}
+          staff={staff}
+          clients={clients}
+          institutions={institutions}
+          setCart={setCart}
+          setContext={setContext}
+          setSelectedPatient={setSelectedPatient}
+          setSelectedInstitution={setSelectedInstitution}
+          setDiscountPercentage={setDiscountPercentage}
+          setView={setView}
+          setResumedQuotationId={setResumedQuotationId}
+        />
+      )}
+
+      {/* Quotation Preview modal overlay */}
+      {showQuotationModal && (
+        <QuotationPreview 
+          isOpen={showQuotationModal}
+          onClose={() => setShowQuotationModal(false)}
+          tenantId={profile?.tenantId || 'demo'}
+          branchId={activeBranchId || 'main'}
+          activeBranch={activeBranch}
+          systemSettings={systemSettings}
+          profile={profile}
+          selectedPatient={selectedPatient}
+          selectedInstitution={selectedInstitution}
+          cart={cart}
+          subtotal={subtotal}
+          taxTotal={cart.reduce((acc, item) => {
+            const product = products.find(p => p.id === item.productId);
+            if (product?.vatClassification === 'Standard Rated') {
+              const rate = product.vatPercentage || 18;
+              const base = item.unitPrice / (1 + (rate / 100));
+              return acc + Math.round((item.unitPrice - base) * item.quantity);
+            }
+            return acc;
+          }, 0)}
+          grandTotal={totalAmount}
+          onSuccess={() => {
+            setCart([]);
+            setSelectedPatient(null);
+            setSelectedInstitution(null);
+            setSelectedPrescriber(null);
+            setContext('walk-in');
+            setPaymentMethod('cash');
+          }}
+        />
+      )}
+
+      {/* A4 Tax Invoice modal overlay */}
+      {showA4InvoiceModal && selectedA4ReceiptId && (
+        <A4InvoiceTemplate 
+          receiptId={selectedA4ReceiptId}
+          isOpen={showA4InvoiceModal}
+          onClose={() => {
+            setShowA4InvoiceModal(false);
+            setSelectedA4ReceiptId(null);
+          }}
+          activeBranch={activeBranch}
+          systemSettings={systemSettings}
+        />
+      )}
     </div>
   );
 };
@@ -2658,9 +2816,10 @@ interface ReceiptLedgerProps {
   onEdit: (sale: Sale) => void;
   onEditInPOS?: (sale: Sale) => void;
   systemSettings: SystemSettings | null;
+  onPrintA4: (receiptId: string) => void;
 }
 
-const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettings }: ReceiptLedgerProps) => {
+const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettings, onPrintA4 }: ReceiptLedgerProps) => {
   const { activeBranch } = useAuth();
   const brandCompanyName = activeBranch?.brandName || systemSettings?.branding?.companyName || 'PharmHelm Pharmacy';
   const brandLogoUrl = activeBranch?.brandLogoUrl || systemSettings?.branding?.logoUrl;
@@ -2825,6 +2984,25 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                           <Trash2 className="w-4 h-4" />
                         </button>
                       )}
+                      {sale.status !== 'voided' && (
+                        <button 
+                          onClick={() => onPrintA4(sale.id)}
+                          disabled={!sale.patientId && !sale.institutionId}
+                          className={cn(
+                            "p-2 rounded-lg transition-colors",
+                            (sale.patientId || sale.institutionId)
+                              ? "hover:bg-blue-100 text-blue-600 cursor-pointer"
+                              : "text-zinc-300 opacity-50 cursor-not-allowed"
+                          )}
+                          title={
+                            (sale.patientId || sale.institutionId)
+                              ? "Print A4 Invoice"
+                              : "A4 invoice requires a linked client or institution"
+                          }
+                        >
+                          <FileText className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -2969,6 +3147,30 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                 <Printer className="w-4 h-4" />
                 Reprint Receipt
               </button>
+
+              {selectedSale.status !== 'voided' && (
+                <button 
+                  onClick={() => {
+                    onPrintA4(selectedSale.id);
+                  }}
+                  disabled={!selectedSale.patientId && !selectedSale.institutionId}
+                  type="button"
+                  className={cn(
+                    "w-full py-3 font-bold flex items-center justify-center gap-2 transition-all rounded-xl border border-zinc-200",
+                    (selectedSale.patientId || selectedSale.institutionId)
+                      ? "bg-white text-zinc-700 hover:bg-zinc-50 cursor-pointer"
+                      : "bg-zinc-100 text-zinc-400 cursor-not-allowed opacity-50"
+                  )}
+                  title={
+                    (selectedSale.patientId || selectedSale.institutionId)
+                      ? "Print A4 Invoice"
+                      : "A4 invoice requires a linked client or institution"
+                  }
+                >
+                  <FileText className="w-4 h-4" />
+                  Print A4 Invoice
+                </button>
+              )}
             </div>
           </motion.div>
         )}

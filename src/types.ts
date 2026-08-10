@@ -1436,6 +1436,7 @@ export interface ReplenishmentEngineSettings {
 export interface ForecastCalculationInput {
   tenantId: string;
   branchId: string;
+  productId?: string;
   productIds?: string[];
   analysisStartDate: string;
   analysisEndDate: string;
