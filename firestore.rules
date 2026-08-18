@@ -10,14 +10,18 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Returns user role/tenant information. Prefer token claims when present, then staff doc; never default to an admin/demo fallback.
     function getUserData() {
-      return request.auth != null && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/staff/$(request.auth.uid)).data
-        : {"role": "owner", "tenantId": "demo"};
+      return request.auth != null && (request.auth.token.role != null || request.auth.token.tenantId != null)
+        ? {"role": request.auth.token.role, "tenantId": request.auth.token.tenantId}
+        : request.auth != null && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
+          ? get(/databases/$(database)/documents/staff/$(request.auth.uid)).data
+          : {"role": "", "tenantId": ""};
     }
 
     function isTenantMember(tenantId) {
       return isAuthenticated() && (
+        (request.auth.token.tenantId != null && request.auth.token.tenantId == tenantId) ||
         getUserData().tenantId == tenantId ||
         request.auth.token.email == "peterssentongo61@gmail.com" ||
         request.auth.token.email == "peter.sentongo@pharmhelm" ||
@@ -30,6 +34,10 @@ service cloud.firestore {
         request.auth.token.email == "peterssentongo61@gmail.com" ||
         request.auth.token.email == "peter.sentongo@pharmhelm" ||
         request.auth.token.email == "peter.sentongo@pharmhelm.com" ||
+        request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'owner' ||
+        request.auth.token.role == 'CEO' ||
+        request.auth.token.role == 'CEO / MD' ||
         getUserData().role == 'admin' ||
         getUserData().role == 'owner' ||
         getUserData().role == 'CEO' ||
