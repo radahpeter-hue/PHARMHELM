@@ -69,6 +69,8 @@ const PlatformAdmin = () => {
   const [reauthEmail, setReauthEmail] = useState('');
   const [reauthPassword, setReauthPassword] = useState('');
   const [reauthSaving, setReauthSaving] = useState(false);
+  const [reauthAction, setReauthAction] = useState<string | null>(null);
+  const [reauthPayload, setReauthPayload] = useState<any>(null);
   const [retentionPeriod, setRetentionPeriod] = useState('365');
 
   // 1. Accounts Module States
@@ -383,13 +385,81 @@ const PlatformAdmin = () => {
       const credential = EmailAuthProvider.credential(reauthEmail, reauthPassword);
       await reauthenticateWithCredential(auth.currentUser!, credential);
 
-      await performCascadeDelete(reauthTenant.id);
+      // Branch based on requested reauthAction
+      if (reauthAction === 'purge') {
+        await performCascadeDelete(reauthTenant.id);
+        toast.success(`Tenant ${reauthTenant.name} has been permanently deleted.`);
+      } else if (reauthAction === 'updateBranchLimit') {
+        const payload = reauthPayload || {};
+        const tenantRef = doc(db, 'tenants', reauthTenant.id);
+        await updateDoc(tenantRef, { branchLimit: payload.newLimit });
+        await addDoc(collection(db, 'global_audit_logs'), {
+          action: 'BRANCH_LIMIT_CHANGED',
+          category: 'TENANT',
+          description: `Changed branchLimit from ${payload.oldLimit} to ${payload.newLimit}`,
+          timestamp: new Date().toISOString(),
+          tenantId: reauthTenant.id,
+          actor: auth.currentUser?.uid || 'system',
+          ipAddress: 'client-side',
+          device: window.navigator.userAgent || 'web'
+        });
+        toast.success(`Branch limit updated to ${payload.newLimit} for ${reauthTenant.name}`);
+      } else if (reauthAction === 'grantTrial') {
+        const payload = reauthPayload || {};
+        const tenantRef = doc(db, 'tenants', reauthTenant.id);
+        const trialStatus = {
+          isTrial: true,
+          trialBranchLimit: payload.trialBranchLimit,
+          trialStartDate: payload.trialStartDate,
+          trialEndDate: payload.trialEndDate,
+          grantedBy: auth.currentUser?.uid || 'system',
+          grantedAt: new Date().toISOString(),
+          notes: payload.notes || ''
+        };
+        await updateDoc(tenantRef, { trialStatus: trialStatus, branchLimit: payload.trialBranchLimit });
+        await addDoc(collection(db, 'global_audit_logs'), {
+          action: 'TRIAL_GRANTED',
+          category: 'TENANT',
+          description: `Trial granted: branchLimit=${payload.trialBranchLimit}, end=${payload.trialEndDate}`,
+          timestamp: new Date().toISOString(),
+          tenantId: reauthTenant.id,
+          actor: auth.currentUser?.uid || 'system',
+          ipAddress: 'client-side',
+          device: window.navigator.userAgent || 'web'
+        });
+        toast.success(`Trial access granted for ${reauthTenant.name}`);
+      } else if (reauthAction === 'grantComplimentary') {
+        const payload = reauthPayload || {};
+        const tenantRef = doc(db, 'tenants', reauthTenant.id);
+        const complimentaryPeriod = {
+          isActive: true,
+          startDate: payload.startDate,
+          endDate: payload.endDate,
+          reason: payload.reason || '',
+          grantedBy: auth.currentUser?.uid || 'system',
+          grantedAt: new Date().toISOString()
+        };
+        await updateDoc(tenantRef, { complimentaryPeriod });
+        await addDoc(collection(db, 'global_audit_logs'), {
+          action: 'COMPLIMENTARY_PERIOD_GRANTED',
+          category: 'TENANT',
+          description: `Complimentary period granted: ${payload.startDate} to ${payload.endDate} - ${payload.reason}`,
+          timestamp: new Date().toISOString(),
+          tenantId: reauthTenant.id,
+          actor: auth.currentUser?.uid || 'system',
+          ipAddress: 'client-side',
+          device: window.navigator.userAgent || 'web'
+        });
+        toast.success(`Complimentary period granted for ${reauthTenant.name}`);
+      }
 
-      toast.success(`Tenant ${reauthTenant.name} has been permanently deleted.`);
+      // Reset modal state
       setShowReauthModal(false);
       setReauthTenant(null);
       setReauthEmail('');
       setReauthPassword('');
+      setReauthAction(null);
+      setReauthPayload(null);
     } catch (err: any) {
       console.error(err);
       toast.error(`Re-authentication failed: ${err.message || 'Incorrect credentials.'}`);
@@ -2815,6 +2885,17 @@ const PlatformAdmin = () => {
 };
 
 const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess }: { tenant: Tenant, platformEmail: string, onClose: () => void, onSuccess: () => void }) => {
+  const [branchCount, setBranchCount] = useState<number | null>(null);
+  const [branchLimitInput, setBranchLimitInput] = useState<number | ''>(tenant.branchLimit ?? '');
+  const [resetToTierDefault, setResetToTierDefault] = useState(false);
+  const [showTrialForm, setShowTrialForm] = useState(false);
+  const [trialBranchLimit, setTrialBranchLimit] = useState<number | ''>('');
+  const [trialEndDate, setTrialEndDate] = useState('');
+  const [trialNotes, setTrialNotes] = useState('');
+  const [showComplimentaryForm, setShowComplimentaryForm] = useState(false);
+  const [compStartDate, setCompStartDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [compEndDate, setCompEndDate] = useState('');
+  const [compReason, setCompReason] = useState('');
   const [formData, setFormData] = useState({
     name: tenant.name,
     slug: tenant.slug,
@@ -2845,6 +2926,19 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess }: { tenant
       fetchPredictiveData();
     }
   }, [activeModalTab]);
+
+  useEffect(() => {
+    // Fetch current branch count for tenant
+    (async () => {
+      try {
+        const q = query(collection(db, 'branches'), where('tenantId', '==', tenant.id));
+        const snap = await getDocs(q);
+        setBranchCount(snap.size);
+      } catch (e) {
+        console.warn('Failed to fetch branch count for tenant', tenant.id, e);
+      }
+    })();
+  }, [tenant.id]);
 
   const fetchPredictiveData = async () => {
     setLoadingPredictive(true);
@@ -3029,6 +3123,91 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess }: { tenant
                 <option value="standard">Standard (Pro)</option>
                 <option value="enterprise">Enterprise (Premium)</option>
               </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-[#141414]/40 uppercase tracking-widest">Branch Limit</label>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none"
+                  value={branchLimitInput as any}
+                  onChange={(e) => setBranchLimitInput(e.target.value === '' ? '' : parseInt(e.target.value))}
+                  placeholder="Set branch limit"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    // trigger reauth modal for branch limit change
+                    const tierDefault = tenant.subscription_tier === 'basic' ? 1 : (tenant.subscription_tier === 'standard' ? 5 : 15);
+                    const newLimit = resetToTierDefault ? tierDefault : branchLimitInput;
+                    setReauthTenant(tenant);
+                    setReauthEmail(auth.currentUser?.email || '');
+                    setReauthPassword('');
+                    setReauthAction('updateBranchLimit');
+                    setReauthPayload({ oldLimit: tenant.branchLimit ?? null, newLimit });
+                    setShowReauthModal(true);
+                  }}
+                  className="px-3 py-3 bg-emerald-500 text-white rounded-xl font-bold text-xs uppercase tracking-widest"
+                >
+                  Save
+                </button>
+              </div>
+              <p className="text-xs text-zinc-400">Current branches: {branchCount ?? '—'} • Tier default: {tenant.subscription_tier === 'basic' ? 1 : tenant.subscription_tier === 'standard' ? 5 : 15}</p>
+              <label className="inline-flex items-center gap-2 text-xs mt-2"><input type="checkbox" checked={resetToTierDefault} onChange={(e) => setResetToTierDefault(e.target.checked)} /> Reset branchLimit to tier default on save</label>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-[#141414]/40 uppercase tracking-widest">Trial Access</label>
+              {!showTrialForm ? (
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setShowTrialForm(true)} className="px-3 py-2 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold">Grant Trial Access</button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <input type="number" min={1} placeholder="Trial Branch Limit" value={trialBranchLimit as any} onChange={(e) => setTrialBranchLimit(e.target.value === '' ? '' : parseInt(e.target.value))} className="w-full px-3 py-2 border rounded-xl" />
+                  <input type="date" value={trialEndDate} onChange={(e) => setTrialEndDate(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
+                  <input type="text" placeholder="Notes (optional)" value={trialNotes} onChange={(e) => setTrialNotes(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => {
+                      // trigger reauth for trial grant
+                      if (!trialBranchLimit || !trialEndDate) { toast.error('Please set trial branch limit and end date'); return; }
+                      setReauthTenant(tenant);
+                      setReauthEmail(auth.currentUser?.email || '');
+                      setReauthPassword('');
+                      setReauthAction('grantTrial');
+                      setReauthPayload({ trialBranchLimit, trialStartDate: new Date().toISOString(), trialEndDate, notes: trialNotes });
+                      setShowReauthModal(true);
+                    }} className="px-3 py-2 bg-emerald-500 text-white rounded-xl text-xs font-bold">Grant Trial</button>
+                    <button type="button" onClick={() => setShowTrialForm(false)} className="px-3 py-2 bg-zinc-100 rounded-xl text-xs">Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-[#141414]/40 uppercase tracking-widest">Complimentary Period</label>
+              {!showComplimentaryForm ? (
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setShowComplimentaryForm(true)} className="px-3 py-2 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold">Grant Complimentary Period</button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <input type="date" value={compStartDate} onChange={(e) => setCompStartDate(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
+                  <input type="date" value={compEndDate} onChange={(e) => setCompEndDate(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
+                  <input type="text" placeholder="Reason" value={compReason} onChange={(e) => setCompReason(e.target.value)} className="w-full px-3 py-2 border rounded-xl" />
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => {
+                      if (!compEndDate || !compReason) { toast.error('Please set end date and reason'); return; }
+                      setReauthTenant(tenant);
+                      setReauthEmail(auth.currentUser?.email || '');
+                      setReauthPassword('');
+                      setReauthAction('grantComplimentary');
+                      setReauthPayload({ startDate: compStartDate, endDate: compEndDate, reason: compReason });
+                      setShowReauthModal(true);
+                    }} className="px-3 py-2 bg-emerald-500 text-white rounded-xl text-xs font-bold">Grant</button>
+                    <button type="button" onClick={() => setShowComplimentaryForm(false)} className="px-3 py-2 bg-zinc-100 rounded-xl text-xs">Cancel</button>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-[#141414]/40 uppercase tracking-widest">Subscription Status</label>
