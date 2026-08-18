@@ -10,6 +10,11 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Check membership in primary or secondary roles
+    function hasRole(roleName) {
+      return getUserData().role == roleName || (("secondaryRoles" in getUserData()) && getUserData().secondaryRoles.hasAny([roleName]));
+    }
+
     // Returns user role/tenant information. Prefer token claims when present, then staff doc; never default to an admin/demo fallback.
     function getUserData() {
       return request.auth != null && (request.auth.token.role != null || request.auth.token.tenantId != null)
@@ -46,27 +51,27 @@ service cloud.firestore {
     }
 
     function isHR() {
-      return isAuthenticated() && (getUserData().role == 'HR Head' || isAdmin());
+      return isAuthenticated() && (hasRole('HR Head') || hasRole('HR Support Personnel') || hasRole('HR Manager') || isAdmin());
     }
 
     function isFinance() {
-      return isAuthenticated() && (getUserData().role == 'Finance Head' || isAdmin());
+      return isAuthenticated() && (hasRole('Finance Head') || hasRole('Finance Officer') || hasRole('Accountant') || isAdmin());
     }
 
     function isLogisticsHead() {
-      return isAuthenticated() && (getUserData().role == 'Logistics Head' || isAdmin());
+      return isAuthenticated() && (hasRole('Logistics Head') || hasRole('Transport & Logistics Personnel') || hasRole('Logistics Manager') || isAdmin());
     }
 
     function isBranchManager() {
-      return isAuthenticated() && (getUserData().role == 'Branch Manager' || isAdmin());
+      return isAuthenticated() && (hasRole('Branch Manager') || hasRole('branch manager') || isAdmin());
     }
 
     function isQA() {
-      return isAuthenticated() && (getUserData().role == 'QA Head' || getUserData().role == 'QA Officer' || isAdmin());
+      return isAuthenticated() && (hasRole('QA Head') || hasRole('QA Officer') || hasRole('QA Manager') || isAdmin());
     }
 
     function isIT() {
-      return isAuthenticated() && (getUserData().role == 'IT Head' || getUserData().role == 'IT Support Staff' || isAdmin());
+      return isAuthenticated() && (hasRole('IT Head') || hasRole('IT Support Staff') || hasRole('IT Staff') || isAdmin());
     }
 
     function isOwner(userId) {
