@@ -43,7 +43,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, 
   const { tenant } = useTenant();
 
   const isHQ = activeBranch?.type === 'HQ' || !multiBranchMode;
-  const isManagement = ['owner', 'CEO', 'IT Head', 'IT Support Staff'].includes(profile?.role || '');
+  const profileRoles = [profile?.role || '', ...(profile?.secondaryRoles || [])];
+  const isManagement = profileRoles.some(r => ['owner', 'CEO', 'IT Head', 'IT Support Staff'].includes(r));
 
   const prefix = `/tenant/${tenant?.slug || 'radah'}/app`;
 

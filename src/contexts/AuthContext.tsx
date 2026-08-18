@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, User, signInWithPopup, signOut, AuthError, signInAnonymously, signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, getDocs, query, where, writeBatch, onSnapshot, addDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, query, where, writeBatch, onSnapshot, addDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../firebase';
 import { Staff, Branch, SystemSettings, PlatformUser } from '../types';
 import { toast } from 'sonner';
@@ -157,6 +157,203 @@ export const ROLE_REGISTRY: Record<string, RolePermissions> = {
     finance: { access: 'none' },
     qa: { access: 'none' },
     hr: { access: 'all' },
+    welfare: { access: 'all' },
+    predictive: { access: 'none' },
+    analytics: { access: 'none' },
+    marketing: { access: 'none' },
+    settings: { access: 'none' }
+  }
+  ,
+  // Additional roles added to support secondaryRoles and broader permission mapping
+  'Finance Head': {
+    sales: { access: 'view' },
+    inventory: { access: 'view' },
+    clients: { access: 'view' },
+    stock: { access: 'view' },
+    procurement: { access: 'operate' },
+    finance: { access: 'all' },
+    qa: { access: 'view' },
+    hr: { access: 'none' },
+    welfare: { access: 'all' },
+    predictive: { access: 'view' },
+    analytics: { access: 'view' },
+    marketing: { access: 'view' },
+    settings: { access: 'view' }
+  },
+  'Finance Officer': {
+    sales: { access: 'view' },
+    inventory: { access: 'view' },
+    clients: { access: 'view' },
+    stock: { access: 'view' },
+    procurement: { access: 'view' },
+    finance: { access: 'operate' },
+    qa: { access: 'view' },
+    hr: { access: 'none' },
+    welfare: { access: 'all' },
+    predictive: { access: 'view' },
+    analytics: { access: 'view' },
+    marketing: { access: 'none' },
+    settings: { access: 'none' }
+  },
+  'Accountant': {
+    sales: { access: 'view' },
+    inventory: { access: 'view' },
+    clients: { access: 'view' },
+    stock: { access: 'view' },
+    procurement: { access: 'view' },
+    finance: { access: 'operate' },
+    qa: { access: 'none' },
+    hr: { access: 'none' },
+    welfare: { access: 'all' },
+    predictive: { access: 'none' },
+    analytics: { access: 'view' },
+    marketing: { access: 'none' },
+    settings: { access: 'none' }
+  },
+  'QA Head': {
+    sales: { access: 'view' },
+    inventory: { access: 'operate' },
+    clients: { access: 'view' },
+    stock: { access: 'operate' },
+    procurement: { access: 'view' },
+    finance: { access: 'view' },
+    qa: { access: 'all' },
+    hr: { access: 'none' },
+    welfare: { access: 'all' },
+    predictive: { access: 'view' },
+    analytics: { access: 'view' },
+    marketing: { access: 'none' },
+    settings: { access: 'none' }
+  },
+  'QA Officer': {
+    sales: { access: 'view' },
+    inventory: { access: 'view' },
+    clients: { access: 'view' },
+    stock: { access: 'view' },
+    procurement: { access: 'view' },
+    finance: { access: 'view' },
+    qa: { access: 'operate' },
+    hr: { access: 'none' },
+    welfare: { access: 'all' },
+    predictive: { access: 'none' },
+    analytics: { access: 'view' },
+    marketing: { access: 'none' },
+    settings: { access: 'none' }
+  },
+  'Procurement Head': {
+    sales: { access: 'view' },
+    inventory: { access: 'operate' },
+    clients: { access: 'view' },
+    stock: { access: 'operate' },
+    procurement: { access: 'all' },
+    finance: { access: 'view' },
+    qa: { access: 'view' },
+    hr: { access: 'none' },
+    welfare: { access: 'all' },
+    predictive: { access: 'view' },
+    analytics: { access: 'view' },
+    marketing: { access: 'none' },
+    settings: { access: 'none' }
+  },
+  'Procurement Officer': {
+    sales: { access: 'view' },
+    inventory: { access: 'operate' },
+    clients: { access: 'view' },
+    stock: { access: 'operate' },
+    procurement: { access: 'operate' },
+    finance: { access: 'view' },
+    qa: { access: 'view' },
+    hr: { access: 'none' },
+    welfare: { access: 'all' },
+    predictive: { access: 'none' },
+    analytics: { access: 'view' },
+    marketing: { access: 'none' },
+    settings: { access: 'none' }
+  },
+  'Logistics Head': {
+    sales: { access: 'view' },
+    inventory: { access: 'operate' },
+    clients: { access: 'view' },
+    stock: { access: 'operate' },
+    procurement: { access: 'operate' },
+    finance: { access: 'view' },
+    qa: { access: 'view' },
+    hr: { access: 'none' },
+    welfare: { access: 'all' },
+    predictive: { access: 'view' },
+    analytics: { access: 'view' },
+    marketing: { access: 'none' },
+    settings: { access: 'none' }
+  },
+  'Branch Manager': {
+    sales: { access: 'operate' },
+    inventory: { access: 'operate' },
+    clients: { access: 'operate' },
+    stock: { access: 'operate' },
+    procurement: { access: 'view' },
+    finance: { access: 'view' },
+    qa: { access: 'view' },
+    hr: { access: 'view' },
+    welfare: { access: 'all' },
+    predictive: { access: 'view' },
+    analytics: { access: 'view' },
+    marketing: { access: 'none' },
+    settings: { access: 'none' }
+  },
+  'Dispenser': {
+    sales: { access: 'operate' },
+    inventory: { access: 'view' },
+    clients: { access: 'operate' },
+    stock: { access: 'view' },
+    procurement: { access: 'none' },
+    finance: { access: 'none' },
+    qa: { access: 'operate' },
+    hr: { access: 'none' },
+    welfare: { access: 'all' },
+    predictive: { access: 'none' },
+    analytics: { access: 'none' },
+    marketing: { access: 'none' },
+    settings: { access: 'none' }
+  },
+  'IT Support Staff': {
+    sales: { access: 'view' },
+    inventory: { access: 'view' },
+    clients: { access: 'view' },
+    stock: { access: 'view' },
+    procurement: { access: 'view' },
+    finance: { access: 'view' },
+    qa: { access: 'view' },
+    hr: { access: 'view' },
+    welfare: { access: 'all' },
+    predictive: { access: 'view' },
+    analytics: { access: 'view' },
+    marketing: { access: 'view' },
+    settings: { access: 'view' }
+  },
+  'HR Support Personnel': {
+    sales: { access: 'none' },
+    inventory: { access: 'none' },
+    clients: { access: 'none' },
+    stock: { access: 'none' },
+    procurement: { access: 'none' },
+    finance: { access: 'none' },
+    qa: { access: 'none' },
+    hr: { access: 'operate' },
+    welfare: { access: 'all' },
+    predictive: { access: 'none' },
+    analytics: { access: 'none' },
+    marketing: { access: 'none' },
+    settings: { access: 'none' }
+  },
+  'Trainee': {
+    sales: { access: 'operate' },
+    inventory: { access: 'view' },
+    clients: { access: 'view' },
+    stock: { access: 'none' },
+    procurement: { access: 'none' },
+    finance: { access: 'none' },
+    qa: { access: 'none' },
+    hr: { access: 'none' },
     welfare: { access: 'all' },
     predictive: { access: 'none' },
     analytics: { access: 'none' },
@@ -536,6 +733,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   // Link Auth UID in Firestore for faster future lookups
                   try {
                     await setDoc(doc(db, 'staff', incomingUser.uid), { ...staffData, id: incomingUser.uid, uid: incomingUser.uid }, { merge: true });
+                    // If the matched staff doc used an auto-generated id (not the UID), delete it to avoid duplicates
+                    if (staffDocMatched.id && staffDocMatched.id !== incomingUser.uid) {
+                      try {
+                        await deleteDoc(doc(db, 'staff', staffDocMatched.id));
+                        console.info('Deleted legacy staff document', staffDocMatched.id, 'after linking to UID', incomingUser.uid);
+                      } catch (delErr) {
+                        console.warn('Failed to delete legacy staff doc', staffDocMatched.id, delErr);
+                      }
+                    }
                   } catch (e) {
                     console.warn("Could not link staff UID:", e);
                   }
