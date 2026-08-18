@@ -450,7 +450,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const userEmail = localStorage.getItem('auth_bypass_email') || user?.email;
-    if (userEmail === 'peterssentongo61@gmail.com' && tenantError?.includes('not found')) {
+    // Only run seeding in development or when explicitly enabled via VITE_ENABLE_SEED
+    if ((import.meta.env.DEV || import.meta.env.VITE_ENABLE_SEED === 'true') && userEmail === 'peterssentongo61@gmail.com' && tenantError?.includes('not found')) {
       const runSeed = async () => {
         const { seedInitialData } = await import('../services/seedService');
         await seedInitialData();

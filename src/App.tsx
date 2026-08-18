@@ -129,8 +129,9 @@ const TenantProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childre
     return <Navigate to={`/tenant/${currentSlug}/login`} replace />;
   }
 
-  // Force branch selector if in multi-branch mode and no active branch is set
-  if (multiBranchMode && !activeBranchId) {
+  // Force branch selector if in multi-branch mode (or user assigned to multiple branches) and no active branch is set
+  const userHasMultipleAssigned = (profile?.assigned_branches && profile.assigned_branches.length > 1) || false;
+  if ((multiBranchMode || userHasMultipleAssigned) && !activeBranchId) {
     return <BranchSelector />;
   }
 

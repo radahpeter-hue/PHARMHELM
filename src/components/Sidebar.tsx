@@ -43,8 +43,9 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, 
   const { tenant } = useTenant();
 
   const isHQ = activeBranch?.type === 'HQ' || !multiBranchMode;
-  const profileRoles = [profile?.role || '', ...(profile?.secondaryRoles || [])];
-  const isManagement = profileRoles.some(r => ['owner', 'CEO', 'IT Head', 'IT Support Staff'].includes(r));
+  const profileRoles = [profile?.role || '', ...(profile?.secondaryRoles || [])].map(r => (r || '').toString().toLowerCase());
+  const managementRoles = ['owner', 'ceo', 'ceo / md', 'admin', 'it head', 'it support staff'];
+  const isManagement = profileRoles.some(r => managementRoles.includes(r));
 
   const prefix = `/tenant/${tenant?.slug || 'radah'}/app`;
 
