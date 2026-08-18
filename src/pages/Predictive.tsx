@@ -66,13 +66,7 @@ const Predictive: React.FC = () => {
   const { profile, activeBranch } = useAuth();
   const { tenant } = useTenant();
 
-  if (tenant?.subscription_tier === 'basic' || tenant?.subscription_tier === 'standard') {
-    return (
-      <div className="max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8">
-        <UpgradeRequiredCard moduleName="Predictive Engine" />
-      </div>
-    );
-  }
+  // Subscription-tier gating removed: Predictive Engine available to role-permitted users
 
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string>('');

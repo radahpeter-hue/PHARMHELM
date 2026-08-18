@@ -124,13 +124,7 @@ const Marketing: React.FC = () => {
     toast.success('Excel-compatible campaigns report downloaded!');
   };
 
-  if (tenant?.subscription_tier === 'basic' || tenant?.subscription_tier === 'standard') {
-    return (
-      <div className="max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8">
-        <UpgradeRequiredCard moduleName="Marketing & Campaigns" />
-      </div>
-    );
-  }
+  // Subscription-based gating removed: all role-permitted users can access Marketing features
 
   // Initial Seeding Logic to ensure rich, beautiful workspace charts immediately
   useEffect(() => {

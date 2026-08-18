@@ -20,6 +20,8 @@ export async function seedInitialData() {
       contact_email: 'peterssentongo61@gmail.com',
       contact_phone: '+256 700 000 000',
       subscription_tier: 'enterprise' as const,
+      // Set branchLimit according to tier defaults: enterprise -> 15
+      branchLimit: 15,
       subscription_status: 'active' as const,
       subscription_cycle: 'annual' as const,
       subscription_start: new Date().toISOString(),

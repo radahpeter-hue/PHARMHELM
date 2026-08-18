@@ -58,12 +58,8 @@ const HRAdmin: React.FC = () => {
         <TabButton active={activeTab === 'payroll'} onClick={() => setActiveTab('payroll')} icon={DollarSign} label="Payroll" />
         <TabButton active={activeTab === 'leave_advance'} onClick={() => setActiveTab('leave_advance')} icon={Briefcase} label="Leave & Advances" />
         <TabButton active={activeTab === 'branches'} onClick={() => setActiveTab('branches')} icon={Building2} label="Branches" />
-        {tenant?.subscription_tier === 'enterprise' && (
-          <>
-            <TabButton active={activeTab === 'recruitment'} onClick={() => setActiveTab('recruitment')} icon={Briefcase} label="Recruitment" />
-            <TabButton active={activeTab === 'trainees'} onClick={() => setActiveTab('trainees')} icon={GraduationCap} label="Trainees" />
-          </>
-        )}
+        <TabButton active={activeTab === 'recruitment'} onClick={() => setActiveTab('recruitment')} icon={Briefcase} label="Recruitment" />
+        <TabButton active={activeTab === 'trainees'} onClick={() => setActiveTab('trainees')} icon={GraduationCap} label="Trainees" />
         <TabButton active={activeTab === 'performance'} onClick={() => setActiveTab('performance')} icon={ShieldAlert} label="Performance" />
         <TabButton active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} icon={FileSpreadsheet} label="Reports" />
         {isManagement && (
@@ -77,16 +73,8 @@ const HRAdmin: React.FC = () => {
         {activeTab === 'attendance' && <AttendanceTracker />}
         {activeTab === 'payroll' && <PayrollManager />}
         {activeTab === 'branches' && <BranchManager />}
-        {activeTab === 'recruitment' && (
-          tenant?.subscription_tier !== 'enterprise' 
-            ? <UpgradeRequiredCard moduleName="Recruitment Management" /> 
-            : <RecruitmentManager />
-        )}
-        {activeTab === 'trainees' && (
-          tenant?.subscription_tier !== 'enterprise' 
-            ? <UpgradeRequiredCard moduleName="Trainees & Candidates" /> 
-            : <TraineesManager />
-        )}
+        {activeTab === 'recruitment' && <RecruitmentManager />}
+        {activeTab === 'trainees' && <TraineesManager />}
         {activeTab === 'performance' && <PerformanceDiscipline />}
         {activeTab === 'leave_advance' && <LeaveAdvanceManager />}
         {activeTab === 'reports' && <HRReportsConsole />}

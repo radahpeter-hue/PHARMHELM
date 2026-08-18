@@ -63,10 +63,11 @@ export const BranchManager: React.FC = () => {
         await firestoreService.updateDocument('branches', editingBranch.id, branchData);
         toast.success('Branch updated successfully');
       } else {
-        // Enforce subscription-based branch limits: Basic/Starter = 1, Standard/Pro = 3, Enterprise/Premium = Unlimited
-        const maxBranches = tenant?.subscription_tier === 'basic' ? 1 : (tenant?.subscription_tier === 'standard' ? 3 : Infinity);
+        // Enforce configurable branch limit: prefer tenant.branchLimit, otherwise fall back to tier defaults (basic=1, standard=5, enterprise/premium=15)
+        const tierDefault = tenant?.subscription_tier === 'basic' ? 1 : (tenant?.subscription_tier === 'standard' ? 5 : 15);
+        const maxBranches = typeof tenant?.branchLimit === 'number' ? tenant.branchLimit : tierDefault;
         if (branches.length >= maxBranches) {
-          toast.error(`Your subscription package (${tenant?.subscription_tier === 'basic' ? 'Basic (Starter)' : 'Standard (Pro)'}) only allows up to ${maxBranches} branch(es). Please upgrade your package in the TMC to register more branches.`);
+          toast.error(`Branch limit reached (${branches.length} of ${maxBranches}). Contact PharmHelm support to increase your limit.`);
           setIsSubmitting(false);
           return;
         }

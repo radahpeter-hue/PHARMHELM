@@ -2151,7 +2151,7 @@ const ManagementFinance: React.FC<{ settings: SystemSettings | null }> = ({ sett
     { id: 'profitability', label: 'Profitability Ledger', icon: BarChart3 },
     { id: 'credit_ledger', label: 'Credit Ledger', icon: CreditCard },
     { id: 'petty_cash', label: 'Petty Cash', icon: Wallet },
-    { id: 'tax_engine', label: 'Tax Engine', icon: Sliders, hidden: !settings?.taxEngineEnabled || tenant?.subscription_tier === 'basic' },
+    { id: 'tax_engine', label: 'Tax Engine', icon: Sliders, hidden: !settings?.taxEngineEnabled },
     { id: 'oversight', label: 'Cash & Banking', icon: Building2 },
     { id: 'inbox', label: 'Reconciliation Inbox', icon: History },
   ].filter(t => !t.hidden);
@@ -2183,11 +2183,7 @@ const ManagementFinance: React.FC<{ settings: SystemSettings | null }> = ({ sett
         {activeSubTab === 'profitability' && <ProfitabilityLedger />}
         {activeSubTab === 'credit_ledger' && <CreditLedgerPanel />}
         {activeSubTab === 'petty_cash' && <PettyCashManagement />}
-        {activeSubTab === 'tax_engine' && (
-          tenant?.subscription_tier === 'basic' 
-            ? <UpgradeRequiredCard moduleName="Taxes Calculation Engine" /> 
-            : <TaxEngine />
-        )}
+        {activeSubTab === 'tax_engine' && <TaxEngine />}
         {activeSubTab === 'oversight' && <CashBankingOversight />}
         {activeSubTab === 'inbox' && <ReconciliationInbox />}
       </div>
