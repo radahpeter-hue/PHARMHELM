@@ -37,8 +37,11 @@ window.addEventListener('unhandledrejection', (event) => {
   reportSystemCrash(event.reason || 'Unhandled Promise Rejection');
 });
 
-// Seed initial data for demo/preview purposes
-seedInitialData();
+// Seed initial data for demo/preview purposes (only in development or when explicitly enabled)
+// To enable seeding in non-dev environments set VITE_ENABLE_SEED=true in env
+if (import.meta.env.DEV || import.meta.env.VITE_ENABLE_SEED === 'true') {
+  seedInitialData();
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

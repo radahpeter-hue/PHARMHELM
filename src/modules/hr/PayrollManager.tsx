@@ -44,7 +44,8 @@ interface DraftPayrollRecord {
 export const PayrollManager: React.FC = () => {
   const { profile } = useAuth();
   const { tenant } = useTenant();
-  const isBasic = tenant?.subscription_tier === 'basic';
+  // Subscription-tier gating removed for Payroll features
+  // const isBasic = tenant?.subscription_tier === 'basic';
   const [staff, setStaff] = useState<Staff[]>([]);
   const [payroll, setPayroll] = useState<any[]>([]);
   const [advances, setAdvances] = useState<AdvanceRequest[]>([]);

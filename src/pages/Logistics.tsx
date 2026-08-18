@@ -20,13 +20,7 @@ const Logistics: React.FC = () => {
   const { tenant } = useTenant();
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
 
-  if (tenant?.subscription_tier === 'basic' || tenant?.subscription_tier === 'standard') {
-    return (
-      <div className="max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8">
-        <UpgradeRequiredCard moduleName="Fleet & Logistics" />
-      </div>
-    );
-  }
+  // Subscription-tier gating removed: Fleet & Logistics available to role-permitted users
 
   const tabs = [
     { id: 'dashboard', label: 'Department Dashboard', icon: BarChart3 },
