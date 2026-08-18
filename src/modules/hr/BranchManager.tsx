@@ -24,6 +24,7 @@ export const BranchManager: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [branchToDelete, setBranchToDelete] = useState<Branch | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (profile?.tenantId) {
@@ -35,6 +36,7 @@ export const BranchManager: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!profile?.tenantId) return;
+    if (isSubmitting) return; // prevent double submit
 
     const formData = new FormData(e.currentTarget);
     const branchData = {
@@ -54,6 +56,7 @@ export const BranchManager: React.FC = () => {
       updated_at: new Date().toISOString()
     };
 
+    setIsSubmitting(true);
     try {
       let branchId = editingBranch?.id;
       if (editingBranch) {
@@ -64,6 +67,7 @@ export const BranchManager: React.FC = () => {
         const maxBranches = tenant?.subscription_tier === 'basic' ? 1 : (tenant?.subscription_tier === 'standard' ? 3 : Infinity);
         if (branches.length >= maxBranches) {
           toast.error(`Your subscription package (${tenant?.subscription_tier === 'basic' ? 'Basic (Starter)' : 'Standard (Pro)'}) only allows up to ${maxBranches} branch(es). Please upgrade your package in the TMC to register more branches.`);
+          setIsSubmitting(false);
           return;
         }
 
@@ -77,33 +81,51 @@ export const BranchManager: React.FC = () => {
         toast.success('Branch added successfully');
       }
 
-      // Feed the license register in QA & Compliance
-      if (branchData.license_number && branchData.license_expiry) {
-        const licenseData = {
-          tenantId: profile.tenantId,
-          branchId: branchId,
-          licenseType: 'NDA Premises Licence',
-          licenseNumber: branchData.license_number,
-          expiryDate: branchData.license_expiry,
-          issuingAuthority: 'National Drug Authority',
-          status: 'Valid',
-          updatedAt: new Date().toISOString()
-        };
-
-        const existingLicenses = await firestoreService.getCollection<any>('premises_licenses', profile.tenantId);
-        const branchLicense = existingLicenses.find(l => l.branchId === branchId && l.licenseType === 'NDA Premises Licence');
-
-        if (branchLicense) {
-          await firestoreService.updateDocument('premises_licenses', branchLicense.id, licenseData);
-        } else {
-          await firestoreService.addDocument('premises_licenses', licenseData);
-        }
-      }
-
+      // Close modal immediately after primary branch write so UI doesn't let user retry
       setIsModalOpen(false);
       setEditingBranch(null);
+
+      // Non-blocking: Feed the license register in QA & Compliance. Any failure here should NOT mark the whole flow as failed.
+      if (branchData.license_number && branchData.license_expiry) {
+        (async () => {
+          try {
+            const licenseData = {
+              tenantId: profile.tenantId,
+              branchId: branchId,
+              licenseType: 'NDA Premises Licence',
+              licenseNumber: branchData.license_number,
+              expiryDate: branchData.license_expiry,
+              issuingAuthority: 'National Drug Authority',
+              status: 'Valid',
+              updatedAt: new Date().toISOString()
+            };
+
+            const existingLicenses = await firestoreService.getCollection<any>('premises_licenses', profile.tenantId);
+            const branchLicense = existingLicenses.find(l => l.branchId === branchId && l.licenseType === 'NDA Premises Licence');
+
+            if (branchLicense) {
+              await firestoreService.updateDocument('premises_licenses', branchLicense.id, licenseData);
+            } else {
+              await firestoreService.addDocument('premises_licenses', licenseData);
+            }
+          } catch (licError) {
+            console.error('License sync failed for branch', branchId, licError);
+            // Surface a helpful message for admins; do not mark overall operation as failed for end users
+            if (isAuthorized) {
+              toast.error(`Branch created; license sync failed: ${licError?.message || licError}`);
+            } else {
+              // Generic notification for non-admin users
+              toast.error('Branch created; license sync failed (admin notified).');
+            }
+          }
+        })();
+      }
     } catch (error) {
-      toast.error('Failed to save branch');
+      console.error('Branch save failed', error);
+      const msg = (error as any)?.message || 'Failed to save branch';
+      toast.error(msg);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
