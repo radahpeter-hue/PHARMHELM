@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, Plus, Filter, Mail, Phone, MapPin, 
   Building2, Calendar, Shield, MoreVertical, 
@@ -13,6 +13,7 @@ import { Staff, Branch } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
 import { registerAuthUser } from '../../firebase';
+import { deduplicateStaff } from '../../utils/deduplicateStaff';
 
 export const StaffDirectory: React.FC = () => {
   const { profile } = useAuth();
@@ -50,7 +51,8 @@ export const StaffDirectory: React.FC = () => {
     }
   }, [profile?.tenantId]);
 
-  const filteredStaff = staff.filter(s => {
+  const dedupedStaff = useMemo(() => deduplicateStaff(staff), [staff]);
+  const filteredStaff = dedupedStaff.filter(s => {
     const matchesSearch = s.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          s.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          s.employee_id?.toLowerCase().includes(searchTerm.toLowerCase());

@@ -41,5 +41,7 @@ export const ROLES = {
   admin: 'Branch Manager',
   pharmacist: 'Pharmacist',
   cashier: 'Cashier',
-  CEO: 'CEO'
+  CEO: 'CEO',
+  financeOfficer: 'Finance Officer',
+  marketing: 'Marketing'
 };

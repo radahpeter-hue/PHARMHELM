@@ -69,6 +69,7 @@ const TABS = [
 ];
 
 const Settings = () => {
+  const { hasPermission } = useAuth();
   if (!hasPermission('settings', 'view')) {
     return <div className="p-8">Access denied.</div>;
   }

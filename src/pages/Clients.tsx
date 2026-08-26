@@ -32,7 +32,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { firestoreService } from '../services/firestore';
 import { Client, InstitutionRegistry, Prescriber, Staff } from '../types';
 import { toast } from 'sonner';
-import { clsx, type ClassValue } from 'clsx';
+import { deduplicateStaff } from '../utils/deduplicateStaff';
 import { twMerge } from 'tailwind-merge';
 import { format } from 'date-fns';
 
@@ -113,13 +113,7 @@ const Clients: React.FC = () => {
       isStaff: true,
     })),
   ];
-  const seen = new Set<string>();
-  return all.filter(item => {
-    const key = `${item.full_name}-${item.phone_number}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return deduplicateStaff(all);
 }, [patients, staff]);
       return combinedPatients.filter(p => (p.full_name || '').toLowerCase().includes(term) || (p.phone_number || '').includes(term));
     } else if (activeTab === 'institutions') {
