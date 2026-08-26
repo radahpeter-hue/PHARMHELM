@@ -98,20 +98,29 @@ const Clients: React.FC = () => {
   const filteredData = () => {
     const term = searchTerm.toLowerCase();
     if (activeTab === 'patients') {
-      const combinedPatients = [
-        ...patients.map(p => ({ ...p, isStaff: false })),
-        ...staff.map(s => ({
-          id: s.id,
-          uid: s.uid,
-          tenantId: s.tenantId,
-          full_name: s.full_name || s.username || 'Unknown Staff',
-          phone_number: s.phone_number || 'N/A',
-          billing_type: 'Staff / Welfare',
-          care_status: s.status,
-          status: s.status,
-          isStaff: true
-        }))
-      ];
+      const combinedPatients = useMemo(() => {
+  const all = [
+    ...patients.map(p => ({ ...p, isStaff: false })),
+    ...staff.map(s => ({
+      id: s.id,
+      uid: s.uid,
+      tenantId: s.tenantId,
+      full_name: s.full_name || s.username || 'Unknown Staff',
+      phone_number: s.phone_number || 'N/A',
+      billing_type: 'Staff / Welfare',
+      care_status: s.status,
+      status: s.status,
+      isStaff: true,
+    })),
+  ];
+  const seen = new Set<string>();
+  return all.filter(item => {
+    const key = `${item.full_name}-${item.phone_number}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}, [patients, staff]);
       return combinedPatients.filter(p => (p.full_name || '').toLowerCase().includes(term) || (p.phone_number || '').includes(term));
     } else if (activeTab === 'institutions') {
       return institutions.filter(i => i.supplier_name.toLowerCase().includes(term));

@@ -69,7 +69,9 @@ const TABS = [
 ];
 
 const Settings = () => {
-  const { profile, activeBranchId, activeBranch } = useAuth();
+  if (!hasPermission('settings', 'view')) {
+    return <div className="p-8">Access denied.</div>;
+  }
   const { tenant } = useTenant();
   const [activeTab, setActiveTab] = useState('system');
   const [settings, setSettings] = useState<SystemSettings | null>(null);

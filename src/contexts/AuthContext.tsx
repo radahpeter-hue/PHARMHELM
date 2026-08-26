@@ -6,6 +6,7 @@ import { Staff, Branch, SystemSettings, PlatformUser } from '../types';
 import { toast } from 'sonner';
 import { useTenant } from './TenantContext';
 import { sanitizeInput } from '../utils/sanitize';
+import { useNavigate } from 'react-router-dom';
 
 export interface ModulePermission {
   access: 'none' | 'view' | 'operate' | 'all';
@@ -759,6 +760,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           if (currentProfile) {
             setProfile(currentProfile);
+    // Auto-redirect if only one assigned branch
+    const navigate = useNavigate();
+    useEffect(() => {
+      if (currentProfile && currentProfile.assigned_branches?.length === 1) {
+        const branchId = currentProfile.assigned_branches[0];
+        handleSetActiveBranchId(branchId);
+        navigate(`/app/branch/${branchId}`);
+      }
+    }, [currentProfile, navigate]);
             localStorage.setItem('auth_profile', JSON.stringify(currentProfile));
             setPlatformProfile(null);
 
