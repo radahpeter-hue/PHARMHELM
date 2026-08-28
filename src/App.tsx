@@ -251,13 +251,13 @@ export default function App() {
         <Route path="/tenant/:tenantSlug/login" element={<TenantLogin />} />
         
         {/* Tenant Application Nested Routes */}
-        <Route path="/tenant/:tenantSlug/app" element={<TenantProtectedRoute><Dashboard /></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app" element={<TenantProtectedRoute><PermissionProtectedRoute module="dashboard" requiredLevel="view"><Dashboard /></PermissionProtectedRoute></TenantProtectedRoute>} />
         <Route path="/tenant/:tenantSlug/app/sales" element={<TenantProtectedRoute><PermissionProtectedRoute module="sales" requiredLevel="view"><Sales /></PermissionProtectedRoute></TenantProtectedRoute>} />
         <Route path="/tenant/:tenantSlug/app/inventory" element={<TenantProtectedRoute><PermissionProtectedRoute module="inventory" requiredLevel="view"><Inventory /></PermissionProtectedRoute></TenantProtectedRoute>} />
         <Route path="/tenant/:tenantSlug/app/clients" element={<TenantProtectedRoute><PermissionProtectedRoute module="clients" requiredLevel="view"><Clients /></PermissionProtectedRoute></TenantProtectedRoute>} />
         <Route path="/tenant/:tenantSlug/app/stock" element={<TenantProtectedRoute><PermissionProtectedRoute module="stock" requiredLevel="view"><StockInOut /></PermissionProtectedRoute></TenantProtectedRoute>} />
         <Route path="/tenant/:tenantSlug/app/procurement" element={<TenantProtectedRoute><PermissionProtectedRoute module="procurement" requiredLevel="view"><Procurement /></PermissionProtectedRoute></TenantProtectedRoute>} />
-        <Route path="/tenant/:tenantSlug/app/logistics" element={<TenantProtectedRoute><PermissionProtectedRoute module="procurement" requiredLevel="view"><Logistics /></PermissionProtectedRoute></TenantProtectedRoute>} />
+        <Route path="/tenant/:tenantSlug/app/logistics" element={<TenantProtectedRoute><PermissionProtectedRoute module="logistics" requiredLevel="view"><Logistics /></PermissionProtectedRoute></TenantProtectedRoute>} />
         <Route path="/tenant/:tenantSlug/app/finance" element={<TenantProtectedRoute><PermissionProtectedRoute module="finance" requiredLevel="view"><Finance /></PermissionProtectedRoute></TenantProtectedRoute>} />
         <Route path="/tenant/:tenantSlug/app/qa" element={<TenantProtectedRoute><PermissionProtectedRoute module="qa" requiredLevel="view"><QACompliance /></PermissionProtectedRoute></TenantProtectedRoute>} />
         <Route path="/tenant/:tenantSlug/app/hr" element={<TenantProtectedRoute><PermissionProtectedRoute module="hr" requiredLevel="view"><HRAdmin /></PermissionProtectedRoute></TenantProtectedRoute>} />

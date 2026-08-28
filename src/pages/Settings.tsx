@@ -69,7 +69,7 @@ const TABS = [
 ];
 
 const Settings = () => {
-  const { hasPermission } = useAuth();
+  const { hasPermission, profile, activeBranchId } = useAuth();
   if (!hasPermission('settings', 'view')) {
     return <div className="p-8">Access denied.</div>;
   }

@@ -39,12 +39,8 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
   const location = useLocation();
-  const { profile, activeBranch, multiBranchMode, logout, hasPermission } = useAuth();
+  const { profile, activeBranch, logout, hasPermission } = useAuth();
   const { tenant } = useTenant();
-
-  const isHQ = activeBranch?.type === 'HQ' || !multiBranchMode;
-  const profileRoles = [profile?.role || '', ...(profile?.secondaryRoles || [])];
-  const isManagement = profileRoles.some(r => ['owner', 'CEO', 'IT Head', 'IT Support Staff'].includes(r));
 
   const prefix = `/tenant/${tenant?.slug || 'radah'}/app`;
 
@@ -67,22 +63,13 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, 
   ];
 
   const filteredItems = menuItems.filter(item => {
-    // 1. Management restriction
-    if (item.management && !isHQ && !isManagement) return false;
-
-    // 2. Subscription tier restriction removed: features are no longer gated by tier
-
-    // 3. Role-based module permission restriction
+    // Role permissions are the authoritative navigation control. Branch location
+    // must not hide a module that the current role is explicitly allowed to use.
     const pathParts = item.path.split('/');
     const pathSuffix = pathParts[pathParts.length - 1];
     
     if (pathSuffix && pathSuffix !== 'app') {
       let moduleKey = pathSuffix;
-      if (pathSuffix === 'logistics') {
-        moduleKey = 'procurement';
-      }
-      
-      // Fallback map check for dashboard settings link
       if (!hasPermission(moduleKey as any, 'view')) {
         return false;
       }

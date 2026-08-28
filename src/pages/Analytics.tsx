@@ -5,7 +5,7 @@ import {
   Zap, Download, Globe, Building2, Calendar as CalendarIcon,
   ChevronDown, Filter, RefreshCw
 } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, type ModuleKey } from '../contexts/AuthContext';
 import { cn } from '../utils/cn';
 import { DateRangePicker, DateRangeOption } from '../components/analytics/DateRangePicker';
 import { POSAnalytics } from '../components/analytics/POSAnalytics';
@@ -30,15 +30,16 @@ type AnalyticsDomain =
   | 'Central Report Hub';
 
 const Analytics = () => {
-  const { profile, activeBranch, assignedBranches, setActiveBranchId } = useAuth();
+  const { profile, activeBranch, assignedBranches, setActiveBranchId, hasPermission } = useAuth();
   const [activeDomain, setActiveDomain] = useState<AnalyticsDomain>('POS & Sales');
   const [dateRange, setDateRange] = useState<DateRangeOption>('This Month');
   const [isGlobalView, setIsGlobalView] = useState(false);
 
-  const userRole = profile?.role || 'Staff';
+  const userRoles = [profile?.role || 'Staff', ...(profile?.secondaryRoles || [])];
 
-  // Access Control Logic based on Specification A.2 & A.4
-  const canSeeGlobalView = ['owner', 'admin', 'IT Head', 'Finance Manager'].includes(userRole);
+  const canSeeGlobalView = userRoles.some(role =>
+    ['owner', 'CEO', 'CEO / MD', 'IT Head', 'Finance Head'].includes(role)
+  );
   const canSwitchBranch = assignedBranches.length > 1 || canSeeGlobalView;
 
   const domains = useMemo(() => {
@@ -54,19 +55,22 @@ const Analytics = () => {
       { id: 'Central Report Hub', icon: Download, label: 'Report Hub' },
     ];
 
-    // Filter domains based on role (A.4)
+    const domainPermissions: Record<AnalyticsDomain, ModuleKey> = {
+      'POS & Sales': 'sales',
+      'Inventory & Stock': 'inventory',
+      'CRM': 'clients',
+      'Finance & OpEx': 'finance',
+      'QA & Compliance': 'qa',
+      'Logistics & Transport': 'logistics',
+      'HR & Personnel': 'hr',
+      'Predictive Engine': 'predictive',
+      'Central Report Hub': 'analytics'
+    };
+
     return allDomains.filter(domain => {
-      if (['owner', 'admin', 'IT Head'].includes(userRole)) return true;
-      if (userRole === 'Finance Manager') return true; // Finance Head has full access
-      if (userRole === 'manager') return domain.id !== 'Logistics & Transport'; // Branch Manager
-      if (userRole === 'QA Manager') return domain.id === 'QA & Compliance' || domain.id === 'Central Report Hub';
-      if (userRole === 'HR Manager') return domain.id === 'HR & Personnel' || domain.id === 'Central Report Hub';
-      if (userRole === 'Logistics Manager') return domain.id === 'Logistics & Transport' || domain.id === 'Central Report Hub';
-      
-      // Default staff access
-      return ['POS & Sales', 'Inventory & Stock'].includes(domain.id);
+      return hasPermission(domainPermissions[domain.id], 'view');
     });
-  }, [userRole]);
+  }, [hasPermission, profile?.role, profile?.secondaryRoles]);
 
   // Set initial domain if current one is not allowed
   React.useEffect(() => {

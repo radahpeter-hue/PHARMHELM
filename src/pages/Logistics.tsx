@@ -2,9 +2,6 @@ import React, { useState } from 'react';
 import { 
   Car, Navigation, Users, DollarSign, BarChart3
 } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
-import { useTenant } from '../contexts/TenantContext';
-import { UpgradeRequiredCard } from '../components/UpgradeRequiredCard';
 import { cn } from '../utils/cn';
 import { VehicleRegister } from '../modules/logistics/VehicleRegister';
 import { PersonnelRegister } from '../modules/logistics/PersonnelRegister';
@@ -16,8 +13,6 @@ import { LogisticsDashboard } from '../modules/logistics/LogisticsDashboard';
 type TabType = 'dashboard' | 'vehicles' | 'personnel' | 'trips' | 'costs' | 'reports';
 
 const Logistics: React.FC = () => {
-  const { userProfile } = useAuth();
-  const { tenant } = useTenant();
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
 
   // Subscription-tier gating removed: Fleet & Logistics available to role-permitted users

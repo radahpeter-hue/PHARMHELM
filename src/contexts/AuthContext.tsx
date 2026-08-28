@@ -6,27 +6,69 @@ import { Staff, Branch, SystemSettings, PlatformUser } from '../types';
 import { toast } from 'sonner';
 import { useTenant } from './TenantContext';
 import { sanitizeInput } from '../utils/sanitize';
-import { useNavigate } from 'react-router-dom';
 
 export interface ModulePermission {
   access: 'none' | 'view' | 'operate' | 'all';
 }
 
-export interface RolePermissions {
-  sales: ModulePermission;
-  inventory: ModulePermission;
-  clients: ModulePermission;
-  stock: ModulePermission;
-  procurement: ModulePermission;
-  finance: ModulePermission;
-  qa: ModulePermission;
-  hr: ModulePermission;
-  welfare: ModulePermission;
-  predictive: ModulePermission;
-  analytics: ModulePermission;
-  marketing: ModulePermission;
-  settings: ModulePermission;
-}
+export type ModuleKey =
+  | 'dashboard'
+  | 'sales'
+  | 'inventory'
+  | 'clients'
+  | 'stock'
+  | 'procurement'
+  | 'logistics'
+  | 'finance'
+  | 'qa'
+  | 'hr'
+  | 'welfare'
+  | 'predictive'
+  | 'analytics'
+  | 'marketing'
+  | 'settings';
+
+export type RolePermissions = Partial<Record<ModuleKey, ModulePermission>>;
+
+const MODULE_KEYS: ModuleKey[] = [
+  'dashboard', 'sales', 'inventory', 'clients', 'stock', 'procurement',
+  'logistics', 'finance', 'qa', 'hr', 'welfare', 'predictive',
+  'analytics', 'marketing', 'settings'
+];
+
+const ACCESS_PRIORITY: Record<ModulePermission['access'], number> = {
+  none: 0,
+  view: 1,
+  operate: 2,
+  all: 3
+};
+
+const createBaselinePermissions = (): RolePermissions => Object.fromEntries(
+  MODULE_KEYS.map(module => [module, { access: module === 'dashboard' ? 'view' : module === 'welfare' ? 'all' : 'none' }])
+) as RolePermissions;
+
+const normalizeRealmModule = (module: string): ModuleKey | null => {
+  if (module === 'compliance') return 'qa';
+  return MODULE_KEYS.includes(module as ModuleKey) ? module as ModuleKey : null;
+};
+
+const normalizeRealmAccess = (accessLevel?: string): ModulePermission['access'] => {
+  if (accessLevel === 'view_only' || accessLevel === 'view') return 'view';
+  if (accessLevel === 'view_functional' || accessLevel === 'operate') return 'operate';
+  if (accessLevel === 'all') return 'all';
+  return 'none';
+};
+
+const mergePermissions = (target: RolePermissions, source?: RolePermissions) => {
+  if (!source) return;
+  MODULE_KEYS.forEach(module => {
+    const sourceAccess = source[module]?.access || (module === 'logistics' ? source.procurement?.access : undefined) || 'none';
+    const targetAccess = target[module]?.access || 'none';
+    if (ACCESS_PRIORITY[sourceAccess] > ACCESS_PRIORITY[targetAccess]) {
+      target[module] = { access: sourceAccess };
+    }
+  });
+};
 
 export const ROLE_REGISTRY: Record<string, RolePermissions> = {
   owner: {
@@ -72,7 +114,7 @@ export const ROLE_REGISTRY: Record<string, RolePermissions> = {
     predictive: { access: 'view' },
     analytics: { access: 'view' },
     marketing: { access: 'view' },
-    settings: { access: 'operate' }
+    settings: { access: 'none' }
   },
   pharmacist: {
     sales: { access: 'operate' },
@@ -179,7 +221,7 @@ export const ROLE_REGISTRY: Record<string, RolePermissions> = {
     predictive: { access: 'view' },
     analytics: { access: 'view' },
     marketing: { access: 'view' },
-    settings: { access: 'view' }
+    settings: { access: 'none' }
   },
   'Finance Officer': {
     sales: { access: 'view' },
@@ -223,7 +265,7 @@ export const ROLE_REGISTRY: Record<string, RolePermissions> = {
     welfare: { access: 'all' },
     predictive: { access: 'view' },
     analytics: { access: 'view' },
-    marketing: { access: 'none' },
+    marketing: { access: 'all' },
     settings: { access: 'none' }
   },
   'QA Officer': {
@@ -238,7 +280,7 @@ export const ROLE_REGISTRY: Record<string, RolePermissions> = {
     welfare: { access: 'all' },
     predictive: { access: 'none' },
     analytics: { access: 'view' },
-    marketing: { access: 'none' },
+    marketing: { access: 'operate' },
     settings: { access: 'none' }
   },
   'Procurement Head': {
@@ -286,6 +328,22 @@ export const ROLE_REGISTRY: Record<string, RolePermissions> = {
     marketing: { access: 'none' },
     settings: { access: 'none' }
   },
+  'Transport & Logistics Personnel': {
+    sales: { access: 'none' },
+    inventory: { access: 'view' },
+    clients: { access: 'none' },
+    stock: { access: 'operate' },
+    procurement: { access: 'view' },
+    logistics: { access: 'operate' },
+    finance: { access: 'none' },
+    qa: { access: 'view' },
+    hr: { access: 'none' },
+    welfare: { access: 'all' },
+    predictive: { access: 'none' },
+    analytics: { access: 'view' },
+    marketing: { access: 'none' },
+    settings: { access: 'none' }
+  },
   'Branch Manager': {
     sales: { access: 'operate' },
     inventory: { access: 'operate' },
@@ -329,7 +387,7 @@ export const ROLE_REGISTRY: Record<string, RolePermissions> = {
     predictive: { access: 'view' },
     analytics: { access: 'view' },
     marketing: { access: 'view' },
-    settings: { access: 'view' }
+    settings: { access: 'all' }
   },
   'HR Support Personnel': {
     sales: { access: 'none' },
@@ -354,6 +412,22 @@ export const ROLE_REGISTRY: Record<string, RolePermissions> = {
     procurement: { access: 'none' },
     finance: { access: 'none' },
     qa: { access: 'none' },
+    hr: { access: 'none' },
+    welfare: { access: 'all' },
+    predictive: { access: 'none' },
+    analytics: { access: 'none' },
+    marketing: { access: 'none' },
+    settings: { access: 'none' }
+  },
+  'Cleaner': {
+    sales: { access: 'none' },
+    inventory: { access: 'none' },
+    clients: { access: 'none' },
+    stock: { access: 'none' },
+    procurement: { access: 'none' },
+    logistics: { access: 'none' },
+    finance: { access: 'none' },
+    qa: { access: 'view' },
     hr: { access: 'none' },
     welfare: { access: 'all' },
     predictive: { access: 'none' },
@@ -391,7 +465,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [platformProfile, setPlatformProfile] = useState<PlatformUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [signingIn, setSigningIn] = useState(false);
-  const [activeBranchId, setActiveBranchId] = useState<string | null>(localStorage.getItem('activeBranchId'));
+  const [activeBranchId, setActiveBranchId] = useState<string | null>(null);
   const [activeBranch, setActiveBranch] = useState<Branch | null>(null);
   const [multiBranchMode, setMultiBranchMode] = useState(false);
   const [assignedBranches, setAssignedBranches] = useState<Branch[]>([]);
@@ -399,7 +473,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const hasPermission = (module: keyof RolePermissions, requiredLevel: 'view' | 'operate' | 'all' = 'view') => {
     if (!permissions) return false;
-    const userAccess = permissions[module]?.access || 'none';
+    const userAccess = permissions[module]?.access || (module === 'logistics' ? permissions.procurement?.access : undefined) || 'none';
     if (userAccess === 'all') return true;
     if (requiredLevel === 'view') {
       return userAccess === 'view' || userAccess === 'operate';
@@ -409,6 +483,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     return false;
   };
+
+  const branchStorageKey = (currentProfile: Staff) =>
+    `activeBranchId:${currentProfile.tenantId}:${currentProfile.id || currentProfile.uid}`;
 
   const seedDemoData = async (tenantId: string, userId: string) => {
     const branchesRef = collection(db, 'branches');
@@ -463,55 +540,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user, tenantError]);
 
   const updateActiveBranch = (branches: Branch[], isMultiBranch: boolean, currentProfile: Staff) => {
-    if (branches.length > 0) {
-      if (!isMultiBranch) {
-        const firstB = branches[0];
-        setActiveBranchId(firstB.id);
-        setActiveBranch(firstB);
-        localStorage.setItem('activeBranchId', firstB.id);
-        return;
-      }
-
-      const isPrimaryAdmin = currentProfile.username.startsWith('admin.');
-      
-      if (isPrimaryAdmin) {
-        const hqBranch = branches.find(br => br.type === 'HQ' || br.branch_code === 'HQ-001') || branches[0];
-        setActiveBranchId(hqBranch.id);
-        setActiveBranch(hqBranch);
-        localStorage.setItem('activeBranchId', hqBranch.id);
-      } else {
-        const assignedIds = currentProfile.assigned_branches || [];
-        if (assignedIds.length === 1) {
-          const b = branches.find(br => br.id === assignedIds[0]);
-          if (b) {
-            setActiveBranchId(b.id);
-            setActiveBranch(b);
-            localStorage.setItem('activeBranchId', b.id);
-          } else {
-            const fallback = branches[0];
-            setActiveBranchId(fallback.id);
-            setActiveBranch(fallback);
-            localStorage.setItem('activeBranchId', fallback.id);
-          }
-        } else if (assignedIds.length > 1) {
-          const savedBranchId = localStorage.getItem('activeBranchId');
-          const b = branches.find(br => br.id === savedBranchId && assignedIds.includes(br.id));
-          if (b) {
-            setActiveBranchId(b.id);
-            setActiveBranch(b);
-          } else {
-            setActiveBranchId(null);
-            setActiveBranch(null);
-            localStorage.removeItem('activeBranchId');
-          }
-        } else {
-          const fallback = branches.find(br => br.type === 'HQ') || branches[0];
-          setActiveBranchId(fallback.id);
-          setActiveBranch(fallback);
-          localStorage.setItem('activeBranchId', fallback.id);
-        }
-      }
+    const storageKey = branchStorageKey(currentProfile);
+    if (branches.length === 0) {
+      setActiveBranchId(null);
+      setActiveBranch(null);
+      localStorage.removeItem(storageKey);
+      return;
     }
+
+    if (!isMultiBranch) {
+      const onlyBranch = branches[0];
+      setActiveBranchId(onlyBranch.id);
+      setActiveBranch(onlyBranch);
+      localStorage.setItem(storageKey, onlyBranch.id);
+      return;
+    }
+
+    if (branches.length === 1) {
+      setActiveBranchId(branches[0].id);
+      setActiveBranch(branches[0]);
+      localStorage.setItem(storageKey, branches[0].id);
+      return;
+    }
+
+    const savedBranchId = localStorage.getItem(storageKey);
+    const savedBranch = branches.find(branch => branch.id === savedBranchId);
+    if (savedBranch) {
+      setActiveBranchId(savedBranch.id);
+      setActiveBranch(savedBranch);
+      return;
+    }
+
+    setActiveBranchId(null);
+    setActiveBranch(null);
+    localStorage.removeItem(storageKey);
   };
 
   useEffect(() => {
@@ -760,64 +822,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           if (currentProfile) {
             setProfile(currentProfile);
-    // Auto-redirect if only one assigned branch
-    const navigate = useNavigate();
-    useEffect(() => {
-      if (currentProfile && currentProfile.assigned_branches?.length === 1) {
-        const branchId = currentProfile.assigned_branches[0];
-        handleSetActiveBranchId(branchId);
-        navigate(`/app/branch/${branchId}`);
-      }
-    }, [currentProfile, navigate]);
             localStorage.setItem('auth_profile', JSON.stringify(currentProfile));
             setPlatformProfile(null);
 
-            // Inject permissions based on Role Registry schema definitions (merging primary and secondary roles)
+            // Merge the primary role, secondary roles and tenant-configured role realms.
             const primaryRole = currentProfile.role || 'staff';
             const secondaryRolesList = currentProfile.secondaryRoles || [];
             const allUserRoles = [primaryRole, ...secondaryRolesList];
+            const mergedPerms = createBaselinePermissions();
 
-            const mergedPerms: RolePermissions = {
-              sales: { access: 'none' },
-              inventory: { access: 'none' },
-              clients: { access: 'none' },
-              stock: { access: 'none' },
-              procurement: { access: 'none' },
-              finance: { access: 'none' },
-              qa: { access: 'none' },
-              hr: { access: 'none' },
-              welfare: { access: 'all' },
-              predictive: { access: 'none' },
-              analytics: { access: 'none' },
-              marketing: { access: 'none' },
-              settings: { access: 'none' }
-            };
+            try {
+              const realmDocs = await Promise.all(allUserRoles.map(role => {
+                const realmId = `${currentProfile.tenantId}_${role.replace(/\s+/g, '_').toLowerCase()}`;
+                return getDoc(doc(db, 'role_realms_of_operation', realmId));
+              }));
+              realmDocs.forEach((realmDoc, index) => {
+                const role = allUserRoles[index];
+                const registryKey = Object.keys(ROLE_REGISTRY).find(k => k.toLowerCase() === role.toLowerCase()) || role;
+                let rolePerms = ROLE_REGISTRY[registryKey];
+                if (realmDoc.exists()) {
+                  const configured = realmDoc.data().permissions || {};
+                  const configuredPerms: RolePermissions = {};
+                  Object.entries(configured).forEach(([rawModule, value]: [string, any]) => {
+                    const module = normalizeRealmModule(rawModule);
+                    if (module) configuredPerms[module] = { access: normalizeRealmAccess(value?.accessLevel) };
+                  });
+                  rolePerms = configuredPerms;
+                }
+                mergePermissions(mergedPerms, rolePerms);
+              });
+            } catch (error) {
+              console.warn('Could not load configured role realms. Using system role defaults.', error);
+              allUserRoles.forEach(role => {
+                const registryKey = Object.keys(ROLE_REGISTRY).find(k => k.toLowerCase() === role.toLowerCase()) || role;
+                mergePermissions(mergedPerms, ROLE_REGISTRY[registryKey]);
+              });
+            }
 
-            const accessPriority: Record<string, number> = { none: 0, view: 1, operate: 2, all: 3 };
-
-            allUserRoles.forEach(role => {
-              const registryKey = Object.keys(ROLE_REGISTRY).find(k => k.toLowerCase() === role.toLowerCase()) || role;
-              const rolePerms = ROLE_REGISTRY[registryKey];
-              if (rolePerms) {
-                Object.keys(rolePerms).forEach(modKey => {
-                  const module = modKey as keyof RolePermissions;
-                  const currentAccess = mergedPerms[module]?.access || 'none';
-                  const roleAccess = rolePerms[module]?.access || 'none';
-                  if (accessPriority[roleAccess] > accessPriority[currentAccess]) {
-                    mergedPerms[module] = { access: roleAccess };
-                  }
-                });
-              }
-            });
-
-            // Specific request: give CEO, Owner, and Admin roles access everywhere in the system
-            const hasCeoRole = allUserRoles.some(role => {
-              const r = role.toLowerCase();
-              return r === 'ceo' || r === 'ceo / md' || r === 'owner' || r === 'admin';
-            });
-            if (hasCeoRole) {
-              Object.keys(mergedPerms).forEach(modKey => {
-                const module = modKey as keyof RolePermissions;
+            const hasExecutiveRole = allUserRoles.some(role =>
+              ['ceo', 'ceo / md', 'owner'].includes(role.toLowerCase())
+            );
+            if (hasExecutiveRole) {
+              MODULE_KEYS.forEach(module => {
                 mergedPerms[module] = { access: 'all' };
               });
             }
@@ -827,9 +873,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Load settings
             let isMultiBranch = false;
             try {
-              const settingsSnap = await getDoc(doc(db, 'system_settings', currentProfile.tenantId));
-              const settings = settingsSnap.data();
-              isMultiBranch = settings?.multiBranchMode || false;
+              const settingsRef = doc(db, 'system_settings', currentProfile.tenantId);
+              const settingsSnap = await getDoc(settingsRef);
+              let settings = settingsSnap.data();
+              if (!settings) {
+                const settingsQuery = await getDocs(query(
+                  collection(db, 'system_settings'),
+                  where('tenantId', '==', currentProfile.tenantId)
+                ));
+                settings = settingsQuery.docs[0]?.data();
+              }
+              isMultiBranch = typeof settings?.multiBranchMode === 'boolean'
+                ? settings.multiBranchMode
+                : tenant.deployment_mode === 'multi_branch';
             } catch (e) {
               console.warn("Failed to fetch system settings:", e);
             }
@@ -837,7 +893,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             // Fetch branches
             const allRoles = [currentProfile.role || 'staff', ...(currentProfile.secondaryRoles || [])];
-            const isAllBranchRole = allRoles.some(r => ['owner', 'CEO', 'CEO / MD', 'IT Head', 'IT Support Staff', 'admin', 'Marketing Head', 'Marketing Personnel'].includes(r));
+            const isAllBranchRole = allRoles.some(role =>
+              ['owner', 'ceo', 'ceo / md', 'it head', 'it support staff'].includes(role.toLowerCase())
+            );
             if (isAllBranchRole) {
               const bSnap = await getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenant.id)));
               const branches = bSnap.docs.map(d => ({ ...d.data(), id: d.id } as Branch));
@@ -857,6 +915,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setActiveBranchId(null);
           setActiveBranch(null);
           setAssignedBranches([]);
+          setPermissions(null);
+          // Remove the legacy unscoped key. Scoped branch selections are safe to retain.
           localStorage.removeItem('activeBranchId');
           localStorage.removeItem('auth_profile');
           localStorage.removeItem('auth_platformProfile');
@@ -872,10 +932,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [tenant, isPlatformAdmin, tenantLoading]);
 
   const handleSetActiveBranchId = (id: string) => {
-    setActiveBranchId(id);
-    localStorage.setItem('activeBranchId', id);
+    if (!profile) return;
     const b = assignedBranches.find(br => br.id === id);
-    if (b) setActiveBranch(b);
+    if (!b) {
+      toast.error('You are not assigned to that branch.');
+      return;
+    }
+    setActiveBranchId(id);
+    localStorage.setItem(branchStorageKey(profile), id);
+    setActiveBranch(b);
   };
 
   const signIn = async (emailOrUsername?: string, password?: string, accountType: 'TMC' | 'TENANT' = 'TENANT') => {

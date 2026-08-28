@@ -22,7 +22,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
-  const { profile, activeBranch, multiBranchMode, assignedBranches, setActiveBranchId, logout } = useAuth();
+  const { profile, activeBranch, multiBranchMode, assignedBranches, setActiveBranchId, logout, hasPermission } = useAuth();
   const { tenant, setTenantSlugAndMode } = useTenant();
   const navigate = useNavigate();
 
@@ -117,13 +117,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                             <UserIcon size={18} className="text-zinc-400" />
                             My Profile
                           </button>
-                          <button 
-                            onClick={() => { navigate(`/tenant/${tenant?.slug || 'radah'}/app/settings`); setUserMenuOpen(false); }}
-                            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900 rounded-lg transition-colors"
-                          >
-                            <Settings size={18} className="text-zinc-400" />
-                            Settings
-                          </button>
+                          {hasPermission('settings', 'view') && (
+                            <button
+                              onClick={() => { navigate(`/tenant/${tenant?.slug || 'radah'}/app/settings`); setUserMenuOpen(false); }}
+                              className="w-full flex items-center gap-3 px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900 rounded-lg transition-colors"
+                            >
+                              <Settings size={18} className="text-zinc-400" />
+                              Settings
+                            </button>
+                          )}
                           <button 
                             onClick={() => { setTenantSlugAndMode(null); }}
                             className="w-full flex items-center gap-3 px-3 py-2 text-xs text-amber-600 hover:bg-amber-50 rounded-lg transition-colors font-bold"

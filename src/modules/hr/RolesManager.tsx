@@ -93,7 +93,7 @@ export const RolesManager: React.FC = () => {
           } else {
             // Default initial state based on the selected role's standard privilege
             const initialPerms: Record<string, any> = {};
-            const isFullPower = ['owner', 'admin', 'CEO'].includes(selectedRoleForRealm.name.toLowerCase());
+            const isFullPower = ['owner', 'ceo', 'ceo / md'].includes(selectedRoleForRealm.name.toLowerCase());
             SYSTEM_MODULES.forEach(mod => {
               initialPerms[mod.id] = {
                 accessLevel: isFullPower ? 'view_functional' : 'none',

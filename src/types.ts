@@ -1,4 +1,31 @@
-export type UserRole = 'owner' | 'admin' | 'manager' | 'cashier' | 'pharmacist' | 'IT Head' | 'IT Staff' | 'HR Manager' | 'Logistics Manager' | 'QA Manager' | 'Finance Manager' | 'Procurement Manager' | 'Marketing Manager' | 'Staff' | 'Finance Head' | 'CEO';
+export type UserRole =
+  | 'owner'
+  | 'admin'
+  | 'CEO'
+  | 'CEO / MD'
+  | 'Branch Manager'
+  | 'cashier'
+  | 'pharmacist'
+  | 'Dispenser'
+  | 'Finance Head'
+  | 'Finance Officer'
+  | 'Accountant'
+  | 'HR Head'
+  | 'HR Support Personnel'
+  | 'QA Head'
+  | 'QA Officer'
+  | 'Procurement Head'
+  | 'Procurement Officer'
+  | 'Logistics Head'
+  | 'Transport & Logistics Personnel'
+  | 'IT Head'
+  | 'IT Support Staff'
+  | 'Marketing Head'
+  | 'Marketing Personnel'
+  | 'Trainee'
+  | 'Cleaner'
+  | 'Staff'
+  | string;
 
 export interface Tenant {
   id: string;
@@ -1594,4 +1621,3 @@ export interface AutoGenerateOrderLine {
   overriddenAt: string | null;
   isManualAdd?: boolean;
 }
-
