@@ -36,11 +36,13 @@ interface ManagementExpense {
   description: string;
   department: string;
   // Metadata for auto-logs
-  sourceType?: 'hr' | 'procurement' | 'credit';
+  sourceType?: 'hr' | 'procurement' | 'credit' | 'manual';
   sourceRefId?: string; // id of payroll, grn, or credit record
   invoiceId?: string;
   invoiceRef?: string;
   originalAmount?: number;
+  source?: string;
+  excludeFromOpexRollup?: boolean;
 }
 
 interface PettyCashEntry {
@@ -301,7 +303,8 @@ export const ManagementExpenseLedger: React.FC = () => {
         logged_by: profile.fullName || profile.email || 'Corporate User',
         description: manualForm.description,
         department: manualForm.department,
-        sourceType: 'manual'
+        sourceType: 'manual',
+        excludeFromOpexRollup: false
       };
       batch.set(expRef, expPayload);
 
@@ -387,7 +390,10 @@ export const ManagementExpenseLedger: React.FC = () => {
         status: 'approved',
         updatedAt: new Date().toISOString(),
         issuedAt: new Date().toISOString(),
-        issuedBy: profile.fullName || profile.email || 'Authorized Finance'
+        issuedBy: profile.fullName || profile.email || 'Authorized Finance',
+        excludeFromOpexRollup: reviewingExpense.excludeFromOpexRollup === true ||
+          reviewingExpense.source === 'cash_grn' || reviewingExpense.source === 'credit_payment' ||
+          reviewingExpense.sourceType === 'procurement' || reviewingExpense.sourceType === 'credit'
       });
 
       // 2. Add outgoing to petty_cash_ledger

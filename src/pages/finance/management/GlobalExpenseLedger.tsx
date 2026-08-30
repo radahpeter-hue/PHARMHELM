@@ -16,6 +16,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
+import { isExcludedFromOpex } from '../../../utils/finance';
 
 interface BranchExpense {
   id: string;
@@ -40,6 +41,9 @@ interface ManagementExpense {
   logged_by: string;
   description: string;
   department: string;
+  source?: string;
+  sourceType?: string;
+  excludeFromOpexRollup?: boolean;
 }
 
 interface ConsolidatedExpense {
@@ -51,6 +55,7 @@ interface ConsolidatedExpense {
   department: string; // Branch Name or Logistics/HR
   type: 'Branch' | 'Management' | 'Logistics' | 'Payroll';
   loggedBy: string;
+  excludeFromOpexRollup?: boolean;
 }
 
 export const GlobalExpenseLedger: React.FC = () => {
@@ -75,6 +80,7 @@ export const GlobalExpenseLedger: React.FC = () => {
   const [filterCategory, setFilterCategory] = useState<string>('All');
   const [filterDept, setFilterDept] = useState<string>('All');
   const [filterLoggedBy, setFilterLoggedBy] = useState<string>('All');
+  const [filterPnlTreatment, setFilterPnlTreatment] = useState<'All' | 'Operating' | 'Excluded'>('All');
   const [minAmount, setMinAmount] = useState<string>('');
   const [maxAmount, setMaxAmount] = useState<string>('');
   const [dateRange, setDateRange] = useState(() => {
@@ -110,7 +116,7 @@ export const GlobalExpenseLedger: React.FC = () => {
       ));
       const mExpenses = mgmtExpSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })) as ManagementExpense[];
       // Filter out drafts or rejected, only take issued/approved
-      setMgmtExpenses(mExpenses.filter(e => e.status === 'approved'));
+      setMgmtExpenses(mExpenses.filter(e => ['approved', 'issued'].includes((e.status || '').toLowerCase())));
 
       // 4. Fetch Logistics logs
       const fuelSnap = await getDocs(query(
@@ -212,7 +218,8 @@ export const GlobalExpenseLedger: React.FC = () => {
         amount: e.amount_ugx || e.amount || 0,
         department: e.department || 'HQ',
         type: 'Management',
-        loggedBy: (e as any).logged_by_name || staffMap.get(e.logged_by || '') || e.logged_by || 'HQ Finance'
+        loggedBy: (e as any).logged_by_name || staffMap.get(e.logged_by || '') || e.logged_by || 'HQ Finance',
+        excludeFromOpexRollup: isExcludedFromOpex(e)
       });
     });
 
@@ -300,6 +307,11 @@ export const GlobalExpenseLedger: React.FC = () => {
       });
     });
 
+    // Every non-management source remains a true operating expense.
+    list.forEach(item => {
+      if (typeof item.excludeFromOpexRollup !== 'boolean') item.excludeFromOpexRollup = false;
+    });
+
     // Sort descending by date
     list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     return list;
@@ -351,17 +363,24 @@ export const GlobalExpenseLedger: React.FC = () => {
       // 6. Logged By
       if (filterLoggedBy !== 'All' && e.loggedBy !== filterLoggedBy) return false;
 
+      if (filterPnlTreatment === 'Operating' && e.excludeFromOpexRollup) return false;
+      if (filterPnlTreatment === 'Excluded' && !e.excludeFromOpexRollup) return false;
+
       // 7. Amount limits
       if (minAmount && e.amount < parseFloat(minAmount)) return false;
       if (maxAmount && e.amount > parseFloat(maxAmount)) return false;
 
       return true;
     });
-  }, [consolidatedList, dateRange, searchTerm, filterType, filterCategory, filterDept, filterLoggedBy, minAmount, maxAmount]);
+  }, [consolidatedList, dateRange, searchTerm, filterType, filterCategory, filterDept, filterLoggedBy, filterPnlTreatment, minAmount, maxAmount]);
 
   // Aggregate sums
   const totalExpenses = useMemo(() => {
     return filteredList.reduce((sum, e) => sum + e.amount, 0);
+  }, [filteredList]);
+
+  const totalOperatingExpenses = useMemo(() => {
+    return filteredList.filter(e => !e.excludeFromOpexRollup).reduce((sum, e) => sum + e.amount, 0);
   }, [filteredList]);
 
   const statsByType = useMemo(() => {
@@ -389,6 +408,7 @@ export const GlobalExpenseLedger: React.FC = () => {
       'Description/Note': e.description,
       'Branch/Department': e.department,
       'Amount (UGX)': e.amount,
+      'P&L Treatment': e.excludeFromOpexRollup ? 'Excluded - Inventory/COGS' : 'Operating Expense',
       'Logged By': e.loggedBy
     }));
 
@@ -399,6 +419,7 @@ export const GlobalExpenseLedger: React.FC = () => {
       'Description/Note': '',
       'Branch/Department': '',
       'Amount (UGX)': totalExpenses,
+      'P&L Treatment': '',
       'Logged By': ''
     });
 
@@ -429,11 +450,16 @@ export const GlobalExpenseLedger: React.FC = () => {
       </div>
 
       {/* Aggregate Widgets */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
         <div className="bg-zinc-950 text-white p-6 rounded-3xl shadow-md flex flex-col justify-between">
-          <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Aggregated Total</span>
+          <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Total Expenses in Period</span>
           <span className="text-xl font-black font-mono block mt-2">UGX {totalExpenses.toLocaleString()}</span>
           <span className="text-[10px] text-zinc-400 mt-2 block">Consolidated Total</span>
+        </div>
+        <div className="bg-emerald-50 border border-emerald-200 p-6 rounded-3xl flex flex-col justify-between">
+          <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Total Operating Expenses (P&amp;L)</span>
+          <span className="text-lg font-black font-mono block mt-2 text-emerald-950">UGX {totalOperatingExpenses.toLocaleString()}</span>
+          <span className="text-[10px] text-emerald-700 mt-2 block">Excludes inventory and supplier-credit cash movements</span>
         </div>
         <div className="bg-white border border-zinc-200 p-6 rounded-3xl flex flex-col justify-between">
           <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1"><Building size={12} /> Branch Costs</span>
@@ -471,6 +497,7 @@ export const GlobalExpenseLedger: React.FC = () => {
               setFilterCategory('All');
               setFilterDept('All');
               setFilterLoggedBy('All');
+              setFilterPnlTreatment('All');
               setMinAmount('');
               setMaxAmount('');
             }}
@@ -480,6 +507,19 @@ export const GlobalExpenseLedger: React.FC = () => {
           </button>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">P&amp;L Treatment</label>
+            <select
+              className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none font-bold text-zinc-800"
+              value={filterPnlTreatment}
+              onChange={(e) => setFilterPnlTreatment(e.target.value as 'All' | 'Operating' | 'Excluded')}
+            >
+              <option value="All">All</option>
+              <option value="Operating">Operating Expenses Only</option>
+              <option value="Excluded">Excluded Only</option>
+            </select>
+          </div>
+
           <div className="space-y-1">
             <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">Search Note/Category</label>
             <div className="relative">
@@ -601,6 +641,7 @@ export const GlobalExpenseLedger: React.FC = () => {
                   <th className="px-6 py-4">Expense Category</th>
                   <th className="px-6 py-4">Description Note</th>
                   <th className="px-6 py-4 text-right">Amount (UGX)</th>
+                  <th className="px-6 py-4">P&amp;L Treatment</th>
                   <th className="px-6 py-4">Logged By</th>
                 </tr>
               </thead>
@@ -632,6 +673,11 @@ export const GlobalExpenseLedger: React.FC = () => {
                     <td className="px-6 py-4 text-right font-black font-mono text-xs text-zinc-950">
                       UGX {e.amount.toLocaleString()}
                     </td>
+                    <td className="px-6 py-4">
+                      <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider ${e.excludeFromOpexRollup ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
+                        {e.excludeFromOpexRollup ? 'Excluded - Inventory/COGS' : 'Operating Expense'}
+                      </span>
+                    </td>
                     <td className="px-6 py-4 text-xs text-zinc-400">
                       {e.loggedBy}
                     </td>
@@ -639,7 +685,7 @@ export const GlobalExpenseLedger: React.FC = () => {
                 ))}
                 {filteredList.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center text-zinc-400 italic text-sm">
+                    <td colSpan={8} className="px-6 py-12 text-center text-zinc-400 italic text-sm">
                       No consolidated global expenses matched current search/filter metrics.
                     </td>
                   </tr>

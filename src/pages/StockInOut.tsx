@@ -21,6 +21,7 @@ import {
   X
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { hasAnyRole } from '../utils/roles';
 import { firestoreService } from '../services/firestore';
 import { Product, StockOrder, StockOrderLine, TransferInvoice, Branch, ProductBatch, TransferInvoiceLine, Sale, OperationalInventory } from '../types';
 import { db } from '../firebase';
@@ -1024,7 +1025,7 @@ const OrderTracker: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId) {
       firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
-        let filtered = profile.role === 'owner' || profile.role === 'admin' 
+        let filtered = hasAnyRole(profile, ['owner', 'admin', 'CEO', 'CEO / MD'])
           ? data 
           : data.filter(o => o.requesting_branch_id === activeBranchId);
         

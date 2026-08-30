@@ -3571,18 +3571,23 @@ const CreateTenantModal = ({ onClose, onSuccess, logAction }: { onClose: () => v
       
       // Register this credential inside Firebase Authentication backend pool
       const authEmail = `admin@${acronymLower}.pharmhelm.com`;
+      let initialUserUid = '';
       try {
-        await registerAuthUser(authEmail, generatedPassword);
+        initialUserUid = await registerAuthUser(authEmail, generatedPassword);
       } catch (authErr: any) {
         console.warn("Could not register user automatically in Firebase Auth:", authErr);
         toast.info("Automatic Auth registration bypassed. Please manually add the credential to Firebase Authentication.");
       }
       
-      await addDoc(collection(db, 'staff'), {
+      if (!initialUserUid) {
+        throw new Error('Initial IT Head authentication account was not created. Tenant staff provisioning stopped.');
+      }
+      await setDoc(doc(db, 'staff', initialUserUid), {
+        id: initialUserUid,
+        uid: initialUserUid,
         tenantId: tenantId,
         username: username,
         authEmail: authEmail,
-        password: generatedPassword, // In production, this should be hashed
         password_set: true,
         email: formData.contact_email,
         displayName: formData.contact_name,

@@ -10,6 +10,7 @@ import { Vehicle, Staff } from '../../types';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { cn } from '../../utils/cn';
+import { hasAnyRole } from '../../utils/roles';
 
 export const VehicleRegister: React.FC = () => {
   const { profile } = useAuth();
@@ -31,8 +32,7 @@ export const VehicleRegister: React.FC = () => {
 
     const dQuery = query(
       collection(db, 'staff'),
-      where('tenantId', '==', profile.tenantId),
-      where('role', 'in', ['Transport & Logistics Personnel', 'Logistics Head'])
+      where('tenantId', '==', profile.tenantId)
     );
 
     const unsubscribeV = onSnapshot(vQuery, (snapshot) => {
@@ -42,7 +42,9 @@ export const VehicleRegister: React.FC = () => {
     });
 
     const unsubscribeD = onSnapshot(dQuery, (snapshot) => {
-      const dData = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as Staff));
+      const dData = snapshot.docs
+        .map(doc => ({ uid: doc.id, ...doc.data() } as Staff))
+        .filter(staff => hasAnyRole(staff, ['Transport & Logistics Personnel', 'Logistics Head']));
       setDrivers(dData);
     });
 

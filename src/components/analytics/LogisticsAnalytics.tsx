@@ -1,51 +1,144 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  LineChart, Line, PieChart, Pie, Cell, Legend, AreaChart, Area, ComposedChart
-} from 'recharts';
-import { 
-  Truck, Clock, ArrowRightLeft, Route, 
-  ShieldCheck, User, DollarSign, TrendingUp
-} from 'lucide-react';
+import { Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Line, ComposedChart } from 'recharts';
+import { Clock, ArrowRightLeft, ShieldCheck, User, DollarSign } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { useAuth } from '../../contexts/AuthContext';
 import { firestoreService } from '../../services/firestore';
 
-const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
-
-const VEHICLE_OPEX_MOCK = [
-  { vehicle: 'UBA 123A', opex: 450, avg: 400 },
-  { vehicle: 'UBB 456B', opex: 380, avg: 400 },
-  { vehicle: 'UBC 789C', opex: 520, avg: 400 },
-  { vehicle: 'UBD 012D', opex: 410, avg: 400 },
-  { vehicle: 'UBE 345E', opex: 350, avg: 400 },
-];
+const amount = (...values: any[]) => Number(values.find(value => Number.isFinite(Number(value))) || 0);
+const dateValue = (value: any) => value?.toDate?.() || (value ? new Date(value) : null);
+const daysUntil = (value: any) => {
+  const date = dateValue(value);
+  return date && !Number.isNaN(date.getTime()) ? Math.ceil((date.getTime() - Date.now()) / 86400000) : null;
+};
 
 export const LogisticsAnalytics: React.FC = () => {
   const { profile } = useAuth();
+  const [vehicles, setVehicles] = useState<any[]>([]);
+  const [trips, setTrips] = useState<any[]>([]);
+  const [fuelLogs, setFuelLogs] = useState<any[]>([]);
+  const [maintenanceLogs, setMaintenanceLogs] = useState<any[]>([]);
+  const [fineLogs, setFineLogs] = useState<any[]>([]);
+  const [generalExpenses, setGeneralExpenses] = useState<any[]>([]);
   const [sales, setSales] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [staff, setStaff] = useState<any[]>([]);
 
   useEffect(() => {
     if (profile?.tenantId) {
-      setLoading(true);
-      const unsubscribe = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
-        setSales(data);
-        setLoading(false);
-      });
-      return () => unsubscribe();
+      const unsubscribers = [
+        firestoreService.subscribeToCollection('vehicles', profile.tenantId, setVehicles),
+        firestoreService.subscribeToCollection('trips', profile.tenantId, setTrips),
+        firestoreService.subscribeToCollection('fuel_logs', profile.tenantId, setFuelLogs),
+        firestoreService.subscribeToCollection('maintenance_logs', profile.tenantId, setMaintenanceLogs),
+        firestoreService.subscribeToCollection('traffic_fine_logs', profile.tenantId, setFineLogs),
+        firestoreService.subscribeToCollection('logistics_expenses', profile.tenantId, setGeneralExpenses),
+        firestoreService.subscribeToCollection('sales', profile.tenantId, setSales),
+        firestoreService.subscribeToCollection('staff', profile.tenantId, setStaff)
+      ];
+      return () => unsubscribers.forEach(unsubscribe => unsubscribe());
     }
   }, [profile?.tenantId]);
 
   const metrics = useMemo(() => {
-    const hasData = sales.length > 0;
-    const vehicleOpex = hasData ? VEHICLE_OPEX_MOCK : [];
-    
-    return {
-      hasData,
-      vehicleOpex
+    const vehicleMap = new Map(vehicles.map(vehicle => [vehicle.id, vehicle]));
+    const staffMap = new Map<string, any>();
+    staff.forEach(person => {
+      staffMap.set(person.uid || person.id, person);
+      if (person.legacyStaffId) staffMap.set(person.legacyStaffId, person);
+    });
+    const costsByVehicle = new Map<string, number>();
+    const addVehicleCost = (record: any, value: number) => {
+      const id = record.vehicleId || record.vehicle_id;
+      if (id) costsByVehicle.set(id, (costsByVehicle.get(id) || 0) + value);
     };
-  }, [sales]);
+    fuelLogs.forEach(log => addVehicleCost(log, amount(log.cost_ugx, log.amount)));
+    maintenanceLogs.forEach(log => addVehicleCost(log, amount(log.cost_ugx, log.cost, log.amount)));
+    fineLogs.forEach(log => addVehicleCost(log, amount(log.fine_amount_ugx, log.amount)));
+    generalExpenses.forEach(log => addVehicleCost(log, amount(log.cost_ugx, log.amount)));
+
+    const distanceByVehicle = new Map<string, number>();
+    trips.forEach(trip => {
+      const distance = Math.max(0, amount(trip.end_mileage) - amount(trip.start_mileage));
+      if (trip.vehicleId && distance > 0) distanceByVehicle.set(trip.vehicleId, (distanceByVehicle.get(trip.vehicleId) || 0) + distance);
+    });
+    const totalCost = [...costsByVehicle.values()].reduce((sum, value) => sum + value, 0);
+    const totalDistance = [...distanceByVehicle.values()].reduce((sum, value) => sum + value, 0);
+    const averageOpex = totalDistance > 0 ? totalCost / totalDistance : 0;
+    const vehicleOpex = vehicles.map(vehicle => {
+      const distance = distanceByVehicle.get(vehicle.id) || 0;
+      return {
+        vehicle: vehicle.plate_number || vehicle.numberPlate || vehicle.name || vehicle.id,
+        opex: distance > 0 ? Math.round((costsByVehicle.get(vehicle.id) || 0) / distance) : 0,
+        avg: Math.round(averageOpex)
+      };
+    }).filter(vehicle => vehicle.opex > 0);
+
+    const completedTrips = trips.filter(trip => trip.status === 'completed' && trip.departure_time && trip.arrival_time);
+    const tatHours = completedTrips.map(trip => {
+      const start = dateValue(trip.departure_time);
+      const end = dateValue(trip.arrival_time);
+      return start && end ? Math.max(0, (end.getTime() - start.getTime()) / 3600000) : 0;
+    }).filter(Boolean);
+    const averageTat = tatHours.length ? tatHours.reduce((sum, value) => sum + value, 0) / tatHours.length : 0;
+
+    const totalRevenue = sales.filter(sale => sale.status !== 'voided').reduce((sum, sale) => sum + amount(sale.total, sale.total_amount, sale.amount), 0);
+    const logisticsCostPercent = totalRevenue > 0 ? (totalCost / totalRevenue) * 100 : 0;
+    const transitValue = trips.reduce((sum, trip) => sum + amount(trip.cargo_value_ugx, trip.delivery_value_ugx), 0);
+    const transitLoss = trips.reduce((sum, trip) => sum + amount(trip.transit_loss_ugx, trip.shrinkage_value_ugx), 0);
+    const shrinkageRate = transitValue > 0 ? (transitLoss / transitValue) * 100 : 0;
+
+    const complianceList = vehicles.flatMap(vehicle => {
+      const name = vehicle.plate_number || vehicle.numberPlate || vehicle.name || vehicle.id;
+      return [
+        { name, item: 'Insurance', days: daysUntil(vehicle.insurance_expiry_date) },
+        { name, item: 'Service', days: daysUntil(vehicle.next_service_date) }
+      ];
+    }).filter(item => item.days !== null && item.days <= 60)
+      .map(item => ({ ...item, days: item.days as number, status: (item.days as number) <= 14 ? 'Critical' : 'Warning' }))
+      .sort((a, b) => a.days - b.days);
+
+    const routes = new Map<string, { route: string; revenue: number; cost: number; profit: number }>();
+    trips.forEach(trip => {
+      const routeName = `${trip.route_origin || 'Origin'} - ${trip.route_destination || 'Destination'}`;
+      const existing = routes.get(routeName) || { route: routeName, revenue: 0, cost: 0, profit: 0 };
+      existing.revenue += amount(trip.revenue_ugx, trip.delivery_revenue_ugx);
+      existing.cost += amount(trip.cost_ugx, trip.trip_cost_ugx);
+      existing.profit = existing.revenue - existing.cost;
+      routes.set(routeName, existing);
+    });
+
+    const drivers = new Map<string, any>();
+    trips.forEach(trip => {
+      const id = trip.driver_id || trip.personnelId || trip.driver_name;
+      if (!id) return;
+      const person = staffMap.get(id);
+      const current = drivers.get(id) || { name: trip.driver_name || person?.full_name || id, trips: 0, hours: 0, timedTrips: 0, incidents: 0 };
+      current.trips += 1;
+      const start = dateValue(trip.departure_time);
+      const end = dateValue(trip.arrival_time);
+      if (start && end) { current.hours += Math.max(0, (end.getTime() - start.getTime()) / 3600000); current.timedTrips += 1; }
+      drivers.set(id, current);
+    });
+    fineLogs.forEach(fine => {
+      const id = fine.driver_id || fine.personnelId || fine.staff_id;
+      if (id && drivers.has(id)) drivers.get(id).incidents += 1;
+    });
+    const driverList = [...drivers.values()].map(driver => ({
+      ...driver,
+      tat: driver.timedTrips ? `${(driver.hours / driver.timedTrips).toFixed(1)}h` : 'N/A',
+      status: driver.incidents === 0 ? 'Normal' : driver.incidents >= 3 ? 'Warning' : 'Review'
+    }));
+
+    return {
+      vehicleOpex,
+      averageTat,
+      shrinkageRate,
+      logisticsCostPercent,
+      complianceList,
+      routeList: [...routes.values()],
+      driverList
+    };
+  }, [vehicles, trips, fuelLogs, maintenanceLogs, fineLogs, generalExpenses, sales, staff]);
   return (
     <div className="space-y-8">
       {/* Live KPI Cards */}
@@ -55,10 +148,10 @@ export const LogisticsAnalytics: React.FC = () => {
             <div className="h-10 w-10 bg-emerald-50 rounded-xl flex items-center justify-center">
               <Clock className="text-emerald-600" size={20} />
             </div>
-            <div className="text-emerald-600 text-xs font-bold">{metrics.hasData ? "1.2h" : "0h"}</div>
+            <div className="text-emerald-600 text-xs font-bold">{metrics.averageTat.toFixed(1)}h</div>
           </div>
           <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Delivery TAT (Avg)</p>
-          <h3 className="text-2xl font-black text-zinc-900">{metrics.hasData ? "1.2 hours" : "0 hours"}</h3>
+          <h3 className="text-2xl font-black text-zinc-900">{metrics.averageTat.toFixed(1)} hours</h3>
           <p className="text-[10px] text-zinc-400 mt-1">From POS checkout to receipt</p>
         </div>
 
@@ -67,10 +160,10 @@ export const LogisticsAnalytics: React.FC = () => {
             <div className="h-10 w-10 bg-blue-50 rounded-xl flex items-center justify-center">
               <ArrowRightLeft className="text-blue-600" size={20} />
             </div>
-            <div className="text-blue-600 text-xs font-bold">{metrics.hasData ? "0.4%" : "0.0%"}</div>
+            <div className="text-blue-600 text-xs font-bold">{metrics.shrinkageRate.toFixed(1)}%</div>
           </div>
           <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Transit Shrinkage Rate</p>
-          <h3 className="text-2xl font-black text-zinc-900">{metrics.hasData ? "0.4%" : "0.0%"}</h3>
+          <h3 className="text-2xl font-black text-zinc-900">{metrics.shrinkageRate.toFixed(1)}%</h3>
           <p className="text-[10px] text-zinc-400 mt-1">Risk threshold: 0.5%</p>
         </div>
 
@@ -79,10 +172,10 @@ export const LogisticsAnalytics: React.FC = () => {
             <div className="h-10 w-10 bg-amber-50 rounded-xl flex items-center justify-center">
               <DollarSign className="text-amber-600" size={20} />
             </div>
-            <div className="text-amber-600 text-xs font-bold">{metrics.hasData ? "8.2%" : "0.0%"}</div>
+            <div className="text-amber-600 text-xs font-bold">{metrics.logisticsCostPercent.toFixed(1)}%</div>
           </div>
           <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Logistics Cost % Revenue</p>
-          <h3 className="text-2xl font-black text-zinc-900">{metrics.hasData ? "8.2%" : "0.0%"}</h3>
+          <h3 className="text-2xl font-black text-zinc-900">{metrics.logisticsCostPercent.toFixed(1)}%</h3>
           <p className="text-[10px] text-zinc-400 mt-1">Total transport costs ÷ revenue</p>
         </div>
 
@@ -91,10 +184,10 @@ export const LogisticsAnalytics: React.FC = () => {
             <div className="h-10 w-10 bg-red-50 rounded-xl flex items-center justify-center">
               <ShieldCheck className="text-red-600" size={20} />
             </div>
-            <div className="text-red-600 text-xs font-bold">{metrics.hasData ? "3 vehicles" : "0 vehicles"}</div>
+            <div className="text-red-600 text-xs font-bold">{metrics.complianceList.length} vehicles</div>
           </div>
           <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Fleet Compliance Alert</p>
-          <h3 className="text-2xl font-black text-zinc-900">{metrics.hasData ? "3 vehicles" : "0 vehicles"}</h3>
+          <h3 className="text-2xl font-black text-zinc-900">{metrics.complianceList.length} alerts</h3>
           <p className="text-[10px] text-zinc-400 mt-1">Maintenance/Insurance due</p>
         </div>
       </div>
@@ -104,7 +197,7 @@ export const LogisticsAnalytics: React.FC = () => {
         <div className="lg:col-span-2 bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm">
           <h3 className="text-lg font-bold text-zinc-900 mb-8">Vehicle OpEx vs Mileage</h3>
           <div className="h-[300px] w-full">
-            {!metrics.hasData ? (
+            {metrics.vehicleOpex.length === 0 ? (
               <div className="h-full flex items-center justify-center text-zinc-400 text-sm">
                 No active fleet mileage logs.
               </div>
@@ -142,13 +235,7 @@ export const LogisticsAnalytics: React.FC = () => {
           <p className="text-sm text-zinc-500 mb-8">Days remaining for vehicle compliance</p>
           <div className="space-y-4">
             {(() => {
-              const complianceList = metrics.hasData ? [
-                { name: 'UBA 123A', item: 'Insurance', days: 15, status: 'Critical' },
-                { name: 'UBB 456B', item: 'Logbook', days: 45, status: 'Warning' },
-                { name: 'UBC 789C', item: 'Service', days: 8, status: 'Critical' },
-                { name: 'UBD 012D', item: 'Insurance', days: 120, status: 'Normal' },
-                { name: 'UBE 345E', item: 'Service', days: 210, status: 'Normal' },
-              ] : [];
+              const complianceList = metrics.complianceList;
 
               if (complianceList.length === 0) {
                 return (
@@ -186,13 +273,7 @@ export const LogisticsAnalytics: React.FC = () => {
           <h3 className="text-lg font-bold text-zinc-900 mb-6">Route Profitability</h3>
           <div className="space-y-4">
             {(() => {
-              const routeList = metrics.hasData ? [
-                { route: 'Kla Central - Zone A', revenue: 4500000, cost: 850000, profit: 3650000 },
-                { route: 'Kla Central - Zone B', revenue: 3200000, cost: 620000, profit: 2580000 },
-                { route: 'Entebbe Road', revenue: 5800000, cost: 1250000, profit: 4550000 },
-                { route: 'Jinja Road', revenue: 4100000, cost: 980000, profit: 3120000 },
-                { route: 'Mityana Road', revenue: 2500000, cost: 750000, profit: 1750000 },
-              ] : [];
+              const routeList = metrics.routeList;
 
               if (routeList.length === 0) {
                 return (
@@ -226,12 +307,7 @@ export const LogisticsAnalytics: React.FC = () => {
           </div>
           <div className="space-y-4">
             {(() => {
-              const driverList = metrics.hasData ? [
-                { name: 'Musa Kato', trips: 145, tat: '1.1h', incidents: 0, status: 'Top Performer' },
-                { name: 'John Mukasa', trips: 124, tat: '1.4h', incidents: 1, status: 'Normal' },
-                { name: 'Peter Semanda', trips: 98, tat: '1.8h', incidents: 3, status: 'Warning' },
-                { name: 'David Okot', trips: 112, tat: '1.2h', incidents: 0, status: 'Normal' },
-              ] : [];
+              const driverList = metrics.driverList;
 
               if (driverList.length === 0) {
                 return (

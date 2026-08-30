@@ -3,6 +3,7 @@ import { Plus, Search, Package, Settings, History, Trash2, Edit2, X } from 'luci
 import { OperationalInventory, OperationalInventoryUsage, OperationalInventoryMaintenance } from '../../types';
 import { firestoreService } from '../../services/firestore';
 import { useAuth } from '../../contexts/AuthContext';
+import { hasAnyRole } from '../../utils/roles';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
@@ -25,7 +26,7 @@ const OperationalInventoryTab: React.FC = () => {
   const [selectedItemForDetails, setSelectedItemForDetails] = useState<OperationalInventory | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  const isCEO = profile?.role === 'CEO' || profile?.role === 'ceo';
+  const isCEO = hasAnyRole(profile, ['CEO', 'CEO / MD', 'owner']);
 
   useEffect(() => {
     if (profile?.tenantId) {

@@ -100,6 +100,7 @@ export interface BranchShifts {
 export interface Staff {
   id: string;
   uid: string;
+  legacyStaffId?: string | null;
   tenantId: string;
   username: string;
   full_name: string;

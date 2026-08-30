@@ -36,6 +36,7 @@ interface ManagementExpenseDraft {
   status: 'draft';
   createdAt: any;
   createdBy: string;
+  excludeFromOpexRollup: true;
 }
 
 export const CreditLedger: React.FC = () => {
@@ -303,6 +304,8 @@ export const CreditLedger: React.FC = () => {
         description: `Credit payment to ${credit.supplierName || 'Supplier'} - Ref: ${credit.invoiceRef}`,
         status: 'draft',
         sourceType: 'credit',
+        source: 'credit_payment',
+        excludeFromOpexRollup: true,
         invoiceId: credit.invoiceId || '',
         invoiceRef: credit.invoiceRef || '',
         sourceRefId: credit.id,

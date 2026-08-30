@@ -420,7 +420,9 @@ export const PayrollManager: React.FC = () => {
         payment_method: 'Petty Cash',
         status: 'Pending',
         logged_by: 'HR System',
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        source: 'hr_salary',
+        excludeFromOpexRollup: false
       });
 
       toast.success(`Successfully finalized payroll, published payslips, and transmitted disbursal request to Finance.`);

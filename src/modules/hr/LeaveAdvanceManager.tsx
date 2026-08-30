@@ -632,7 +632,9 @@ const ReviewAdvanceModal: React.FC<{
           payment_method: 'Petty Cash',
           status: 'Pending',
           logged_by: 'HR System - Advance',
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          source: 'hr_advance',
+          excludeFromOpexRollup: false
         });
         toast.success(`Advance fully approved & sent to Finance Management Expenses!`);
       } else {
@@ -665,7 +667,9 @@ const ReviewAdvanceModal: React.FC<{
         payment_method: 'Petty Cash',
         status: 'Pending',
         logged_by: 'HR System - Advance',
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        source: 'hr_advance',
+        excludeFromOpexRollup: false
       });
       toast.success('Approved both levels successfully & sent to Finance Management Expenses');
       onClose();

@@ -11,6 +11,7 @@ import { FuelLog, MaintenanceLog, TrafficFineLog, Vehicle, Staff } from '../../t
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { cn } from '../../utils/cn';
+import { hasAnyRole, hasRoleContaining } from '../../utils/roles';
 
 type CostType = 'fuel' | 'maintenance' | 'fines' | 'petty_cash' | 'general_expenses';
 
@@ -38,7 +39,7 @@ export const CostLedger: React.FC = () => {
   const [reqReason, setReqReason] = useState('');
   const [reqIsSubmitting, setReqIsSubmitting] = useState(false);
 
-  const isFinance = profile?.role.includes('Finance') || profile?.role === 'owner' || profile?.role === 'CEO';
+  const isFinance = hasRoleContaining(profile, 'Finance') || hasAnyRole(profile, ['owner', 'CEO', 'CEO / MD']);
 
   useEffect(() => {
     if (!profile?.tenantId) return;

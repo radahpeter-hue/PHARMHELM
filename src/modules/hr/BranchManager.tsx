@@ -10,11 +10,12 @@ import { firestoreService } from '../../services/firestore';
 import { Branch, Staff } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
+import { hasAnyRole } from '../../utils/roles';
 
 export const BranchManager: React.FC = () => {
   const { profile } = useAuth();
   const { tenant } = useTenant();
-  const isAuthorized = profile?.role === 'owner' || profile?.role === 'CEO' || profile?.role === 'CEO / MD' || profile?.role === 'admin' || profile?.username === 'operator_bypass';
+  const isAuthorized = hasAnyRole(profile, ['owner', 'CEO', 'CEO / MD']) || profile?.username === 'operator_bypass';
   const [branches, setBranches] = useState<Branch[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);

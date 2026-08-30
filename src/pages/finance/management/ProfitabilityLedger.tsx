@@ -16,6 +16,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
+import { isExcludedFromOpex } from '../../../utils/finance';
 
 interface BranchExpense {
   id: string;
@@ -39,6 +40,9 @@ interface ManagementExpense {
   logged_by: string;
   description: string;
   department: string;
+  source?: string;
+  sourceType?: string;
+  excludeFromOpexRollup?: boolean;
 }
 
 export const ProfitabilityLedger: React.FC = () => {
@@ -47,6 +51,8 @@ export const ProfitabilityLedger: React.FC = () => {
   const [branchExpenses, setBranchExpenses] = useState<BranchExpense[]>([]);
   const [mgmtExpenses, setMgmtExpenses] = useState<ManagementExpense[]>([]);
   const [quarantineLogs, setQuarantineLogs] = useState<any[]>([]);
+  const [logisticsExpenses, setLogisticsExpenses] = useState<any[]>([]);
+  const [marketingExpenses, setMarketingExpenses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Date Range Ledger Filter (defaults to Today)
@@ -60,17 +66,28 @@ export const ProfitabilityLedger: React.FC = () => {
     if (!profile?.tenantId) return;
     setLoading(true);
     try {
-      const salesSnap = await getDocs(query(collection(db, 'sales'), where('tenantId', '==', profile.tenantId)));
+      const [salesSnap, bExpSnap, mExpSnap, quarSnap, fuelSnap, maintenanceSnap, fineSnap, logisticsSnap, marketingSnap] = await Promise.all([
+        getDocs(query(collection(db, 'sales'), where('tenantId', '==', profile.tenantId))),
+        getDocs(query(collection(db, 'branch_expenses'), where('tenantId', '==', profile.tenantId))),
+        getDocs(query(collection(db, 'management_expenses'), where('tenantId', '==', profile.tenantId))),
+        getDocs(query(collection(db, 'quarantine_logs'), where('tenantId', '==', profile.tenantId))),
+        getDocs(query(collection(db, 'fuel_logs'), where('tenantId', '==', profile.tenantId))),
+        getDocs(query(collection(db, 'maintenance_logs'), where('tenantId', '==', profile.tenantId))),
+        getDocs(query(collection(db, 'traffic_fine_logs'), where('tenantId', '==', profile.tenantId))),
+        getDocs(query(collection(db, 'logistics_expenses'), where('tenantId', '==', profile.tenantId))),
+        getDocs(query(collection(db, 'marketing_expenses'), where('tenantId', '==', profile.tenantId)))
+      ]);
       setSales(salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
-
-      const bExpSnap = await getDocs(query(collection(db, 'branch_expenses'), where('tenantId', '==', profile.tenantId)));
       setBranchExpenses(bExpSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
-
-      const mExpSnap = await getDocs(query(collection(db, 'management_expenses'), where('tenantId', '==', profile.tenantId)));
       setMgmtExpenses(mExpSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
-
-      const quarSnap = await getDocs(query(collection(db, 'quarantine_logs'), where('tenantId', '==', profile.tenantId)));
       setQuarantineLogs(quarSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+      setLogisticsExpenses([
+        ...fuelSnap.docs.map(doc => ({ id: doc.id, kind: 'fuel', ...doc.data() as any })),
+        ...maintenanceSnap.docs.map(doc => ({ id: doc.id, kind: 'maintenance', ...doc.data() as any })),
+        ...fineSnap.docs.map(doc => ({ id: doc.id, kind: 'fine', ...doc.data() as any })),
+        ...logisticsSnap.docs.map(doc => ({ id: doc.id, kind: 'general', ...doc.data() as any }))
+      ]);
+      setMarketingExpenses(marketingSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
     } catch (e: any) {
       console.error("Error fetching profitability metrics:", e);
       toast.error("Failed to fetch profitability metrics.");
@@ -103,12 +120,19 @@ export const ProfitabilityLedger: React.FC = () => {
 
   const filteredMgmtExpenses = useMemo(() => {
     return mgmtExpenses.filter(e => {
-      if (e.status !== 'approved') return false; // Only aggregate approved/issued expenses
+      if (!['approved', 'issued'].includes((e.status || '').toLowerCase())) return false;
+      if (isExcludedFromOpex(e)) return false;
       if (!isDateFilterActive) return true;
       const d = (e.expense_date || e.date || '').split('T')[0];
       return d && d >= dateRange.start && d <= dateRange.end;
     });
   }, [mgmtExpenses, isDateFilterActive, dateRange]);
+
+  const filterByPeriod = (items: any[]) => items.filter(item => {
+    if (!isDateFilterActive) return true;
+    const d = (item.date || item.expense_date || item.created_at || '').split('T')[0];
+    return d && d >= dateRange.start && d <= dateRange.end;
+  });
 
   const filteredQuarantine = useMemo(() => {
     return quarantineLogs.filter(q => {
@@ -139,13 +163,21 @@ export const ProfitabilityLedger: React.FC = () => {
     return filteredMgmtExpenses.reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
   }, [filteredMgmtExpenses]);
 
+  const totalLogisticsExp = useMemo(() => {
+    return filterByPeriod(logisticsExpenses).reduce((sum, e) => sum + (e.cost_ugx || e.fine_amount_ugx || e.amount || 0), 0);
+  }, [logisticsExpenses, isDateFilterActive, dateRange]);
+
+  const totalMarketingExp = useMemo(() => {
+    return filterByPeriod(marketingExpenses).reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
+  }, [marketingExpenses, isDateFilterActive, dateRange]);
+
   const totalWastage = useMemo(() => {
     return filteredQuarantine.reduce((sum, q) => sum + (q.totalCost || q.total_cost || q.estimatedValue || q.cost || 0), 0);
   }, [filteredQuarantine]);
 
   const totalExpenses = useMemo(() => {
-    return totalBranchExp + totalMgmtExp + totalWastage;
-  }, [totalBranchExp, totalMgmtExp, totalWastage]);
+    return totalBranchExp + totalLogisticsExp + totalMarketingExp + totalMgmtExp + totalWastage;
+  }, [totalBranchExp, totalLogisticsExp, totalMarketingExp, totalMgmtExp, totalWastage]);
 
   const netProfit = useMemo(() => {
     return grossProfit - totalExpenses;
@@ -158,6 +190,8 @@ export const ProfitabilityLedger: React.FC = () => {
       { 'Metric Label': 'Cost of Goods Sold (COGS)', 'Value (UGX)': totalCOGS, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalCOGS / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Gross Profit Margin', 'Value (UGX)': grossProfit, 'Percentage of Revenue': totalRevenue > 0 ? `${((grossProfit / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Branch Operational Expenses', 'Value (UGX)': totalBranchExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalBranchExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
+      { 'Metric Label': 'Logistics and Transport Expenses', 'Value (UGX)': totalLogisticsExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalLogisticsExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
+      { 'Metric Label': 'Marketing Expenses', 'Value (UGX)': totalMarketingExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalMarketingExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Corporate HQ & Management Expenses', 'Value (UGX)': totalMgmtExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalMgmtExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Wastage & Quarantine Loss', 'Value (UGX)': totalWastage, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalWastage / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Total Consolidated Expenses', 'Value (UGX)': totalExpenses, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalExpenses / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
@@ -283,6 +317,14 @@ export const ProfitabilityLedger: React.FC = () => {
               <span className="font-black text-red-500 font-mono text-sm">- UGX {totalBranchExp.toLocaleString()}</span>
             </div>
             <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
+              <span className="font-bold text-zinc-600 text-sm">Logistics and Transport Expenses</span>
+              <span className="font-black text-red-500 font-mono text-sm">- UGX {totalLogisticsExp.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
+              <span className="font-bold text-zinc-600 text-sm">Marketing Expenses</span>
+              <span className="font-black text-red-500 font-mono text-sm">- UGX {totalMarketingExp.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
               <span className="font-bold text-zinc-600 text-sm">Management/HQ Expenses</span>
               <span className="font-black text-red-500 font-mono text-sm">- UGX {totalMgmtExp.toLocaleString()}</span>
             </div>
@@ -291,6 +333,7 @@ export const ProfitabilityLedger: React.FC = () => {
               <span className="font-black text-red-500 font-mono text-sm">- UGX {totalWastage.toLocaleString()}</span>
             </div>
             <div className="h-px bg-zinc-200 my-2" />
+            <p className="text-[10px] text-zinc-500 px-2">Total Operating Expenses excludes stock purchase and supplier credit repayment amounts, which are already reflected in Cost of Goods Sold.</p>
             <div className={`flex justify-between items-center p-6 rounded-2xl border ${
               netProfit >= 0 ? "bg-blue-50 border-blue-100" : "bg-red-50 border-red-100"
             }`}>

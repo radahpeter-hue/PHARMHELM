@@ -21,6 +21,7 @@ import {
   UserCircle
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { hasAnyRole } from '../utils/roles';
 import { firestoreService } from '../services/firestore';
 import { WelfareRecord, CSRProject, Staff } from '../types';
 import { toast } from 'sonner';
@@ -49,7 +50,7 @@ const Welfare: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
 
-  const isAdmin = profile?.role === 'admin' || profile?.role === 'hr';
+  const isAdmin = hasAnyRole(profile, ['admin', 'HR Head', 'HR Support Personnel', 'HR Manager', 'owner', 'CEO', 'CEO / MD']);
 
   useEffect(() => {
     if (profile?.tenantId) {

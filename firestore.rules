@@ -21,7 +21,7 @@ service cloud.firestore {
       return request.auth != null && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
         ? get(/databases/$(database)/documents/staff/$(request.auth.uid)).data
         : request.auth != null && (request.auth.token.role != null || request.auth.token.tenantId != null)
-          ? {"role": request.auth.token.role, "tenantId": request.auth.token.tenantId, "secondaryRoles": [], "assigned_branches": []}
+          ? {"role": request.auth.token.role, "tenantId": request.auth.token.tenantId, "secondaryRoles": (("roles" in request.auth.token) && request.auth.token.roles is list ? request.auth.token.roles : (("secondaryRoles" in request.auth.token) && request.auth.token.secondaryRoles is list ? request.auth.token.secondaryRoles : [])), "assigned_branches": []}
           : {"role": "", "tenantId": "", "secondaryRoles": [], "assigned_branches": []};
     }
 
@@ -43,10 +43,25 @@ service cloud.firestore {
         request.auth.token.role == 'owner' ||
         request.auth.token.role == 'CEO' ||
         request.auth.token.role == 'CEO / MD' ||
-        getUserData().role == 'owner' ||
-        getUserData().role == 'CEO' ||
-        getUserData().role == 'CEO / MD'
+        hasRole('owner') ||
+        hasRole('CEO') ||
+        hasRole('CEO / MD')
       );
+    }
+
+    function isCEO() {
+      return isAuthenticated() && (isAdmin() || hasRole('CEO') || hasRole('CEO / MD') || hasRole('owner'));
+    }
+
+    function hasValidBranchShape() {
+      return request.resource.data.keys().hasAll([
+        'tenantId', 'name', 'branch_code', 'type', 'address', 'phone',
+        'status', 'created_at', 'created_by'
+      ])
+      && request.resource.data.tenantId is string
+      && request.resource.data.name is string
+      && request.resource.data.branch_code is string
+      && request.resource.data.status in ['Active', 'Inactive', 'Closed'];
     }
 
     function isHR() {
@@ -104,7 +119,10 @@ service cloud.firestore {
     }
 
     function isOwner(userId) {
-      return isAuthenticated() && (request.auth != null ? request.auth.uid == userId : true);
+      return isAuthenticated() && (
+        request.auth.uid == userId ||
+        (("legacyStaffId" in getUserData()) && getUserData().legacyStaffId == userId)
+      );
     }
 
     // ===============================================================
@@ -113,33 +131,44 @@ service cloud.firestore {
 
     match /vehicles/{vehicleId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isLogisticsHead();
+      allow create: if isLogisticsHead() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
     }
 
     match /trips/{tripId} {
       allow read: if isAuthenticated() && (isLogisticsHead() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
-      allow write: if isLogisticsHead();
+      allow create: if isLogisticsHead() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
     }
 
     match /trip_legs/{legId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isLogisticsHead();
+      allow create: if isLogisticsHead() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
     }
 
     match /fuel_logs/{logId} {
       allow read: if isAuthenticated() && (isLogisticsHead() || isFinance() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
-      allow create: if isAuthenticated() && (isLogisticsHead() || isOwner(request.resource.data.personnelId));
-      allow update, delete: if isLogisticsHead();
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isLogisticsHead() || isOwner(request.resource.data.personnelId));
+      allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
     }
 
     match /maintenance_logs/{logId} {
       allow read: if isAuthenticated() && (isLogisticsHead() || isFinance() || isTenantMember(resource.data.tenantId));
-      allow write: if isLogisticsHead();
+      allow create: if isLogisticsHead() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
     }
 
     match /traffic_fine_logs/{logId} {
       allow read: if isAuthenticated() && (isLogisticsHead() || isHR() || isFinance() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
-      allow write: if isLogisticsHead() || isHR();
+      allow create: if (isLogisticsHead() || isHR()) && isTenantMember(request.resource.data.tenantId);
+      allow update: if (isLogisticsHead() || isHR()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if (isLogisticsHead() || isHR()) && isTenantMember(resource.data.tenantId);
     }
 
     match /hiring_applications/{applicationId} {
@@ -181,7 +210,7 @@ service cloud.firestore {
 
     match /branches/{branchId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
+      allow create: if isCEO() && isTenantMember(request.resource.data.tenantId) && hasValidBranchShape();
       allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
@@ -193,14 +222,15 @@ service cloud.firestore {
         resource.data.authEmail == request.auth.token.email ||
         isTenantMember(resource.data.tenantId)
       );
-      allow create: if isAuthenticated() && (isAdmin() || isIT() || isHR());
+      allow create: if isAuthenticated() && (isAdmin() || isIT() || isHR()) && isTenantMember(request.resource.data.tenantId);
       allow update: if isAuthenticated() && (
         isAdmin() || isIT() || isHR() ||
         (request.auth.uid == staffId &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
             'tenantId', 'role', 'secondaryRoles', 'assigned_branches',
             'branch_id', 'default_branch_id', 'status', 'active',
-            'authEmail', 'loginHandle', 'username', 'uid', 'password_set'
+            'authEmail', 'loginHandle', 'username', 'uid', 'password_set',
+            'legacyStaffId'
           ]))
       );
       allow delete: if isAdmin() || isIT();
@@ -479,28 +509,40 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
     match /stock_order_lines/{lineId} {
-      allow read: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
-      allow write: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isProcurement() || isBranchManager());
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /transfer_invoices/{invoiceId} {
-      allow read: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
-      allow write: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isProcurement() || isBranchManager() || isFinance());
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /transfer_invoice_lines/{lineId} {
-      allow read: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
-      allow write: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isProcurement() || isBranchManager() || isFinance());
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /hq_order_drafts/{draftId} {
-      allow read: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
-      allow write: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isProcurement();
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && isProcurement();
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && isProcurement();
+      allow delete: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isProcurement();
     }
     match /billable_services/{serviceId} {
-      allow read: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
-      allow write: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /welfare_records/{recordId} {
-      allow read: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
-      allow write: if isAuthenticated() && (getUserData().tenantId != null || isAdmin());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isHR() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isHR() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isHR() && isTenantMember(resource.data.tenantId);
     }
 
     match /inventoryMovementEvents/{eventId} {

@@ -33,7 +33,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
 import { firestoreService } from '../services/firestore';
 import { registerAuthUser, db } from '../firebase';
-import { runTransaction, doc } from 'firebase/firestore';
+import { runTransaction, doc, writeBatch } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { 
   SystemSettings, 
@@ -538,26 +538,34 @@ const Settings = () => {
       
       const authEmail = `${finalHandle}@${tenantAcronym}.pharmhelm.com`;
       
-      // Create user in Firebase Auth backend
-      await registerAuthUser(authEmail, activationPassword);
-      
-      // 1. Update Staff document
-      await firestoreService.updateDocument('staff', selectedActivation.staffId, {
-        password: activationPassword,
+      // Create Firebase Auth identity and use its UID as the authoritative staff document ID.
+      const authUid = await registerAuthUser(authEmail, activationPassword);
+      const { password: _legacyPassword, ...safeStaffData } = staffDoc as Staff & { password?: string };
+      const activationBatch = writeBatch(db);
+      const canonicalStaffRef = doc(db, 'staff', authUid);
+      activationBatch.set(canonicalStaffRef, {
+        ...safeStaffData,
+        id: authUid,
+        uid: authUid,
+        legacyStaffId: selectedActivation.staffId !== authUid ? selectedActivation.staffId : null,
         password_set: true,
         active: true,
         status: 'active',
         loginHandle: finalHandle,
         authEmail: authEmail,
-        username: finalHandle
+        username: finalHandle,
+        updatedAt: new Date().toISOString()
       });
-
-      // 2. Update Pending Activation
-      await firestoreService.updateDocument('pending_activations', selectedActivation.id, {
+      if (selectedActivation.staffId !== authUid) {
+        activationBatch.delete(doc(db, 'staff', selectedActivation.staffId));
+      }
+      activationBatch.update(doc(db, 'pending_activations', selectedActivation.id), {
         status: 'activated',
         activatedAt: new Date().toISOString(),
-        activatedBy: profile?.id
+        activatedBy: profile?.id,
+        authUid
       });
+      await activationBatch.commit();
 
       toast.success(`Staff account for ${selectedActivation.name} activated successfully`);
       setPendingActivations(pendingActivations.filter(a => a.id !== selectedActivation.id));

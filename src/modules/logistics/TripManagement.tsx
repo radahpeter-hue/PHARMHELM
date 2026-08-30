@@ -11,6 +11,7 @@ import { Trip, TripLeg, Vehicle, Staff } from '../../types';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { cn } from '../../utils/cn';
+import { hasAnyRole } from '../../utils/roles';
 
 export const TripManagement: React.FC = () => {
   const { profile } = useAuth();
@@ -40,8 +41,7 @@ export const TripManagement: React.FC = () => {
 
     const dQuery = query(
       collection(db, 'staff'),
-      where('tenantId', '==', profile.tenantId),
-      where('role', 'in', ['Transport & Logistics Personnel', 'Logistics Head'])
+      where('tenantId', '==', profile.tenantId)
     );
 
     const unsubscribeT = onSnapshot(tQuery, (snapshot) => {
@@ -56,7 +56,9 @@ export const TripManagement: React.FC = () => {
     });
 
     const unsubscribeD = onSnapshot(dQuery, (snapshot) => {
-      const dData = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as Staff));
+      const dData = snapshot.docs
+        .map(doc => ({ uid: doc.id, ...doc.data() } as Staff))
+        .filter(staff => hasAnyRole(staff, ['Transport & Logistics Personnel', 'Logistics Head']));
       setDrivers(dData);
     });
 
@@ -69,7 +71,12 @@ export const TripManagement: React.FC = () => {
 
   const fetchLegs = async (tripId: string) => {
     if (tripLegs[tripId]) return;
-    const q = query(collection(db, 'trip_legs'), where('tripId', '==', tripId));
+    if (!profile?.tenantId) return;
+    const q = query(
+      collection(db, 'trip_legs'),
+      where('tenantId', '==', profile.tenantId),
+      where('tripId', '==', tripId)
+    );
     const snapshot = await getDocs(q);
     const legs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as TripLeg));
     setTripLegs(prev => ({ ...prev, [tripId]: legs }));

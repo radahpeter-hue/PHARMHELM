@@ -55,6 +55,7 @@ import { ManagementExpenseLedger } from './finance/management/ManagementExpenseL
 import { GlobalExpenseLedger } from './finance/management/GlobalExpenseLedger';
 import { ProfitabilityLedger } from './finance/management/ProfitabilityLedger';
 import { TaxEngine } from './finance/management/TaxEngine';
+import { hasAnyRole } from '../utils/roles';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -73,8 +74,7 @@ const Finance: React.FC = () => {
     }
   }, [profile?.tenantId]);
 
-  const userRoles = [profile?.role || 'staff', ...(profile?.secondaryRoles || [])];
-  const isManagement = userRoles.some(r => ['owner', 'CEO', 'CEO / MD', 'Finance Head', 'admin'].includes(r));
+  const isManagement = hasAnyRole(profile, ['owner', 'CEO', 'CEO / MD', 'Finance Head', 'Finance Officer']);
 
   return (
     <div className="space-y-6">
@@ -215,7 +215,7 @@ const BranchFinance: React.FC = () => {
 
 const EODReconciliationTab: React.FC = () => {
   const { profile, activeBranchId } = useAuth();
-  const isFinanceHead = profile?.role === 'Finance Head';
+  const isFinanceHead = hasAnyRole(profile, ['Finance Head']);
   const [revealed, setRevealed] = useState(false);
   const [sales, setSales] = useState<Sale[]>([]);
   const [formData, setFormData] = useState({
@@ -620,7 +620,7 @@ const VarianceRow: React.FC<{ label: string, declared: number, expected: number 
 
 const BranchExpenseLog: React.FC = () => {
   const { profile, activeBranchId } = useAuth();
-  const isFinanceHead = profile?.role === 'Finance Head';
+  const isFinanceHead = hasAnyRole(profile, ['Finance Head']);
   const [expenses, setExpenses] = useState<BranchExpense[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [editingExpense, setEditingExpense] = useState<BranchExpense | null>(null);
@@ -1707,7 +1707,9 @@ const ManagementExpenseModal: React.FC<{ isOpen: boolean, onClose: () => void }>
         tenantId: profile.tenantId,
         logged_by: profile.name,
         status: status,
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        source: 'manual',
+        excludeFromOpexRollup: false
       };
       const savedDoc = await firestoreService.addDocument('management_expenses', expenseDoc);
 
@@ -2823,7 +2825,7 @@ const PettyCashManagement: React.FC = () => {
                     <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mt-1">Status: {(req.status || '').replace('_', ' ')}</p>
                   </div>
                   <div className="flex gap-2">
-                    {statusLower === 'pending' && (profile?.role === 'Finance Head' || profile?.role === 'owner' || profile?.role === 'admin' || (profile?.secondaryRoles || []).includes('Finance Head')) && (
+                    {statusLower === 'pending' && hasAnyRole(profile, ['Finance Head', 'owner', 'CEO', 'CEO / MD']) && (
                       <>
                         <button 
                           onClick={() => handleApproveFinance(req.id)}
@@ -3889,7 +3891,7 @@ const ReconciliationInbox: React.FC = () => {
 
 const LegacyReconciliationInbox: React.FC = () => {
   const { profile } = useAuth();
-  const isFinanceHead = profile?.role === 'Finance Head';
+  const isFinanceHead = hasAnyRole(profile, ['Finance Head']);
   const [reconciliations, setReconciliations] = useState<EODReconciliation[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [editingRec, setEditingRec] = useState<EODReconciliation | null>(null);
