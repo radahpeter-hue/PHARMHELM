@@ -37,7 +37,20 @@ jobs:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
 
       - name: Deploy Firestore rules
-        run: npx firebase-tools deploy --only firestore:rules --project gen-lang-client-0911422817 --non-interactive
+        shell: bash
+        run: |
+          set +e
+          deploy_output=$(npx firebase-tools deploy --only firestore:rules --project gen-lang-client-0911422817 --non-interactive 2>&1)
+          deploy_status=$?
+          set -e
+          echo "$deploy_output"
+          if [ "$deploy_status" -ne 0 ]; then
+            escaped_output=${deploy_output//'%'/'%25'}
+            escaped_output=${escaped_output//$'\r'/'%0D'}
+            escaped_output=${escaped_output//$'\n'/'%0A'}
+            echo "::error title=Firestore rules deployment failed::$escaped_output"
+            exit "$deploy_status"
+          fi
 
       - name: Deploy Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
