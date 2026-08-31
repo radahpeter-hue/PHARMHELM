@@ -34,6 +34,7 @@ import { Client, InstitutionRegistry, Prescriber, Staff } from '../types';
 import { toast } from 'sonner';
 import { deduplicateStaff } from '../utils/deduplicateStaff';
 import { twMerge } from 'tailwind-merge';
+import { clsx, type ClassValue } from 'clsx';
 import { format } from 'date-fns';
 
 function cn(...inputs: ClassValue[]) {
@@ -56,33 +57,49 @@ const Clients: React.FC = () => {
 
   useEffect(() => {
     if (profile?.tenantId) {
-      firestoreService.subscribeToCollection<Client>(
+      const unsubscribers = [firestoreService.subscribeToCollection<Client>(
         'clients',
         profile.tenantId,
         setPatients
-      );
-      firestoreService.subscribeToCollection<Staff>(
+      ), firestoreService.subscribeToCollection<Staff>(
         'staff',
         profile.tenantId,
         setStaff
-      );
-      firestoreService.subscribeToCollection<InstitutionRegistry>(
+      ), firestoreService.subscribeToCollection<InstitutionRegistry>(
         'institutions',
         profile.tenantId,
         setInstitutions
-      );
-      firestoreService.subscribeToCollection<InstitutionRegistry>(
+      ), firestoreService.subscribeToCollection<InstitutionRegistry>(
         'supplier_registry',
         profile.tenantId,
         setSuppliers
-      );
-      firestoreService.subscribeToCollection<Prescriber>(
+      ), firestoreService.subscribeToCollection<Prescriber>(
         'prescribers',
         profile.tenantId,
         setPrescribers
-      );
+      )];
+
+      return () => unsubscribers.forEach(unsubscribe => unsubscribe());
     }
   }, [profile?.tenantId]);
+
+  const combinedPatients = useMemo(() => {
+    const all = [
+      ...patients.map(patient => ({ ...patient, isStaff: false })),
+      ...staff.map(staffMember => ({
+        id: staffMember.id,
+        uid: staffMember.uid,
+        tenantId: staffMember.tenantId,
+        full_name: staffMember.full_name || staffMember.username || 'Unknown Staff',
+        phone_number: staffMember.phone_number || 'N/A',
+        billing_type: 'Staff / Welfare',
+        care_status: staffMember.status,
+        status: staffMember.status,
+        isStaff: true,
+      })),
+    ];
+    return deduplicateStaff(all);
+  }, [patients, staff]);
 
   const handleDelete = async (collection: string, id: string) => {
     if (window.confirm('Are you sure you want to delete this entry?')) {
@@ -98,23 +115,6 @@ const Clients: React.FC = () => {
   const filteredData = () => {
     const term = searchTerm.toLowerCase();
     if (activeTab === 'patients') {
-      const combinedPatients = useMemo(() => {
-  const all = [
-    ...patients.map(p => ({ ...p, isStaff: false })),
-    ...staff.map(s => ({
-      id: s.id,
-      uid: s.uid,
-      tenantId: s.tenantId,
-      full_name: s.full_name || s.username || 'Unknown Staff',
-      phone_number: s.phone_number || 'N/A',
-      billing_type: 'Staff / Welfare',
-      care_status: s.status,
-      status: s.status,
-      isStaff: true,
-    })),
-  ];
-  return deduplicateStaff(all);
-}, [patients, staff]);
       return combinedPatients.filter(p => (p.full_name || '').toLowerCase().includes(term) || (p.phone_number || '').includes(term));
     } else if (activeTab === 'institutions') {
       return institutions.filter(i => i.supplier_name.toLowerCase().includes(term));
@@ -126,7 +126,7 @@ const Clients: React.FC = () => {
     return [];
   };
 
-  const combinedPatientsCount = patients.length + staff.length;
+  const combinedPatientsCount = combinedPatients.length;
 
   return (
     <div className="space-y-8">
