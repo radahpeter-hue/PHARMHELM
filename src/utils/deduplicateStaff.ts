@@ -15,6 +15,10 @@ type StaffLike = {
 };
 
 const normalize = (value?: string) => (value || '').trim().toLowerCase();
+const normalizePhone = (value?: string) => {
+  const digits = (value || '').replace(/\D/g, '');
+  return digits.length > 9 ? digits.slice(-9) : digits;
+};
 
 const identityKeys = (item: StaffLike) => {
   const keys = [
@@ -27,8 +31,12 @@ const identityKeys = (item: StaffLike) => {
     item.employee_id && `employee:${normalize(item.employee_id)}`,
   ].filter(Boolean) as string[];
 
-  if (keys.length === 0 && item.full_name && item.phone_number) {
-    keys.push(`person:${normalize(item.full_name)}:${normalize(item.phone_number)}`);
+  // Legacy duplicates often received different Firestore/Auth ids but retained
+  // the same real-world identity. Always include the person key so those pairs
+  // collapse as well. Strong identifiers above still take precedence.
+  const phone = normalizePhone(item.phone_number);
+  if (item.full_name && phone) {
+    keys.push(`person:${normalize(item.full_name)}:${phone}`);
   }
   return keys;
 };

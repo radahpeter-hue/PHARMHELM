@@ -31,7 +31,8 @@ import {
   Lock,
   Wifi,
   ShieldAlert,
-  RefreshCw
+  RefreshCw,
+  Menu
 } from 'lucide-react';
 import { collection, query, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc, orderBy, limit, where, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth, registerAuthUser } from '../firebase';
@@ -63,6 +64,11 @@ const PlatformAdmin = () => {
   const [tenantsSubTab, setTenantsSubTab] = useState<'active' | 'deleted'>('active');
   const [quickAccessTenant, setQuickAccessTenant] = useState<Tenant | null>(null);
   const [editingHandler, setEditingHandler] = useState<any | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [activeTab]);
 
   // Deletion Re-authentication & Retention states
   const [showReauthModal, setShowReauthModal] = useState(false);
@@ -850,9 +856,19 @@ const PlatformAdmin = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#E4E3E0] flex font-sans">
+    <div className="min-h-screen bg-[#E4E3E0] flex font-sans overflow-hidden">
+      {mobileNavOpen && (
+        <button
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm md:hidden"
+          onClick={() => setMobileNavOpen(false)}
+          aria-label="Close navigation menu"
+        />
+      )}
       {/* Sidebar */}
-      <aside className="w-64 bg-[#141414] text-white flex flex-col">
+      <aside className={cn(
+        "fixed inset-y-0 left-0 z-50 w-72 md:w-64 bg-[#141414] text-white flex flex-col transition-transform duration-300 md:relative md:translate-x-0",
+        mobileNavOpen ? "translate-x-0" : "-translate-x-full"
+      )}>
         <div className="p-6 border-b border-white/10">
           <div className="flex items-center gap-3 mb-2">
             <div className="h-8 w-8 bg-emerald-500 rounded-lg flex items-center justify-center">
@@ -983,13 +999,20 @@ const PlatformAdmin = () => {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-16 bg-white border-b border-[#141414]/10 flex items-center justify-between px-8">
+      <main className="flex-1 min-w-0 flex flex-col overflow-hidden min-h-screen">
+        <header className="min-h-16 bg-white border-b border-[#141414]/10 flex items-center justify-between px-3 sm:px-5 md:px-8 gap-3 shrink-0">
+          <button
+            onClick={() => setMobileNavOpen(true)}
+            className="md:hidden p-2 rounded-xl text-[#141414]/70 hover:bg-[#E4E3E0]"
+            aria-label="Open navigation menu"
+          >
+            <Menu size={24} />
+          </button>
           <h2 className="text-sm font-bold uppercase tracking-widest text-[#141414]/60">
             {activeTab === 'dashboard' ? 'Network Overview' : activeTab === 'tenants' ? 'Tenant Directory' : activeTab === 'analytics' ? 'Performance & Telemetry' : 'Platform Audit'}
           </h2>
-          <div className="flex items-center gap-4">
-            <div className="relative">
+          <div className="flex items-center gap-2 sm:gap-4 ml-auto">
+            <div className="relative hidden sm:block">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#141414]/40" size={16} />
               <input 
                 type="text" 
@@ -1005,17 +1028,17 @@ const PlatformAdmin = () => {
                 className="flex items-center gap-2 bg-[#141414] text-white px-4 py-2 rounded-full text-sm font-bold hover:bg-[#2a2a2a] transition-all shadow-lg shadow-[#141414]/10"
               >
                 <Plus size={16} />
-                New Tenant
+                <span className="hidden sm:inline">New Tenant</span>
               </button>
             )}
           </div>
         </header>
 
-        <div className="flex-1 overflow-auto p-8">
+        <div className="flex-1 overflow-auto p-3 sm:p-5 md:p-8">
           {activeTab === 'dashboard' && (
             <div className="space-y-8">
               {/* Stats Grid */}
-              <div className="grid grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6">
                 {[
                   { label: 'Total Tenants', value: stats.total, icon: Users, color: 'text-blue-500' },
                   { label: 'Active Subscriptions', value: stats.active, icon: CheckCircle2, color: 'text-emerald-500' },

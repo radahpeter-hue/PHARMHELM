@@ -8,6 +8,7 @@ import {
   Settings, 
   ChevronLeft,
   ChevronRight,
+  X,
   LogOut,
   Truck,
   FileText,
@@ -82,12 +83,12 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, 
     <div 
       className={cn(
         "fixed inset-y-0 left-0 z-50 md:relative h-screen bg-zinc-950 text-zinc-400 border-r border-zinc-800 transition-all duration-300 flex flex-col",
-        collapsed ? "w-20" : "w-64",
+        collapsed ? "w-72 md:w-20" : "w-72 md:w-64",
         mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
       )}
     >
       <div className="p-6 flex items-center justify-between">
-        {!collapsed && (
+        {(!collapsed || mobileOpen) && (
           <div className="flex flex-col">
             <span className="font-bold text-xl text-white tracking-tight">
               {activeBranch?.brandName || 'PharmHelm'}<span className="text-emerald-500" style={activeBranch?.brandPrimaryColor ? { color: activeBranch.brandPrimaryColor } : undefined}>{activeBranch?.brandName ? '' : ' Pro'}</span>
@@ -99,9 +100,16 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, 
             )}
           </div>
         )}
+        <button
+          onClick={() => setMobileOpen?.(false)}
+          className="md:hidden p-2 hover:bg-zinc-800 rounded-lg transition-colors"
+          aria-label="Close navigation menu"
+        >
+          <X size={20} />
+        </button>
         <button 
           onClick={() => setCollapsed(!collapsed)}
-          className="p-1 hover:bg-zinc-800 rounded-md transition-colors"
+          className="hidden md:block p-1 hover:bg-zinc-800 rounded-md transition-colors"
         >
           {collapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
         </button>
@@ -123,15 +131,15 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, 
               )}
             >
               <item.icon size={20} className={cn(isActive ? "text-emerald-500" : "text-zinc-500 group-hover:text-zinc-300")} />
-              {!collapsed && <span className="font-medium">{item.label}</span>}
+              <span className={cn("font-medium", collapsed && "md:hidden")}>{item.label}</span>
             </Link>
           );
         })}
       </nav>
 
       <div className="p-4 border-t border-zinc-800 space-y-4">
-        {!collapsed && profile && (
-          <div className="px-3 py-2">
+        {profile && (
+          <div className={cn("px-3 py-2", collapsed && "md:hidden")}>
             <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">User</p>
             <p className="text-sm font-bold text-white truncate">{profile.displayName}</p>
             <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">{profile.role}</p>
@@ -142,7 +150,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, 
           className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-red-500/10 hover:text-red-500 transition-all text-zinc-500"
         >
           <LogOut size={20} />
-          {!collapsed && <span className="font-medium">Sign Out</span>}
+          <span className={cn("font-medium", collapsed && "md:hidden")}>Sign Out</span>
         </button>
       </div>
     </div>

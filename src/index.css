@@ -14,11 +14,29 @@
 }
 
 @layer base {
+  html {
+    overflow-x: hidden;
+  }
   body {
-    @apply bg-pharm-dark text-white font-sans antialiased;
+    @apply bg-pharm-dark text-white font-sans antialiased overflow-x-hidden;
   }
   input, select, textarea {
     @apply text-zinc-900;
+  }
+}
+
+@media (max-width: 767px) {
+  input, select, textarea {
+    font-size: 16px;
+  }
+
+  table {
+    min-width: max-content;
+  }
+
+  [role="dialog"] {
+    max-width: calc(100vw - 1rem);
+    max-height: calc(100dvh - 1rem);
   }
 }
 

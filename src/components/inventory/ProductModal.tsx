@@ -20,6 +20,7 @@ interface ProductModalProps {
 
 const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product }) => {
   const { profile } = useAuth();
+  const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState<Partial<Product>>({
     name: '',
     category: 'drug/medicine',
@@ -33,9 +34,16 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product })
   });
 
   useEffect(() => {
-    if (product) {
-      setFormData(prev => ({
-        ...prev,
+    setFormData({
+      name: '',
+      category: 'drug/medicine',
+      costPricePerPack: 0,
+      sellingPricePerUnit: 0,
+      vatClassification: 'Zero-Rated',
+      vatPercentage: 0,
+      status: 'active',
+      unitOfSell: 'unit',
+      ...(product ? {
         ...product,
         name: product.name || '',
         category: product.category || 'drug/medicine',
@@ -45,24 +53,28 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product })
         vatPercentage: product.vatPercentage || 18,
         status: product.status || 'active',
         unitOfSell: product.unitOfSell || 'unit'
-      }));
-    }
-  }, [product]);
+      } : {})
+    });
+  }, [product, isOpen]);
 
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile?.tenantId) return;
+    if (!profile?.tenantId || isSaving) return;
 
     if ((formData.dosageForm === 'Tablet' || formData.dosageForm === 'Capsule') && (!formData.unitsPerStrip || formData.unitsPerStrip <= 0)) {
       toast.error('Units per strip is required for Tablets and Capsules');
       return;
     }
 
+    setIsSaving(true);
     try {
+      // Never send the synthetic document id or server-managed timestamps back
+      // to Firestore. Existing products include these fields after subscription.
+      const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...editableFields } = formData as any;
       const productData = {
-        ...formData,
+        ...editableFields,
         tenantId: profile.tenantId,
         productId: formData.productId || `PRD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
         sku: formData.sku || `SKU-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
@@ -75,11 +87,17 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product })
         await firestoreService.addDocument('products', productData);
         toast.success('Product registered successfully');
       }
-      onClose();
     } catch (error) {
       console.error('Error saving product:', error);
-      toast.error('Failed to save product');
+      const message = error instanceof Error && error.message.includes('permissions')
+        ? 'You do not have permission to save products. Ask an administrator to check your inventory role.'
+        : 'Product was not saved. Please try again or contact support if the problem continues.';
+      toast.error(message);
+      setIsSaving(false);
+      return;
     }
+    setIsSaving(false);
+    onClose();
   };
 
   const renderDrugFields = () => (
@@ -283,7 +301,7 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product })
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 space-y-8">
+        <form id="product-form" onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-6 sm:space-y-8">
           {/* Core Details */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="space-y-1">
@@ -425,10 +443,12 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product })
             Cancel
           </button>
           <button
-            onClick={handleSubmit}
-            className="px-8 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl font-bold transition-all shadow-lg shadow-zinc-900/20 uppercase text-xs tracking-widest"
+            type="submit"
+            form="product-form"
+            disabled={isSaving}
+            className="px-8 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl font-bold transition-all shadow-lg shadow-zinc-900/20 uppercase text-xs tracking-widest disabled:opacity-60 disabled:cursor-wait"
           >
-            {product ? 'Update Product' : 'Register Product'}
+            {isSaving ? 'Saving…' : product ? 'Update Product' : 'Register Product'}
           </button>
         </div>
       </div>

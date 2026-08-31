@@ -321,6 +321,10 @@ const Clients: React.FC = () => {
                       <div className="flex items-center justify-end gap-2">
                         <button 
                           onClick={() => {
+                            if (item.isStaff) {
+                              toast.info('Staff customer details are managed in HR Admin.');
+                              return;
+                            }
                             setEditingItem(item);
                             setIsModalOpen(true);
                           }}
@@ -328,9 +332,19 @@ const Clients: React.FC = () => {
                         >
                           <Edit2 size={16} />
                         </button>
-                        <button 
-                          onClick={() => handleDelete(activeTab === 'patients' ? 'clients' : activeTab === 'institutions' ? 'institutions' : activeTab === 'suppliers' ? 'supplier_registry' : 'prescribers', item.id)}
-                          className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                        <button
+                          onClick={() => {
+                            if (item.isStaff) {
+                              toast.info('Staff customers are linked to HR records and cannot be deleted here.');
+                              return;
+                            }
+                            handleDelete(activeTab === 'patients' ? 'clients' : activeTab === 'institutions' ? 'institutions' : activeTab === 'suppliers' ? 'supplier_registry' : 'prescribers', item.id);
+                          }}
+                          title={item.isStaff ? 'Manage this staff record in HR Admin' : 'Delete entry'}
+                          className={cn(
+                            "p-2 rounded-lg transition-all",
+                            item.isStaff ? "text-zinc-300 cursor-help" : "text-zinc-400 hover:text-red-500 hover:bg-red-50"
+                          )}
                         >
                           <Trash2 size={16} />
                         </button>

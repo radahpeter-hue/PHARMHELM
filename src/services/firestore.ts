@@ -43,6 +43,13 @@ const deepClean = (obj: any): any => {
     return obj.map(item => deepClean(item));
   }
   if (typeof obj === 'object') {
+    // Firestore Timestamps, FieldValues and Dates are class instances. Recursing
+    // into them turns them into plain objects and can make an otherwise valid
+    // write fail after an existing document has been loaded into a form.
+    const prototype = Object.getPrototypeOf(obj);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return obj;
+    }
     const cleaned: any = {};
     for (const [key, val] of Object.entries(obj)) {
       if (val !== undefined) {

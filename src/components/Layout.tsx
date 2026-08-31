@@ -27,6 +27,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { tenant, setTenantSlugAndMode } = useTenant();
   const navigate = useNavigate();
   const location = useLocation();
+  const routeSegment = location.pathname.split('/').filter(Boolean).pop() || 'app';
+  const pageTitle: Record<string, string> = {
+    app: 'Dashboard', sales: 'Sales / POS', inventory: 'Inventory', clients: 'Clients',
+    stock: 'Stock In / Out', procurement: 'Procurement', logistics: 'Fleet & Logistics',
+    finance: 'Finance', qa: 'Compliance', hr: 'HR Admin', welfare: 'Welfare',
+    predictive: 'Predictive Engine', analytics: 'Analytics', marketing: 'Marketing', settings: 'Settings'
+  };
 
   const handleSwitchBranch = (branchId: string) => {
     setActiveBranchId(branchId);
@@ -52,16 +59,19 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       />
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top Navigation */}
-        <header className="h-16 bg-white border-b border-zinc-200 flex items-center justify-between px-4 md:px-8 z-20">
-          <div className="flex items-center gap-4 md:gap-6">
+        <header className="min-h-16 bg-white border-b border-zinc-200 flex items-center justify-between px-3 sm:px-4 md:px-8 z-20 shrink-0">
+          <div className="flex flex-1 min-w-0 items-center gap-2 sm:gap-4 md:gap-6">
             <button 
               onClick={() => setMobileOpen(true)}
-              className="md:hidden p-2 text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100 rounded-xl transition-all"
+              className="md:hidden p-2 text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 rounded-xl transition-all shrink-0"
               title="Open Navigation Menu"
             >
-              <Menu size={20} />
+              <Menu size={24} />
             </button>
-            <div className="flex items-center gap-4 mr-4">
+            <h1 className="md:hidden text-base sm:text-lg font-black text-zinc-900 truncate">
+              {pageTitle[routeSegment] || 'PharmHelm'}
+            </h1>
+            <div className="hidden md:flex items-center gap-4 mr-4">
               {assignedBranches.length <= 1 && (
                 <div className="text-sm font-medium text-zinc-500">
                   {activeBranch?.brandName || 'PharmHelm Pro ERP'} • <span className="text-zinc-900">{activeBranch?.brandSlogan || 'Standard Edition'}</span>
@@ -80,8 +90,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               )}
             </div>
 
-            <div className="h-8 w-[1px] bg-zinc-200" />            {/* User Profile & Branch Switcher on the Left */}
-            <div className="flex items-center gap-3">
+            <div className="hidden md:block h-8 w-[1px] bg-zinc-200" />
+            <div className="flex items-center gap-2 md:gap-3 ml-auto md:ml-0">
               <div className="relative">
                 <button 
                   onClick={() => setUserMenuOpen(!userMenuOpen)}
@@ -107,7 +117,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                         initial={{ opacity: 0, y: 10, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                        className="absolute left-0 mt-2 w-64 bg-white rounded-2xl border border-zinc-200 shadow-xl overflow-hidden z-40"
+                    className="fixed sm:absolute right-3 sm:right-auto sm:left-0 mt-2 w-[calc(100vw-1.5rem)] sm:w-64 bg-white rounded-2xl border border-zinc-200 shadow-xl overflow-hidden z-40"
                       >
                         <div className="p-4 border-b border-zinc-100 bg-zinc-50/50">
                           <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Signed in as</p>
@@ -158,14 +168,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   <div className="relative">
                     <button
                       onClick={() => setBranchMenuOpen(!branchMenuOpen)}
-                      className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-100 hover:bg-emerald-100 transition-all group"
+                    className="flex items-center gap-2 px-2 sm:px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-100 hover:bg-emerald-100 transition-all group max-w-[42vw] sm:max-w-none"
                       title={assignedBranches.length > 1 ? 'Switch Operating Branch' : 'Current Operating Branch'}
                       disabled={assignedBranches.length <= 1}
                     >
                       <Building2 size={14} className="text-emerald-500" />
                       <div className="text-left">
-                        <p className="text-[9px] font-black text-emerald-500/60 uppercase tracking-widest leading-none mb-0.5">Branch</p>
-                        <p className="text-xs font-bold text-zinc-900 leading-none">{activeBranch.name}</p>
+                        <p className="hidden sm:block text-[9px] font-black text-emerald-500/60 uppercase tracking-widest leading-none mb-0.5">Branch</p>
+                        <p className="text-[11px] sm:text-xs font-bold text-zinc-900 leading-none truncate">{activeBranch.name}</p>
                       </div>
                       {assignedBranches.length > 1 && <ChevronDown size={12} className={`text-emerald-400 transition-transform ${branchMenuOpen ? 'rotate-180' : ''}`} />}
                     </button>
@@ -178,7 +188,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                             initial={{ opacity: 0, y: 10, scale: 0.95 }}
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                            className="absolute left-0 mt-2 w-64 bg-white rounded-2xl border border-zinc-200 shadow-xl overflow-hidden z-40"
+                            className="fixed sm:absolute right-3 sm:right-auto sm:left-0 mt-2 w-[calc(100vw-1.5rem)] sm:w-64 bg-white rounded-2xl border border-zinc-200 shadow-xl overflow-hidden z-40"
                           >
                             <div className="p-4 border-b border-zinc-100 bg-zinc-50/50">
                               <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Select Operating Branch</p>
@@ -219,7 +229,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </header>
 
         <main className="flex-1 overflow-y-auto relative">
-          <div className="p-8 max-w-7xl mx-auto">
+          <div className="p-3 sm:p-5 md:p-8 max-w-7xl mx-auto min-w-0">
             <ModuleErrorBoundary key={location.pathname}>{children}</ModuleErrorBoundary>
           </div>
           <Toaster position="top-right" expand={false} richColors />
