@@ -32,12 +32,17 @@ jobs:
           npm run build
 
       - name: Authenticate to Firebase
+        id: firebase_auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          token_format: access_token
 
       - name: Deploy Firestore rules
         shell: bash
+        env:
+          FIREBASE_ACCESS_TOKEN: '${{ steps.firebase_auth.outputs.access_token }}'
+          FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
         run: |
           deploy_status=1
           for attempt in 1 2 3 4; do
@@ -56,6 +61,23 @@ jobs:
             echo "Firebase Rules API returned 503. Retrying in ${retry_delay} seconds (attempt $((attempt + 1)) of 4)."
             sleep "$retry_delay"
           done
+          if [ "$deploy_status" -ne 0 ] && [[ "$deploy_output" == *"HTTP Error: 409"* ]] && [[ "$deploy_output" == *"rules file"*"compiled successfully"* ]]; then
+            release_url="https://firebaserules.googleapis.com/v1/projects/gen-lang-client-0911422817/releases/cloud.firestore/${FIRESTORE_DATABASE_ID}"
+            release_json=$(curl --fail --silent --show-error \
+              -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
+              "$release_url")
+            ruleset_name=$(printf '%s' "$release_json" | jq -r '.rulesetName // empty')
+            if [ -n "$ruleset_name" ]; then
+              ruleset_json=$(curl --fail --silent --show-error \
+                -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
+                "https://firebaserules.googleapis.com/v1/${ruleset_name}")
+              active_rules=$(printf '%s' "$ruleset_json" | jq -r '.source.files[] | select(.name == "firestore.rules") | .content' | head -n 1)
+              if [ -n "$active_rules" ] && [ "$active_rules" = "$(cat firestore.rules)" ]; then
+                echo "The active named-database release exactly matches firestore.rules; accepting the Firebase CLI 409 as an idempotent success."
+                deploy_status=0
+              fi
+            fi
+          fi
           if [ "$deploy_status" -ne 0 ]; then
             escaped_output=${deploy_output//'%'/'%25'}
             escaped_output=${escaped_output//$'\r'/'%0D'}
