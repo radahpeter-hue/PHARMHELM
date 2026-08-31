@@ -44,6 +44,7 @@ export interface Tenant {
   subscription_end: string;
   modules_enabled: string[];
   deployment_mode: 'single_branch' | 'multi_branch';
+  branchLimit?: number;
   status: 'active' | 'inactive' | 'suspended' | 'deleted';
   created_at: string;
   created_by: string;
