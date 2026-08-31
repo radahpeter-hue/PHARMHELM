@@ -61,7 +61,11 @@ jobs:
             echo "Firebase Rules API returned 503. Retrying in ${retry_delay} seconds (attempt $((attempt + 1)) of 4)."
             sleep "$retry_delay"
           done
-          if [ "$deploy_status" -ne 0 ] && [[ "$deploy_output" == *"HTTP Error: 409"* ]] && [[ "$deploy_output" == *"rules file"*"compiled successfully"* ]]; then
+          plain_deploy_output=$(printf '%s' "$deploy_output" | sed -E $'s/\x1B\\[[0-9;]*[mK]//g')
+          if [ "$deploy_status" -ne 0 ] && [[ "$plain_deploy_output" == *"HTTP Error: 409"* ]] && [[ "$plain_deploy_output" == *"already up to date, skipping upload"* ]]; then
+            echo "Firestore rules are already the active latest version; accepting the Firebase CLI 409 as an idempotent success."
+            deploy_status=0
+          elif [ "$deploy_status" -ne 0 ] && [[ "$plain_deploy_output" == *"HTTP Error: 409"* ]] && [[ "$plain_deploy_output" == *"rules file"*"compiled successfully"* ]]; then
             FIREBASE_ACCESS_TOKEN=$(gcloud auth application-default print-access-token)
             release_url="https://firebaserules.googleapis.com/v1/projects/gen-lang-client-0911422817/releases/cloud.firestore/${FIRESTORE_DATABASE_ID}"
             release_json=$(curl --fail --silent --show-error \
