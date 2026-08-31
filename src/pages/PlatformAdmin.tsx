@@ -45,6 +45,7 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { deduplicateStaff } from '../utils/deduplicateStaff';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -473,7 +474,7 @@ const PlatformAdmin = () => {
     try {
       const q = query(collection(db, 'staff'), where('tenantId', '==', tenantId));
       const snap = await getDocs(q);
-      const accounts = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const accounts = deduplicateStaff(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setStaffAccounts(accounts);
     } catch (err) {
       console.error('Error fetching staff accounts:', err);
@@ -2697,6 +2698,14 @@ const PlatformAdmin = () => {
         <EditTenantModal 
           tenant={editingTenant}
           platformEmail={platformProfile?.email || ''}
+          onRequestReauth={(action, payload) => {
+            setReauthTenant(editingTenant);
+            setReauthEmail(auth.currentUser?.email || '');
+            setReauthPassword('');
+            setReauthAction(action);
+            setReauthPayload(payload);
+            setShowReauthModal(true);
+          }}
           onClose={() => setEditingTenant(null)} 
           onSuccess={() => {
             setEditingTenant(null);
@@ -2884,7 +2893,7 @@ const PlatformAdmin = () => {
   );
 };
 
-const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess }: { tenant: Tenant, platformEmail: string, onClose: () => void, onSuccess: () => void }) => {
+const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess, onRequestReauth }: { tenant: Tenant, platformEmail: string, onClose: () => void, onSuccess: () => void, onRequestReauth: (action: string, payload: any) => void }) => {
   const [branchCount, setBranchCount] = useState<number | null>(null);
   const [branchLimitInput, setBranchLimitInput] = useState<number | ''>(tenant.branchLimit ?? '');
   const [resetToTierDefault, setResetToTierDefault] = useState(false);
@@ -3141,12 +3150,7 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess }: { tenant
                     // trigger reauth modal for branch limit change
                     const tierDefault = tenant.subscription_tier === 'basic' ? 1 : (tenant.subscription_tier === 'standard' ? 5 : 15);
                     const newLimit = resetToTierDefault ? tierDefault : branchLimitInput;
-                    setReauthTenant(tenant);
-                    setReauthEmail(auth.currentUser?.email || '');
-                    setReauthPassword('');
-                    setReauthAction('updateBranchLimit');
-                    setReauthPayload({ oldLimit: tenant.branchLimit ?? null, newLimit });
-                    setShowReauthModal(true);
+                    onRequestReauth('updateBranchLimit', { oldLimit: tenant.branchLimit ?? null, newLimit });
                   }}
                   className="px-3 py-3 bg-emerald-500 text-white rounded-xl font-bold text-xs uppercase tracking-widest"
                 >
@@ -3171,12 +3175,7 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess }: { tenant
                     <button type="button" onClick={() => {
                       // trigger reauth for trial grant
                       if (!trialBranchLimit || !trialEndDate) { toast.error('Please set trial branch limit and end date'); return; }
-                      setReauthTenant(tenant);
-                      setReauthEmail(auth.currentUser?.email || '');
-                      setReauthPassword('');
-                      setReauthAction('grantTrial');
-                      setReauthPayload({ trialBranchLimit, trialStartDate: new Date().toISOString(), trialEndDate, notes: trialNotes });
-                      setShowReauthModal(true);
+                      onRequestReauth('grantTrial', { trialBranchLimit, trialStartDate: new Date().toISOString(), trialEndDate, notes: trialNotes });
                     }} className="px-3 py-2 bg-emerald-500 text-white rounded-xl text-xs font-bold">Grant Trial</button>
                     <button type="button" onClick={() => setShowTrialForm(false)} className="px-3 py-2 bg-zinc-100 rounded-xl text-xs">Cancel</button>
                   </div>
@@ -3197,12 +3196,7 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess }: { tenant
                   <div className="flex gap-2">
                     <button type="button" onClick={() => {
                       if (!compEndDate || !compReason) { toast.error('Please set end date and reason'); return; }
-                      setReauthTenant(tenant);
-                      setReauthEmail(auth.currentUser?.email || '');
-                      setReauthPassword('');
-                      setReauthAction('grantComplimentary');
-                      setReauthPayload({ startDate: compStartDate, endDate: compEndDate, reason: compReason });
-                      setShowReauthModal(true);
+                      onRequestReauth('grantComplimentary', { startDate: compStartDate, endDate: compEndDate, reason: compReason });
                     }} className="px-3 py-2 bg-emerald-500 text-white rounded-xl text-xs font-bold">Grant</button>
                     <button type="button" onClick={() => setShowComplimentaryForm(false)} className="px-3 py-2 bg-zinc-100 rounded-xl text-xs">Cancel</button>
                   </div>
