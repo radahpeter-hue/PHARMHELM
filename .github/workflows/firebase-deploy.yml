@@ -1,4 +1,4 @@
-name: Deploy to Firebase Hosting
+name: Deploy to Firebase
 
 on:
   push:
@@ -8,6 +8,9 @@ on:
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -16,16 +19,27 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - name: Install dependencies
         run: |
-          npm install
+          npm ci
           npm install @tailwindcss/oxide-linux-x64-gnu --save-optional --no-save
 
       - name: Build project
-        run: npm run build
+        run: |
+          npm run lint
+          npm run build
 
-      - name: Deploy to Firebase Hosting
+      - name: Authenticate to Firebase
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Deploy Firestore rules
+        run: npx firebase-tools deploy --only firestore:rules --project gen-lang-client-0911422817 --non-interactive
+
+      - name: Deploy Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
