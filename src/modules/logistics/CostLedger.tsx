@@ -399,11 +399,10 @@ export const CostLedger: React.FC = () => {
   const totalFineCost = filteredFineLogs.reduce((sum, log) => sum + (log.fine_amount_ugx || 0), 0);
   const totalGeneralExpensesCost = filteredGeneralExpenses.reduce((sum, log) => sum + (log.cost_ugx || 0), 0);
 
-  // Logistics Petty Cash calculations based on departmental_petty_cash_ledger (Starting Balance 100,000 UGX + inflows - outflows)
-  const openingBalance = 100000;
+  // Departmental funds exist only after a confirmed Finance issuance.
   const totalReceived = deptLedger.reduce((sum, entry) => sum + (entry.amount_received || 0), 0);
   const totalSpent = deptLedger.reduce((sum, entry) => sum + (entry.amount_spent || 0), 0);
-  const logisticsAvailableBalance = openingBalance + totalReceived - totalSpent;
+  const logisticsAvailableBalance = totalReceived - totalSpent;
 
   return (
     <div className="space-y-6">
