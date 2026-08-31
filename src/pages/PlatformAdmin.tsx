@@ -378,7 +378,7 @@ const PlatformAdmin = () => {
     await deleteDoc(doc(db, 'tenants', tenantId));
   };
 
-  const handleReauthPermanentDelete = async (e: React.FormEvent) => {
+  const handleReauthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reauthTenant) return;
     setReauthSaving(true);
@@ -2825,70 +2825,106 @@ const PlatformAdmin = () => {
         />
       )}
 
-      {/* Permanent Delete Re-auth Modal */}
-      {showReauthModal && (
-        <div className="fixed inset-0 bg-[#141414]/80 backdrop-blur-sm flex items-center justify-center p-4 z-[70]">
-          <div className="bg-white rounded-[2rem] p-8 max-w-md w-full border border-zinc-200 shadow-2xl space-y-6">
-            <div className="text-center">
-              <div className="h-16 w-16 bg-red-50 text-red-600 rounded-3xl flex items-center justify-center mx-auto mb-4">
-                <ShieldAlert size={36} />
+      {/* Re-auth Modal */}
+      {showReauthModal && (() => {
+        let title = 'Confirm Action';
+        let desc = <span>Please verify your credentials to confirm this action for <strong>{reauthTenant?.name}</strong>.</span>;
+        let iconColor = 'bg-blue-50 text-blue-600';
+        let btnColor = 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/20';
+        let btnText = reauthSaving ? 'Confirming...' : 'Confirm';
+
+        if (reauthAction === 'purge') {
+          title = 'Confirm Permanent Deletion';
+          desc = <span>This is a highly destructive administrative action. Please verify your credentials to permanently purge <strong>{reauthTenant?.name}</strong>.</span>;
+          iconColor = 'bg-red-50 text-red-600';
+          btnColor = 'bg-red-600 hover:bg-red-700 shadow-red-500/20';
+          btnText = reauthSaving ? 'Purging...' : 'Confirm Purge';
+        } else if (reauthAction === 'updateBranchLimit') {
+          title = 'Confirm Branch Limit Update';
+          desc = <span>Please verify your credentials to update the branch limit for <strong>{reauthTenant?.name}</strong>.</span>;
+          iconColor = 'bg-amber-50 text-amber-600';
+          btnColor = 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/20';
+          btnText = reauthSaving ? 'Updating...' : 'Confirm Update';
+        } else if (reauthAction === 'grantTrial') {
+          title = 'Confirm Trial Grant';
+          desc = <span>Please verify your credentials to grant a trial period for <strong>{reauthTenant?.name}</strong>.</span>;
+          iconColor = 'bg-emerald-50 text-emerald-600';
+          btnColor = 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20';
+          btnText = reauthSaving ? 'Granting...' : 'Confirm Grant';
+        } else if (reauthAction === 'grantComplimentary') {
+          title = 'Confirm Complimentary Period';
+          desc = <span>Please verify your credentials to grant a complimentary period for <strong>{reauthTenant?.name}</strong>.</span>;
+          iconColor = 'bg-emerald-50 text-emerald-600';
+          btnColor = 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20';
+          btnText = reauthSaving ? 'Granting...' : 'Confirm Grant';
+        }
+
+        return (
+          <div className="fixed inset-0 bg-[#141414]/80 backdrop-blur-sm flex items-center justify-center p-4 z-[70]">
+            <div className="bg-white rounded-[2rem] p-8 max-w-md w-full border border-zinc-200 shadow-2xl space-y-6">
+              <div className="text-center">
+                <div className={`h-16 w-16 ${iconColor} rounded-3xl flex items-center justify-center mx-auto mb-4`}>
+                  <ShieldAlert size={36} />
+                </div>
+                <h3 className="text-xl font-black text-zinc-900 uppercase tracking-tight">{title}</h3>
+                <p className="text-xs text-zinc-500 mt-2">
+                  {desc}
+                </p>
               </div>
-              <h3 className="text-xl font-black text-zinc-900 uppercase tracking-tight">Confirm Permanent Deletion</h3>
-              <p className="text-xs text-zinc-500 mt-2">
-                This is a highly destructive administrative action. Please verify your credentials to permanently purge <strong>{reauthTenant?.name}</strong>.
-              </p>
+
+              <form onSubmit={handleReauthSubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Email Address</label>
+                  <input 
+                    type="email" 
+                    required 
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none font-medium"
+                    placeholder="Enter your administrative email"
+                    value={reauthEmail}
+                    onChange={(e) => setReauthEmail(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Password</label>
+                  <input 
+                    type="password" 
+                    required 
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none"
+                    placeholder="Enter your password"
+                    value={reauthPassword}
+                    onChange={(e) => setReauthPassword(e.target.value)}
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setShowReauthModal(false);
+                      setReauthTenant(null);
+                      setReauthEmail('');
+                      setReauthPassword('');
+                      setReauthAction(null);
+                      setReauthPayload(null);
+                    }}
+                    className="flex-1 py-3.5 bg-zinc-100 text-zinc-700 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={reauthSaving}
+                    className={`flex-1 py-3.5 text-white rounded-xl font-bold text-xs uppercase tracking-widest disabled:bg-zinc-200 transition-all shadow-lg ${btnColor}`}
+                  >
+                    {btnText}
+                  </button>
+                </div>
+              </form>
             </div>
-
-            <form onSubmit={handleReauthPermanentDelete} className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Email Address</label>
-                <input 
-                  type="email" 
-                  required 
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none font-medium"
-                  placeholder="Enter your administrative email"
-                  value={reauthEmail}
-                  onChange={(e) => setReauthEmail(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Password</label>
-                <input 
-                  type="password" 
-                  required 
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none"
-                  placeholder="Enter your password"
-                  value={reauthPassword}
-                  onChange={(e) => setReauthPassword(e.target.value)}
-                />
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button 
-                  type="button"
-                  onClick={() => {
-                    setShowReauthModal(false);
-                    setReauthTenant(null);
-                    setReauthEmail('');
-                    setReauthPassword('');
-                  }}
-                  className="flex-1 py-3.5 bg-zinc-100 text-zinc-700 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  disabled={reauthSaving}
-                  className="flex-1 py-3.5 bg-red-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-red-700 disabled:bg-zinc-200 transition-all shadow-lg shadow-red-500/20"
-                >
-                  {reauthSaving ? 'Purging...' : 'Confirm Purge'}
-                </button>
-              </div>
-            </form>
           </div>
-        </div>
-      )}
+        );
+      })}
     </div>
   );
 };
