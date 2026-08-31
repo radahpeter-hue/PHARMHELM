@@ -60,10 +60,9 @@ export const LogisticsDashboard: React.FC = () => {
 
   // Calculations
   const metrics = useMemo(() => {
-    const openingBalance = 100000;
     const totalReceived = deptLedger.reduce((sum, entry) => sum + (entry.amount_received || 0), 0);
     const totalSpent = deptLedger.reduce((sum, entry) => sum + (entry.amount_spent || 0), 0);
-    const availableBalance = openingBalance + totalReceived - totalSpent;
+    const availableBalance = totalReceived - totalSpent;
 
     const pendingRequests = requisitions.filter(r => r.status === 'Pending' || r.status === 'Under review');
     const totalPendingAmount = pendingRequests.reduce((sum, r) => sum + (r.amount || 0), 0);
@@ -131,7 +130,7 @@ export const LogisticsDashboard: React.FC = () => {
           </div>
           <span className="text-[10px] font-black text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded uppercase tracking-widest mb-1 inline-block">Available Petty Cash</span>
           <h3 className="text-2xl font-black text-emerald-950 mt-2">UGX {metrics.availableBalance.toLocaleString()}</h3>
-          <p className="text-[10px] text-emerald-700/80 mt-1 font-semibold">Opening Balance: UGX 100,000</p>
+          <p className="text-[10px] text-emerald-700/80 mt-1 font-semibold">Confirmed Finance issuances less recorded expenditure</p>
         </div>
 
         {/* Pending Requests */}
