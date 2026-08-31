@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="PharmHelm">
+  <defs>
+    <linearGradient id="pharmhelm-green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#08a500"/>
+      <stop offset="1" stop-color="#05bf00"/>
+    </linearGradient>
+  </defs>
+  <path d="M23 4h18v12h13v32H41v12H23V48H10V16h13V4Zm6 6v12H16v20h13v12h6V42h13V22H35V10h-6Z" fill="url(#pharmhelm-green)"/>
+  <path d="M13 31h12l3.5 6.5L34 24l5.2 7H51v6H36.2l-1.1-1.5-3.7 9.2a3 3 0 0 1-5.4.3l-4.6-8H13v-6Z" fill="url(#pharmhelm-green)"/>
+</svg>
