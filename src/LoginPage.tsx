@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useAuth } from './AuthContext';
+import { useAuth } from './contexts/AuthContext';
 import { Pill, Lock, Mail, Loader2 } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
