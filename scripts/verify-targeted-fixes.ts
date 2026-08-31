@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { hasAnyRole } from '../src/utils/roles.ts';
 import { isExcludedFromOpex } from '../src/utils/finance.ts';
+import { deduplicateStaff } from '../src/utils/deduplicateStaff.ts';
 
 assert.equal(hasAnyRole({ role: 'Cashier', secondaryRoles: ['Finance Officer'] }, ['Finance Officer']), true);
 assert.equal(hasAnyRole({ role: 'Cashier', secondaryRoles: ['Dispenser'] }, ['Finance Officer']), false);
@@ -10,6 +11,29 @@ assert.equal(isExcludedFromOpex({ source: 'credit_payment' }), true);
 assert.equal(isExcludedFromOpex({ sourceType: 'credit' }), true);
 assert.equal(isExcludedFromOpex({ source: 'manual' }), false);
 assert.equal(isExcludedFromOpex({ source: 'cash_grn', excludeFromOpexRollup: false }), false);
+
+const staff = deduplicateStaff([
+  {
+    id: 'legacy-doc',
+    uid: 'auth-uid',
+    authEmail: 'person@tenant.pharmhelm.com',
+    full_name: 'Test Person',
+    assigned_branches: ['branch-a'],
+    secondaryRoles: ['Cashier']
+  },
+  {
+    id: 'auth-uid',
+    uid: 'auth-uid',
+    authEmail: 'person@tenant.pharmhelm.com',
+    full_name: 'Test Person',
+    assigned_branches: ['branch-b'],
+    secondaryRoles: ['Dispenser']
+  }
+]);
+assert.equal(staff.length, 1);
+assert.equal(staff[0].id, 'auth-uid');
+assert.deepEqual(staff[0].assigned_branches?.sort(), ['branch-a', 'branch-b']);
+assert.deepEqual(staff[0].secondaryRoles?.sort(), ['Cashier', 'Dispenser']);
 
 const revenue = 1_000_000;
 const cogs = 600_000;
