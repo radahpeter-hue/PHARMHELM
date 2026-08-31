@@ -51,7 +51,7 @@ const TmcProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }
 
 // Protected Route for Tenants
 const TenantProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, profile, loading, activeBranchId, multiBranchMode } = useAuth();
+  const { user, profile, loading, activeBranchId, assignedBranches } = useAuth();
   const { tenant, error: tenantError, loading: tenantLoading } = useTenant();
   const params = useParams<{ tenantSlug?: string }>();
 
@@ -129,8 +129,9 @@ const TenantProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childre
     return <Navigate to={`/tenant/${currentSlug}/login`} replace />;
   }
 
-  // Force branch selector if in multi-branch mode and no active branch is set
-  if (multiBranchMode && !activeBranchId) {
+  // Every staff member assigned to multiple branches must choose an operating
+  // branch for the current authenticated session before entering the workspace.
+  if (assignedBranches.length > 1 && !activeBranchId) {
     return <BranchSelector />;
   }
 
