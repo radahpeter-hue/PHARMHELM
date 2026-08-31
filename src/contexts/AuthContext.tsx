@@ -6,6 +6,7 @@ import { Staff, Branch, SystemSettings, PlatformUser } from '../types';
 import { toast } from 'sonner';
 import { useTenant } from './TenantContext';
 import { sanitizeInput } from '../utils/sanitize';
+import { deduplicateStaff } from '../utils/deduplicateStaff';
 
 export interface ModulePermission {
   access: 'none' | 'view' | 'operate' | 'all';
@@ -544,26 +545,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (branches.length === 0) {
       setActiveBranchId(null);
       setActiveBranch(null);
-      localStorage.removeItem(storageKey);
-      return;
-    }
-
-    if (!isMultiBranch) {
-      const onlyBranch = branches[0];
-      setActiveBranchId(onlyBranch.id);
-      setActiveBranch(onlyBranch);
-      localStorage.setItem(storageKey, onlyBranch.id);
+      sessionStorage.removeItem(storageKey);
       return;
     }
 
     if (branches.length === 1) {
-      setActiveBranchId(branches[0].id);
-      setActiveBranch(branches[0]);
-      localStorage.setItem(storageKey, branches[0].id);
+      const onlyBranch = branches[0];
+      setActiveBranchId(onlyBranch.id);
+      setActiveBranch(onlyBranch);
+      sessionStorage.setItem(storageKey, onlyBranch.id);
       return;
     }
 
-    const savedBranchId = localStorage.getItem(storageKey);
+    const savedBranchId = sessionStorage.getItem(storageKey);
     const savedBranch = branches.find(branch => branch.id === savedBranchId);
     if (savedBranch) {
       setActiveBranchId(savedBranch.id);
@@ -573,7 +567,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setActiveBranchId(null);
     setActiveBranch(null);
-    localStorage.removeItem(storageKey);
+    sessionStorage.removeItem(storageKey);
   };
 
   useEffect(() => {
@@ -753,6 +747,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const staffData = staffSnap.data() as Staff;
               if (staffData.tenantId === tenant.id && (staffData.status === 'active' || staffData.active)) {
                 currentProfile = { ...staffData, id: staffSnap.id };
+                // Historical activation flows could leave a second legacy staff
+                // document containing newer role or branch assignments. Merge it
+                // into the authenticated profile until the migration removes it.
+                if (userEmail) {
+                  try {
+                    const legacySnap = await getDocs(query(
+                      collection(db, 'staff'),
+                      where('authEmail', '==', userEmail.toLowerCase().trim())
+                    ));
+                    const sameTenantProfiles = legacySnap.docs
+                      .filter(candidate => (candidate.data() as Staff).tenantId === tenant.id)
+                      .map(candidate => ({ ...(candidate.data() as Staff), id: candidate.id }));
+                    currentProfile = deduplicateStaff([currentProfile, ...sameTenantProfiles])[0] || currentProfile;
+                  } catch (mergeError) {
+                    console.warn('Could not merge legacy staff assignments into the active profile.', mergeError);
+                  }
+                }
               } else {
                 toast.error('Access denied: Staff account inactive or not assigned to this workspace.');
                 await signOut(auth);
@@ -939,7 +950,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     setActiveBranchId(id);
-    localStorage.setItem(branchStorageKey(profile), id);
+    sessionStorage.setItem(branchStorageKey(profile), id);
     setActiveBranch(b);
   };
 
@@ -1162,6 +1173,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
+      if (profile) {
+        sessionStorage.removeItem(branchStorageKey(profile));
+      }
       await signOut(auth);
     } catch (error) {
       toast.error('Failed to sign out.');
