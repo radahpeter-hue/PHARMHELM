@@ -10,6 +10,7 @@ import { firestoreService } from '../../services/firestore';
 import { Staff, AdvanceRequest, TrafficFineLog, Payslip } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
+import { deduplicateStaff } from '../../utils/deduplicateStaff';
 
 interface DraftPayrollRecord {
   staffId: string;
@@ -44,8 +45,7 @@ interface DraftPayrollRecord {
 export const PayrollManager: React.FC = () => {
   const { profile } = useAuth();
   const { tenant } = useTenant();
-  // Subscription-tier gating removed for Payroll features
-  // const isBasic = tenant?.subscription_tier === 'basic';
+  // Payroll tax processing is controlled by tenant settings, not subscription tier.
   const [staff, setStaff] = useState<Staff[]>([]);
   const [payroll, setPayroll] = useState<any[]>([]);
   const [advances, setAdvances] = useState<AdvanceRequest[]>([]);
@@ -112,6 +112,8 @@ export const PayrollManager: React.FC = () => {
     }
   }, [profile?.tenantId]);
 
+  const canonicalStaff = deduplicateStaff(staff);
+
   // Dynamic CME point retriever matching either fullName or full_name (case-insensitive) for YTD performance check
   const getStaffCmePoints = (targetStaffId: string) => {
     const staffMember = staff.find(s => s.id === targetStaffId);
@@ -148,14 +150,14 @@ export const PayrollManager: React.FC = () => {
 
   // Draft calculation logic based on period and configuration
   const handleGeneratePayrollDraft = () => {
-    if (staff.length === 0) {
+    if (canonicalStaff.length === 0) {
       toast.error('No staff records loaded.');
       return;
     }
 
     const draftRecords: DraftPayrollRecord[] = [];
 
-    staff.forEach(member => {
+    canonicalStaff.forEach(member => {
       if (member.status !== 'active') return;
 
       // 1. Calculate Expected Work Hours & Hourly Rate based on Profile expected figures
@@ -230,7 +232,7 @@ export const PayrollManager: React.FC = () => {
       });
 
       // 6. Tax Engine: PAYE and NSSF (Conditional based on process_tax_deductibles toggle)
-      const taxEnabled = isBasic ? false : (systemSettings ? systemSettings.process_tax_deductibles !== false : true);
+      const taxEnabled = systemSettings ? systemSettings.process_tax_deductibles !== false : true;
       const empType = (member as any).employmentType || 'Full-Time';
       const isRegularStaff = empType === 'Full-Time' || empType === 'Part-Time';
       
@@ -354,7 +356,7 @@ export const PayrollManager: React.FC = () => {
 
       for (const item of draftPayroll) {
         // Find matching staff to copy properties (like branchId)
-        const staffMember = staff.find(s => s.id === item.staffId);
+        const staffMember = canonicalStaff.find(s => s.id === item.staffId);
         
         // 1. Add to main payroll ledger
         const payrollData = {
@@ -667,7 +669,7 @@ export const PayrollManager: React.FC = () => {
             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Active Headcount</span>
           </div>
           <div className="mt-4">
-            <h4 className="text-2xl font-black text-slate-900">{staff.filter(s => s.status === 'active').length} Staff</h4>
+            <h4 className="text-2xl font-black text-slate-900">{canonicalStaff.filter(s => s.status === 'active').length} Staff</h4>
             <p className="text-[10px] text-slate-400 font-bold uppercase mt-0.5">Eligible for period payslip generation</p>
           </div>
         </div>
@@ -687,22 +689,7 @@ export const PayrollManager: React.FC = () => {
       </div>
 
       {/* Dynamic Tax Control Toggle Banner */}
-      {isBasic ? (
-        <div className="bg-amber-50 border border-amber-200/60 p-5 rounded-[24px] flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl flex items-center justify-center bg-amber-100 text-amber-600 border border-amber-200">
-              <ShieldCheck size={20} />
-            </div>
-            <div>
-              <h4 className="text-xs font-black text-amber-900 uppercase tracking-wider">Tax Processing Engine Locked</h4>
-              <p className="text-[11px] text-amber-600 font-medium">
-                Tax Processing Engine calculations and configurations are locked on the Basic subscription tier. Upgrade your plan to activate.
-              </p>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="bg-slate-50 border border-slate-200/60 p-5 rounded-[24px] flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className="bg-slate-50 border border-slate-200/60 p-5 rounded-[24px] flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className={cn(
               "h-10 w-10 rounded-xl flex items-center justify-center transition-colors",
@@ -743,8 +730,7 @@ export const PayrollManager: React.FC = () => {
               />
             </button>
           </div>
-        </div>
-      )}
+      </div>
 
       {/* Date Select & Generator Panel */}
       <div className="bg-white p-6 rounded-[32px] border border-zinc-200 shadow-sm flex flex-col md:flex-row md:items-end justify-between gap-6">
