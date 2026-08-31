@@ -27,6 +27,7 @@ import TmcLogin from './pages/TmcLogin';
 import TenantLogin from './pages/TenantLogin';
 import { AboutPage } from './pages/AboutPage';
 import { PrivacyPage } from './pages/PrivacyPage';
+import { TermsOfUsePage } from './pages/TermsOfUsePage';
 
 // Protected Route for TMC
 const TmcProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -198,6 +199,9 @@ export default function App() {
   if (hostname.includes('privacy.')) {
     return <PrivacyPage />;
   }
+  if (hostname.includes('termsofuse.')) {
+    return <TermsOfUsePage />;
+  }
 
   const parts = hostname.split('.');
   let isSubdomainTenant = false;
@@ -240,6 +244,7 @@ export default function App() {
         {/* Public info routes */}
         <Route path="/about" element={<AboutPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/terms-of-use" element={<TermsOfUsePage />} />
 
         {/* Portal Entry Redirection */}
         <Route path="/" element={getRootRedirect()} />
