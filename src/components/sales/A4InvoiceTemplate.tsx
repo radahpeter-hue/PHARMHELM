@@ -74,13 +74,12 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
   const brandReceiptFooter = activeBranch?.brandReceiptFooter || systemSettings?.branding?.receiptFooter || 'Thank you for your business!';
 
   // Bank Info from settings fallback
-  const bankName = activeBranch?.bankName || systemSettings?.billing?.bankName || 'Stanbic Bank Uganda';
-  const bankAccountName = activeBranch?.bankAccountName || systemSettings?.billing?.bankAccountName || brandCompanyName;
-  const bankAccountNumber = activeBranch?.bankAccountNumber || systemSettings?.billing?.bankAccountNumber || '9030012345678';
-  const bankBranch = activeBranch?.bankBranch || systemSettings?.billing?.bankBranch || 'Kampala Corporate Branch';
+  const bankName = activeBranch?.bankName || systemSettings?.billing?.bankName;
+  const bankAccountName = activeBranch?.bankAccountName || systemSettings?.billing?.bankAccountName;
+  const bankAccountNumber = activeBranch?.bankAccountNumber || systemSettings?.billing?.bankAccountNumber;
+  const bankBranch = activeBranch?.bankBranch || systemSettings?.billing?.bankBranch;
 
-  const isVatExempt = receipt.taxAmount === 0;
-  const title = isVatExempt ? 'INVOICE' : 'TAX INVOICE';
+  const title = 'INVOICE';
 
   const handlePrint = () => {
     // Open print window specifically for this component
@@ -155,7 +154,7 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
         {/* Header toolbar */}
         <div className="px-6 py-4 border-b flex justify-between items-center bg-zinc-50">
           <div>
-            <h3 className="font-bold text-zinc-900 text-sm">A4 Tax Invoice</h3>
+            <h3 className="font-bold text-zinc-900 text-sm">A4 Invoice</h3>
             <p className="text-[10px] text-zinc-500 font-medium">Verify billable items and client associations</p>
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-zinc-200 rounded-full text-zinc-400 hover:text-zinc-600 transition-colors">
@@ -222,7 +221,7 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
                     <th className="p-3 w-8">#</th>
                     <th className="p-3">Item Name</th>
                     <th className="p-3">Generic Name</th>
-                    <th className="p-3">Batch No</th>
+                    <th className="p-3">Batch / Expiry</th>
                     <th className="p-3 text-center">Qty</th>
                     <th className="p-3 text-right">Unit Price</th>
                     <th className="p-3 text-right">Tax (VAT)</th>
@@ -235,7 +234,10 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
                       <td className="p-3 text-zinc-400">{idx + 1}</td>
                       <td className="p-3 font-semibold text-zinc-900">{item.productName}</td>
                       <td className="p-3 text-zinc-500 italic">{item.genericName || 'N/A'}</td>
-                      <td className="p-3 text-zinc-600 font-mono text-[10px]">{item.batchNumber || 'N/A'}</td>
+                      <td className="p-3 text-zinc-600 font-mono text-[10px]">
+                        <div>{item.batchNumber || 'N/A'}</div>
+                        {item.expiryDate && <div className="text-zinc-400 mt-0.5">Exp: {item.expiryDate}</div>}
+                      </td>
                       <td className="p-3 text-center font-bold text-zinc-800">{item.quantity}</td>
                       <td className="p-3 text-right text-zinc-600">UGX {(item.unitPrice || 0).toLocaleString()}</td>
                       <td className="p-3 text-right text-zinc-500">
@@ -260,7 +262,7 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
                 )}
 
                 {/* Bank Details */}
-                <div className="p-4 bg-zinc-50 rounded-xl border border-zinc-150 space-y-1 text-[10px]">
+                {bankAccountNumber && <div className="p-4 bg-zinc-50 rounded-xl border border-zinc-200 space-y-1 text-[10px]">
                   <span className="text-[9px] text-emerald-700 font-extrabold block uppercase tracking-wider mb-1">
                     Direct Bank Remittance Info
                   </span>
@@ -268,7 +270,7 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
                   <p className="text-zinc-500">Account Name: <span className="font-bold text-zinc-800">{bankAccountName}</span></p>
                   <p className="text-zinc-500">Account No: <span className="font-mono font-bold text-zinc-800">{bankAccountNumber}</span></p>
                   <p className="text-zinc-500">Branch: <span className="font-bold text-zinc-800">{bankBranch}</span></p>
-                </div>
+                </div>}
               </div>
 
               {/* Totals block */}

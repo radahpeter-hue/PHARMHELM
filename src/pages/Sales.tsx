@@ -28,6 +28,7 @@ import { where, query, collection } from 'firebase/firestore';
 import { QuotationPreview } from '../components/sales/QuotationPreview';
 import { A4InvoiceTemplate } from '../components/sales/A4InvoiceTemplate';
 import { QuotationsLog } from '../components/sales/QuotationsLog';
+import { openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
 
 
 function cn(...inputs: ClassValue[]) {
@@ -537,12 +538,16 @@ const Sales: React.FC = () => {
     setIsCheckoutOpen(true);
   };
 
-  const completeSale = async (alsoGenerateA4: boolean = false) => {
-    if (!profile) return;
+  const completeSale = async (receiptWindow?: Window | null) => {
+    if (!profile) {
+      receiptWindow?.close();
+      return;
+    }
 
     // Check if any cart item's price is below cost price of that specific batch
     const belowCostItem = cart.find(item => !item.isService && item.unitPrice < item.costPrice);
     if (belowCostItem) {
+      receiptWindow?.close();
       toast.error(`Checkout blocked: ${belowCostItem.productName} is priced at UGX ${(belowCostItem.unitPrice || 0).toLocaleString()}, which is below its batch cost price of UGX ${(belowCostItem.costPrice || 0).toLocaleString()}.`);
       return;
     }
@@ -579,6 +584,7 @@ const Sales: React.FC = () => {
 
       const finalTotal = totalAmount;
       let finalReceiptId = editingSaleId;
+      let completedSale: Sale | null = null;
 
       if (editingSaleId) {
         const originalSale = sales.find(s => s.id === editingSaleId);
@@ -668,6 +674,7 @@ const Sales: React.FC = () => {
             total: finalTotal,
             totalAmount: finalTotal
           };
+          completedSale = updatedSaleData;
           await logSaleMovements(editingSaleId, updatedSaleData, false, null, profile.uid);
 
           // 4. Create Audit Log
@@ -722,7 +729,8 @@ const Sales: React.FC = () => {
         const newSaleId = await firestoreService.addDocument('sales', saleData);
         if (newSaleId) {
           finalReceiptId = newSaleId;
-          await logSaleMovements(newSaleId, { ...saleData, id: newSaleId }, false, null, profile.uid);
+          completedSale = { ...saleData, id: newSaleId };
+          await logSaleMovements(newSaleId, completedSale, false, null, profile.uid);
         }
       }
       
@@ -806,10 +814,20 @@ const Sales: React.FC = () => {
         setResumedQuotationId(null);
       }
 
-      // Check if we also want to display A4 invoice preview immediately
-      if (alsoGenerateA4 && finalReceiptId) {
-        setSelectedA4ReceiptId(finalReceiptId);
-        setShowA4InvoiceModal(true);
+      if (completedSale) {
+        const printOpened = printThermalReceipt(completedSale, {
+          companyName: brandCompanyName,
+          logoUrl: brandLogoUrl,
+          address: activeBranch?.address,
+          phone: activeBranch?.phone,
+          ndaRegistration: brandNdaReg,
+          footer: brandReceiptFooter
+        }, profile.displayName || profile.full_name || 'Operator', false, receiptWindow);
+        if (!printOpened) {
+          toast.warning('Sale completed, but the receipt window was blocked. Reprint it from the Receipt Ledger.');
+        }
+      } else {
+        receiptWindow?.close();
       }
 
       toast.success(`${editingSaleId ? 'Sale updated' : 'Sale completed'}! Receipt: ${receiptNumber}`);
@@ -823,6 +841,7 @@ const Sales: React.FC = () => {
       setIsCheckoutOpen(false);
       setEditingSaleId(null);
     } catch (error) {
+      receiptWindow?.close();
       console.error(error);
       toast.error('Failed to process sale');
     } finally {
@@ -1177,9 +1196,9 @@ const Sales: React.FC = () => {
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 w-full bg-zinc-50/50 p-4 rounded-3xl border border-zinc-200/60 shadow-sm">
             <div className="flex flex-col gap-1">
               <span className="text-[10px] text-zinc-400 font-extrabold uppercase tracking-wider">Transaction Mode</span>
-              <span className="text-xs font-semibold text-zinc-650">Select active billing and patient context</span>
+              <span className="text-xs font-semibold text-zinc-600">Select active billing and patient context</span>
             </div>
-            <div className="flex items-center gap-2 bg-white p-1 rounded-2xl border border-zinc-150 shadow-inner w-full md:w-auto">
+            <div className="flex items-center gap-1 sm:gap-2 bg-white p-1 rounded-2xl border border-zinc-200 shadow-inner w-full md:w-auto overflow-x-auto">
               {[
                 { id: 'walk-in', label: 'Walk-In', icon: User },
                 { id: 'telepharmacy', label: 'Telepharmacy', icon: Video },
@@ -1193,10 +1212,10 @@ const Sales: React.FC = () => {
                   }}
                   type="button"
                   className={cn(
-                    "flex-1 md:flex-none flex items-center justify-center gap-2.5 px-6 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 outline-none select-none",
+                    "flex-1 md:flex-none min-w-fit flex items-center justify-center gap-1.5 sm:gap-2.5 px-3 sm:px-6 py-3 rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wide sm:tracking-wider transition-all duration-200 outline-none select-none",
                     context === ctx.id 
                       ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/15 scale-[1.02]" 
-                      : "text-zinc-550 hover:bg-zinc-50 hover:text-zinc-900"
+                      : "text-zinc-700 bg-white hover:bg-zinc-100 hover:text-zinc-950"
                   )}
                 >
                   <ctx.icon size={14} strokeWidth={3} />
@@ -1905,10 +1924,13 @@ const Sales: React.FC = () => {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-4xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col md:flex-row max-h-[90vh]"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Complete transaction"
+              className="relative w-full max-w-5xl bg-white rounded-2xl sm:rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col md:flex-row max-h-[calc(100dvh-1rem)] sm:max-h-[92vh]"
             >
               {/* Receipt Preview (Left) */}
-              <div className="flex-1 bg-zinc-100 p-8 overflow-y-auto custom-scrollbar border-r border-zinc-200">
+              <div className="hidden md:block flex-1 bg-zinc-100 p-5 lg:p-8 overflow-y-auto custom-scrollbar border-r border-zinc-200">
                 <div className="bg-white p-8 shadow-sm rounded-sm max-w-md mx-auto font-mono text-[10px] text-zinc-800">
                   <div className="text-center mb-6">
                     {brandLogoUrl && (
@@ -1996,7 +2018,7 @@ const Sales: React.FC = () => {
               </div>
 
               {/* Payment Selection (Right) */}
-              <div className="w-full md:w-96 p-8 flex flex-col gap-6">
+              <div className="w-full md:w-[25rem] p-4 sm:p-6 lg:p-8 flex flex-col gap-4 sm:gap-6 overflow-y-auto custom-scrollbar min-h-0">
                 <div>
                   <h3 className="text-xl font-bold text-zinc-900 mb-2">Complete Transaction</h3>
                   <p className="text-sm text-zinc-500">Select payment method to finish.</p>
@@ -2112,38 +2134,18 @@ const Sales: React.FC = () => {
                     <p className="text-[10px] text-zinc-400 font-medium">Payment Method: <span className="text-zinc-900 font-bold uppercase">{paymentMethod.replace('_', ' ')}</span></p>
                   </div>
 
-                  <div className="flex gap-2">
+                  <div>
                     <button 
-                      onClick={() => completeSale(false)}
+                      onClick={() => completeSale(openReceiptPrintWindow())}
                       disabled={isProcessing}
-                      className="flex-1 py-4 bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-400 text-white rounded-2xl font-bold text-xs transition-all flex items-center justify-center gap-1.5"
+                      className="w-full py-4 bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-400 text-white rounded-2xl font-bold text-xs transition-all flex items-center justify-center gap-1.5"
                     >
                       {isProcessing ? (
                         <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                       ) : (
                         <Printer size={16} />
                       )}
-                      Print & Complete
-                    </button>
-                    
-                    <button 
-                      onClick={() => completeSale(true)}
-                      disabled={isProcessing || (!selectedPatient && !selectedInstitution)}
-                      type="button"
-                      className={cn(
-                        "flex-1 py-4 font-bold text-xs transition-all rounded-2xl flex items-center justify-center gap-1.5 border border-zinc-200",
-                        (selectedPatient || selectedInstitution)
-                          ? "bg-white text-zinc-700 hover:bg-zinc-50 cursor-pointer animate-pulse"
-                          : "bg-zinc-100 text-zinc-450 cursor-not-allowed opacity-60"
-                      )}
-                      title={
-                        (selectedPatient || selectedInstitution)
-                          ? "Print A4 Invoice"
-                          : "A4 invoice requires a linked client or institution"
-                      }
-                    >
-                      <FileText size={16} />
-                      Also Generate A4
+                      Complete & Print Thermal Receipt
                     </button>
                   </div>
                   <button 
@@ -2824,6 +2826,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
   const brandCompanyName = activeBranch?.brandName || systemSettings?.branding?.companyName || 'PharmHelm Pharmacy';
   const brandLogoUrl = activeBranch?.brandLogoUrl || systemSettings?.branding?.logoUrl;
   const brandNdaReg = activeBranch?.brandNdaRegNumber || systemSettings?.branding?.ndaRegNumber || 'NDA/WHL/2026/0847';
+  const brandReceiptFooter = activeBranch?.brandReceiptFooter || systemSettings?.branding?.receiptFooter || 'Thank you for your business!';
 
   const [searchTerm, setSearchTerm] = useState('');
   const [dateRange, setDateRange] = useState({ 
@@ -3153,19 +3156,9 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                   onClick={() => {
                     onPrintA4(selectedSale.id);
                   }}
-                  disabled={!selectedSale.patientId && !selectedSale.institutionId}
                   type="button"
-                  className={cn(
-                    "w-full py-3 font-bold flex items-center justify-center gap-2 transition-all rounded-xl border border-zinc-200",
-                    (selectedSale.patientId || selectedSale.institutionId)
-                      ? "bg-white text-zinc-700 hover:bg-zinc-50 cursor-pointer"
-                      : "bg-zinc-100 text-zinc-400 cursor-not-allowed opacity-50"
-                  )}
-                  title={
-                    (selectedSale.patientId || selectedSale.institutionId)
-                      ? "Print A4 Invoice"
-                      : "A4 invoice requires a linked client or institution"
-                  }
+                  className="w-full py-3 font-bold flex items-center justify-center gap-2 transition-all rounded-xl border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                  title="Open the A4 invoice format"
                 >
                   <FileText className="w-4 h-4" />
                   Print A4 Invoice
@@ -3329,12 +3322,14 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                   <div className="border-t border-dashed border-zinc-300 pt-2 space-y-0.5 text-[8px]">
                     <div className="flex justify-between">
                       <span>Subtotal:</span>
-                      <span>UGX {Math.round(selectedSale.total * 0.82).toLocaleString()}</span>
+                      <span>UGX {(selectedSale.subtotal ?? selectedSale.total).toLocaleString()}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>VAT (18%):</span>
-                      <span>UGX {Math.round(selectedSale.total * 0.18).toLocaleString()}</span>
-                    </div>
+                    {(selectedSale.discountAmount || 0) > 0 && (
+                      <div className="flex justify-between"><span>Discount:</span><span>- UGX {(selectedSale.discountAmount || 0).toLocaleString()}</span></div>
+                    )}
+                    {(selectedSale.taxAmount || 0) > 0 && (
+                      <div className="flex justify-between"><span>VAT:</span><span>UGX {(selectedSale.taxAmount || 0).toLocaleString()}</span></div>
+                    )}
                     <div className="flex justify-between font-bold text-[10px] pt-1 border-t border-zinc-200">
                       <span>TOTAL:</span>
                       <span>UGX {selectedSale.total.toLocaleString()}</span>
@@ -3371,8 +3366,21 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
               <div className="p-6 bg-zinc-50 border-t border-zinc-100 flex flex-col gap-2">
                 <button
                   onClick={() => {
-                    toast.success("Thermal receipt reprinted & printing tasks sent to queue.");
-                    setIsReprintModalOpen(false);
+                    const cashier = staff.find(s => s.uid === selectedSale.servedBy)?.displayName || staff.find(s => s.id === selectedSale.servedBy)?.displayName || selectedSale.servedBy || 'Operator';
+                    const opened = printThermalReceipt(selectedSale, {
+                      companyName: brandCompanyName,
+                      logoUrl: brandLogoUrl,
+                      address: activeBranch?.address,
+                      phone: activeBranch?.phone,
+                      ndaRegistration: brandNdaReg,
+                      footer: brandReceiptFooter
+                    }, cashier, true);
+                    if (opened) {
+                      toast.success('Thermal receipt opened for printing.');
+                      setIsReprintModalOpen(false);
+                    } else {
+                      toast.error('The print window was blocked. Allow pop-ups and try again.');
+                    }
                   }}
                   className="w-full py-3 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors text-xs shadow-md"
                 >
