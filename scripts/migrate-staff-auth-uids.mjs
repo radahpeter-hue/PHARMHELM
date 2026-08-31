@@ -15,6 +15,8 @@ let alreadyLinked = 0;
 let migratable = 0;
 let unmatched = 0;
 let ambiguous = 0;
+let canonicalWithLegacyDuplicates = 0;
+const reviewRequired = [];
 
 for (const user of users) {
   if (!user.localId || !user.email) continue;
@@ -24,9 +26,32 @@ for (const user of users) {
     where: { fieldFilter: { field: { fieldPath: 'authEmail' }, op: 'EQUAL', value: { stringValue: user.email.toLowerCase() } } },
     limit: 3
   });
-  if (matches.some(document => document.name === canonicalName)) { alreadyLinked += 1; continue; }
+  const canonicalMatch = matches.find(document => document.name === canonicalName);
+  if (canonicalMatch) {
+    alreadyLinked += 1;
+    const legacyMatches = matches.filter(document => document.name !== canonicalName);
+    if (legacyMatches.length > 0) {
+      canonicalWithLegacyDuplicates += 1;
+      reviewRequired.push({
+        email: user.email.toLowerCase(),
+        authUid: user.localId,
+        reason: 'canonical record plus legacy duplicate',
+        documentIds: matches.map(document => document.name.split('/').pop())
+      });
+    }
+    continue;
+  }
   if (matches.length === 0) { unmatched += 1; continue; }
-  if (matches.length !== 1) { ambiguous += 1; continue; }
+  if (matches.length !== 1) {
+    ambiguous += 1;
+    reviewRequired.push({
+      email: user.email.toLowerCase(),
+      authUid: user.localId,
+      reason: 'multiple legacy records and no canonical UID record',
+      documentIds: matches.map(document => document.name.split('/').pop())
+    });
+    continue;
+  }
 
   migratable += 1;
   if (!APPLY) continue;
@@ -43,4 +68,13 @@ for (const user of users) {
   ]);
 }
 
-console.log(JSON.stringify({ mode: APPLY ? 'apply' : 'dry-run', authUsers: users.length, alreadyLinked, migratable, unmatched, ambiguous }, null, 2));
+console.log(JSON.stringify({
+  mode: APPLY ? 'apply' : 'dry-run',
+  authUsers: users.length,
+  alreadyLinked,
+  migratable,
+  unmatched,
+  ambiguous,
+  canonicalWithLegacyDuplicates,
+  reviewRequired
+}, null, 2));
