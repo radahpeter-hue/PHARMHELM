@@ -77,21 +77,21 @@ export const StaffDirectory: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatCard 
           label="Total Workforce" 
-          value={staff.length} 
+          value={dedupedStaff.length}
           icon={Users} 
           color="text-slate-600" 
           bgColor="bg-slate-50" 
         />
         <StatCard 
           label="Active Staff" 
-          value={staff.filter(s => s.status === 'active').length} 
+          value={dedupedStaff.filter(s => s.status === 'active').length}
           icon={Activity} 
           color="text-emerald-600" 
           bgColor="bg-emerald-50" 
         />
         <StatCard 
           label="On Leave" 
-          value={staff.filter(s => s.status === 'on-leave').length} 
+          value={dedupedStaff.filter(s => s.status === 'on-leave').length}
           icon={Calendar} 
           color="text-amber-600" 
           bgColor="bg-amber-50" 
@@ -391,6 +391,7 @@ const StatCard: React.FC<{ label: string; value: number; icon: any; color: strin
 const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff | null; branches: Branch[]; customRoles?: any[] }> = ({ isOpen, onClose, staff, branches, customRoles = [] }) => {
   const { profile } = useAuth();
   const { tenant } = useTenant();
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   const systemDefaultRoleNames = [
     'owner', 'admin', 'pharmacist', 'cashier', 'qa head', 'qa officer', 
@@ -467,8 +468,9 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile?.tenantId) return;
+    if (!profile?.tenantId || isSubmitting) return;
 
+    setIsSubmitting(true);
     try {
       if (staff?.id) {
         await firestoreService.updateDocument('staff', staff.id, formData);
@@ -506,6 +508,8 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
     } catch (error: any) {
       console.error('Error saving staff:', error);
       toast.error(error.message || 'Failed to save staff member');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -771,8 +775,8 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
 
             <div className="flex justify-end gap-3 pt-6 border-t border-slate-100">
               <button type="button" onClick={onClose} className="px-6 py-2 border border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-50 transition-colors uppercase text-[10px] tracking-widest">Cancel</button>
-              <button type="submit" className="px-8 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold transition-all shadow-lg shadow-slate-200 uppercase text-[10px] tracking-widest">
-                {staff ? 'Update Member' : 'Register Member'}
+              <button type="submit" disabled={isSubmitting} className="px-8 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-bold transition-all shadow-lg shadow-slate-200 uppercase text-[10px] tracking-widest">
+                {isSubmitting ? 'Saving...' : staff ? 'Update Member' : 'Register Member'}
               </button>
             </div>
           </form>
