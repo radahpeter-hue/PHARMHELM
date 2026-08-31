@@ -21,6 +21,9 @@ export default function TenantLogin() {
     }
     return `https://pharmhelm.com${path}`;
   };
+  const termsOfUseLink = window.location.hostname.includes('localhost') || window.location.hostname.includes('web.app') || window.location.hostname.includes('firebaseapp.com')
+    ? getPublicLink('/terms-of-use')
+    : 'https://termsofuse.pharmhelm.com';
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -369,7 +372,7 @@ export default function TenantLogin() {
         <p className="font-caption text-caption text-[#3f4848]">© 2026 PharmHelm. HIPAA Compliant Enterprise Systems.</p>
         <div className="flex gap-4 mt-2">
           <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href={getPublicLink('/privacy')} target="_blank" rel="noopener noreferrer">Privacy Policy</a>
-          <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href="#">Terms of Service</a>
+          <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href={termsOfUseLink} target="_blank" rel="noopener noreferrer">Terms of Service</a>
           <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors font-bold" href={getPublicLink('/about')} target="_blank" rel="noopener noreferrer">About Us</a>
           <a className="font-caption text-caption text-[#3f4848] hover:text-primary transition-colors" href="#">Security Standards</a>
         </div>
