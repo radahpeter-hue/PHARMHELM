@@ -14,6 +14,9 @@ export default function TmcLogin() {
     }
     return `https://pharmhelm.com${path}`;
   };
+  const termsOfUseLink = window.location.hostname.includes('localhost') || window.location.hostname.includes('web.app') || window.location.hostname.includes('firebaseapp.com')
+    ? getPublicLink('/terms-of-use')
+    : 'https://termsofuse.pharmhelm.com';
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -254,6 +257,8 @@ export default function TmcLogin() {
 
             {/* Footer Links */}
             <div className="mt-12 flex items-center justify-center gap-6">
+              <a className="text-[12px] text-[#404849] hover:text-[#003436] transition-colors" href={termsOfUseLink} target="_blank" rel="noopener noreferrer">Terms of Service</a>
+              <div className="w-1.5 h-1.5 rounded-full bg-[#bfc8c8]"></div>
               <a className="text-[12px] text-[#404849] hover:text-[#003436] transition-colors" href="#">Documentation</a>
               <div className="w-1.5 h-1.5 rounded-full bg-[#bfc8c8]"></div>
               <a className="text-[12px] text-[#404849] hover:text-[#003436] transition-colors" href="#">Security Standards</a>
