@@ -1237,8 +1237,6 @@ const WholeOrderSourcingModal: React.FC<{
         supplier_id: 'HQ_STORE',
         supplier_name: 'HQ Store',
         supplier_type: 'internal_hq',
-        unit_cost_ugx: 0,
-        line_total_ugx: 0,
         line_status: 'approved' // Automatically approved since fulfilled from HQ central!
       });
 
@@ -2679,7 +2677,8 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
       }
 
       const grnNumber = `GRN-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
-      let totalValue = 0;
+      let financeValue = 0;
+      let transferValue = 0;
       const grnItems = [];
       const unsuppliedLines = [];
       const updatedOrderLines = [];
@@ -2735,12 +2734,16 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
             expiry_date: edit.expiry,
             status: 'received'
           });
-          totalValue += edit.qty * (line.unit_cost_ugx || 0);
+          
+          transferValue += edit.qty * (line.unit_cost_ugx || 0);
+          if (line.supplier_type !== 'internal_hq' && line.supplier_type !== 'internal_warehouse') {
+            financeValue += edit.qty * (line.unit_cost_ugx || 0);
+          }
         }
       }
 
-      if (paymentType === 'cash' && availablePettyCash < totalValue) {
-        throw new Error(`Insufficient Management Petty Cash. Available: UGX ${availablePettyCash.toLocaleString()}, Required: UGX ${totalValue.toLocaleString()}`);
+      if (paymentType === 'cash' && availablePettyCash < financeValue) {
+        throw new Error(`Insufficient Management Petty Cash. Available: UGX ${availablePettyCash.toLocaleString()}, Required: UGX ${financeValue.toLocaleString()}`);
       }
 
       const supplierId = lines[0]?.supplier_id || 'UNKNOWN';
@@ -2759,7 +2762,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
         status: 'completed',
         payment_type: paymentType,
         payment_status: paymentType === 'cash' ? 'paid' : 'pending',
-        total_value_ugx: totalValue,
+        total_value_ugx: financeValue,
         inputVat,
         whtAmount,
         items: grnItems,
@@ -2783,7 +2786,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
         invoice_number: invoiceNumber || grnNumber,
         grn_number: grnNumber,
         invoice_date: invoiceDate,
-        amount: totalValue,
+        amount: financeValue,
         type: 'payable',
         status: paymentType === 'cash' ? 'Paid' : 'Unpaid',
         due_date: new Date(new Date(invoiceDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -2808,9 +2811,9 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
         grn_number: grnNumber,
         invoice_date: invoiceDate,
         due_date: new Date(new Date(invoiceDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        amount: totalValue,
-        total_amount_ugx: totalValue,
-        paid_amount_ugx: paymentType === 'cash' ? totalValue : 0,
+        amount: financeValue,
+        total_amount_ugx: financeValue,
+        paid_amount_ugx: paymentType === 'cash' ? financeValue : 0,
         status: paymentType === 'cash' ? 'Paid' : 'Credit',
         created_at: new Date().toISOString()
       });
@@ -2821,7 +2824,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
         batch.set(pcRef, {
           tenantId,
           date: new Date().toISOString(),
-          amount: totalValue,
+          amount: financeValue,
           source: 'Petty Cash Reserve',
           reference_number: invoiceNumber || grnNumber,
           type: 'outgoing',
@@ -2838,8 +2841,8 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
           supplierId,
           supplierName,
           invoiceNumber: invoiceNumber || grnNumber,
-          amount: totalValue,
-          balance: totalValue,
+          amount: financeValue,
+          balance: financeValue,
           dueDate: new Date(new Date(invoiceDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
           status: 'unpaid',
           createdAt: new Date().toISOString(),
@@ -2892,8 +2895,9 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
           status: 'dispatched',
           dispatched_at: new Date().toISOString(),
           dispatched_by: profile?.uid,
+          dispatched_by_name: profile?.full_name || profile?.displayName || profile?.email || 'Unknown',
           total_items: grnItems.length,
-          total_value_ugx: totalValue
+          total_value_ugx: transferValue
         });
 
         // Transfer Lines

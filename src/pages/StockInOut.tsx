@@ -1297,14 +1297,14 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     let lines = invoiceLines;
     if (invoice.id !== selectedInvoice?.id) {
       lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-        { field: 'transfer_id', operator: '==', value: invoice.id }
+        { field: 'transfer_id', operator: '==', value: invoice.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
       ]);
     }
 
     const srcName = invoice.source_branch_id === 'HQ' ? 'HQ Central Store' : (branches.find(b => b.id === invoice.source_branch_id)?.name || invoice.source_branch_name || 'Branch Store');
     const destName = invoice.destination_branch_id === 'HQ' ? 'HQ Central Store' : (branches.find(b => b.id === invoice.destination_branch_id)?.name || invoice.destination_branch_name || 'Branch Store');
-    const senderName = getUserName(invoice.dispatched_by);
-    const receiverName = invoice.received_by ? getUserName(invoice.received_by) : 'N/A';
+    const senderName = (invoice.dispatched_by_name || getUserName(invoice.dispatched_by));
+    const receiverName = invoice.received_by ? (invoice.received_by_name || getUserName(invoice.received_by)) : 'N/A';
     const timeSent = invoice.dispatched_at ? new Date(invoice.dispatched_at).toLocaleString() : 'N/A';
     const timeRec = invoice.received_at ? new Date(invoice.received_at).toLocaleString() : 'N/A';
     
@@ -1442,8 +1442,8 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       
       const srcName = (invoice.source_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === invoice.source_branch_id)?.name || invoice.source_branch_name || 'Branch Transfer')).toLowerCase();
       const destName = (invoice.destination_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === invoice.destination_branch_id)?.name || invoice.destination_branch_name || 'Current Branch')).toLowerCase();
-      const sender = getUserName(invoice.dispatched_by).toLowerCase();
-      const receiver = invoice.received_by ? getUserName(invoice.received_by).toLowerCase() : 'pending';
+      const sender = (invoice.dispatched_by_name || getUserName(invoice.dispatched_by)).toLowerCase();
+      const receiver = invoice.received_by ? (invoice.received_by_name || getUserName(invoice.received_by)).toLowerCase() : 'pending';
       
       return transferNum.includes(q) || 
              invoiceId.includes(q) || 
@@ -1469,7 +1469,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const handleOpenReceive = async (invoice: TransferInvoice) => {
     setSelectedInvoice(invoice);
     const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-      { field: 'transfer_id', operator: '==', value: invoice.id }
+      { field: 'transfer_id', operator: '==', value: invoice.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
     ]);
     setInvoiceLines(lines);
     
@@ -1743,8 +1743,8 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               {displayedInvoices.map((invoice) => {
                 const srcName = invoice.source_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === invoice.source_branch_id)?.name || invoice.source_branch_name || 'Branch Transfer');
                 const destName = invoice.destination_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === invoice.destination_branch_id)?.name || invoice.destination_branch_name || 'Current Branch');
-                const sender = getUserName(invoice.dispatched_by);
-                const receiver = invoice.received_by ? getUserName(invoice.received_by) : 'Pending';
+                const sender = (invoice.dispatched_by_name || getUserName(invoice.dispatched_by));
+                const receiver = invoice.received_by ? (invoice.received_by_name || getUserName(invoice.received_by)) : 'Pending';
                 const totalWorth = invoice.total_value_ugx || (invoice.items || []).reduce((sum, item) => sum + ((item.qty_dispatched || 0) * (item.unit_cost_ugx || 0)), 0);
                 return (
                   <tr key={invoice.id} className="hover:bg-zinc-50/50 transition-colors text-xs">
@@ -1844,7 +1844,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
                   </div>
                   <div className="pt-2 border-t border-zinc-200">
                     <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block font-mono">Dispatched/Sent By &amp; When</span>
-                    <span className="font-semibold text-zinc-700 block">{getUserName(selectedInvoice.dispatched_by)}</span>
+                    <span className="font-semibold text-zinc-700 block">{(selectedInvoice.dispatched_by_name || getUserName(selectedInvoice.dispatched_by))}</span>
                     <span className="text-zinc-500 font-mono text-[11px] block">
                       {selectedInvoice.dispatched_at ? new Date(selectedInvoice.dispatched_at).toLocaleString() : '--'}
                     </span>
@@ -1861,7 +1861,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
                   <div className="pt-2 border-t border-zinc-200">
                     <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block font-mono">Received/Verified By &amp; When</span>
                     <span className="font-semibold text-zinc-700 block">
-                      {selectedInvoice.received_by ? getUserName(selectedInvoice.received_by) : 'Pending Receipt Verification'}
+                      {selectedInvoice.received_by ? (selectedInvoice.received_by_name || getUserName(selectedInvoice.received_by)) : 'Pending Receipt Verification'}
                     </span>
                     <span className="text-zinc-500 font-mono text-[11px] block">
                       {selectedInvoice.received_at ? new Date(selectedInvoice.received_at).toLocaleString() : 'Pending'}
@@ -2345,7 +2345,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     if (lines.length === 0) {
       try {
         lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-          { field: 'transfer_id', operator: '==', value: transfer.id }
+          { field: 'transfer_id', operator: '==', value: transfer.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
         ]);
       } catch (err) {
         console.error("Error fetching transfer lines for download:", err);
@@ -2396,7 +2396,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     setSelectedTransferLines([]);
     try {
       const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-        { field: 'transfer_id', operator: '==', value: transfer.id }
+        { field: 'transfer_id', operator: '==', value: transfer.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
       ]);
       setSelectedTransferLines(lines);
     } catch (err) {
@@ -2963,7 +2963,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
                   <div className="pt-2 border-t border-zinc-200">
                     <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block font-mono">Received/Verified By & When</span>
                     <span className="font-semibold text-zinc-700 mt-0.5 block">
-                      {selectedTransfer.received_by ? getUserName(selectedTransfer.received_by) : 'Pending Receipt Verification'}
+                      {selectedTransfer.received_by ? (selectedTransfer.received_by_name || getUserName(selectedTransfer.received_by)) : 'Pending Receipt Verification'}
                     </span>
                     <span className="text-zinc-500 font-mono text-[11px] block">{selectedTransfer.received_at ? new Date(selectedTransfer.received_at).toLocaleString() : 'Pending Receipt'}</span>
                   </div>
@@ -3756,7 +3756,7 @@ export const StockInOutReportsHub: React.FC<{ branches: Branch[] }> = ({ branche
         if (lines.length === 0) {
           try {
             lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-              { field: 'transfer_id', operator: '==', value: ti.id }
+              { field: 'transfer_id', operator: '==', value: ti.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
             ]);
           } catch (e) {
             console.error("Error fetching lines for reception:", e);
@@ -3820,7 +3820,7 @@ export const StockInOutReportsHub: React.FC<{ branches: Branch[] }> = ({ branche
         if (lines.length === 0) {
           try {
             lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-              { field: 'transfer_id', operator: '==', value: ti.id }
+              { field: 'transfer_id', operator: '==', value: ti.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
             ]);
           } catch (e) {
             console.error("Error fetching lines for transfer:", e);

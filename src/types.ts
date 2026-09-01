@@ -1008,8 +1008,10 @@ export interface TransferInvoice {
   transfer_type: 'branch_to_branch' | 'central_to_branch' | 'branch_to_central' | 'query_return';
   status: 'draft' | 'dispatched' | 'received' | 'cancelled' | 'fully_accepted' | 'queried';
   dispatched_by: string;
+  dispatched_by_name?: string;
   dispatched_at: string;
   received_by?: string;
+  received_by_name?: string;
   received_at?: string;
   total_value_ugx: number;
   notes?: string;
