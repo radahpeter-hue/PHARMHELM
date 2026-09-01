@@ -2383,7 +2383,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     if (lines.length === 0) {
       try {
         lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-          { field: 'transfer_id', operator: '==', value: transfer.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
+          { field: 'transfer_id', operator: '==', value: transfer.id }
         ]);
       } catch (err) {
         console.error("Error fetching transfer lines for download:", err);
@@ -2434,7 +2434,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     setSelectedTransferLines([]);
     try {
       const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-        { field: 'transfer_id', operator: '==', value: transfer.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
+        { field: 'transfer_id', operator: '==', value: transfer.id }
       ]);
       setSelectedTransferLines(lines);
     } catch (err) {
