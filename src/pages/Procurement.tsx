@@ -2453,8 +2453,6 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     } catch (error: any) {
       console.error('Manual GRN Process Error:', error);
       toast.error('Failed to save manual GRN: ' + (error?.message || 'Unknown error'));
-    } finally {
-      setSubmitting(false);
     }
   };
 
