@@ -190,7 +190,14 @@ jobs:
           fi
 
       - name: Deploy Firebase Storage rules
+        id: deploy_storage
+        continue-on-error: true
         run: npx firebase-tools deploy --only storage --project gen-lang-client-0911422817 --non-interactive
+
+      - name: Report deferred Firebase Storage deployment
+        if: steps.deploy_storage.outcome == 'failure'
+        run: |
+          echo "::warning title=Firebase Storage deployment deferred::Storage rules were not deployed because Cloud Storage is unavailable on the current Spark plan. Firestore and Hosting deployment will continue."
 
       - name: Deploy Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
