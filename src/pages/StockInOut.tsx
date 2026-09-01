@@ -26,7 +26,7 @@ import { hasAnyRole } from '../utils/roles';
 import { firestoreService } from '../services/firestore';
 import { Product, StockOrder, StockOrderLine, TransferInvoice, Branch, ProductBatch, TransferInvoiceLine, Sale, OperationalInventory } from '../types';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, runTransaction } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, runTransaction, writeBatch } from 'firebase/firestore';
 import { logMovementAndAggregateInTx, getBranchProductBatchRefs } from '../services/consumptionService';
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
@@ -1297,7 +1297,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     let lines = invoiceLines;
     if (invoice.id !== selectedInvoice?.id) {
       lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-        { field: 'transfer_id', operator: '==', value: invoice.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
+        { field: 'transfer_id', operator: '==', value: invoice.id }
       ]);
     }
 
@@ -1469,7 +1469,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const handleOpenReceive = async (invoice: TransferInvoice) => {
     setSelectedInvoice(invoice);
     const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-      { field: 'transfer_id', operator: '==', value: invoice.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
+      { field: 'transfer_id', operator: '==', value: invoice.id }
     ]);
     setInvoiceLines(lines);
     
@@ -1481,12 +1481,11 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   };
 
   const handleReceiveSubmit = async () => {
-    if (!selectedInvoice || !profile?.tenantId) return;
+    if (!selectedInvoice || !profile?.tenantId || !activeBranchId) return;
 
     try {
-      // Pre-fetch batches and products to avoid getDocs inside transaction
       const batchPromises = invoiceLines.map(line => 
-        firestoreService.getDocumentsByQuery<ProductBatch>('product_batches', [
+        firestoreService.getDocumentsByQuery('product_batches', [
           { field: 'tenantId', operator: '==', value: profile.tenantId },
           { field: 'branchId', operator: '==', value: activeBranchId },
           { field: 'productId', operator: '==', value: line.product_id },
@@ -1494,7 +1493,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         ])
       );
       const productPromises = invoiceLines.map(line => 
-        firestoreService.getDocument<any>('products', line.product_id)
+        firestoreService.getDocument('products', line.product_id)
       );
 
       const [batchResults, productResults] = await Promise.all([
@@ -1502,124 +1501,151 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         Promise.all(productPromises)
       ]);
 
-      const batchMap: Record<string, ProductBatch> = {};
+      const batchMap: Record<string, any> = {};
       const productMap: Record<string, any> = {};
 
       invoiceLines.forEach((line, index) => {
-        if (batchResults[index].length > 0) {
-          batchMap[line.id] = batchResults[index][0];
+        if (batchResults[index] && batchResults[index].length > 0) {
+          batchMap[line.id as string] = batchResults[index][0];
         }
         if (productResults[index]) {
-          productMap[line.product_id] = productResults[index];
+          productMap[line.product_id as string] = productResults[index];
         }
       });
 
-      // Pre-fetch receiving branch batch references for all products
-      const uniqueProductIds = Array.from(new Set<string>(invoiceLines.map(line => String(line.product_id))));
-      const branchBatchRefsMap: Record<string, { ref: any; id: string }[]> = {};
+      const uniqueProductIds = (Array.from(new Set(invoiceLines.map(line => String(line.product_id)))) as string[]);
+      const branchBatchRefsMap: Record<string, any> = {};
       for (const pId of uniqueProductIds) {
         branchBatchRefsMap[pId] = await getBranchProductBatchRefs(
           profile.tenantId,
-          activeBranchId!,
+          activeBranchId,
           pId
         );
       }
 
-      await firestoreService.runTransaction(async (transaction) => {
-        let hasQueries = false;
-        const queriedLines: any[] = [];
+      const batch = writeBatch(db);
 
-        for (const line of invoiceLines) {
-          const data = receivingData[line.id];
-          if (!data) continue;
+      let hasQueries = false;
+      const successfulMovements: any[] = []; 
 
-          const lineRef = doc(db, 'transfer_invoice_lines', line.id);
+      for (const line of invoiceLines) {
+        const data = receivingData[line.id];
+        if (!data) continue;
+
+        const lineRef = doc(db, 'transfer_invoice_lines', line.id);
+        
+        batch.update(lineRef, {
+          qty_received: data.accepted,
+          qty_accepted: data.accepted,
+          qty_queried: data.queried,
+          query_reason: data.reason || null,
+          line_status: data.queried > 0 ? 'queried' : 'received',
+          updatedAt: new Date().toISOString()
+        });
+
+        if (data.queried > 0) {
+          hasQueries = true;
+          const queryRef = doc(db, 'stock_queries', line.id);
+          const queryObj = {
+            id: line.id,
+            tenantId: profile.tenantId,
+            invoiceId: selectedInvoice.id,
+            invoiceNumber: selectedInvoice.transfer_number,
+            productId: line.product_id,
+            productName: line.product_name,
+            batchNumber: line.batch_number || 'N/A',
+            qtyQueried: data.queried,
+            unitCost: line.unit_cost_ugx || 0,
+            amountAccrued: data.queried * (line.unit_cost_ugx || 0),
+            reason: data.reason || 'Unspecified discrepancy',
+            sourceBranchId: selectedInvoice.source_branch_id,
+            sourceBranchName: selectedInvoice.source_branch_name,
+            destinationBranchId: selectedInvoice.destination_branch_id,
+            destinationBranchName: selectedInvoice.destination_branch_name,
+            loggedBy: profile.uid,
+            loggedByName: profile.fullName || profile.displayName || profile.email || 'Staff User',
+            status: 'pending_return',
+            timestamp: new Date().toISOString()
+          };
+          batch.set(queryRef, queryObj);
+        }
+
+        if (data.accepted > 0) {
+          const existingBatch = batchMap[line.id as string];
+          const product = productMap[line.product_id as string];
+          const unitsPerPack = product?.unitsPerPack || 1;
+          const totalUnitsAccepted = data.accepted * unitsPerPack;
           
-          transaction.update(lineRef, {
-            qty_received: data.accepted, // This is physically received
-            qty_accepted: data.accepted,
-            qty_queried: data.queried,
-            query_reason: data.reason || null,
-            line_status: data.queried > 0 ? 'queried' : 'received',
-            updatedAt: new Date().toISOString()
-          });
-
-          if (data.queried > 0) {
-            hasQueries = true;
-            queriedLines.push({ ...line, ...data });
-
-            // Create persistent Query audit log document
-            const queryRef = doc(db, 'stock_queries', line.id);
-            const queryObj = {
-              id: line.id,
+          if (existingBatch) {
+            const batchRef = doc(db, 'product_batches', existingBatch.id);
+            batch.update(batchRef, {
+              quantity: (existingBatch.quantity || 0) + totalUnitsAccepted,
+              lastUpdated: new Date().toISOString()
+            });
+          } else {
+            const newBatchRef = doc(collection(db, 'product_batches'));
+            const purchasePricePerUnit = (line.unit_cost_ugx || 0) / unitsPerPack;
+            const sellingPricePerUnit = product?.sellingPricePerUnit || (purchasePricePerUnit * 1.3);
+            
+            const newBatch = {
               tenantId: profile.tenantId,
-              invoiceId: selectedInvoice.id,
-              invoiceNumber: selectedInvoice.transfer_number,
+              branchId: activeBranchId,
               productId: line.product_id,
-              productName: line.product_name,
               batchNumber: line.batch_number || 'N/A',
-              qtyQueried: data.queried,
-              unitCost: line.unit_cost_ugx || 0,
-              amountAccrued: data.queried * (line.unit_cost_ugx || 0),
-              reason: data.reason || 'Unspecified discrepancy',
-              sourceBranchId: selectedInvoice.source_branch_id,
-              sourceBranchName: selectedInvoice.source_branch_name,
-              destinationBranchId: selectedInvoice.destination_branch_id,
-              destinationBranchName: selectedInvoice.destination_branch_name,
-              loggedBy: profile.uid,
-              loggedByName: profile.fullName || profile.email || 'Staff User',
-              status: 'pending_return',
-              timestamp: new Date().toISOString()
+              expiryDate: line.expiry_date || '',
+              quantity: totalUnitsAccepted,
+              purchasePrice: purchasePricePerUnit,
+              sellingPrice: sellingPricePerUnit,
+              batch_status: 'active',
+              lastUpdated: new Date().toISOString()
             };
-            transaction.set(queryRef, queryObj);
+            batch.set(newBatchRef, { ...newBatch, createdAt: new Date().toISOString() });
           }
 
-          if (data.accepted > 0) {
-            const existingBatch = batchMap[line.id];
-            const product = productMap[line.product_id];
-            const unitsPerPack = product?.unitsPerPack || 1;
-            const totalUnitsAccepted = data.accepted * unitsPerPack;
-            
-            if (existingBatch) {
-              const batchRef = doc(db, 'product_batches', existingBatch.id);
-              transaction.update(batchRef, {
-                quantity: existingBatch.quantity + totalUnitsAccepted,
-                lastUpdated: new Date().toISOString()
-              });
-            } else {
-              const newBatchRef = doc(collection(db, 'product_batches'));
-              const purchasePricePerUnit = line.unit_cost_ugx / unitsPerPack;
-              const sellingPricePerUnit = product?.sellingPricePerUnit || (purchasePricePerUnit * 1.3);
-              
-              const newBatch: Partial<ProductBatch> = {
-                tenantId: profile.tenantId,
-                branchId: activeBranchId!,
-                productId: line.product_id,
-                batchNumber: line.batch_number,
-                expiryDate: line.expiry_date,
-                quantity: totalUnitsAccepted,
-                purchasePrice: purchasePricePerUnit,
-                sellingPrice: sellingPricePerUnit,
-                batch_status: 'active',
-                lastUpdated: new Date().toISOString()
-              };
-              transaction.set(newBatchRef, { ...newBatch, createdAt: new Date().toISOString() });
-            }
+          if (product) {
+            const productRef = doc(db, 'products', line.product_id);
+            batch.update(productRef, {
+              quantityInStock: (product.quantityInStock || 0) + totalUnitsAccepted,
+              updatedAt: new Date().toISOString()
+            });
+          }
 
-            // Update Inventory Master (Main Product Document)
-            if (product) {
-              const productRef = doc(db, 'products', line.product_id);
-              transaction.update(productRef, {
-                quantityInStock: (product.quantityInStock || 0) + totalUnitsAccepted,
-                updatedAt: new Date().toISOString()
-              });
-            }
+          successfulMovements.push({
+            line,
+            totalUnitsAccepted
+          });
+        }
+      }
 
-            // Log TRANSFER_IN movement event & update summaries
-            const batchRefs = branchBatchRefsMap[line.product_id] || [];
+      const finalStatus = hasQueries ? 'queried' : 'fully_accepted';
+      const invoiceRef = doc(db, 'transfer_invoices', selectedInvoice.id);
+      batch.update(invoiceRef, { 
+        status: finalStatus,
+        received_at: new Date().toISOString(),
+        received_by: profile?.uid,
+        received_by_name: profile?.full_name || profile?.displayName || profile?.email || 'Unknown',
+        updatedAt: new Date().toISOString()
+      });
+
+      if (selectedInvoice.order_id) {
+        const orderRef = doc(db, 'stock_orders', selectedInvoice.order_id);
+        batch.update(orderRef, {
+          status: finalStatus === 'fully_accepted' ? 'closed' : 'queried',
+          received_at: new Date().toISOString()
+        });
+      }
+
+      await batch.commit();
+
+      for (const movement of successfulMovements) {
+        const { line, totalUnitsAccepted } = movement;
+        const batchRefs = branchBatchRefsMap[line.product_id] || [];
+        
+        try {
+          await firestoreService.runTransaction(async (transaction) => {
             await logMovementAndAggregateInTx(transaction, batchRefs, {
               tenantId: profile.tenantId,
-              branchId: activeBranchId!,
+              branchId: activeBranchId,
               productId: line.product_id,
               eventType: 'TRANSFER_IN',
               quantityDeltaBaseUnits: totalUnitsAccepted,
@@ -1634,27 +1660,11 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               effectiveAt: new Date(),
               timezone: 'Africa/Kampala'
             });
-          }
-        }
-
-        const finalStatus = hasQueries ? 'queried' : 'fully_accepted';
-        const invoiceRef = doc(db, 'transfer_invoices', selectedInvoice.id);
-        transaction.update(invoiceRef, { 
-          status: finalStatus,
-          received_at: new Date().toISOString(),
-          received_by: profile?.uid,
-          updatedAt: new Date().toISOString()
-        });
-
-        // If it was linked to an order, update order status
-        if (selectedInvoice.order_id) {
-          const orderRef = doc(db, 'stock_orders', selectedInvoice.order_id);
-          transaction.update(orderRef, {
-            status: finalStatus === 'fully_accepted' ? 'closed' : 'queried',
-            received_at: new Date().toISOString()
           });
+        } catch (logErr) {
+          console.error("Failed to log movement for product", line.product_id, logErr);
         }
-      });
+      }
 
       toast.success("Stock verified and inventory updated.");
       setSelectedInvoice(null);
@@ -1664,7 +1674,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     }
   };
 
-  return (
+return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex gap-2 p-1 bg-zinc-100 rounded-xl w-fit">
@@ -2345,7 +2355,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     if (lines.length === 0) {
       try {
         lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-          { field: 'transfer_id', operator: '==', value: transfer.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
+          { field: 'transfer_id', operator: '==', value: transfer.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
         ]);
       } catch (err) {
         console.error("Error fetching transfer lines for download:", err);
@@ -2396,7 +2406,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     setSelectedTransferLines([]);
     try {
       const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-        { field: 'transfer_id', operator: '==', value: transfer.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
+        { field: 'transfer_id', operator: '==', value: transfer.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
       ]);
       setSelectedTransferLines(lines);
     } catch (err) {
@@ -3756,7 +3766,7 @@ export const StockInOutReportsHub: React.FC<{ branches: Branch[] }> = ({ branche
         if (lines.length === 0) {
           try {
             lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-              { field: 'transfer_id', operator: '==', value: ti.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
+              { field: 'transfer_id', operator: '==', value: ti.id }
             ]);
           } catch (e) {
             console.error("Error fetching lines for reception:", e);
@@ -3820,7 +3830,7 @@ export const StockInOutReportsHub: React.FC<{ branches: Branch[] }> = ({ branche
         if (lines.length === 0) {
           try {
             lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-              { field: 'transfer_id', operator: '==', value: ti.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }, { field: 'tenantId', operator: '==', value: profile?.tenantId || '' }
+              { field: 'transfer_id', operator: '==', value: ti.id }
             ]);
           } catch (e) {
             console.error("Error fetching lines for transfer:", e);
