@@ -75,51 +75,8 @@ const Inventory: React.FC = () => {
             setShowOperational(false);
           }
 
-          // Seed operational inventory if empty
-          const invDocs = await firestoreService.getCollection<any>('operational_inventory', profile.tenantId!);
-          if (invDocs.length === 0) {
-            const seedItems = [
-              {
-                name: 'Office Printer (HP LaserJet)',
-                type: 'fixed',
-                quantityInStock: 1,
-                unitOfIssue: 'unit',
-                supplier: 'Tech Solutions Ltd',
-                uniqueId: 'PRN-001',
-                purchaseDate: '2025-01-15',
-                cost: 1200000,
-                tenantId: profile.tenantId,
-                branchId: activeBranchId || profile.branchId || null
-              },
-              {
-                name: 'A4 Printing Paper',
-                type: 'non-fixed',
-                quantityInStock: 10,
-                unitOfIssue: 'reams',
-                unitPerPack: 1,
-                costPerPack: 25000,
-                supplier: 'Stationery World',
-                tenantId: profile.tenantId,
-                branchId: activeBranchId || profile.branchId || null
-              },
-              {
-                name: 'Ballpoint Pens (Blue)',
-                type: 'non-fixed',
-                quantityInStock: 50,
-                unitOfIssue: 'pcs',
-                unitPerPack: 50,
-                costPerPack: 15000,
-                supplier: 'Stationery World',
-                tenantId: profile.tenantId,
-                branchId: activeBranchId || profile.branchId || null
-              }
-            ];
-            for (const item of seedItems) {
-              await firestoreService.addDocument('operational_inventory', item);
-            }
-          }
         } catch (error) {
-          console.error('Error fetching settings or seeding:', error);
+          console.error('Error fetching inventory settings:', error);
         }
       };
       fetchSettings();

@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { isLegacyOperationalInventorySeed } from '../../utils/operationalInventory';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -33,7 +34,7 @@ const OperationalInventoryTab: React.FC = () => {
       const unsubscribeInv = firestoreService.subscribeToCollection<OperationalInventory>(
         'operational_inventory',
         profile.tenantId,
-        setInventory
+        data => setInventory(data.filter(item => !isLegacyOperationalInventorySeed(item)))
       );
       const unsubscribeUsage = firestoreService.subscribeToCollection<OperationalInventoryUsage>(
         'operational_inventory_usage',
@@ -209,7 +210,7 @@ const OperationalInventoryTab: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-zinc-100">
               {usageLogs
-                .filter(l => l.branchId === profile?.branchId || !l.branchId || !profile?.branchId)
+                .filter(l => l.branchId === activeBranchId)
                 .map(log => {
                 const item = inventory.find(i => i.id === log.inventoryId);
                 return (
@@ -432,7 +433,7 @@ const DetailsModal: React.FC<{
 
 // Sub-modals for Operational Inventory
 const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item: OperationalInventory | null }> = ({ isOpen, onClose, item }) => {
-  const { profile } = useAuth();
+  const { profile, activeBranchId } = useAuth();
   const [formData, setFormData] = useState<Partial<OperationalInventory>>({
     name: '',
     type: 'non-fixed',
@@ -457,7 +458,7 @@ const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item:
       const data = { 
         ...formData, 
         tenantId: profile.tenantId, 
-        branchId: profile.branchId || null 
+        branchId: activeBranchId || profile.branchId || null
       };
 
       // Auto-generate ID if missing

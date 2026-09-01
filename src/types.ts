@@ -1569,6 +1569,7 @@ export interface AutoGenerateOrderRun {
     applySeasonality: boolean;
     budgetCeiling?: number | null;
     temporaryDemandMultiplier?: number | null;
+    productScopes?: string[];
   };
   calculationVersion: number;
   productCountAnalysed: number;
@@ -1622,4 +1623,5 @@ export interface AutoGenerateOrderLine {
   overriddenBy: string | null;
   overriddenAt: string | null;
   isManualAdd?: boolean;
+  isOperational?: boolean;
 }

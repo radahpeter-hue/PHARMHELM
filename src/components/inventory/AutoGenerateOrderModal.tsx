@@ -31,6 +31,8 @@ import { db } from '../../firebase';
 import { 
   Branch, 
   Product, 
+  OperationalInventory,
+  OperationalInventoryUsage,
   AutoGenerateOrderRun, 
   AutoGenerateOrderLine 
 } from '../../types';
@@ -38,13 +40,14 @@ import { getReplenishmentSettings, calculateProductForecast } from '../../servic
 import { getNetworkFulfilmentRecommendations, createTransferReservationTx } from '../../services/networkFulfilmentService';
 import { revalidateOrderRun, submitOrderRun } from '../../services/orderSubmissionService';
 import { useAuth } from '../../contexts/AuthContext';
+import { isLegacyOperationalInventorySeed } from '../../utils/operationalInventory';
 
 interface AutoGenerateOrderModalProps {
   isOpen: boolean;
   onClose: () => void;
   branches: Branch[];
   initialCoverageDays: number;
-  initialProductScope: string;
+  initialProductScopes: string[];
   initialCategory: string;
 }
 
@@ -53,7 +56,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   onClose,
   branches,
   initialCoverageDays,
-  initialProductScope,
+  initialProductScopes,
   initialCategory
 }) => {
   const { profile, activeBranchId } = useAuth();
@@ -69,7 +72,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   const [selectedBranchId, setSelectedBranchId] = useState(activeBranchId || '');
   const [lookbackDays, setLookbackDays] = useState(90); // default 90 days historical lookback
   const [coverageDays, setCoverageDays] = useState(30);
-  const [productScope, setProductScope] = useState('medicines');
+  const [productScopes, setProductScopes] = useState<string[]>(['drug/medicine']);
   const [categoryScope, setCategoryScope] = useState('sellable_non_cosmetic');
   
   const [deliveryDate, setDeliveryDate] = useState('');
@@ -92,6 +95,8 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   // Manual add product state
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [operationalInventory, setOperationalInventory] = useState<OperationalInventory[]>([]);
+  const [operationalUsage, setOperationalUsage] = useState<OperationalInventoryUsage[]>([]);
   const [selectedProductId, setSelectedProductId] = useState('');
   const [manualQtyPacks, setManualQtyPacks] = useState(1);
   const [manualReason, setManualReason] = useState('');
@@ -107,21 +112,31 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
     if (isOpen) {
       setStep('config');
       setCoverageDays(initialCoverageDays);
-      setProductScope(initialProductScope);
+      setProductScopes(initialProductScopes);
       setCategoryScope(initialCategory);
       if (activeBranchId) {
         setSelectedBranchId(activeBranchId);
       }
     }
-  }, [isOpen, initialCoverageDays, initialProductScope, initialCategory, activeBranchId]);
+  }, [isOpen, initialCoverageDays, initialProductScopes, initialCategory, activeBranchId]);
 
   // Fetch products on load
   useEffect(() => {
     if (profile?.tenantId && isOpen) {
       const fetchProds = async () => {
-        const prodSnap = await getDocs(query(collection(db, 'products'), where('tenantId', '==', profile.tenantId)));
+        const [prodSnap, operationalSnap, usageSnap] = await Promise.all([
+          getDocs(query(collection(db, 'products'), where('tenantId', '==', profile.tenantId))),
+          getDocs(query(collection(db, 'operational_inventory'), where('tenantId', '==', profile.tenantId))),
+          getDocs(query(collection(db, 'operational_inventory_usage'), where('tenantId', '==', profile.tenantId)))
+        ]);
         const prods = prodSnap.docs.map(d => ({ id: d.id, ...d.data() } as Product));
         setAllProducts(prods);
+        setOperationalInventory(
+          operationalSnap.docs
+            .map(d => ({ id: d.id, ...d.data() } as OperationalInventory))
+            .filter(item => !isLegacyOperationalInventorySeed(item))
+        );
+        setOperationalUsage(usageSnap.docs.map(d => ({ id: d.id, ...d.data() } as OperationalInventoryUsage)));
       };
       fetchProds();
     }
@@ -129,50 +144,21 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Filter products by selected product scope
+  // Filter products by the same categories used by Inventory Master registration.
   const getFilteredProducts = () => {
     const activeProducts = allProducts.filter(p => p.status !== 'inactive');
-    
-    switch (productScope) {
-      case 'medicines':
-        return activeProducts.filter(p => p.category === 'sellable_non_cosmetic');
-      case 'supplies':
-        return activeProducts.filter(p => {
-          const name = p.name.toLowerCase();
-          return name.includes('supply') || name.includes('syringe') || name.includes('bandage') || name.includes('glove') || name.includes('needle') || p.category === 'supplies';
-        });
-      case 'laboratory':
-        return activeProducts.filter(p => {
-          const name = p.name.toLowerCase();
-          return name.includes('lab') || name.includes('test kit') || name.includes('reagent') || name.includes('tube') || name.includes('strip');
-        });
-      case 'surgical':
-        return activeProducts.filter(p => {
-          const name = p.name.toLowerCase();
-          return name.includes('surgical') || name.includes('scalpel') || name.includes('suture') || name.includes('blade') || name.includes('catheter');
-        });
-      case 'cold_chain':
-        return activeProducts.filter(p => {
-          const name = p.name.toLowerCase();
-          return name.includes('vaccine') || name.includes('insulin') || name.includes('cold') || name.includes('injection') || (p as any).storageCondition === 'refrigerated';
-        });
-      case 'controlled':
-        return activeProducts.filter(p => {
-          const name = p.name.toLowerCase();
-          return p.prescriptionCategory === 'controlled' || name.includes('morphine') || name.includes('pethidine') || name.includes('diazepam') || name.includes('narcotic');
-        });
-      case 'category':
-        return activeProducts.filter(p => p.category === categoryScope);
-      case 'all':
-      default:
-        return activeProducts;
-    }
+    return activeProducts.filter(p => productScopes.includes(p.category));
   };
 
   // Step 5: Run optimal calculations
   const runGenerationEngine = async () => {
     if (!selectedBranchId) {
       toast.error('Please select a target branch.');
+      return;
+    }
+
+    if (productScopes.length === 0) {
+      toast.error('Select at least one product scope.');
       return;
     }
 
@@ -209,12 +195,17 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
       // Filter products based on selected scope
       const targetProducts = getFilteredProducts();
-      if (targetProducts.length === 0) {
-        throw new Error('No products found matching the selected product scope.');
+      const includeOperational = productScopes.includes('operational_inventory');
+      const targetOperationalItems = includeOperational
+        ? operationalInventory.filter(item => item.branchId === selectedBranchId && item.type === 'non-fixed')
+        : [];
+      if (targetProducts.length === 0 && targetOperationalItems.length === 0) {
+        throw new Error('No tenant-created items were found for the selected scopes and branch.');
       }
       
       setProgress(50);
-      setProgressMsg(`Running Core Forecasting models on ${targetProducts.length} items...`);
+      const totalTargetCount = targetProducts.length + targetOperationalItems.length;
+      setProgressMsg(`Running replenishment calculations on ${totalTargetCount} items...`);
 
       const tempRunId = `run_${Date.now()}`;
       const results: AutoGenerateOrderLine[] = [];
@@ -344,6 +335,74 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
         }
       }
 
+      // Operational inventory is replenished from actual usage logs, never from POS sales.
+      // Fixed assets are excluded because usage-based consumption only applies to consumables.
+      const analysisStartMs = start.getTime();
+      const analysisEndMs = end.getTime();
+      for (const item of targetOperationalItems) {
+        const issuedUnits = operationalUsage
+          .filter(log =>
+            log.branchId === selectedBranchId &&
+            log.inventoryId === item.id &&
+            new Date(log.timestamp).getTime() >= analysisStartMs &&
+            new Date(log.timestamp).getTime() <= analysisEndMs
+          )
+          .reduce((sum, log) => sum + Number(log.issuedAmount || 0), 0);
+
+        if (issuedUnits <= 0) continue;
+
+        const unitsPerPack = Math.max(1, Number(item.unitPerPack || 1));
+        const projectedUsage = (issuedUnits / Math.max(1, lookbackDays)) * coverageDays * tempMultiplier;
+        const recommendationUnits = Math.max(0, Math.ceil(projectedUsage - Number(item.quantityInStock || 0)));
+        const purchasePacks = Math.ceil(recommendationUnits / unitsPerPack);
+        if (purchasePacks <= 0) continue;
+
+        results.push({
+          tenantId,
+          runId: tempRunId,
+          productId: item.id,
+          productName: item.name,
+          sku: item.uniqueId || '',
+          genericName: 'Operational Inventory',
+          baseUnit: item.unitOfIssue || 'unit',
+          purchasePack: 'pack',
+          unitsPerPack,
+          originalRecommendationBaseUnits: recommendationUnits,
+          originalPurchasePacks: purchasePacks,
+          originalInternalAllocation: 0,
+          originalCentralAllocation: 0,
+          originalDonorAllocations: [],
+          finalRecommendationBaseUnits: recommendationUnits,
+          finalPurchasePacks: purchasePacks,
+          finalInternalAllocation: 0,
+          finalCentralAllocation: 0,
+          finalDonorAllocations: [],
+          calculationInputs: {
+            costPricePerPack: Number(item.costPerPack || 0),
+            supplierId: item.supplier || 'unknown_supplier',
+            historicalIssuedUnits: issuedUnits,
+            currentStockUnits: Number(item.quantityInStock || 0)
+          },
+          calculationOutputs: {
+            projectedUsage,
+            grossNetRequirement: recommendationUnits
+          },
+          confidenceScore: 100,
+          warnings: [],
+          explanation: `Based on ${issuedUnits} units issued during the previous ${lookbackDays} days, projected usage is ${projectedUsage.toFixed(1)} units for the coverage period. Current stock of ${item.quantityInStock || 0} units was deducted.`,
+          wasOverridden: false,
+          overrideReason: null,
+          overriddenBy: null,
+          overriddenAt: null,
+          isOperational: true
+        });
+        externalCount++;
+      }
+
+      if (results.length === 0) {
+        throw new Error('No replenishment is currently required from the available consumption and stock data.');
+      }
+
       setProgress(90);
       setProgressMsg('Saving calculations and metadata snapdocs...');
 
@@ -365,10 +424,11 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
           includeExceptionalConsumption: !excludeExceptional,
           applySeasonality,
           budgetCeiling: budgetCeiling === '' ? null : budgetCeiling,
-          temporaryDemandMultiplier: tempMultiplier
+          temporaryDemandMultiplier: tempMultiplier,
+          productScopes
         },
         calculationVersion: 1,
-        productCountAnalysed: targetProducts.length,
+        productCountAnalysed: totalTargetCount,
         externalLineCount: externalCount,
         internalLineCount: internalCount,
         manualReviewCount: manualCount,
@@ -616,13 +676,10 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-600">Product Scope Selected</label>
-                  <input 
-                    type="text" 
-                    value={productScope.toUpperCase().replace('_', ' ')}
-                    disabled
-                    className="w-full px-4 py-2.5 bg-zinc-100 border border-zinc-200 rounded-xl outline-none text-sm font-bold text-zinc-600 cursor-not-allowed"
-                  />
+                  <label className="text-xs font-semibold text-zinc-600">Product Scopes Selected</label>
+                  <div className="w-full min-h-[42px] px-4 py-2.5 bg-zinc-100 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-600">
+                    {productScopes.map(scope => scope === 'operational_inventory' ? 'Operational / Non-Sellable Inventory' : scope).join(', ') || 'None'}
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-zinc-600">Required Delivery Date</label>

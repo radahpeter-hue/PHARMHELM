@@ -15,6 +15,7 @@ import {
   AutoGenerateOrderRun, 
   AutoGenerateOrderLine,
   InventoryTransferReservation,
+  OperationalInventory,
   Product,
   ProductBatch
 } from '../types';
@@ -62,6 +63,33 @@ export async function revalidateOrderRun(runId: string): Promise<RevalidationRes
     let totalBudgetCost = 0;
 
     for (const line of lines) {
+      if (line.isOperational) {
+        const operationalSnap = await getDoc(doc(db, 'operational_inventory', line.productId));
+        if (!operationalSnap.exists()) {
+          result.hasChanges = true;
+          result.warnings.push({
+            productId: line.productId,
+            productName: line.productName,
+            type: 'STOCK_DROP',
+            message: 'This operational inventory item no longer exists and must be removed from the order.',
+            details: {}
+          });
+          continue;
+        }
+        const operationalItem = operationalSnap.data() as OperationalInventory;
+        if (Number(operationalItem.costPerPack || 0) !== Number(line.calculationInputs?.costPricePerPack || 0)) {
+          result.hasChanges = true;
+          result.warnings.push({
+            productId: line.productId,
+            productName: line.productName,
+            type: 'PRICE_CHANGE',
+            message: `Operational item price changed from UGX ${line.calculationInputs?.costPricePerPack || 0} to UGX ${operationalItem.costPerPack || 0}.`,
+            details: { previous: line.calculationInputs?.costPricePerPack || 0, current: operationalItem.costPerPack || 0 }
+          });
+        }
+        totalBudgetCost += line.finalPurchasePacks * Number(operationalItem.costPerPack || 0);
+        continue;
+      }
       // Fetch product detail live
       const prodSnap = await getDoc(doc(db, 'products', line.productId));
       if (!prodSnap.exists()) continue;
@@ -175,10 +203,11 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
       // External draft (requires positive purchase quantity)
       if (line.finalPurchasePacks > 0) {
         const supplierId = (line.calculationInputs as any)?.supplierId || 'unknown_supplier';
-        if (!externalBySupplier[supplierId]) {
-          externalBySupplier[supplierId] = [];
+        const groupKey = `${line.isOperational ? 'operational' : 'sellable'}::${supplierId}`;
+        if (!externalBySupplier[groupKey]) {
+          externalBySupplier[groupKey] = [];
         }
-        externalBySupplier[supplierId].push(line);
+        externalBySupplier[groupKey].push(line);
       }
 
       // Internal transfer draft
@@ -204,9 +233,10 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
 
     // Write all documents in a transaction sequence
     // 1. Create External Purchase Orders
-    for (const supplierId in externalBySupplier) {
-      const items = externalBySupplier[supplierId];
+    for (const groupKey in externalBySupplier) {
+      const items = externalBySupplier[groupKey];
       if (items.length === 0) continue;
+      const supplierId = groupKey.split('::').slice(1).join('::');
 
       const orderRef = doc(collection(db, 'stock_orders'));
       const orderNumber = `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
@@ -219,7 +249,7 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
         requesting_branch_name: '', // Will populate on read fallback
         supplier_id: supplierId,
         order_type: run.configuration.temporaryDemandMultiplier ? 'emergency' : 'monthly',
-        category: 'sellable_non_cosmetic',
+        category: items.every(item => item.isOperational) ? 'non_sellable' : 'sellable_non_cosmetic',
         generation_method: 'auto_generated',
         status: 'draft',
         is_emergency: !!run.configuration.temporaryDemandMultiplier,
@@ -243,6 +273,7 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
             unit_cost_ugx: (item.calculationInputs as any)?.costPricePerPack || 0,
             line_total_ugx: item.finalPurchasePacks * ((item.calculationInputs as any)?.costPricePerPack || 0),
             line_status: 'ordered',
+            isOperational: !!item.isOperational,
             createdAt: new Date().toISOString()
           });
         }

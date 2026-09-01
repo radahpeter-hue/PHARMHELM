@@ -32,6 +32,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { format } from 'date-fns';
 import { AutoGenerateOrderModal } from '../components/inventory/AutoGenerateOrderModal';
+import { isLegacyOperationalInventorySeed } from '../utils/operationalInventory';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -343,7 +344,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const [genMethod, setGenMethod] = useState<'manual' | 'auto_generated'>('manual');
   const [coveragePeriod, setCoveragePeriod] = useState<'1_month' | '2_months' | '3_months' | 'custom'>('1_month');
   const [customCoverageDays, setCustomCoverageDays] = useState<number>(30);
-  const [productScope, setProductScope] = useState<string>('medicines');
+  const [productScopes, setProductScopes] = useState<string[]>(['drug/medicine']);
   const [consumptionPeriod, setConsumptionPeriod] = useState<2 | 3 | 6>(3);
   const [products, setProducts] = useState<Product[]>([]);
   const [operationalInventory, setOperationalInventory] = useState<OperationalInventory[]>([]);
@@ -361,7 +362,11 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   useEffect(() => {
     if (profile?.tenantId) {
       const unsubProducts = firestoreService.subscribeToCollection<Product>('products', profile.tenantId, setProducts);
-      const unsubOps = firestoreService.subscribeToCollection<OperationalInventory>('operational_inventory', profile.tenantId, setOperationalInventory);
+      const unsubOps = firestoreService.subscribeToCollection<OperationalInventory>(
+        'operational_inventory',
+        profile.tenantId,
+        data => setOperationalInventory(data.filter(item => !isLegacyOperationalInventorySeed(item)))
+      );
       return () => {
         unsubProducts();
         unsubOps();
@@ -711,35 +716,29 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
 
             {/* Step 2: Product scope */}
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-zinc-700">Product Scope</label>
-              <select 
-                value={productScope} 
-                onChange={(e) => setProductScope(e.target.value)}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold"
-              >
-                <option value="all">All Products</option>
-                <option value="medicines">Medicines</option>
-                <option value="supplies">Medical Supplies</option>
-                <option value="laboratory">Laboratory Products</option>
-                <option value="surgical">Surgical Products</option>
-                <option value="cold_chain">Cold-Chain Products</option>
-                <option value="controlled">Controlled Medicines</option>
-                <option value="category">Selected Category</option>
-              </select>
-              {productScope === 'category' && (
-                <div className="mt-2 animate-fade-in">
-                  <label className="text-xs text-zinc-500 font-bold block mb-1">Category Type</label>
-                  <select 
-                    value={category} 
-                    onChange={(e) => handleCategoryChange(e.target.value as any)}
-                    className="w-full px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-xs font-semibold"
-                  >
-                    <option value="sellable_non_cosmetic">Sellable Non-Cosmetic</option>
-                    <option value="sellable_cosmetic">Sellable Cosmetic</option>
-                    <option value="non_sellable">Non-Sellable (Operational)</option>
-                  </select>
-                </div>
-              )}
+              <label className="text-sm font-semibold text-zinc-700">Product Scope (select one or more)</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 bg-zinc-50 border border-zinc-200 rounded-xl">
+                {[
+                  ['drug/medicine', 'Drug / Medicine'],
+                  ['cosmetic', 'Cosmetic'],
+                  ['consumable', 'Consumable'],
+                  ['device', 'Device'],
+                  ['cosmetic therapeutics', 'Cosmetic Therapeutics'],
+                  ['operational_inventory', 'Operational / Non-Sellable Inventory']
+                ].map(([value, label]) => (
+                  <label key={value} className="flex items-center gap-2 text-xs font-semibold text-zinc-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={productScopes.includes(value)}
+                      onChange={() => setProductScopes(current =>
+                        current.includes(value) ? current.filter(scope => scope !== value) : [...current, value]
+                      )}
+                      className="rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
             </div>
 
             {/* Step 3: Order Method */}
@@ -778,7 +777,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
             onClose={() => setShowAutoGenerateModal(false)} 
             branches={branches}
             initialCoverageDays={coveragePeriod === '1_month' ? 30 : coveragePeriod === '2_months' ? 60 : coveragePeriod === '3_months' ? 90 : customCoverageDays}
-            initialProductScope={productScope}
+            initialProductScopes={productScopes}
             initialCategory={category}
           />
 
