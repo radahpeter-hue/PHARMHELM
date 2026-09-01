@@ -1701,7 +1701,13 @@ const Settings = () => {
                     if (file) {
                       try {
                         const uploadToast = toast.loading("Uploading logo to secure Cloud Object Storage bucket...");
-                        const downloadUrl = await uploadFileToObjectStorage(file, 'logos');
+                        if (!profile?.tenantId || !selectedBrandingBranchId) {
+                          throw new Error('Tenant and branch context are required before uploading a logo.');
+                        }
+                        const downloadUrl = await uploadFileToObjectStorage(
+                          file,
+                          `logos/${profile.tenantId}/${selectedBrandingBranchId}`
+                        );
                         setBranchBranding({
                           ...branchBranding,
                           logoUrl: downloadUrl

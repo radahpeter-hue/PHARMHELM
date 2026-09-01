@@ -560,6 +560,8 @@ export interface Sale {
   servedBy?: string;
   isExceptionalConsumption?: boolean;
   exceptionalConsumptionReason?: string | null;
+  inventoryPosted?: boolean;
+  inventoryPostedAt?: unknown;
   voidedAt?: string;
   voidedBy?: string;
   voidReason?: string;

@@ -13,7 +13,6 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { getNextQuotationId } from '../../services/quotationService';
-import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
 interface QuotationPreviewProps {
@@ -127,14 +126,133 @@ export const QuotationPreview: React.FC<QuotationPreviewProps> = ({
     }
   };
 
+  const renderQuotationCanvas = async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1580;
+    canvas.height = 2234;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('This browser cannot create the quotation image.');
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    let logo: HTMLImageElement | null = null;
+    if (brandLogoUrl) {
+      try {
+        logo = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const image = new Image();
+          image.crossOrigin = 'anonymous';
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error('Branch logo could not be loaded'));
+          image.src = brandLogoUrl;
+        });
+      } catch (logoError) {
+        console.warn(logoError);
+      }
+    }
+
+    if (logo) {
+      ctx.save();
+      ctx.globalAlpha = 0.055;
+      const watermarkSize = 760;
+      ctx.drawImage(logo, (canvas.width - watermarkSize) / 2, 650, watermarkSize, watermarkSize);
+      ctx.restore();
+      const ratio = Math.min(220 / logo.width, 110 / logo.height);
+      ctx.drawImage(logo, 110, 95, logo.width * ratio, logo.height * ratio);
+    }
+
+    const money = (value: number) => `UGX ${Number(value || 0).toLocaleString()}`;
+    ctx.fillStyle = '#111827';
+    ctx.font = '700 42px Arial';
+    ctx.fillText(brandCompanyName, 110, 245);
+    ctx.font = '24px Arial';
+    ctx.fillStyle = '#4b5563';
+    ctx.fillText(brandAddress, 110, 290);
+    ctx.fillText(`Phone: ${brandPhone}`, 110, 328);
+    ctx.fillText(`NDA Licence: ${brandNdaReg}`, 110, 366);
+
+    ctx.fillStyle = '#047857';
+    ctx.font = '700 38px Arial';
+    ctx.textAlign = 'right';
+    ctx.fillText('PRICE QUOTATION', 1470, 175);
+    ctx.fillStyle = '#374151';
+    ctx.font = '23px Arial';
+    ctx.fillText(`Quotation ID: ${quotationId}`, 1470, 225);
+    ctx.fillText(`Date: ${createdAtDate.toLocaleDateString()}`, 1470, 265);
+    ctx.fillText(`Valid until: ${validityDate.toLocaleDateString()}`, 1470, 305);
+    ctx.textAlign = 'left';
+
+    ctx.strokeStyle = '#d1d5db';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(110, 420); ctx.lineTo(1470, 420); ctx.stroke();
+
+    let y = 485;
+    const customer = selectedInstitution?.supplier_name || selectedPatient?.full_name;
+    if (customer) {
+      ctx.fillStyle = '#111827';
+      ctx.font = '700 27px Arial';
+      ctx.fillText(`Prepared for: ${customer}`, 110, y);
+      y += 70;
+    }
+
+    const columns = [110, 730, 980, 1160, 1470];
+    ctx.fillStyle = '#ecfdf5';
+    ctx.fillRect(110, y, 1360, 65);
+    ctx.fillStyle = '#065f46';
+    ctx.font = '700 24px Arial';
+    ctx.fillText('Product', columns[0] + 18, y + 42);
+    ctx.fillText('Generic', columns[1] + 18, y + 42);
+    ctx.fillText('Qty', columns[2] + 18, y + 42);
+    ctx.textAlign = 'right';
+    ctx.fillText('Unit price', columns[3] + 160, y + 42);
+    ctx.fillText('Total', columns[4] - 18, y + 42);
+    ctx.textAlign = 'left';
+    y += 65;
+
+    ctx.font = '24px Arial';
+    for (const item of cart) {
+      ctx.fillStyle = '#111827';
+      ctx.fillText(String(item.productName || ''), columns[0] + 18, y + 45, 580);
+      ctx.fillStyle = '#6b7280';
+      ctx.fillText(String(item.genericName || 'N/A'), columns[1] + 18, y + 45, 230);
+      ctx.fillStyle = '#111827';
+      ctx.fillText(String(item.quantity), columns[2] + 18, y + 45);
+      ctx.textAlign = 'right';
+      ctx.fillText(money(item.unitPrice), columns[3] + 160, y + 45);
+      ctx.font = '700 24px Arial';
+      ctx.fillText(money(item.quantity * item.unitPrice), columns[4] - 18, y + 45);
+      ctx.font = '24px Arial';
+      ctx.textAlign = 'left';
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.beginPath(); ctx.moveTo(110, y + 70); ctx.lineTo(1470, y + 70); ctx.stroke();
+      y += 82;
+      if (y > 1570) break;
+    }
+
+    y = Math.max(y + 75, 1530);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#4b5563';
+    ctx.font = '26px Arial';
+    ctx.fillText(`Subtotal: ${money(subtotal)}`, 1470, y);
+    ctx.fillText(`VAT / Tax: ${money(taxTotal)}`, 1470, y + 48);
+    ctx.fillStyle = '#047857';
+    ctx.font = '700 36px Arial';
+    ctx.fillText(`Grand Total: ${money(grandTotal)}`, 1470, y + 112);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '23px Arial';
+    ctx.fillText('This is a price quotation, not a receipt or invoice.', 790, 2020);
+    ctx.fillText(`Prices and stock availability are subject to change. Valid until ${validityDate.toLocaleDateString()}.`, 790, 2060);
+    ctx.fillText('No stock is reserved by this document.', 790, 2100);
+    return canvas;
+  };
+
   const generatePDFBlob = async (): Promise<Blob | null> => {
-    const element = document.getElementById('quotation-preview-container');
-    if (!element) return null;
-    const canvas = await html2canvas(element, { scale: 2, useCORS: true });
+    const canvas = await renderQuotationCanvas();
     const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF('p', 'mm', 'a4');
     const imgWidth = 210;
-    const pageHeight = 295;
+    const pageHeight = 297;
     const imgHeight = (canvas.height * imgWidth) / canvas.width;
     let heightLeft = imgHeight;
     let position = 0;
@@ -142,7 +260,7 @@ export const QuotationPreview: React.FC<QuotationPreviewProps> = ({
     pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
     heightLeft -= pageHeight;
 
-    while (heightLeft >= 0) {
+    while (heightLeft > 0) {
       position = heightLeft - imgHeight;
       pdf.addPage();
       pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
@@ -152,8 +270,6 @@ export const QuotationPreview: React.FC<QuotationPreviewProps> = ({
   };
 
   const handleDownloadPDF = async () => {
-    const element = document.getElementById('quotation-preview-container');
-    if (!element) return;
     try {
       const blob = await generatePDFBlob();
       if (blob) {
@@ -164,6 +280,7 @@ export const QuotationPreview: React.FC<QuotationPreviewProps> = ({
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        URL.revokeObjectURL(url);
         toast.success('PDF downloaded.');
       }
     } catch (e) {
@@ -172,10 +289,8 @@ export const QuotationPreview: React.FC<QuotationPreviewProps> = ({
   };
 
   const handleDownloadImage = async () => {
-    const element = document.getElementById('quotation-preview-container');
-    if (!element) return;
     try {
-      const canvas = await html2canvas(element, { scale: 2, useCORS: true });
+      const canvas = await renderQuotationCanvas();
       canvas.toBlob((blob) => {
         if (blob) {
           const url = URL.createObjectURL(blob);
@@ -185,6 +300,7 @@ export const QuotationPreview: React.FC<QuotationPreviewProps> = ({
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
+          URL.revokeObjectURL(url);
           toast.success('PNG Image downloaded.');
         }
       }, 'image/png');

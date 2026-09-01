@@ -135,6 +135,18 @@ service cloud.firestore {
       );
     }
 
+    function isPOSOperator() {
+      return isAuthenticated() && (
+        hasRole('Cashier') || hasRole('cashier') ||
+        hasRole('Pharmacist') || hasRole('pharmacist') ||
+        hasRole('Dispenser') ||
+        hasRole('Trainee') ||
+        hasRole('IT Head') ||
+        hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin') ||
+        isAdmin()
+      );
+    }
+
     function isMarketing() {
       return isAuthenticated() && (
         hasRole('Marketing Head') || hasRole('Marketing Personnel') || hasRole('Marketing Manager') ||
@@ -502,7 +514,15 @@ service cloud.firestore {
     match /products/{productId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
       allow create: if isInventoryOperator() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isInventoryOperator() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow update: if isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && (
+          isInventoryOperator() ||
+          (isPOSOperator()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'updatedAt'])
+            && request.resource.data.stock is number
+            && request.resource.data.stock >= 0)
+        );
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
@@ -529,7 +549,15 @@ service cloud.firestore {
             request.resource.data.quantity <= getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.lines[request.resource.data.openingStockLineIndex].quantity
           )
         );
-      allow update: if isInventoryOperator() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow update: if isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && (
+          isInventoryOperator() ||
+          (isPOSOperator()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'updatedAt'])
+            && request.resource.data.quantity is number
+            && request.resource.data.quantity >= 0)
+        );
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
@@ -627,6 +655,18 @@ service cloud.firestore {
       allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
+
+    match /sales/{saleId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isPOSOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.branchId is string
+        && request.resource.data.status == 'completed';
+      allow update: if isPOSOperator()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
     match /welfare_records/{recordId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
       allow create: if isHR() && isTenantMember(request.resource.data.tenantId);
@@ -682,9 +722,9 @@ service cloud.firestore {
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
       allow read: if collectionName != 'opening_stock_sessions' && isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'product_batches' && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'product_batches' && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'product_batches' && isAdmin() && isTenantMember(resource.data.tenantId);
+      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && isAdmin() && isTenantMember(resource.data.tenantId);
     }
   }
 }

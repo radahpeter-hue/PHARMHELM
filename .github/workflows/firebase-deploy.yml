@@ -189,6 +189,9 @@ jobs:
             exit "$deploy_status"
           fi
 
+      - name: Deploy Firebase Storage rules
+        run: npx firebase-tools deploy --only storage --project gen-lang-client-0911422817 --non-interactive
+
       - name: Deploy Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:

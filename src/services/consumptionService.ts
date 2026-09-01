@@ -88,6 +88,7 @@ export async function logMovementAndAggregateInTx(
     reversalOfEventId: string | null;
     createdBy: string;
     effectiveAt: Date;
+    stockAlreadyApplied?: boolean;
     timezone?: string;
   }
 ) {
@@ -106,6 +107,7 @@ export async function logMovementAndAggregateInTx(
     reversalOfEventId,
     createdBy,
     effectiveAt,
+    stockAlreadyApplied = false,
     timezone = 'Africa/Kampala'
   } = eventData;
 
@@ -145,7 +147,12 @@ export async function logMovementAndAggregateInTx(
     }
   }
 
-  const closingUsableStock = currentUsableStock + quantityDeltaBaseUnits;
+  const openingUsableStock = stockAlreadyApplied
+    ? currentUsableStock - quantityDeltaBaseUnits
+    : currentUsableStock;
+  const closingUsableStock = stockAlreadyApplied
+    ? currentUsableStock
+    : currentUsableStock + quantityDeltaBaseUnits;
 
   // 4. Load or initialize daily summary
   const summaryId = `${tenantId}_${branchId}_${productId}_${dateKey}`;
@@ -168,7 +175,7 @@ export async function logMovementAndAggregateInTx(
       dateKey,
       baseUnitId: productId,
       baseUnitName,
-      openingUsableStock: currentUsableStock,
+      openingUsableStock,
       closingUsableStock,
       ordinaryUnitsSold: 0,
       ordinaryUnitsDispensed: 0,
@@ -272,24 +279,29 @@ export async function logSaleMovements(
   saleData: Sale,
   isReversal: boolean,
   reversalOfEventId: string | null = null,
-  createdBy: string = 'system'
+  createdBy: string = 'system',
+  stockAlreadyApplied: boolean = false
 ) {
-  const items = saleData.items.filter(item => !item.isService);
+  const itemsByProduct = new Map<string, SaleItem>();
+  for (const item of saleData.items.filter(item => !item.isService)) {
+    const existing = itemsByProduct.get(item.productId);
+    itemsByProduct.set(item.productId, existing
+      ? { ...existing, quantity: existing.quantity + item.quantity }
+      : { ...item });
+  }
+  const items = Array.from(itemsByProduct.values());
   if (items.length === 0) return;
 
-  // Pre-fetch batch refs outside transaction (Firestore requirement for Web SDK queries)
-  const itemsBatchRefs: Record<string, { ref: any; id: string }[]> = {};
+  // Use one idempotent transaction per line. This avoids Firestore's prohibition
+  // on reading a second product after the first line has already written events.
   for (const item of items) {
-    itemsBatchRefs[item.productId] = await getBranchProductBatchRefs(
+    const batchRefs = await getBranchProductBatchRefs(
       saleData.tenantId,
       saleData.branchId,
       item.productId
     );
-  }
 
-  await runTransaction(db, async (transaction) => {
-    for (const item of items) {
-      const batchRefs = itemsBatchRefs[item.productId] || [];
+    await runTransaction(db, async (transaction) => {
       const qty = item.quantity;
       
       const productRef = doc(db, 'products', item.productId);
@@ -317,9 +329,9 @@ export async function logSaleMovements(
         reversalOfEventId,
         createdBy,
         effectiveAt: new Date(saleData.timestamp),
+        stockAlreadyApplied,
         timezone: 'Africa/Kampala'
       });
-    }
-  });
+    });
+  }
 }
-
