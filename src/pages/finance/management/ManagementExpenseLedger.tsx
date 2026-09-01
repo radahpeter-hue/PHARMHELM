@@ -17,10 +17,11 @@ import {
   RefreshCw,
   Wallet
 } from 'lucide-react';
-import { collection, query, where, getDocs, doc, writeBatch, addDoc, updateDoc, Timestamp, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, writeBatch, addDoc, updateDoc, Timestamp, orderBy, runTransaction } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
+import { calculateCreditSettlement } from '../../../services/financeRecordNormalization';
 
 interface ManagementExpense {
   id: string;
@@ -377,6 +378,76 @@ export const ManagementExpenseLedger: React.FC = () => {
     }
 
     try {
+      if (reviewingExpense.sourceType === 'credit' && reviewingExpense.invoiceId && reviewingExpense.sourceRefId) {
+        const expenseRef = doc(db, 'management_expenses', reviewingExpense.id);
+        const creditRef = doc(db, 'creditLedger', reviewingExpense.sourceRefId);
+        const invoiceRef = doc(db, 'invoices', reviewingExpense.invoiceId);
+        const paymentRef = doc(db, 'creditPayments', reviewingExpense.id);
+        const pettyRef = doc(db, 'petty_cash_ledger', `credit_payment_${reviewingExpense.id}`);
+        const now = Timestamp.now();
+
+        await runTransaction(db, async transaction => {
+          const [expenseSnap, creditSnap, invoiceSnap, paymentSnap] = await Promise.all([
+            transaction.get(expenseRef), transaction.get(creditRef),
+            transaction.get(invoiceRef), transaction.get(paymentRef)
+          ]);
+          if (!expenseSnap.exists() || !creditSnap.exists() || !invoiceSnap.exists()) {
+            throw new Error('The payment draft, supplier liability, or invoice is missing.');
+          }
+          if (paymentSnap.exists() || expenseSnap.data().status === 'approved') return;
+          if (expenseSnap.data().tenantId !== profile.tenantId || creditSnap.data().tenantId !== profile.tenantId) {
+            throw new Error('The payment does not belong to the active tenant.');
+          }
+          const remainingBefore = Number(
+            creditSnap.data().remainingCreditBalance ?? creditSnap.data().balance ?? creditSnap.data().amount ?? 0
+          );
+          if (amt > remainingBefore) {
+            throw new Error(`Payment exceeds the current outstanding balance of UGX ${remainingBefore.toLocaleString()}.`);
+          }
+          const { remainingAfter, status: liabilityStatus } = calculateCreditSettlement(remainingBefore, amt);
+          const paymentReference = `CP-${reviewingExpense.id.slice(-10).toUpperCase()}`;
+
+          transaction.update(expenseRef, {
+            amount: amt, amount_ugx: amt, category: reviewForm.category,
+            department: reviewForm.department, description: reviewForm.description,
+            status: 'approved', updatedAt: now, issuedAt: now,
+            issuedBy: profile.fullName || profile.email || 'Authorized Finance',
+            paymentReference, excludeFromOpexRollup: true
+          });
+          transaction.set(pettyRef, {
+            tenantId: profile.tenantId, date: now.toDate().toISOString().split('T')[0],
+            amount: amt, source: 'Supplier credit settlement', reference_number: paymentReference,
+            type: 'outgoing', invoiceId: reviewingExpense.invoiceId,
+            creditLedgerId: reviewingExpense.sourceRefId, paymentId: reviewingExpense.id,
+            logged_by: profile.fullName || profile.email || 'SYSTEM',
+            createdAt: now, created_at: now.toDate().toISOString()
+          }, { merge: true });
+          transaction.update(creditRef, {
+            remainingCreditBalance: remainingAfter, balance: remainingAfter,
+            status: liabilityStatus,
+            lastProcessedAt: now, updatedAt: now, lastPaymentReference: paymentReference
+          });
+          transaction.update(invoiceRef, {
+            paymentStatus: remainingAfter === 0 ? 'paid' : 'partial',
+            creditBalance: remainingAfter, updatedAt: now,
+            lastPaymentReference: paymentReference
+          });
+          transaction.set(paymentRef, {
+            tenantId: profile.tenantId, creditLedgerId: reviewingExpense.sourceRefId,
+            invoiceId: reviewingExpense.invoiceId, invoiceRef: reviewingExpense.invoiceRef || '',
+            paymentReference, amount: amt, balanceBefore: remainingBefore,
+            balanceAfter: remainingAfter, paymentSource: 'management_petty_cash',
+            processedBy: profile.uid, processedAt: now, expenseId: reviewingExpense.id
+          });
+        });
+
+        toast.success('Supplier credit payment issued and liability updated.');
+        setIsReviewModalOpen(false);
+        setReviewingExpense(null);
+        fetchData();
+        return;
+      }
+
       const batch = writeBatch(db);
 
       // 1. Update the management_expenses record status to approved (Issued) and details

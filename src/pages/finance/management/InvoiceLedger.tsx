@@ -3,9 +3,10 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
 import { Search, Filter, Download, FileText, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { collection, query, where, getDocs, Timestamp, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
+import { dateInRange, financialDate, normalizeInvoiceRecord } from '../../../services/financeRecordNormalization';
 
 interface Invoice {
   id: string;
@@ -17,7 +18,7 @@ interface Invoice {
   supplierId: string;
   supplierName: string;
   invoiceValue: number;
-  paymentStatus: 'cash' | 'credit' | 'partial';
+  paymentStatus: 'cash' | 'credit' | 'partial' | 'paid';
   creditBalance: number;
   createdAt: any;
   updatedAt: any;
@@ -63,23 +64,17 @@ export const InvoiceLedger: React.FC = () => {
     if (!profile?.tenantId) return;
     setLoading(true);
     try {
-      const startOfDay = new Date(dateRange.start + 'T00:00:00');
-      const endOfDay = new Date(dateRange.end + 'T23:59:59');
-
       const colRef = collection(db, 'invoices');
       const q = query(
         colRef,
-        where('tenantId', '==', profile.tenantId),
-        where('createdAt', '>=', Timestamp.fromDate(startOfDay)),
-        where('createdAt', '<=', Timestamp.fromDate(endOfDay)),
-        orderBy('createdAt', 'desc')
+        where('tenantId', '==', profile.tenantId)
       );
 
       const snapshot = await getDocs(q);
-      const data = snapshot.docs.map(doc => ({
-        ...(doc.data() as any),
-        id: doc.id
-      })) as Invoice[];
+      const data = snapshot.docs
+        .map(snap => normalizeInvoiceRecord(snap.id, snap.data()) as Invoice)
+        .filter(invoice => dateInRange(invoice.createdAt, dateRange.start, dateRange.end))
+        .sort((a, b) => (financialDate(b.createdAt)?.getTime() || 0) - (financialDate(a.createdAt)?.getTime() || 0));
 
       setInvoices(data);
     } catch (e: any) {
@@ -169,7 +164,7 @@ export const InvoiceLedger: React.FC = () => {
     toast.success("Excel report exported successfully");
   };
 
-  const getStatusBadge = (status: 'cash' | 'credit' | 'partial') => {
+  const getStatusBadge = (status: 'cash' | 'credit' | 'partial' | 'paid') => {
     switch (status) {
       case 'cash':
         return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Cash</span>;
@@ -177,6 +172,8 @@ export const InvoiceLedger: React.FC = () => {
         return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-50 text-amber-700 border border-amber-200">Credit</span>;
       case 'partial':
         return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-zinc-100 text-zinc-600 border border-zinc-200">Partial</span>;
+      case 'paid':
+        return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Paid</span>;
       default:
         return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-zinc-50 text-zinc-500">{status}</span>;
     }

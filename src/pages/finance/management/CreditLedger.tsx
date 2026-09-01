@@ -3,9 +3,10 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
 import { Search, Filter, Download, CreditCard, ChevronLeft, ChevronRight, X, ArrowRight, Check, Ban } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { collection, query, where, getDocs, Timestamp, orderBy, updateDoc, addDoc, doc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, Timestamp, writeBatch, addDoc, doc, setDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
+import { dateInRange, financialDate, normalizeCreditRecord } from '../../../services/financeRecordNormalization';
 
 interface CreditRecord {
   id: string;
@@ -86,23 +87,18 @@ export const CreditLedger: React.FC = () => {
     if (!profile?.tenantId) return;
     setLoading(true);
     try {
-      const startOfDay = new Date(dateRange.start + 'T00:00:00');
-      const endOfDay = new Date(dateRange.end + 'T23:59:59');
-
       // 1. Fetch Credits Owed to Suppliers (Payables)
       const colRef = collection(db, 'creditLedger');
       const q = query(
         colRef,
-        where('tenantId', '==', profile.tenantId),
-        where('creditAccruedAt', '>=', startOfDay.toISOString()),
-        where('creditAccruedAt', '<=', endOfDay.toISOString())
+        where('tenantId', '==', profile.tenantId)
       );
 
       const snapshot = await getDocs(q);
-      const data = snapshot.docs.map(doc => ({
-        ...(doc.data() as any),
-        id: doc.id
-      })) as CreditRecord[];
+      const data = snapshot.docs
+        .map(snap => normalizeCreditRecord(snap.id, snap.data()) as CreditRecord)
+        .filter(credit => dateInRange(credit.creditAccruedAt, dateRange.start, dateRange.end))
+        .sort((a, b) => (financialDate(b.creditAccruedAt)?.getTime() || 0) - (financialDate(a.creditAccruedAt)?.getTime() || 0));
 
       setCredits(data);
 
@@ -314,14 +310,21 @@ export const CreditLedger: React.FC = () => {
         createdBy: profile?.uid || 'SYSTEM'
       };
 
-      await addDoc(collection(db, 'management_expenses'), draftPayload);
+      const draftId = `credit_payment_${credit.id}_${credit.remainingCreditBalance}_${amountToProcess}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'management_expenses', draftId), {
+        ...draftPayload,
+        sourceRef: credit.id,
+        createdAt: Timestamp.now()
+      }, { merge: true });
 
-      // 2. Update creditLedger document status to 'processing'
+      // 2. Mark the liability as processing in the same atomic write.
       const creditDocRef = doc(db, 'creditLedger', credit.id);
-      await updateDoc(creditDocRef, {
+      batch.update(creditDocRef, {
         status: 'processing',
         lastProcessedAt: Timestamp.now()
       });
+      await batch.commit();
 
       toast.success('Payment draft sent to Management Expense Ledger for review and issuance.');
       setProcessingId(null);
@@ -405,7 +408,7 @@ export const CreditLedger: React.FC = () => {
       if (isPayables) {
         let dateStr = '';
         if (c.creditAccruedAt) {
-          dateStr = new Date(c.creditAccruedAt).toLocaleDateString('en-GB');
+          dateStr = financialDate(c.creditAccruedAt)?.toLocaleDateString('en-GB') || '';
         }
         return {
           'Type': 'PAYABLE (Owed to Supplier)',
@@ -460,7 +463,7 @@ export const CreditLedger: React.FC = () => {
   // Payment history for a given credit record
   const selectedCreditHistory = useMemo(() => {
     if (!selectedCredit) return [];
-    return expenses.filter(e => e.sourceRef === selectedCredit.id);
+    return expenses.filter(e => e.sourceRef === selectedCredit.id || e.sourceRefId === selectedCredit.id);
   }, [selectedCredit, expenses]);
 
   return (
@@ -604,9 +607,7 @@ export const CreditLedger: React.FC = () => {
               <tbody className="divide-y divide-zinc-100 text-sm font-medium text-zinc-700">
                 {activeTab === 'payables' ? (
                   (paginatedItems as CreditRecord[]).map((credit) => {
-                    const dateStr = credit.creditAccruedAt
-                      ? new Date(credit.creditAccruedAt).toLocaleDateString('en-GB')
-                      : 'N/A';
+                    const dateStr = financialDate(credit.creditAccruedAt)?.toLocaleDateString('en-GB') || 'N/A';
                     const isProcessing = processingId === credit.id;
 
                     return (

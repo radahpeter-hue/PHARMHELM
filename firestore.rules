@@ -349,6 +349,25 @@ service cloud.firestore {
       allow write: if isFinance() && isTenantMember(request.resource.data.tenantId);
     }
 
+    // Deterministic procurement posting IDs require an existence check before
+    // creation. A missing document exposes no tenant data; existing documents
+    // remain tenant-scoped by the second clause and by the collection rules.
+    match /grn_records/{recordId} {
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+    }
+    match /invoices/{invoiceId} {
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+    }
+    match /procurement_invoices/{invoiceId} {
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+    }
+    match /creditLedger/{entryId} {
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+    }
+    match /petty_cash_ledger/{entryId} {
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+    }
+
     match /eod_reconciliations/{reconciliationId} {
       allow read: if isAuthenticated() && (isFinance() || isBranchManager() || isTenantMember(resource.data.tenantId));
       allow create: if isAuthenticated() && (isBranchManager() || isFinance());
@@ -396,6 +415,20 @@ service cloud.firestore {
     match /supplier_credit_ledger/{entryId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isFinance();
       allow write: if isFinance();
+    }
+
+    match /creditPayments/{paymentId} {
+      allow get: if isAuthenticated() && isFinance() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isFinance();
+      allow create: if isAuthenticated() && isFinance() && isTenantMember(request.resource.data.tenantId);
+      allow update, delete: if false;
+    }
+
+    match /financial_posting_audit/{auditId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isFinance() || isProcurement() || isAdmin());
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isFinance() || isProcurement() || isAdmin());
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (isFinance() || isAdmin());
+      allow delete: if false;
     }
 
     match /financial_metrics/{metricId} {
@@ -632,7 +665,8 @@ service cloud.firestore {
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /transfer_invoices/{invoiceId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isProcurement() || isBranchManager() || isFinance());
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId)) && (isProcurement() || isBranchManager() || isFinance());
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isProcurement() || isBranchManager() || isFinance());
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
       allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);

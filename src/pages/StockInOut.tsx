@@ -1483,7 +1483,25 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const handleReceiveSubmit = async () => {
     if (!selectedInvoice || !profile?.tenantId || !activeBranchId) return;
 
+    const selectedInvoiceRef = doc(db, 'transfer_invoices', selectedInvoice.id);
+    let receptionClaimed = false;
     try {
+      await runTransaction(db, async transaction => {
+        const current = await transaction.get(selectedInvoiceRef);
+        if (!current.exists()) throw new Error('The dispatch no longer exists.');
+        const status = current.data().status;
+        if (status === 'fully_accepted' || status === 'queried' || status === 'received') {
+          throw new Error('This dispatch has already been received. No stock was added again.');
+        }
+        if (status === 'receiving') throw new Error('This dispatch is already being received by another session.');
+        transaction.update(selectedInvoiceRef, {
+          status: 'receiving',
+          reception_claimed_by: profile.uid,
+          reception_claimed_at: new Date().toISOString()
+        });
+      });
+      receptionClaimed = true;
+
       const batchPromises = invoiceLines.map(line => 
         firestoreService.getDocumentsByQuery('product_batches', [
           { field: 'tenantId', operator: '==', value: profile.tenantId },
@@ -1618,8 +1636,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       }
 
       const finalStatus = hasQueries ? 'queried' : 'fully_accepted';
-      const invoiceRef = doc(db, 'transfer_invoices', selectedInvoice.id);
-      batch.update(invoiceRef, { 
+      batch.update(selectedInvoiceRef, {
         status: finalStatus,
         received_at: new Date().toISOString(),
         received_by: profile?.uid,
@@ -1668,9 +1685,20 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
 
       toast.success("Stock verified and inventory updated.");
       setSelectedInvoice(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      toast.error("Failed to process reception.");
+      if (receptionClaimed) {
+        try {
+          await updateDoc(selectedInvoiceRef, {
+            status: 'dispatched',
+            reception_claimed_by: null,
+            reception_claimed_at: null
+          });
+        } catch (releaseError) {
+          console.error('Failed to release reception claim:', releaseError);
+        }
+      }
+      toast.error(error?.message || "Failed to process reception.");
     }
   };
 
