@@ -82,6 +82,42 @@ jobs:
                 deploy_status=0
               fi
             fi
+            if [ "$deploy_status" -ne 0 ]; then
+              rulesets_url="https://firebaserules.googleapis.com/v1/projects/gen-lang-client-0911422817/rulesets?pageSize=20"
+              matching_ruleset=""
+              while IFS= read -r candidate_ruleset; do
+                [ -z "$candidate_ruleset" ] && continue
+                candidate_json=$(curl --fail --silent --show-error \
+                  -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
+                  "https://firebaserules.googleapis.com/v1/${candidate_ruleset}")
+                candidate_rules=$(printf '%s' "$candidate_json" | jq -r '.source.files[] | select(.name == "firestore.rules") | .content' | head -n 1)
+                if [ -n "$candidate_rules" ] && [ "$candidate_rules" = "$(cat firestore.rules)" ]; then
+                  matching_ruleset="$candidate_ruleset"
+                  break
+                fi
+              done < <(curl --fail --silent --show-error \
+                -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
+                "$rulesets_url" | jq -r '.rulesets[]?.name')
+
+              if [ -n "$matching_ruleset" ]; then
+                release_name="projects/gen-lang-client-0911422817/releases/cloud.firestore/${FIRESTORE_DATABASE_ID}"
+                patch_body=$(jq -n \
+                  --arg name "$release_name" \
+                  --arg rulesetName "$matching_ruleset" \
+                  '{name: $name, rulesetName: $rulesetName}')
+                patched_release=$(curl --fail --silent --show-error \
+                  -X PATCH \
+                  -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
+                  -H "Content-Type: application/json" \
+                  --data "$patch_body" \
+                  "https://firebaserules.googleapis.com/v1/${release_name}?updateMask=rulesetName")
+                patched_ruleset=$(printf '%s' "$patched_release" | jq -r '.rulesetName // empty')
+                if [ "$patched_ruleset" = "$matching_ruleset" ]; then
+                  echo "Updated the named Firestore release to the matching compiled ruleset after Firebase CLI 409."
+                  deploy_status=0
+                fi
+              fi
+            fi
           fi
           if [ "$deploy_status" -ne 0 ]; then
             escaped_output=${deploy_output//'%'/'%25'}
