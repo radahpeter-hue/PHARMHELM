@@ -1671,7 +1671,7 @@ const FinancialApprovalModal: React.FC<{
             order_id: order.id,
             original_line_id: line.id,
             product_id: line.product_id,
-            product_name: line.product_name,
+            product_name: line.product_name || 'Unknown Product',
             qty_unsupplied: line.qty_ordered,
             reason: 'Removed during financial approval',
             status: 'pending',
@@ -1691,13 +1691,13 @@ const FinancialApprovalModal: React.FC<{
             order_id: order.id,
             original_line_id: line.id,
             product_id: line.product_id,
-            product_name: line.product_name,
+            product_name: line.product_name || 'Unknown Product',
             qty_unsupplied: diff,
             reason: 'Quantity reduced during financial approval',
             status: 'pending',
             createdAt: new Date().toISOString()
           });
-          totalValue += edit.qty * line.unit_cost_ugx;
+          totalValue += edit.qty * (line.unit_cost_ugx || 0);
         } else {
           totalValue += line.line_total_ugx;
         }
@@ -2440,7 +2440,7 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           class: 'received',
           reference: grnNumber,
           initiator: profile?.displayName || profile?.full_name || 'System',
-          initiatorId: profile?.uid,
+          initiatorId: profile?.uid || 'SYSTEM',
           receiver: targetBranch?.name || 'Manual Branch',
           receiverId: selectedBranchId,
           timestamp: new Date().toISOString(),
@@ -2450,8 +2450,11 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
       toast.success('Manual GRN recorded and inventory updated');
       onClose();
-    } catch (error) {
-      toast.error('Failed to save manual GRN');
+    } catch (error: any) {
+      console.error('Manual GRN Process Error:', error);
+      toast.error('Failed to save manual GRN: ' + (error?.message || 'Unknown error'));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -2684,7 +2687,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
             order_id: order.id,
             original_line_id: line.id,
             product_id: line.product_id,
-            product_name: line.product_name,
+            product_name: line.product_name || 'Unknown Product',
             qty_unsupplied: line.qty_ordered,
             reason: 'Removed during GRN processing',
             status: 'pending',
@@ -2698,7 +2701,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
               order_id: order.id,
               original_line_id: line.id,
               product_id: line.product_id,
-              product_name: line.product_name,
+              product_name: line.product_name || 'Unknown Product',
               qty_unsupplied: diff,
               reason: 'Quantity reduced during GRN processing',
               status: 'pending',
@@ -2713,16 +2716,16 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
 
           grnItems.push({
             product_id: line.product_id,
-            product_name: line.product_name,
+            product_name: line.product_name || 'Unknown Product',
             qty_ordered: line.qty_ordered,
             qty_received: edit.qty,
-            unit_cost_ugx: line.unit_cost_ugx,
-            total_cost_ugx: edit.qty * line.unit_cost_ugx,
+            unit_cost_ugx: line.unit_cost_ugx || 0,
+            total_cost_ugx: edit.qty * (line.unit_cost_ugx || 0),
             batch_number: edit.batch,
             expiry_date: edit.expiry,
             status: 'received'
           });
-          totalValue += edit.qty * line.unit_cost_ugx;
+          totalValue += edit.qty * (line.unit_cost_ugx || 0);
         }
       }
 
@@ -2789,8 +2792,8 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
       // Add to Procurement Invoices Ledger for Finance Module
       await firestoreService.addDocument('procurement_invoices', {
         tenantId: profile?.tenantId,
-        branch_id: order.requesting_branch_id,
-        branch_name: order.requesting_branch_name,
+        branch_id: order.requesting_branch_id || 'UNKNOWN',
+        branch_name: order.requesting_branch_name || 'Branch',
         supplier_id: grnRecord.supplier_id,
         supplier_name: grnRecord.supplier_name,
         invoice_number: invoiceNumber || grnNumber,
@@ -2813,7 +2816,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
           source: 'Petty Cash Reserve',
           reference_number: invoiceNumber || grnNumber,
           type: 'outgoing',
-          branch_id: order.requesting_branch_id,
+          branch_id: order.requesting_branch_id || 'UNKNOWN',
           logged_by: profile?.uid || 'SYSTEM',
           notes: `Cash stock purchase - GRN ${grnNumber} - Supplier: ${grnRecord.supplier_name}`,
           created_at: new Date().toISOString()
@@ -2879,7 +2882,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
           class: 'received',
           reference: grnNumber,
           initiator: profile?.displayName || profile?.full_name || 'System',
-          initiatorId: profile?.uid,
+          initiatorId: profile?.uid || 'SYSTEM',
           receiver: order.requesting_branch_name || 'Branch',
           receiverId: order.requesting_branch_id,
           timestamp: new Date().toISOString(),
@@ -2912,8 +2915,9 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
 
       toast.success('GRN processed successfully');
       onClose();
-    } catch (error) {
-      toast.error('Failed to process GRN');
+    } catch (error: any) {
+      console.error('GRN Process Error:', error);
+      toast.error('Failed to process GRN: ' + (error?.message || 'Unknown error'));
     } finally {
       setSubmitting(false);
     }
@@ -3127,7 +3131,7 @@ const DispatchTab: React.FC = () => {
         transfer_number: `TI-${Date.now()}`,
         source_branch_id: 'HQ', 
         source_branch_name: 'Central HQ',
-        destination_branch_id: order.requesting_branch_id,
+        destination_branch_id: order.requesting_branch_id || 'UNKNOWN',
         destination_branch_name: order.requesting_branch_name || 'Branch',
         transfer_type: 'central_to_branch',
         status: 'dispatched',
@@ -3170,7 +3174,7 @@ const DispatchTab: React.FC = () => {
           tenantId: profile?.tenantId,
           transfer_id: transferInvoiceId,
           product_id: line.product_id,
-          product_name: line.product_name,
+          product_name: line.product_name || 'Unknown Product',
           qty_dispatched: line.qty_ordered, // This is in packs
           qty_received: 0,
           qty_queried: 0,
@@ -4717,7 +4721,7 @@ const HQStockInOutTab: React.FC = () => {
           tenantId: profile.tenantId,
           order_id: orderRef.id,
           product_id: line.product_id,
-          product_name: line.product_name,
+          product_name: line.product_name || 'Unknown Product',
           qty_ordered: Number(line.qty_ordered),
           qty_received: 0,
           unit_cost_ugx: Number(line.unit_cost_ugx),
@@ -5056,9 +5060,9 @@ const HQStockInOutTab: React.FC = () => {
           tenantId: profile?.tenantId,
           transfer_id: transferRef.id,
           product_id: line.product_id,
-          product_name: line.product_name,
+          product_name: line.product_name || 'Unknown Product',
           qty_dispatched: line.qty_dispatched,
-          unit_cost_ugx: line.unit_cost_ugx,
+          unit_cost_ugx: line.unit_cost_ugx || 0,
           total_cost_ugx: line.total_cost_ugx,
           batch_number: line.batch_number,
           expiry_date: line.expiry_date,
