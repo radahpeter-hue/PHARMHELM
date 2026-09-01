@@ -2362,6 +2362,40 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         });
       }
 
+      // Add to Procurement Invoices Ledger for Finance Module
+      await firestoreService.addDocument('procurement_invoices', {
+        tenantId: profile?.tenantId,
+        branch_id: selectedBranchId,
+        branch_name: targetBranch?.branch_name || 'Branch Store',
+        supplier_id: selectedSupplierId,
+        supplier_name: supplier?.supplier_name || 'Manual Supplier',
+        invoice_number: invoiceNumber || grnNumber,
+        grn_number: grnNumber,
+        invoice_date: invoiceDate,
+        due_date: new Date(new Date(invoiceDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        amount: totalValue,
+        total_amount_ugx: totalValue,
+        paid_amount_ugx: paymentType === 'cash' ? totalValue : 0,
+        status: paymentType === 'cash' ? 'Paid' : 'Credit',
+        created_at: new Date().toISOString()
+      });
+
+      if (paymentType === 'cash') {
+        // Log in Petty Cash Ledger (Outgoing) for cash stock purchase
+        await firestoreService.addDocument('petty_cash_ledger', {
+          tenantId: profile?.tenantId,
+          date: new Date().toISOString(),
+          amount: totalValue,
+          source: 'Petty Cash Reserve',
+          reference_number: invoiceNumber || grnNumber,
+          type: 'outgoing',
+          branch_id: selectedBranchId,
+          logged_by: profile?.uid || 'SYSTEM',
+          notes: `Cash stock purchase (Manual) - GRN ${grnNumber} - Supplier: ${supplier?.supplier_name || 'Manual Supplier'}`,
+          created_at: new Date().toISOString()
+        });
+      }
+
       // Inventory Update logic...
       for (const item of items) {
         const product = products.find(p => p.id === item.product_id);
@@ -2769,6 +2803,22 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
         status: paymentType === 'cash' ? 'Paid' : 'Credit',
         created_at: new Date().toISOString()
       });
+
+      if (paymentType === 'cash') {
+        // Log in Petty Cash Ledger (Outgoing) for cash stock purchase
+        await firestoreService.addDocument('petty_cash_ledger', {
+          tenantId: profile?.tenantId,
+          date: new Date().toISOString(),
+          amount: totalValue,
+          source: 'Petty Cash Reserve',
+          reference_number: invoiceNumber || grnNumber,
+          type: 'outgoing',
+          branch_id: order.requesting_branch_id,
+          logged_by: profile?.uid || 'SYSTEM',
+          notes: `Cash stock purchase - GRN ${grnNumber} - Supplier: ${grnRecord.supplier_name}`,
+          created_at: new Date().toISOString()
+        });
+      }
 
       // Update Inventory: Create/Update Batches and Product Stock
       for (const item of grnItems) {
