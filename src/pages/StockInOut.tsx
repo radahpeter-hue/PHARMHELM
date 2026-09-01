@@ -406,7 +406,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       setGenMethod(draft.generation_method);
 
       // Fetch the draft lines
-      const lines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', draft.id);
+      const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: draft.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       setOrderLines(lines);
       toast.success(`Draft loaded: ${draft.order_number}`);
     } catch (error) {
@@ -653,7 +653,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         await firestoreService.updateDocument('stock_orders', orderId, orderData);
 
         // Delete previous lines of the draft
-        const existingLines = await firestoreService.getDocumentsByField<any>('stock_order_lines', 'order_id', orderId);
+        const existingLines = await firestoreService.getDocumentsByQuery<any>('stock_order_lines', [{ field: 'order_id', operator: '==', value: orderId }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
         for (const line of existingLines) {
           await firestoreService.deleteDocument('stock_order_lines', line.id);
         }

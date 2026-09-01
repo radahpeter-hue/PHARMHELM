@@ -142,7 +142,7 @@ const NewRequisitions: React.FC = () => {
   const handleDownload = async (order: StockOrder, format: 'pdf' | 'xls') => {
     toast.info(`Generating ${format.toUpperCase()} for order ${order.order_number}...`);
     try {
-      const lines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+      const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       
       if (format === 'xls') {
         let content = '';
@@ -284,7 +284,7 @@ const NewRequisitions: React.FC = () => {
       });
       
       // Also update lines to sourcing status
-      const lines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+      const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       for (const line of lines) {
         await firestoreService.updateDocument('stock_order_lines', line.id, {
           line_status: 'sourcing'
@@ -435,7 +435,7 @@ const RequisitionDetailModal: React.FC<{ order: StockOrder, onClose: () => void 
 
   useEffect(() => {
     const fetchLines = async () => {
-      const data = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+      const data = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: order.tenantId }]);
       setLines(data);
     };
     fetchLines();
@@ -557,7 +557,7 @@ const QueriesTab: React.FC = () => {
         });
 
         // 1. Get all line items for this query return
-        const lines = await firestoreService.getDocumentsByField<TransferInvoiceLine>('transfer_invoice_lines', 'transfer_id', selectedQuery.id);
+        const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: selectedQuery.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
         
         // 2. For each line item, deduct/remove from HQ stock (since it was temporarily returned to HQ)
         for (const line of lines) {
@@ -591,7 +591,7 @@ const QueriesTab: React.FC = () => {
         });
 
         // Get all line items for this query return
-        const lines = await firestoreService.getDocumentsByField<TransferInvoiceLine>('transfer_invoice_lines', 'transfer_id', selectedQuery.id);
+        const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: selectedQuery.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
         
         // Re-add to central store inventory (branchId 'HQ')
         for (const line of lines) {
@@ -655,7 +655,7 @@ const QueriesTab: React.FC = () => {
         await setDoc(newInvoiceRef, { ...newInvoice, createdAt: new Date().toISOString() });
 
         // Copy lines and deduct from HQ stock
-        const lines = await firestoreService.getDocumentsByField<TransferInvoiceLine>('transfer_invoice_lines', 'transfer_id', selectedQuery.id);
+        const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: selectedQuery.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
         for (const line of lines) {
           const newLineRef = doc(collection(db, 'transfer_invoice_lines'));
           const { id, ...lineData } = line;
@@ -1089,7 +1089,7 @@ const SourcingTab: React.FC = () => {
                                   status: 'submitted',
                                   updatedAt: new Date().toISOString()
                                 });
-                                const lines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+                                const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
                                 for (const line of lines) {
                                   await firestoreService.updateDocument('stock_order_lines', line.id, {
                                     line_status: 'submitted',
@@ -1294,7 +1294,7 @@ const WholeOrderSourcingModal: React.FC<{
       }
 
       // Check if all lines for this order are now sourced
-      const allLinesData = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+      const allLinesData = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       const allSourced = allLinesData.every(l => l.line_status !== 'sourcing' && l.line_status !== 'pending');
       
       if (allSourced) {
@@ -1518,7 +1518,7 @@ const FinancialApprovalTab: React.FC = () => {
       });
       
       // Update all lines to approved
-      const lines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', id);
+      const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       for (const line of lines) {
         if (line.line_status === 'awaiting_finance_approval') {
           await firestoreService.updateDocument('stock_order_lines', line.id, {
@@ -1561,7 +1561,7 @@ const FinancialApprovalTab: React.FC = () => {
                             status: 'sourcing',
                             updatedAt: new Date().toISOString()
                           });
-                          const lines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+                          const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
                           for (const line of lines) {
                             await firestoreService.updateDocument('stock_order_lines', line.id, {
                               line_status: 'sourcing',
@@ -1625,7 +1625,7 @@ const FinancialApprovalModal: React.FC<{
 
   useEffect(() => {
     const fetchLines = async () => {
-      const data = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+      const data = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       setLines(data.filter(l => l.line_status === 'awaiting_finance_approval'));
       const initialEdits: Record<string, { qty: number, removed: boolean }> = {};
       data.forEach(l => {
@@ -1951,7 +1951,7 @@ const GRNTab: React.FC = () => {
                           status: 'awaiting_finance_approval',
                           updatedAt: new Date().toISOString()
                         });
-                        const lines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+                        const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
                         for (const line of lines) {
                           await firestoreService.updateDocument('stock_order_lines', line.id, {
                             line_status: 'awaiting_finance_approval',
@@ -2576,7 +2576,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
 
   useEffect(() => {
     const fetchLines = async () => {
-      const data = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+      const data = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       const approvedLines = data.filter(l => l.line_status === 'approved');
       setLines(approvedLines);
       
@@ -2852,7 +2852,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
       }
 
       // Check if all lines are received
-      const allLines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+      const allLines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       const allProcessed = allLines.every(l => l.line_status === 'received' || l.line_status === 'unsupplied' || l.line_status === 'rejected');
       if (allProcessed) {
         await firestoreService.updateDocument('stock_orders', order.id, {
@@ -3173,7 +3173,7 @@ const DispatchTab: React.FC = () => {
                             status: 'approved',
                             updatedAt: new Date().toISOString()
                           });
-                          const lines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+                          const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
                           for (const line of lines) {
                             await firestoreService.updateDocument('stock_order_lines', line.id, {
                               line_status: 'approved',
@@ -3237,7 +3237,7 @@ const DispatchModal: React.FC<{
   useEffect(() => {
     const fetchLines = async () => {
       try {
-        const data = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+        const data = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: order.tenantId }]);
         setLines(data);
       } catch (error) {
         toast.error('Failed to fetch order items');
@@ -4781,7 +4781,7 @@ const HQStockInOutTab: React.FC = () => {
   const handleOpenReceiptModal = async (order: StockOrder) => {
     setSelectedOrder(order);
     try {
-      const lines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', order.id);
+      const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       setOrderLinesDetail(lines);
       
       const initialReceipt: typeof receiptData = {};
@@ -4852,7 +4852,7 @@ const HQStockInOutTab: React.FC = () => {
   const handleOpenTransferModal = async (t: TransferInvoice) => {
     setSelectedTransfer(t);
     try {
-      const lines = await firestoreService.getDocumentsByField<TransferInvoiceLine>('transfer_invoice_lines', 'transfer_id', t.id);
+      const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: t.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       setTransferLinesDetail(lines);
       setIsTransferModalOpen(true);
     } catch (err) {
@@ -5053,7 +5053,7 @@ const HQStockInOutTab: React.FC = () => {
       let tLines = item.items || [];
       if (tLines.length === 0) {
         try {
-          tLines = await firestoreService.getDocumentsByField<TransferInvoiceLine>('transfer_invoice_lines', 'transfer_id', item.id);
+          tLines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: item.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
         } catch (e) {
           console.error("Error fetching transfer lines:", e);
         }
@@ -5067,7 +5067,7 @@ const HQStockInOutTab: React.FC = () => {
       };
     } else if (type === 'sourced_receipt') {
       title = `Sourced GRN Receipt #${item.order_number}`;
-      const oLines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', item.id);
+      const oLines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: item.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       lines = oLines.map((l: any) => ({
         product_name: l.product_name,
         qty_dispatched: l.qty_ordered,
@@ -5083,7 +5083,7 @@ const HQStockInOutTab: React.FC = () => {
       };
     } else {
       title = `Accepted Return #${item.transfer_number}`;
-      const tLines = await firestoreService.getDocumentsByField<TransferInvoiceLine>('transfer_invoice_lines', 'transfer_id', item.id);
+      const tLines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: item.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       lines = tLines.map(l => ({
         product_name: l.product_name,
         qty_dispatched: l.qty_dispatched,
@@ -5123,7 +5123,7 @@ const HQStockInOutTab: React.FC = () => {
     let lines = transfer.items || [];
     if (lines.length === 0) {
       try {
-        lines = await firestoreService.getDocumentsByField<TransferInvoiceLine>('transfer_invoice_lines', 'transfer_id', transfer.id);
+        lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: transfer.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       } catch (e) {
         console.error("Error fetching lines for transfer export:", e);
       }
@@ -5183,7 +5183,7 @@ const HQStockInOutTab: React.FC = () => {
         let totalQueriedQty = 0;
 
         if (item.type === 'sourced_receipt') {
-          const oLines = await firestoreService.getDocumentsByField<StockOrderLine>('stock_order_lines', 'order_id', item.id);
+          const oLines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: item.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
           oLines.forEach(l => {
             const ordered = l.qty_ordered || 0;
             const received = l.qty_supplied ?? l.qty_ordered ?? 0;
@@ -5193,7 +5193,7 @@ const HQStockInOutTab: React.FC = () => {
             totalQueriedQty += queried;
           });
         } else {
-          const tLines = await firestoreService.getDocumentsByField<TransferInvoiceLine>('transfer_invoice_lines', 'transfer_id', item.id);
+          const tLines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: item.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
           tLines.forEach(l => {
             const dispatched = l.qty_dispatched || 0;
             const received = l.qty_received ?? l.qty_dispatched ?? 0;
@@ -5274,7 +5274,7 @@ const HQStockInOutTab: React.FC = () => {
         let tLines = t.items || [];
         if (tLines.length === 0) {
           try {
-            tLines = await firestoreService.getDocumentsByField<TransferInvoiceLine>('transfer_invoice_lines', 'transfer_id', t.id);
+            tLines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: t.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
           } catch (e) {
             console.error("Error fetching lines for transfer export:", e);
           }
