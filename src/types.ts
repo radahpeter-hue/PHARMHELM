@@ -315,6 +315,71 @@ export interface ProductBatch {
   supplierName?: string;
   batch_status: 'active' | 'quarantined' | 'expired' | 'in_transit';
   lastUpdated?: string;
+  sourceType?: 'procurement' | 'transfer' | 'manual_grn' | 'opening_stock';
+  openingStockSessionId?: string;
+  openingStockLineIndex?: number;
+}
+
+export type OpeningStockStatus =
+  | 'draft'
+  | 'submitted'
+  | 'returned'
+  | 'rejected'
+  | 'ceo_approved'
+  | 'awaiting_receipt'
+  | 'fully_accepted'
+  | 'closed_with_queries';
+
+export interface OpeningStockLine {
+  id: string;
+  productId: string;
+  productName: string;
+  sku: string;
+  batchNumber: string;
+  expiryDate: string;
+  quantity: number;
+  unitCost: number;
+  sellingPrice: number;
+  acceptedQuantity?: number;
+  queriedQuantity?: number;
+  queryReason?: string;
+}
+
+export interface OpeningStockSession {
+  id: string;
+  tenantId: string;
+  branchId: string;
+  branchName: string;
+  reference: string;
+  effectiveDate: string;
+  reason: string;
+  evidenceReference: string;
+  status: OpeningStockStatus;
+  lines: OpeningStockLine[];
+  totalQuantity: number;
+  totalValue: number;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+  submittedAt?: string;
+  approvedBy?: string;
+  approvedByName?: string;
+  approvedAt?: string;
+  approvalNote?: string;
+  releasedBy?: string;
+  releasedByName?: string;
+  releasedAt?: string;
+  receivedBy?: string;
+  receivedByName?: string;
+  receivedAt?: string;
+  receiptResults?: Array<{
+    lineId: string;
+    acceptedQuantity: number;
+    queriedQuantity: number;
+    queryReason?: string;
+  }>;
+  rejectionReason?: string;
 }
 
 export interface InventoryMovement {
@@ -325,7 +390,7 @@ export interface InventoryMovement {
   batchId: string;
   timestamp: string;
   reference: string; // receipt, invoice number in/out, adjustment id
-  movementClass: 'sale' | 'transfer out' | 'transfer in' | 'adjustment';
+  movementClass: 'sale' | 'transfer out' | 'transfer in' | 'adjustment' | 'opening_stock';
   class?: string; // for backward compatibility
   type?: 'in' | 'out';
   initiator: string; // name

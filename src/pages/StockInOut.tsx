@@ -9,6 +9,7 @@ import {
   AlertCircle, 
   Clock,
   Package,
+  PackagePlus,
   Truck,
   FileText,
   ChevronRight,
@@ -33,6 +34,7 @@ import { twMerge } from 'tailwind-merge';
 import { format } from 'date-fns';
 import { AutoGenerateOrderModal } from '../components/inventory/AutoGenerateOrderModal';
 import { isLegacyOperationalInventorySeed } from '../utils/operationalInventory';
+import { OpeningStockTab } from '../components/inventory/OpeningStockTab';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -41,7 +43,7 @@ function cn(...inputs: ClassValue[]) {
 
 const StockInOut: React.FC = () => {
   const { profile, activeBranchId, activeBranch, assignedBranches, setActiveBranchId } = useAuth();
-  const [activeTab, setActiveTab] = useState<'inventory' | 'initiate' | 'tracker' | 'stock-in' | 'transfer-out' | 'queried' | 'reports'>('inventory');
+  const [activeTab, setActiveTab] = useState<'inventory' | 'opening-stock' | 'initiate' | 'tracker' | 'stock-in' | 'transfer-out' | 'queried' | 'reports'>('inventory');
   const [branches, setBranches] = useState<Branch[]>([]);
   const [showBranchSelector, setShowBranchSelector] = useState(false);
 
@@ -53,6 +55,7 @@ const StockInOut: React.FC = () => {
 
   const tabs = [
     { id: 'inventory', label: 'Inventory', icon: Package },
+    { id: 'opening-stock', label: 'Opening Inventory', icon: PackagePlus },
     { id: 'initiate', label: 'Initiate Order', icon: Plus },
     { id: 'tracker', label: 'Order Tracker', icon: Clock },
     { id: 'stock-in', label: 'Stock In', icon: ArrowLeft },
@@ -167,13 +170,13 @@ const StockInOut: React.FC = () => {
         </div>
       )}
 
-      <div className="flex border-b border-zinc-200">
+      <div className="flex border-b border-zinc-200 overflow-x-auto">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
             className={cn(
-              "flex items-center gap-2 px-6 py-3 text-sm font-medium transition-all border-b-2",
+              "flex items-center gap-2 px-6 py-3 text-sm font-medium transition-all border-b-2 whitespace-nowrap",
               activeTab === tab.id 
                 ? "border-emerald-500 text-emerald-600" 
                 : "border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300"
@@ -187,6 +190,7 @@ const StockInOut: React.FC = () => {
 
       <div className="mt-6">
         {activeTab === 'inventory' && <InventoryTab />}
+        {activeTab === 'opening-stock' && <OpeningStockTab branches={branches} />}
         {activeTab === 'initiate' && <InitiateOrder branches={branches} />}
         {activeTab === 'tracker' && <OrderTracker />}
         {activeTab === 'stock-in' && <StockInTab branches={branches} />}

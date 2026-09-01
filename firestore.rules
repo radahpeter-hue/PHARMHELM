@@ -80,6 +80,12 @@ service cloud.firestore {
       return isAuthenticated() && (hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin') || isAdmin());
     }
 
+    function hasBranchManagerRole() {
+      return isAuthenticated() && (
+        hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin')
+      );
+    }
+
     function isQA() {
       return isAuthenticated() && (hasRole('QA Head') || hasRole('QA Officer') || hasRole('QA Manager') || isAdmin());
     }
@@ -99,6 +105,24 @@ service cloud.firestore {
         hasRole('Procurement Manager') ||
         isAdmin()
       );
+    }
+
+    function hasProcurementRole() {
+      return isAuthenticated() && (
+        hasRole('Procurement Head') ||
+        hasRole('Procurement Officer') ||
+        hasRole('Procurement Manager')
+      );
+    }
+
+    function isAssignedBranchManager(branchId) {
+      return isAuthenticated()
+        && (hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin'))
+        && (
+          (("assigned_branches" in getUserData()) && getUserData().assigned_branches.hasAny([branchId])) ||
+          (("branch_id" in getUserData()) && getUserData().branch_id == branchId) ||
+          (("default_branch_id" in getUserData()) && getUserData().default_branch_id == branchId)
+        );
     }
 
     function isInventoryOperator() {
@@ -484,16 +508,81 @@ service cloud.firestore {
 
     match /product_batches/{batchId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isInventoryOperator() && isTenantMember(request.resource.data.tenantId);
+      allow create: if isInventoryOperator() && isTenantMember(request.resource.data.tenantId)
+        && (
+          !("sourceType" in request.resource.data) ||
+          request.resource.data.sourceType != 'opening_stock' ||
+          (
+            ("openingStockSessionId" in request.resource.data) &&
+            ("openingStockLineIndex" in request.resource.data) &&
+            request.resource.data.openingStockLineIndex is int &&
+            request.resource.data.openingStockLineIndex >= 0 &&
+            getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.status in ['fully_accepted', 'closed_with_queries'] &&
+            getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.tenantId == request.resource.data.tenantId &&
+            getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.branchId == request.resource.data.branchId &&
+            getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.receivedBy == request.auth.uid &&
+            request.resource.data.openingStockLineIndex < getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.lines.size() &&
+            request.resource.data.productId == getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.lines[request.resource.data.openingStockLineIndex].productId &&
+            request.resource.data.batchNumber == getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.lines[request.resource.data.openingStockLineIndex].batchNumber &&
+            request.resource.data.expiryDate == getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.lines[request.resource.data.openingStockLineIndex].expiryDate &&
+            request.resource.data.quantity == getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.receiptResults[request.resource.data.openingStockLineIndex].acceptedQuantity &&
+            request.resource.data.quantity <= getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.lines[request.resource.data.openingStockLineIndex].quantity
+          )
+        );
       allow update: if isInventoryOperator() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /{path=**}/product_batches/{batchId} {
+    match /opening_stock_sessions/{sessionId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isInventoryOperator() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isInventoryOperator() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+
+      allow create: if isTenantMember(request.resource.data.tenantId)
+        && sessionId == request.resource.data.tenantId + '_' + request.resource.data.branchId
+        && (hasBranchManagerRole() || hasProcurementRole())
+        && request.resource.data.status in ['draft', 'submitted']
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.lines is list
+        && request.resource.data.lines.size() > 0
+        && request.resource.data.lines.size() <= 300;
+
+      allow update: if isTenantMember(resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && request.resource.data.branchId == resource.data.branchId
+        && request.resource.data.createdBy == resource.data.createdBy
+        && (
+          (
+            resource.data.status in ['draft', 'returned']
+            && request.resource.data.status in ['draft', 'submitted']
+            && (hasBranchManagerRole() || hasProcurementRole())
+            && request.resource.data.lines is list
+            && request.resource.data.lines.size() > 0
+            && request.resource.data.lines.size() <= 300
+          ) ||
+          (
+            resource.data.status == 'submitted'
+            && request.resource.data.status in ['ceo_approved', 'returned', 'rejected']
+            && isCEO()
+            && request.resource.data.lines == resource.data.lines
+          ) ||
+          (
+            resource.data.status == 'ceo_approved'
+            && request.resource.data.status == 'awaiting_receipt'
+            && hasProcurementRole()
+            && request.resource.data.lines == resource.data.lines
+          ) ||
+          (
+            resource.data.status == 'awaiting_receipt'
+            && request.resource.data.status in ['fully_accepted', 'closed_with_queries']
+            && isAssignedBranchManager(resource.data.branchId)
+            && request.resource.data.receivedBy == request.auth.uid
+            && request.resource.data.lines == resource.data.lines
+            && request.resource.data.receiptResults is list
+            && request.resource.data.receiptResults.size() == resource.data.lines.size()
+            && request.resource.data.lines.size() == resource.data.lines.size()
+          )
+        );
+
+      allow delete: if false;
     }
 
     match /system_crashes/{crashId} {
@@ -592,10 +681,10 @@ service cloud.firestore {
 
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+      allow read: if collectionName != 'opening_stock_sessions' && isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'product_batches' && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'product_batches' && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'product_batches' && isAdmin() && isTenantMember(resource.data.tenantId);
     }
   }
 }
