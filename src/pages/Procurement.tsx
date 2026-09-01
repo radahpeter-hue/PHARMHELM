@@ -5,7 +5,7 @@ import {
   MoreVertical, Edit2, Trash2, ExternalLink, Eye, Download, FileSpreadsheet,
   File as FileIcon, Check, X, ArrowRight, ArrowLeft, ArrowRightLeft
 } from 'lucide-react';
-import { where, doc, collection, setDoc } from 'firebase/firestore';
+import { where, doc, collection, setDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
@@ -1654,270 +1654,68 @@ const FinancialApprovalModal: React.FC<{
     if (submitting) return;
     setSubmitting(true);
     try {
-      const tenantId = profile?.tenantId;
-      if (!tenantId) throw new Error("Missing tenantId");
-
-      // Validate Cash Balance first if cash payment
-      let availablePettyCash = 0;
-      if (paymentType === 'cash') {
-        const pcDocs = await firestoreService.getDocumentsByQuery('petty_cash_ledger', [
-           { field: 'tenantId', operator: '==', value: tenantId }
-        ]);
-        availablePettyCash = pcDocs.reduce((acc, doc) => doc.type === 'incoming' ? acc + doc.amount : acc - doc.amount, 0);
-      }
-
-      const grnNumber = `GRN-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
       let totalValue = 0;
-      const grnItems = [];
-      const unsuppliedLines = [];
-      const updatedOrderLines = [];
-
       for (const line of lines) {
         const edit = editedLines[line.id];
         if (!edit) continue;
-        
         if (edit.removed || edit.qty === 0) {
-          updatedOrderLines.push({ id: line.id, qty_ordered: 0, line_status: 'unsupplied' });
-          unsuppliedLines.push({
-            tenantId,
+          // Move to unsupplied
+          await firestoreService.updateDocument('stock_order_lines', line.id, {
+            line_status: 'unsupplied',
+            original_qty: line.qty_ordered,
+            qty_ordered: 0
+          });
+          
+          await firestoreService.addDocument('unsupplied_lines', {
+            tenantId: profile?.tenantId,
             order_id: order.id,
             original_line_id: line.id,
             product_id: line.product_id,
-            product_name: line.product_name || 'Unknown',
+            product_name: line.product_name || 'Unknown Product',
             qty_unsupplied: line.qty_ordered,
-            reason: 'Removed during GRN processing',
+            reason: 'Removed during financial approval',
             status: 'pending',
             createdAt: new Date().toISOString()
           });
-        } else {
-          if (edit.qty < line.qty_ordered) {
-            unsuppliedLines.push({
-              tenantId,
-              order_id: order.id,
-              original_line_id: line.id,
-              product_id: line.product_id,
-              product_name: line.product_name || 'Unknown',
-              qty_unsupplied: line.qty_ordered - edit.qty,
-              reason: 'Quantity reduced during GRN processing',
-              status: 'pending',
-              createdAt: new Date().toISOString()
-            });
-          }
-
-          updatedOrderLines.push({
-            id: line.id,
+        } else if (edit.qty < line.qty_ordered) {
+          // Reduce qty and move difference to unsupplied
+          const diff = line.qty_ordered - edit.qty;
+          await firestoreService.updateDocument('stock_order_lines', line.id, {
+            original_qty: line.qty_ordered,
             qty_ordered: edit.qty,
-            line_status: 'received',
-            batch_number: edit.batch,
-            expiry_date: edit.expiry
+            line_total_ugx: edit.qty * line.unit_cost_ugx
           });
-
-          grnItems.push({
+          
+          await firestoreService.addDocument('unsupplied_lines', {
+            tenantId: profile?.tenantId,
+            order_id: order.id,
+            original_line_id: line.id,
             product_id: line.product_id,
             product_name: line.product_name || 'Unknown Product',
-            qty_ordered: line.qty_ordered,
-            qty_received: edit.qty,
-            unit_cost_ugx: line.unit_cost_ugx || 0,
-            total_cost_ugx: edit.qty * (line.unit_cost_ugx || 0),
-            batch_number: edit.batch,
-            expiry_date: edit.expiry,
-            status: 'received'
+            qty_unsupplied: diff,
+            reason: 'Quantity reduced during financial approval',
+            status: 'pending',
+            createdAt: new Date().toISOString()
           });
           totalValue += edit.qty * (line.unit_cost_ugx || 0);
+        } else {
+          totalValue += line.line_total_ugx;
         }
       }
 
-      if (paymentType === 'cash' && availablePettyCash < totalValue) {
-        throw new Error(`Insufficient Management Petty Cash. Available: UGX ${availablePettyCash.toLocaleString()}, Required: UGX ${totalValue.toLocaleString()}`);
-      }
-
-      const supplierId = lines[0]?.supplier_id || 'UNKNOWN';
-      const supplierName = lines[0]?.supplier_name || 'Unknown Supplier';
-
-      const grnRecord = {
-        tenantId,
-        grn_number: grnNumber,
-        order_id: order.id,
-        supplier_id: supplierId,
-        supplier_name: supplierName,
-        invoice_number: invoiceNumber,
-        invoice_date: invoiceDate,
-        receivedAt: new Date().toISOString(),
-        receivedBy: profile?.uid || 'SYSTEM',
-        status: 'completed',
-        payment_type: paymentType,
-        payment_status: paymentType === 'cash' ? 'paid' : 'pending',
-        total_value_ugx: totalValue,
-        inputVat,
-        whtAmount,
-        items: grnItems,
-        notes
-      };
-
-      // Create Atomic Batch
-      const batch = firestoreService.writeBatch();
-      
-      // Import directly since top level imports were missing
-      const db = (await import('../firebase')).db;
-      const { doc, collection } = await import('firebase/firestore');
-
-      // 1. GRN Record
-      const grnRef = doc(collection(db, 'grn_records'));
-      batch.set(grnRef, { ...grnRecord, id: grnRef.id });
-
-      // 2. Finance Invoice
-      const invoiceRef = doc(collection(db, 'invoices'));
-      batch.set(invoiceRef, {
-        tenantId,
-        branch_id: order.requesting_branch_id || 'UNKNOWN',
-        branch_name: order.requesting_branch_name || 'Branch',
-        supplier_name: supplierName,
-        invoice_number: invoiceNumber || grnNumber,
-        grn_number: grnNumber,
-        invoice_date: invoiceDate,
-        amount: totalValue,
-        type: 'payable',
-        status: paymentType === 'cash' ? 'Paid' : 'Unpaid',
-        due_date: new Date(new Date(invoiceDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        created_at: new Date().toISOString(),
-        items: grnItems.map(item => ({
-          product_name: item.product_name,
-          quantity: item.qty_received,
-          unit_price: item.unit_cost_ugx,
-          total_price: item.total_cost_ugx
-        }))
+      // Update order total value
+      await firestoreService.updateDocument('stock_orders', order.id, {
+        total_order_value_ugx: totalValue
       });
 
-      // 3. Procurement Invoice
-      const procInvoiceRef = doc(collection(db, 'procurement_invoices'));
-      batch.set(procInvoiceRef, {
-        tenantId,
-        branch_id: order.requesting_branch_id || 'UNKNOWN',
-        branch_name: order.requesting_branch_name || 'Branch',
-        supplier_id: supplierId,
-        supplier_name: supplierName,
-        invoice_number: invoiceNumber || grnNumber,
-        grn_number: grnNumber,
-        invoice_date: invoiceDate,
-        due_date: new Date(new Date(invoiceDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        amount: totalValue,
-        total_amount_ugx: totalValue,
-        paid_amount_ugx: paymentType === 'cash' ? totalValue : 0,
-        status: paymentType === 'cash' ? 'Paid' : 'Credit',
-        created_at: new Date().toISOString()
-      });
-
-      // 4. Payment ledger (Petty Cash or Credit)
-      if (paymentType === 'cash') {
-        const pcRef = doc(collection(db, 'petty_cash_ledger'));
-        batch.set(pcRef, {
-          tenantId,
-          date: new Date().toISOString(),
-          amount: totalValue,
-          source: 'Petty Cash Reserve',
-          reference_number: invoiceNumber || grnNumber,
-          type: 'outgoing',
-          branch_id: order.requesting_branch_id || 'UNKNOWN',
-          logged_by: profile?.uid || 'SYSTEM',
-          notes: `Cash stock purchase - GRN ${grnNumber} - Supplier: ${supplierName}`,
-          created_at: new Date().toISOString()
-        });
-      } else {
-        const crRef = doc(collection(db, 'creditLedger'));
-        batch.set(crRef, {
-          tenantId,
-          branchId: order.requesting_branch_id || 'UNKNOWN',
-          supplierId,
-          supplierName,
-          invoiceNumber: invoiceNumber || grnNumber,
-          amount: totalValue,
-          balance: totalValue,
-          dueDate: new Date(new Date(invoiceDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-          status: 'unpaid',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        });
-      }
-
-      // 5. Unsupplied Lines
-      for (const us of unsuppliedLines) {
-        const ref = doc(collection(db, 'unsupplied_lines'));
-        batch.set(ref, us);
-      }
-
-      // 6. Update Stock Order Lines
-      for (const line of updatedOrderLines) {
-        const ref = doc(db, 'stock_order_lines', line.id);
-        batch.update(ref, { 
-          qty_ordered: line.qty_ordered, 
-          line_status: line.line_status,
-          ...(line.batch_number ? { batch_number: line.batch_number } : {}),
-          ...(line.expiry_date ? { expiry_date: line.expiry_date } : {})
-        });
-      }
-
-      // 7. Determine Order Status
-      const allLinesData = await firestoreService.getDocumentsByQuery('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: tenantId }]);
-      // Merge updated state
-      const finalLines = allLinesData.map(l => {
-        const update = updatedOrderLines.find(u => u.id === l.id);
-        return update ? { ...l, line_status: update.line_status } : l;
-      });
-      const allProcessed = finalLines.every(l => l.line_status === 'received' || l.line_status === 'unsupplied' || l.line_status === 'rejected');
-      
-      if (allProcessed) {
-        const orderRef = doc(db, 'stock_orders', order.id);
-        batch.update(orderRef, { status: 'fully_received' });
-      }
-
-      // 8. Create Dispatch (Transfer Invoice) so branch can accept it
-      if (grnItems.length > 0) {
-        const transferRef = doc(collection(db, 'transfer_invoices'));
-        batch.set(transferRef, {
-          tenantId,
-          transfer_number: `TI-GRN-${Date.now()}`,
-          source_branch_id: 'HQ',
-          source_branch_name: 'Central HQ',
-          destination_branch_id: order.requesting_branch_id || 'UNKNOWN',
-          destination_branch_name: order.requesting_branch_name || 'Branch',
-          transfer_type: 'central_to_branch',
-          status: 'dispatched',
-          dispatched_at: new Date().toISOString(),
-          dispatched_by: profile?.uid,
-          total_items: grnItems.length,
-          total_value_ugx: totalValue
-        });
-
-        // Transfer Lines
-        grnItems.forEach(item => {
-          const tLineRef = doc(collection(db, 'transfer_invoice_lines'));
-          batch.set(tLineRef, {
-            tenantId,
-            transfer_id: transferRef.id,
-            product_id: item.product_id,
-            product_name: item.product_name,
-            qty_dispatched: item.qty_received,
-            unit_cost_ugx: item.unit_cost_ugx,
-            total_cost_ugx: item.total_cost_ugx,
-            batch_number: item.batch_number,
-            expiry_date: item.expiry_date,
-            line_status: 'dispatched'
-          });
-        });
-      }
-
-      // Execute Batch
-      await batch.commit();
-
-      toast.success('GRN processed successfully. Stock has been dispatched to the branch.');
-      onClose();
-    } catch (error: any) {
-      console.error('GRN Process Error:', error);
-      toast.error('Failed to process GRN: ' + (error?.message || 'Unknown error'));
+      onApprove(order.id);
+    } catch (error) {
+      toast.error('Failed to update order details');
     } finally {
       setSubmitting(false);
     }
   };
+
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-[32px] w-full max-w-4xl max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
@@ -2874,7 +2672,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
       // Validate Cash Balance first if cash payment
       let availablePettyCash = 0;
       if (paymentType === 'cash') {
-        const pcDocs = await firestoreService.getDocumentsByQuery('petty_cash_ledger', [
+        const pcDocs = await firestoreService.getDocumentsByQuery<any>('petty_cash_ledger', [
            { field: 'tenantId', operator: '==', value: tenantId }
         ]);
         availablePettyCash = pcDocs.reduce((acc, doc) => doc.type === 'incoming' ? acc + (doc.amount || 0) : acc - (doc.amount || 0), 0);
@@ -2969,9 +2767,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
       };
 
       // Create Atomic Batch
-      const { doc, collection } = await import('firebase/firestore');
-      const { db } = await import('../firebase');
-      const batch = firestoreService.writeBatch();
+      const batch = writeBatch(db);
 
       // 1. GRN Record
       const grnRef = doc(collection(db, 'grn_records'));
@@ -3069,7 +2865,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
       }
 
       // 7. Determine Order Status
-      const allLinesData = await firestoreService.getDocumentsByQuery('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: tenantId }]);
+      const allLinesData = await firestoreService.getDocumentsByQuery<any>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: tenantId }]);
       // Merge updated state
       const finalLines = allLinesData.map(l => {
         const update = updatedOrderLines.find(u => u.id === l.id);
