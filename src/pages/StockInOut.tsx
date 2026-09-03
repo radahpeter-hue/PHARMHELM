@@ -1268,7 +1268,7 @@ const OrderDetailsModal: React.FC<{ order: StockOrder; onClose: () => void }> = 
 };
 
 const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
-  const { profile, activeBranchId } = useAuth();
+  const { profile, activeBranchId, hasPermission } = useAuth();
   const [invoices, setInvoices] = useState<TransferInvoice[]>([]);
   const [selectedInvoice, setSelectedInvoice] = useState<TransferInvoice | null>(null);
   const [invoiceLines, setInvoiceLines] = useState<TransferInvoiceLine[]>([]);
@@ -1280,6 +1280,9 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   });
   const [receptionSearch, setReceptionSearch] = useState('');
   const [staff, setStaff] = useState<any[]>([]);
+  const [invoiceLinesLoading, setInvoiceLinesLoading] = useState(false);
+  const [invoiceLinesError, setInvoiceLinesError] = useState<string | null>(null);
+  const canOperateReception = hasPermission('stock', 'operate') && hasPermission('inventory', 'operate');
 
   useEffect(() => {
     if (profile?.tenantId) {
@@ -1297,6 +1300,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     let lines = invoiceLines;
     if (invoice.id !== selectedInvoice?.id) {
       lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
+        { field: 'tenantId', operator: '==', value: profile?.tenantId || '' },
         { field: 'transfer_id', operator: '==', value: invoice.id }
       ]);
     }
@@ -1417,14 +1421,18 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
 
   useEffect(() => {
     if (profile?.tenantId && activeBranchId) {
-      firestoreService.subscribeToCollection<TransferInvoice>('transfer_invoices', profile.tenantId, (data) => {
-        const filtered = data.filter(i => i.destination_branch_id === activeBranchId);
+      return firestoreService.subscribeToCollectionByQuery<TransferInvoice>(
+        'transfer_invoices',
+        profile.tenantId,
+        [where('destination_branch_id', '==', activeBranchId)],
+        (filtered) => {
         if (showHistory) {
           setInvoices(filtered.filter(i => i.status === 'fully_accepted' || i.status === 'queried'));
         } else {
           setInvoices(filtered.filter(i => i.status !== 'fully_accepted' && i.status !== 'queried'));
         }
-      });
+        }
+      );
     }
   }, [profile?.tenantId, activeBranchId, showHistory]);
 
@@ -1467,21 +1475,56 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   }
 
   const handleOpenReceive = async (invoice: TransferInvoice) => {
+    if (!profile?.tenantId || invoice.destination_branch_id !== activeBranchId) {
+      toast.error('This invoice is not assigned to the active branch.');
+      return;
+    }
+
     setSelectedInvoice(invoice);
-    const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
-      { field: 'transfer_id', operator: '==', value: invoice.id }
-    ]);
-    setInvoiceLines(lines);
-    
-    const initialReceiving: Record<string, any> = {};
-    lines.forEach(l => {
-      initialReceiving[l.id] = { accepted: l.qty_dispatched, queried: 0 };
-    });
-    setReceivingData(initialReceiving);
+    setInvoiceLines([]);
+    setReceivingData({});
+    setInvoiceLinesError(null);
+    setInvoiceLinesLoading(true);
+
+    try {
+      const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
+        { field: 'tenantId', operator: '==', value: profile.tenantId },
+        { field: 'transfer_id', operator: '==', value: invoice.id }
+      ]);
+
+      if (lines.length === 0) {
+        setInvoiceLinesError('No product lines were found for this invoice. Reception has been blocked.');
+        return;
+      }
+
+      setInvoiceLines(lines);
+      const initialReceiving: Record<string, any> = {};
+      lines.forEach(l => {
+        initialReceiving[l.id] = { accepted: l.qty_dispatched, queried: 0 };
+      });
+      setReceivingData(initialReceiving);
+    } catch (error) {
+      console.error('Failed to load incoming invoice lines', error);
+      setInvoiceLinesError('The invoice contents could not be loaded. Close this window and try again.');
+    } finally {
+      setInvoiceLinesLoading(false);
+    }
   };
 
   const handleReceiveSubmit = async () => {
     if (!selectedInvoice || !profile?.tenantId || !activeBranchId) return;
+    if (!canOperateReception) {
+      toast.error('Your role can view this invoice but cannot confirm stock reception.');
+      return;
+    }
+    if (invoiceLinesLoading || invoiceLinesError || invoiceLines.length === 0) {
+      toast.error('Invoice products must load successfully before reception can be confirmed.');
+      return;
+    }
+    if (selectedInvoice.destination_branch_id !== activeBranchId) {
+      toast.error('This invoice is not assigned to the active branch.');
+      return;
+    }
 
     const selectedInvoiceRef = doc(db, 'transfer_invoices', selectedInvoice.id);
     let receptionClaimed = false;
@@ -1828,7 +1871,7 @@ return (
                             onClick={() => handleOpenReceive(invoice)}
                             className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition-colors shadow-sm"
                           >
-                            Receive &amp; Verify
+                            {canOperateReception ? 'Receive &amp; Verify' : 'View Details'}
                           </button>
                         ) : (
                           <button 
@@ -1856,21 +1899,21 @@ return (
       </div>
 
       {selectedInvoice && (
-        <div className="fixed inset-0 bg-zinc-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-zinc-100">
-            <div className="p-6 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50">
+        <div className="fixed inset-0 bg-zinc-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl sm:rounded-3xl w-full max-w-5xl max-h-[96vh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-zinc-100">
+            <div className="p-4 sm:p-6 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50">
               <div>
                 <h2 className="text-xl font-bold text-zinc-900">
                   {showHistory ? 'Goods Received Note (GRN) Details' : 'Verify Incoming Stock'}
                 </h2>
                 <p className="text-sm text-zinc-500">Invoice: {selectedInvoice.transfer_number}</p>
               </div>
-              <button onClick={() => setSelectedInvoice(null)} className="text-zinc-400 hover:text-zinc-650 transition-colors p-2 hover:bg-zinc-100 rounded-full">
+              <button onClick={() => setSelectedInvoice(null)} className="text-zinc-400 hover:text-zinc-600 transition-colors p-2 hover:bg-zinc-100 rounded-full">
                 <Plus className="rotate-45" size={24} />
               </button>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
               {/* Detailed origin, destination, and sender/receiver trail */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-zinc-50 p-5 rounded-2xl border border-zinc-200 text-xs leading-relaxed">
                 <div className="space-y-2">
@@ -1908,8 +1951,8 @@ return (
                 </div>
               </div>
 
-              <div className="border border-zinc-200 rounded-2xl overflow-hidden shadow-sm">
-                <table className="w-full text-left border-collapse">
+              <div className="border border-zinc-200 rounded-2xl overflow-x-auto shadow-sm">
+                <table className="w-full min-w-[1000px] text-left border-collapse">
                   <thead>
                     <tr className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest border-b border-zinc-100 bg-zinc-50/50">
                       <th className="px-4 py-3">Product</th>
@@ -1923,11 +1966,30 @@ return (
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
+                    {invoiceLinesLoading && (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-10 text-center text-zinc-500">
+                          <span className="inline-flex items-center gap-2 font-semibold">
+                            <RotateCw size={16} className="animate-spin" /> Loading invoice products...
+                          </span>
+                        </td>
+                      </tr>
+                    )}
+                    {!invoiceLinesLoading && invoiceLinesError && (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-8 text-center">
+                          <div className="inline-flex max-w-xl items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-semibold text-red-700">
+                            <AlertCircle size={18} className="mt-0.5 shrink-0" />
+                            <span>{invoiceLinesError}</span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
                     {invoiceLines.map(line => (
                       <tr key={line.id} className="text-xs">
                         <td className="px-4 py-3">
                           <p className="font-bold text-zinc-900">{line.product_name}</p>
-                          <p className="text-[10px] text-zinc-500">ID: {line.product_id.slice(0, 8)}</p>
+                          <p className="text-[10px] text-zinc-500">ID: {String(line.product_id || 'N/A').slice(0, 8)}</p>
                         </td>
                         <td className="px-4 py-3">
                           <p className="text-zinc-650 font-mono font-semibold">{line.batch_number}</p>
@@ -1937,7 +1999,7 @@ return (
                         </td>
                         <td className="px-4 py-3 text-center font-bold text-zinc-900">{line.qty_dispatched}</td>
                         <td className="px-4 py-3 text-center">
-                          {showHistory ? (
+                          {showHistory || !canOperateReception ? (
                             <span className="font-bold text-emerald-600">{line.qty_accepted ?? line.qty_received ?? line.qty_dispatched ?? 0}</span>
                           ) : (
                             <input 
@@ -1955,7 +2017,7 @@ return (
                           )}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          {showHistory ? (
+                          {showHistory || !canOperateReception ? (
                             <span className="font-bold text-red-600">{line.qty_queried || 0}</span>
                           ) : (
                             <input 
@@ -1973,7 +2035,7 @@ return (
                           UGX {((line.qty_dispatched || 0) * (line.unit_cost_ugx || 0)).toLocaleString()}
                         </td>
                         <td className="px-4 py-3">
-                          {showHistory ? (
+                          {showHistory || !canOperateReception ? (
                             <span className="text-[11px] text-red-500 italic">{line.query_reason || '--'}</span>
                           ) : (
                             receivingData[line.id]?.queried > 0 && (
@@ -1999,7 +2061,7 @@ return (
                   </tbody>
                   <tfoot>
                     <tr className="bg-zinc-50/50 font-bold border-t border-zinc-200 text-xs">
-                      <td colSpan={6} className="px-4 py-3 text-zinc-655 uppercase text-[10px] tracking-wider">Grand Invoice Total Value</td>
+                      <td colSpan={6} className="px-4 py-3 text-zinc-600 uppercase text-[10px] tracking-wider">Grand Invoice Total Value</td>
                       <td className="px-4 py-3 text-right font-mono text-sm text-zinc-900">
                         UGX {(selectedInvoice.total_value_ugx || 0).toLocaleString()}
                       </td>
@@ -2010,16 +2072,19 @@ return (
               </div>
             </div>
 
-            <div className="p-6 border-t border-zinc-100 bg-zinc-50/50 flex justify-between items-center">
+            <div className="p-4 sm:p-6 border-t border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <div className="flex items-center gap-2 text-amber-600 text-xs font-bold">
-                {!showHistory && (
+                {!showHistory && canOperateReception && (
                   <>
                     <AlertCircle size={16} />
                     <span>Verify against physical invoice before submitting.</span>
                   </>
                 )}
+                {!showHistory && !canOperateReception && (
+                  <span>View only. Your role cannot confirm or query stock reception.</span>
+                )}
               </div>
-              <div className="flex gap-3">
+              <div className="flex flex-wrap gap-3 w-full sm:w-auto sm:justify-end">
                 {showHistory && (
                   <button 
                     onClick={() => downloadExcelGRN(selectedInvoice)}
@@ -2037,7 +2102,8 @@ return (
                 {!showHistory && (
                   <button 
                     onClick={handleReceiveSubmit}
-                    className="px-8 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold transition-colors shadow-lg shadow-emerald-500/20"
+                    disabled={!canOperateReception || invoiceLinesLoading || !!invoiceLinesError || invoiceLines.length === 0}
+                    className="px-8 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold transition-colors shadow-lg shadow-emerald-500/20 disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:shadow-none"
                   >
                     Confirm Reception
                   </button>
@@ -2383,6 +2449,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     if (lines.length === 0) {
       try {
         lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
+          { field: 'tenantId', operator: '==', value: profile?.tenantId || '' },
           { field: 'transfer_id', operator: '==', value: transfer.id }
         ]);
       } catch (err) {
@@ -2434,6 +2501,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     setSelectedTransferLines([]);
     try {
       const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
+        { field: 'tenantId', operator: '==', value: profile?.tenantId || '' },
         { field: 'transfer_id', operator: '==', value: transfer.id }
       ]);
       setSelectedTransferLines(lines);
@@ -3794,6 +3862,7 @@ export const StockInOutReportsHub: React.FC<{ branches: Branch[] }> = ({ branche
         if (lines.length === 0) {
           try {
             lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
+              { field: 'tenantId', operator: '==', value: profile?.tenantId || '' },
               { field: 'transfer_id', operator: '==', value: ti.id }
             ]);
           } catch (e) {
@@ -3858,6 +3927,7 @@ export const StockInOutReportsHub: React.FC<{ branches: Branch[] }> = ({ branche
         if (lines.length === 0) {
           try {
             lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
+              { field: 'tenantId', operator: '==', value: profile?.tenantId || '' },
               { field: 'transfer_id', operator: '==', value: ti.id }
             ]);
           } catch (e) {

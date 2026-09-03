@@ -128,9 +128,23 @@ service cloud.firestore {
     function isInventoryOperator() {
       return isAuthenticated() && (
         hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin') ||
-        hasRole('pharmacist') || hasRole('Dispenser') ||
+        hasRole('Pharmacist') || hasRole('pharmacist') || hasRole('Dispenser') ||
         hasRole('Procurement Head') || hasRole('Procurement Officer') ||
         hasRole('QA Head') || hasRole('QA Officer') ||
+        hasRole('Logistics Head') || hasRole('Logistics Manager') ||
+        hasRole('IT Head') ||
+        isAdmin()
+      );
+    }
+
+    function isStockOperator() {
+      return isAuthenticated() && (
+        hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin') ||
+        hasRole('Pharmacist') || hasRole('pharmacist') ||
+        hasRole('Procurement Head') || hasRole('Procurement Officer') || hasRole('Procurement Manager') ||
+        hasRole('QA Head') ||
+        hasRole('Logistics Head') || hasRole('Logistics Manager') ||
+        hasRole('IT Head') ||
         isAdmin()
       );
     }
@@ -665,16 +679,16 @@ service cloud.firestore {
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /transfer_invoices/{invoiceId} {
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId)) && (isProcurement() || isBranchManager() || isFinance());
-      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isProcurement() || isBranchManager() || isFinance());
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isStockOperator() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isStockOperator() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /transfer_invoice_lines/{lineId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isProcurement() || isBranchManager() || isFinance());
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isStockOperator() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isStockOperator() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /hq_order_drafts/{draftId} {
@@ -755,10 +769,10 @@ service cloud.firestore {
 
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
-      allow read: if collectionName != 'opening_stock_sessions' && isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && isAdmin() && isTenantMember(resource.data.tenantId);
+      allow read: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && isAdmin() && isTenantMember(resource.data.tenantId);
     }
   }
 }
