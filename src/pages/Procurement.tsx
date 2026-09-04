@@ -19,6 +19,8 @@ import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { processProcurementGrn } from '../services/procurementFinanceService';
+import { AutoGenerateOrderModal } from '../components/inventory/AutoGenerateOrderModal';
+import { isBranchReturnToHq, isHqProcurementDelivery, receiveHqTransfer } from '../services/hqStockReceiptService';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -2883,13 +2885,20 @@ const DispatchTab: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId) {
       firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
-        setApprovedOrders(data.filter(o => o.status === 'fully_received'));
+        setApprovedOrders(data.filter(o =>
+          o.status === 'fully_received' &&
+          !(o as any).transfer_id &&
+          o.requesting_branch_id !== 'HQ'
+        ));
       });
     }
   }, [profile?.tenantId]);
 
   const handleDispatch = async (order: StockOrder, lines: StockOrderLine[]) => {
     try {
+      if (order.requesting_branch_id === 'HQ') {
+        throw new Error('HQ replenishment orders cannot be dispatched back to HQ.');
+      }
       // Fetch products to get unitsPerPack
       const productIds = Array.from(new Set(lines.map(l => l.product_id)));
       const productPromises = productIds.map(id => firestoreService.getDocument<Product>('products', id));
@@ -4181,7 +4190,9 @@ const HQStockInOutTab: React.FC = () => {
 
   // 1. GENERATE ORDER STATE
   const [orderMethod, setOrderMethod] = useState<'manual' | 'auto'>('manual');
-  const [autoPeriod, setAutoPeriod] = useState<2 | 3 | 6>(3);
+  const [showHqAutoGenerate, setShowHqAutoGenerate] = useState(false);
+  const [hqCoverageDays, setHqCoverageDays] = useState(90);
+  const [hqProductScopes, setHqProductScopes] = useState<string[]>(['drug/medicine']);
   const [isAggregating, setIsAggregating] = useState(false);
   const [orderLines, setOrderLines] = useState<Array<{
     product_id: string;
@@ -4203,18 +4214,10 @@ const HQStockInOutTab: React.FC = () => {
   const [transferProductSearchTerm, setTransferProductSearchTerm] = useState('');
 
   // 2. STOCK IN STATE
-  const [replenishOrders, setReplenishOrders] = useState<StockOrder[]>([]);
   const [incomingTransfers, setIncomingTransfers] = useState<TransferInvoice[]>([]);
-  const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
   const [selectedTransfer, setSelectedTransfer] = useState<TransferInvoice | null>(null);
-  const [orderLinesDetail, setOrderLinesDetail] = useState<StockOrderLine[]>([]);
   const [transferLinesDetail, setTransferLinesDetail] = useState<TransferInvoiceLine[]>([]);
-  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
-  
-  // Sourced Receipt modal temp input state
-  const [receiptData, setReceiptData] = useState<Record<string, { batchNumber: string; expiryDate: string; acceptedQty: number }>>({});
-  const [submittingReceipt, setSubmittingReceipt] = useState(false);
   const [submittingTransferReturn, setSubmittingTransferReturn] = useState(false);
 
   // 3. TRANSFER OUT STATE
@@ -4286,15 +4289,8 @@ const HQStockInOutTab: React.FC = () => {
         setHqBatches
       );
 
-      // Subscribe to HQ pending purchase orders (to be received)
-      const unsubOrders = firestoreService.subscribeToCollectionByQuery<StockOrder>(
-        'stock_orders',
-        profile.tenantId,
-        [where('requesting_branch_id', '==', 'HQ'), where('status', 'in', ['approved', 'submitted'])],
-        setReplenishOrders
-      );
-
-      // Subscribe to incoming branch transfers to HQ
+      // HQ receives only physical shipments. Submitted/approved orders are not
+      // receivable until Procurement has processed and dispatched their GRN.
       const unsubIncomingTransfers = firestoreService.subscribeToCollectionByQuery<TransferInvoice>(
         'transfer_invoices',
         profile.tenantId,
@@ -4323,7 +4319,7 @@ const HQStockInOutTab: React.FC = () => {
         'transfer_invoices',
         profile.tenantId,
         [where('destination_branch_id', '==', 'HQ'), where('status', '==', 'fully_accepted')],
-        setAcceptedReturns
+        transfers => setAcceptedReturns(transfers.filter(isBranchReturnToHq))
       );
 
       // Subscribe to Order Drafts
@@ -4346,7 +4342,6 @@ const HQStockInOutTab: React.FC = () => {
 
       return () => {
         unsubBatches();
-        unsubOrders();
         unsubIncomingTransfers();
         unsubTransferHistory();
         unsubReceivedOrders();
@@ -4356,71 +4351,6 @@ const HQStockInOutTab: React.FC = () => {
       };
     }
   }, [profile?.tenantId]);
-
-  // Aggregate Consumption for Auto Replenishment
-  const handleAutoGenerateReplenish = async () => {
-    if (!profile?.tenantId) return;
-    setIsAggregating(true);
-    try {
-      const startDate = new Date();
-      startDate.setMonth(startDate.getMonth() - autoPeriod);
-      const startDateStr = startDate.toISOString();
-
-      // Fetch all sales for this tenant across ALL branches
-      const allSales = await firestoreService.getDocumentsByQuery<any>('sales', [
-        { field: 'tenantId', operator: '==', value: profile.tenantId },
-        { field: 'timestamp', operator: '>=', value: startDateStr }
-      ]);
-
-      const consumption: Record<string, number> = {};
-      allSales.forEach(sale => {
-        if (sale.items && Array.isArray(sale.items)) {
-          sale.items.forEach(it => {
-            if (it.productId) {
-              consumption[it.productId] = (consumption[it.productId] || 0) + Number(it.quantity || 0);
-            }
-          });
-        }
-      });
-
-      // Map consumption to suggested HQ restock lines
-      const suggestions: typeof orderLines = [];
-      const defaultSupplierId = suppliers[0]?.id || 'default-supplier';
-
-      products.forEach(p => {
-        const unitsSold = consumption[p.id] || 0;
-        if (unitsSold > 0) {
-          const avgMonthlyUnits = unitsSold / autoPeriod;
-          const unitsPerPack = p.unitsPerPack || 10;
-          const avgMonthlyPacks = avgMonthlyUnits / unitsPerPack;
-          
-          // Suggest 1.5x monthly consumption for HQ safety buffers
-          const suggestedQty = Math.max(10, Math.ceil(avgMonthlyPacks * 1.5));
-          const estUnitCost = p.costPricePerPack || p.cost_price || 15000;
-
-          suggestions.push({
-            product_id: p.id,
-            product_name: p.name,
-            qty_ordered: suggestedQty,
-            unit_cost_ugx: estUnitCost,
-            line_total_ugx: suggestedQty * estUnitCost,
-            supplier_id: defaultSupplierId
-          });
-        }
-      });
-
-      if (suggestions.length === 0) {
-        toast.info(`No branch sales found for the last ${autoPeriod} months. Standard stock items can be added manually.`);
-      } else {
-        setOrderLines(suggestions);
-        toast.success(`Generated ${suggestions.length} Restock Suggestions based on aggregated branch sales!`);
-      }
-    } catch (err) {
-      toast.error('Failed to aggregate consumption data.');
-    } finally {
-      setIsAggregating(false);
-    }
-  };
 
   // Add Manual order line
   const handleAddManualLine = (e: React.FormEvent) => {
@@ -4507,7 +4437,6 @@ const HQStockInOutTab: React.FC = () => {
 
       toast.success(`HQ Store order ${orderNumber} submitted to Procurement module successfully!`);
       setOrderLines([]);
-      setSubTab('stock_in');
     } catch (err) {
       toast.error('Failed to submit order to Procurement.');
     }
@@ -4603,77 +4532,6 @@ const HQStockInOutTab: React.FC = () => {
     }
   };
 
-  // Open Direct PO Receipt Modal
-  const handleOpenReceiptModal = async (order: StockOrder) => {
-    setSelectedOrder(order);
-    try {
-      const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-      setOrderLinesDetail(lines);
-      
-      const initialReceipt: typeof receiptData = {};
-      lines.forEach(l => {
-        initialReceipt[l.id] = {
-          batchNumber: `BAT-${Math.random().toString(36).substring(7).toUpperCase()}`,
-          expiryDate: new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().split('T')[0],
-          acceptedQty: l.qty_ordered
-        };
-      });
-      setReceiptData(initialReceipt);
-      setIsReceiptModalOpen(true);
-    } catch (err) {
-      toast.error('Error fetching order lines.');
-    }
-  };
-
-  // Submit Direct PO Goods Receipt
-  const handleReceiptSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedOrder || !profile || submittingReceipt) return;
-    setSubmittingReceipt(true);
-    try {
-      for (const line of orderLinesDetail) {
-        const data = receiptData[line.id];
-        if (!data) continue;
-
-        // 1. Create product batch with branchId 'HQ'
-        await firestoreService.addDocument('product_batches', {
-          tenantId: profile.tenantId,
-          branchId: 'HQ',
-          productId: line.product_id,
-          batchNumber: data.batchNumber.toUpperCase().trim(),
-          expiryDate: data.expiryDate,
-          quantity: Number(data.acceptedQty),
-          purchasePrice: Number(line.unit_cost_ugx || 0),
-          sellingPrice: Number(line.unit_cost_ugx || 0) * 1.3,
-          batch_status: 'active',
-          createdAt: new Date().toISOString(),
-          lastUpdated: new Date().toISOString()
-        });
-
-        // 2. Update line item state
-        await firestoreService.updateDocument('stock_order_lines', line.id, {
-          qty_received: data.acceptedQty,
-          line_status: 'received'
-        });
-      }
-
-      // 3. Update parent order
-      await firestoreService.updateDocument('stock_orders', selectedOrder.id, {
-        status: 'fully_received',
-        received_at: new Date().toISOString(),
-        received_by: profile.uid
-      });
-
-      toast.success('Procured stock successfully received into HQ Stores Inventory!');
-      setIsReceiptModalOpen(false);
-      setSelectedOrder(null);
-    } catch (err) {
-      toast.error('Failed to complete Goods Receipt.');
-    } finally {
-      setSubmittingReceipt(false);
-    }
-  };
-
   // Open Incoming Returns / Branch Transfer receipt modal
   const handleOpenTransferModal = async (t: TransferInvoice) => {
     setSelectedTransfer(t);
@@ -4686,54 +4544,28 @@ const HQStockInOutTab: React.FC = () => {
     }
   };
 
-  // Accept Incoming Return / Branch Transfer
+  // Accept an HQ-bound physical shipment once. Both Procurement GRNs and true
+  // branch returns use the same idempotent inventory-posting boundary.
   const handleAcceptTransferReturn = async () => {
     if (!selectedTransfer || !profile || submittingTransferReturn) return;
     setSubmittingTransferReturn(true);
     try {
-      for (const line of transferLinesDetail) {
-        const existingBatches = await firestoreService.getDocumentsByQuery<ProductBatch>('product_batches', [
-          { field: 'tenantId', operator: '==', value: profile.tenantId },
-          { field: 'branchId', operator: '==', value: 'HQ' },
-          { field: 'productId', operator: '==', value: line.product_id },
-          { field: 'batchNumber', operator: '==', value: line.batch_number }
-        ]);
-
-        if (existingBatches.length > 0) {
-          const batch = existingBatches[0];
-          await firestoreService.updateDocument('product_batches', batch.id, {
-            quantity: batch.quantity + (line.qty_dispatched || 0),
-            lastUpdated: new Date().toISOString()
-          });
-        } else {
-          await firestoreService.addDocument('product_batches', {
-            tenantId: profile.tenantId,
-            branchId: 'HQ',
-            productId: line.product_id,
-            batchNumber: line.batch_number,
-            expiryDate: line.expiry_date || new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().split('T')[0],
-            quantity: line.qty_dispatched || 0,
-            purchasePrice: line.unit_cost_ugx || 0,
-            sellingPrice: (line.unit_cost_ugx || 0) * 1.3,
-            batch_status: 'active',
-            createdAt: new Date().toISOString(),
-            lastUpdated: new Date().toISOString()
-          });
+      await receiveHqTransfer({
+        tenantId: profile.tenantId,
+        transfer: selectedTransfer,
+        lines: transferLinesDetail,
+        user: {
+          uid: profile.uid,
+          name: profile.full_name || profile.displayName || profile.username || profile.email || 'HQ Store Officer'
         }
-      }
-
-      // Mark transfer as fully accepted
-      await firestoreService.updateDocument('transfer_invoices', selectedTransfer.id, {
-        status: 'fully_accepted',
-        accepted_at: new Date().toISOString(),
-        accepted_by: profile.uid
       });
-
-      toast.success('Successfully received branch return and updated HQ store catalog.');
+      toast.success(isHqProcurementDelivery(selectedTransfer)
+        ? 'GRN shipment received into HQ inventory.'
+        : 'Branch return received into HQ inventory.');
       setIsTransferModalOpen(false);
       setSelectedTransfer(null);
-    } catch (err) {
-      toast.error('Failed to accept branch return.');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to receive the HQ shipment.');
     } finally {
       setSubmittingTransferReturn(false);
     }
@@ -5229,6 +5061,10 @@ const HQStockInOutTab: React.FC = () => {
     return true;
   });
 
+  const hqGrnDeliveries = incomingTransfers.filter(isHqProcurementDelivery);
+  const hqBranchReturns = incomingTransfers.filter(isBranchReturnToHq);
+  const pendingHqReceipts = hqGrnDeliveries.length + hqBranchReturns.length;
+
   return (
     <div className="space-y-6">
       {/* Top mini-tab header */}
@@ -5252,7 +5088,7 @@ const HQStockInOutTab: React.FC = () => {
         >
           <Package size={13} />
           Stock In (GRN)
-          {(replenishOrders.length > 0 || incomingTransfers.length > 0) && (
+          {pendingHqReceipts > 0 && (
             <span className="w-2.5 h-2.5 bg-rose-500 rounded-full animate-pulse inline-block"></span>
           )}
         </button>
@@ -5315,33 +5151,53 @@ const HQStockInOutTab: React.FC = () => {
             </div>
 
             {orderMethod === 'auto' && (
-              <div className="p-6 bg-emerald-50/50 border border-emerald-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="p-6 bg-emerald-50/50 border border-emerald-100 rounded-2xl space-y-4">
                 <div className="space-y-1">
                   <p className="text-sm font-bold text-emerald-950">HQ Consumption Aggregator Engine</p>
-                  <p className="text-xs text-zinc-600">This pulls previous sales volume logs across all branch outlets to calculate exact monthly HQ safety restocks.</p>
-                  <div className="flex items-center gap-2 mt-3">
-                    <span className="text-xs text-zinc-400 font-bold">Historical Range:</span>
-                    <select
-                      value={autoPeriod}
-                      onChange={(e) => setAutoPeriod(Number(e.target.value) as any)}
-                      className="px-3 py-1 bg-white border border-zinc-200 rounded-lg text-xs font-semibold outline-none"
-                    >
-                      <option value={2}>Last 2 Months Sales</option>
-                      <option value={3}>Last 3 Months Sales</option>
-                      <option value={6}>Last 6 Months Sales</option>
+                  <p className="text-xs text-zinc-600">Uses the branch replenishment model for every branch, aggregates unmet demand, then deducts usable HQ stock and confirmed incoming supply.</p>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr_auto] gap-4 items-end">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-wider">Coverage period</label>
+                    <select value={hqCoverageDays} onChange={event => setHqCoverageDays(Number(event.target.value))} className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold">
+                      <option value={30}>30 days</option>
+                      <option value={60}>60 days</option>
+                      <option value={90}>90 days</option>
                     </select>
                   </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-wider">Product scope (select one or more)</label>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 bg-white border border-zinc-200 rounded-xl p-3">
+                      {[
+                        ['drug/medicine', 'Drug / Medicine'], ['cosmetic', 'Cosmetic'],
+                        ['consumable', 'Consumable'], ['device', 'Device'],
+                        ['cosmetic therapeutics', 'Cosmetic Therapeutics'],
+                        ['operational_inventory', 'Operational / Non-Sellable']
+                      ].map(([value, label]) => (
+                        <label key={value} className="flex items-center gap-2 text-[10px] font-bold text-zinc-700">
+                          <input type="checkbox" checked={hqProductScopes.includes(value)} onChange={() => setHqProductScopes(current => current.includes(value) ? current.filter(scope => scope !== value) : [...current, value])} />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => setShowHqAutoGenerate(true)} disabled={hqProductScopes.length === 0} className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider disabled:opacity-50">
+                    Launch Replenishment Console
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  disabled={isAggregating}
-                  onClick={handleAutoGenerateReplenish}
-                  className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider inline-flex items-center gap-2 transition-all disabled:opacity-50"
-                >
-                  {isAggregating ? 'Calculating Consumption...' : 'Generate Order Suggestions'}
-                </button>
               </div>
             )}
+
+            <AutoGenerateOrderModal
+              isOpen={showHqAutoGenerate}
+              onClose={() => setShowHqAutoGenerate(false)}
+              branches={branches}
+              initialCoverageDays={hqCoverageDays}
+              initialProductScopes={hqProductScopes}
+              initialCategory="sellable_non_cosmetic"
+              mode="hq_aggregate"
+              fixedBranchId="HQ"
+            />
 
             {orderMethod === 'manual' && (
               <form onSubmit={handleAddManualLine} className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-zinc-50/50 p-5 rounded-2xl border border-zinc-150">
@@ -5611,37 +5467,37 @@ const HQStockInOutTab: React.FC = () => {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               
-              {/* Left Column: Direct Procurement PO receipts */}
+              {/* Left Column: Procurement shipments created only after GRN dispatch */}
               <div className="space-y-4">
                 <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider font-mono flex items-center gap-2">
                   <Truck size={12} />
-                  Sourced Central Purchases ({replenishOrders.length})
+                  Dispatched Procurement GRNs ({hqGrnDeliveries.length})
                 </h4>
-                {replenishOrders.length === 0 ? (
+                {hqGrnDeliveries.length === 0 ? (
                   <div className="p-8 border border-dashed border-zinc-200 rounded-3xl bg-zinc-50/20 text-center text-zinc-400 italic text-xs">
-                    No active central sourced deliveries awaiting receipt.
+                    No processed Procurement GRNs are currently awaiting HQ receipt. Submitted orders remain in Procurement until GRN dispatch.
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-                    {replenishOrders.map(order => (
-                      <div key={order.id} className="p-5 border border-zinc-155 rounded-3xl bg-white hover:border-zinc-300 transition-all shadow-sm">
+                    {hqGrnDeliveries.map(transfer => (
+                      <div key={transfer.id} className="p-5 border border-zinc-155 rounded-3xl bg-white hover:border-zinc-300 transition-all shadow-sm">
                         <div className="flex justify-between items-start">
                           <div>
-                            <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">Reference PO</span>
-                            <span className="text-sm font-bold text-zinc-900">{order.order_number}</span>
+                            <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">GRN Shipment</span>
+                            <span className="text-sm font-bold text-zinc-900">{transfer.transfer_number}</span>
                           </div>
-                          <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] uppercase font-black tracking-wider">{order.status}</span>
+                          <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] uppercase font-black tracking-wider">Dispatched</span>
                         </div>
                         <div className="my-4 text-xs font-semibold text-zinc-550 flex justify-between">
-                          <span>Est Sourcing Value: UGX {order.total_order_value_ugx?.toLocaleString()}</span>
-                          <span>Submitted: {order.submitted_at ? new Date(order.submitted_at).toLocaleDateString() : 'N/A'}</span>
+                          <span>Supplier: {transfer.source_branch_name || 'Procurement'}</span>
+                          <span>Value: UGX {transfer.total_value_ugx?.toLocaleString()}</span>
                         </div>
                         <button
                           type="button"
-                          onClick={() => handleOpenReceiptModal(order)}
+                          onClick={() => handleOpenTransferModal(transfer)}
                           className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all"
                         >
-                          Receive & Stow Sourced Stock
+                          Verify & Receive GRN Shipment
                         </button>
                       </div>
                     ))}
@@ -5653,15 +5509,15 @@ const HQStockInOutTab: React.FC = () => {
               <div className="space-y-4">
                 <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider font-mono flex items-center gap-2">
                   <ArrowRightLeft size={12} />
-                  Incoming Branch Returns ({incomingTransfers.length})
+                  Incoming Branch Returns ({hqBranchReturns.length})
                 </h4>
-                {incomingTransfers.length === 0 ? (
+                {hqBranchReturns.length === 0 ? (
                   <div className="p-8 border border-dashed border-zinc-200 rounded-3xl bg-zinc-50/20 text-center text-zinc-400 italic text-xs">
                     No incoming branch return transfers currently in transit.
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-                    {incomingTransfers.map(t => (
+                    {hqBranchReturns.map(t => (
                       <div key={t.id} className="p-5 border border-zinc-155 rounded-3xl bg-white hover:border-zinc-300 transition-all shadow-sm">
                         <div className="flex justify-between items-start">
                           <div>
@@ -5688,100 +5544,14 @@ const HQStockInOutTab: React.FC = () => {
               </div>
             </div>
 
-            {/* Sourced Receipt Modal */}
-            {isReceiptModalOpen && selectedOrder && (
-              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 font-sans">
-                <form onSubmit={handleReceiptSubmit} className="bg-white rounded-[2rem] w-full max-w-lg overflow-hidden shadow-2xl p-8 animate-fade-in leading-normal">
-                  <h3 className="text-xl font-bold text-zinc-950 mb-1">Process Sourced Goods Receipt (HQ)</h3>
-                  <p className="text-xs text-zinc-500 mb-6">Assign specific batches, expiry guidelines, and store locations for cataloging.</p>
-
-                  <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar mb-6">
-                    {orderLinesDetail.map(line => {
-                      const data = receiptData[line.id];
-                      if (!data) return null;
-                      return (
-                        <div key={line.id} className="p-4 bg-zinc-50 rounded-2xl space-y-3 border border-zinc-100">
-                          <p className="font-bold text-zinc-900 text-sm">{line.product_name}</p>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div className="space-y-1">
-                              <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">Batch ID</label>
-                              <input 
-                                type="text" 
-                                required
-                                className="w-full px-3 py-1.5 bg-white border border-zinc-200 font-mono font-bold rounded-lg uppercase outline-none"
-                                value={data.batchNumber}
-                                onChange={(e) => setReceiptData({
-                                  ...receiptData,
-                                  [line.id]: { ...data, batchNumber: e.target.value }
-                                })}
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">Expiry Date</label>
-                              <input 
-                                type="date" 
-                                required
-                                className="w-full px-3 py-1.5 bg-white border border-zinc-200 rounded-lg outline-none"
-                                value={data.expiryDate}
-                                onChange={(e) => setReceiptData({
-                                  ...receiptData,
-                                  [line.id]: { ...data, expiryDate: e.target.value }
-                                })}
-                              />
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 text-xs items-center">
-                            <p className="text-zinc-500 font-semibold">Qty Ordered: <strong className="text-zinc-800">{line.qty_ordered}</strong> Packs</p>
-                            <div className="space-y-1">
-                              <label className="text-[9px] font-black text-zinc-400 tracking-widest block uppercase">Received Packs</label>
-                              <input 
-                                type="number" 
-                                required
-                                min={0}
-                                className="w-full px-3 py-1 bg-white border border-zinc-200 font-bold rounded-lg text-sm outline-none"
-                                value={data.acceptedQty}
-                                onChange={(e) => setReceiptData({
-                                  ...receiptData,
-                                  [line.id]: { ...data, acceptedQty: Number(e.target.value) }
-                                })}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="flex gap-4">
-                    <button 
-                      type="button" 
-                      onClick={() => {
-                        setIsReceiptModalOpen(false);
-                        setSelectedOrder(null);
-                      }}
-                      disabled={submittingReceipt}
-                      className="flex-1 py-3 text-zinc-400 hover:text-zinc-600 font-bold text-sm"
-                    >
-                      Cancel
-                    </button>
-                    <button 
-                      type="submit"
-                      disabled={submittingReceipt}
-                      className="flex-1 py-3 bg-zinc-950 hover:bg-zinc-850 font-bold text-white rounded-2xl text-sm shadow-md"
-                    >
-                      {submittingReceipt ? 'Storing Goods...' : 'Store Sourced Goods'}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-
             {/* Transfer return modal */}
             {isTransferModalOpen && selectedTransfer && (
               <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 font-sans">
                 <div className="bg-white rounded-[2rem] w-full max-w-lg overflow-hidden shadow-2xl p-8 animate-fade-in leading-normal">
-                  <h3 className="text-xl font-bold text-zinc-950 mb-1">Verify Return Acceptance: {selectedTransfer.transfer_number}</h3>
-                  <p className="text-xs text-zinc-550 mb-6">Review inventory parameters. This adds the exact batches directly back into the HQ store system.</p>
+                  <h3 className="text-xl font-bold text-zinc-950 mb-1">
+                    {isHqProcurementDelivery(selectedTransfer) ? 'Verify Procurement GRN' : 'Verify Return Acceptance'}: {selectedTransfer.transfer_number}
+                  </h3>
+                  <p className="text-xs text-zinc-550 mb-6">Review the dispatched batches before confirming. Confirmation posts this shipment to HQ inventory exactly once.</p>
 
                   <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar mb-6">
                     {transferLinesDetail.map(line => (
@@ -5816,7 +5586,7 @@ const HQStockInOutTab: React.FC = () => {
                       disabled={submittingTransferReturn}
                       className="flex-1 py-3 bg-zinc-950 hover:bg-zinc-850 font-bold text-white rounded-2xl text-sm shadow-md"
                     >
-                      {submittingTransferReturn ? 'Updating Database...' : 'Confirm Return Goods'}
+                      {submittingTransferReturn ? 'Updating Database...' : isHqProcurementDelivery(selectedTransfer) ? 'Confirm GRN Receipt' : 'Confirm Return Goods'}
                     </button>
                   </div>
                 </div>

@@ -46,6 +46,12 @@ const DEFAULT_SETTINGS: ReplenishmentEngineSettings = {
   confidenceModerateThreshold: 55
 };
 
+export const calculateHqNetRequirement = (
+  aggregateBranchShortage: number,
+  hqUsableStock: number,
+  confirmedIncoming: number
+) => Math.max(0, aggregateBranchShortage - hqUsableStock - confirmedIncoming);
+
 /**
  * Fetch tenant settings or return defaults.
  */
@@ -575,4 +581,121 @@ export async function calculateProductForecast(
   }
 
   return output;
+}
+
+/**
+ * Runs the branch replenishment model for every operating branch and rolls the
+ * unmet branch demand up into one HQ procurement requirement. Branch stock is
+ * accounted for by each branch forecast; HQ stock and already-dispatched HQ
+ * purchase orders are then deducted once from the aggregate shortage.
+ */
+export async function calculateAggregateProductForecast(
+  input: Omit<ForecastCalculationInput, 'branchId'> & { branchIds: string[]; inventoryBranchId?: string },
+  cachedProduct?: Product,
+  cachedSettings?: ReplenishmentEngineSettings
+): Promise<ForecastCalculationOutput> {
+  const inventoryBranchId = input.inventoryBranchId || 'HQ';
+  const branchIds = Array.from(new Set(input.branchIds.filter(id => id && id !== inventoryBranchId)));
+  const settings = cachedSettings || await getReplenishmentSettings(input.tenantId);
+  const forecasts = await Promise.all(branchIds.map(branchId => calculateProductForecast({
+    ...input,
+    branchId
+  } as ForecastCalculationInput, cachedProduct, settings)));
+
+  const eligible = forecasts.filter(forecast => forecast.calculationAllowed);
+  const base = forecasts[0] || await calculateProductForecast({
+    ...input,
+    branchId: inventoryBranchId
+  } as ForecastCalculationInput, cachedProduct, settings);
+
+  const total = (field: keyof ForecastCalculationOutput) => eligible.reduce(
+    (sum, forecast) => sum + Number(forecast[field] || 0),
+    0
+  );
+  const product = cachedProduct;
+  const projectedDailyConsumption = total('projectedDailyConsumption');
+  let hqUsableStock = 0;
+
+  const batchesSnap = await getDocs(query(
+    collection(db, 'product_batches'),
+    where('tenantId', '==', input.tenantId),
+    where('branchId', '==', inventoryBranchId),
+    where('productId', '==', input.productId)
+  ));
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const shelfLifePolicyDays = (product as any)?.minimumAcceptableShelfLifeDays || 90;
+  batchesSnap.forEach(snapshot => {
+    const batch = snapshot.data() as ProductBatch;
+    if (['quarantined', 'expired', 'in_transit'].includes(batch.batch_status)) return;
+    if (!batch.expiryDate) {
+      hqUsableStock += Number(batch.quantity || 0);
+      return;
+    }
+    const expiry = new Date(batch.expiryDate);
+    expiry.setHours(0, 0, 0, 0);
+    const remainingDays = Math.round((expiry.getTime() - today.getTime()) / 86400000);
+    if (remainingDays < shelfLifePolicyDays) return;
+    const usableBeforeExpiry = projectedDailyConsumption > 0
+      ? projectedDailyConsumption * (remainingDays - shelfLifePolicyDays)
+      : Number(batch.quantity || 0);
+    hqUsableStock += Math.min(Number(batch.quantity || 0), usableBeforeExpiry);
+  });
+
+  let confirmedIncoming = 0;
+  const multiplier = product ? getBaseUnitMultiplier(product) : 1;
+  const ordersSnap = await getDocs(query(
+    collection(db, 'stock_orders'),
+    where('tenantId', '==', input.tenantId),
+    where('requesting_branch_id', '==', inventoryBranchId),
+    where('status', '==', 'dispatched')
+  ));
+  for (const orderSnapshot of ordersSnap.docs) {
+    const linesSnap = await getDocs(query(
+      collection(db, 'stock_order_lines'),
+      where('tenantId', '==', input.tenantId),
+      where('order_id', '==', orderSnapshot.id),
+      where('product_id', '==', input.productId)
+    ));
+    linesSnap.forEach(lineSnapshot => {
+      const line = lineSnapshot.data() as StockOrderLine;
+      confirmedIncoming += Number(line.qty_supplied || line.qty_ordered || 0) * multiplier;
+    });
+  }
+
+  const aggregateShortage = total('grossNetRequirement');
+  const confidenceScore = eligible.length
+    ? Math.round(eligible.reduce((sum, forecast) => sum + forecast.confidenceScore, 0) / eligible.length)
+    : 0;
+  const missingBranches = forecasts.length - eligible.length;
+
+  return {
+    ...base,
+    branchId: inventoryBranchId,
+    actualConsumption: total('actualConsumption'),
+    adjustedConsumption: total('adjustedConsumption'),
+    adc: total('adc'),
+    earlierHalfAdc: total('earlierHalfAdc'),
+    recentHalfAdc: total('recentHalfAdc'),
+    projectedDailyConsumption,
+    projectedConsumption: total('projectedConsumption'),
+    leadTimeStock: total('leadTimeStock'),
+    safetyBuffer: total('safetyBuffer'),
+    targetStockLevel: total('targetStockLevel'),
+    expiryAdjustedUsableStock: hqUsableStock,
+    confirmedIncoming,
+    grossNetRequirement: calculateHqNetRequirement(aggregateShortage, hqUsableStock, confirmedIncoming),
+    confidenceScore,
+    confidenceLabel: confidenceScore >= settings.confidenceHighThreshold
+      ? 'HIGH'
+      : confidenceScore >= settings.confidenceModerateThreshold ? 'MODERATE' : 'LOW',
+    calculationAllowed: eligible.length > 0,
+    manualReviewReasons: eligible.length > 0
+      ? []
+      : ['No operating branch has enough valid consumption history for this product.'],
+    warnings: [
+      ...Array.from(new Set(eligible.flatMap(forecast => forecast.warnings))),
+      ...(missingBranches > 0 ? [`${missingBranches} branch forecast(s) were excluded because their data was insufficient.`] : [])
+    ]
+  };
 }

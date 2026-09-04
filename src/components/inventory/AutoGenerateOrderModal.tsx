@@ -36,7 +36,7 @@ import {
   AutoGenerateOrderRun, 
   AutoGenerateOrderLine 
 } from '../../types';
-import { getReplenishmentSettings, calculateProductForecast } from '../../services/forecastingService';
+import { getReplenishmentSettings, calculateAggregateProductForecast, calculateProductForecast } from '../../services/forecastingService';
 import { getNetworkFulfilmentRecommendations, createTransferReservationTx } from '../../services/networkFulfilmentService';
 import { revalidateOrderRun, submitOrderRun } from '../../services/orderSubmissionService';
 import { useAuth } from '../../contexts/AuthContext';
@@ -49,6 +49,8 @@ interface AutoGenerateOrderModalProps {
   initialCoverageDays: number;
   initialProductScopes: string[];
   initialCategory: string;
+  mode?: 'branch' | 'hq_aggregate';
+  fixedBranchId?: string;
 }
 
 export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({ 
@@ -57,7 +59,9 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   branches,
   initialCoverageDays,
   initialProductScopes,
-  initialCategory
+  initialCategory,
+  mode = 'branch',
+  fixedBranchId
 }) => {
   const { profile, activeBranchId } = useAuth();
   
@@ -114,11 +118,15 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
       setCoverageDays(initialCoverageDays);
       setProductScopes(initialProductScopes);
       setCategoryScope(initialCategory);
-      if (activeBranchId) {
-        setSelectedBranchId(activeBranchId);
+      if (fixedBranchId || activeBranchId) {
+        setSelectedBranchId(fixedBranchId || activeBranchId || '');
+      }
+      if (mode === 'hq_aggregate') {
+        setCheckCentralStore(false);
+        setCheckOtherBranches(false);
       }
     }
-  }, [isOpen, initialCoverageDays, initialProductScopes, initialCategory, activeBranchId]);
+  }, [isOpen, initialCoverageDays, initialProductScopes, initialCategory, activeBranchId, fixedBranchId, mode]);
 
   // Fetch products on load
   useEffect(() => {
@@ -196,8 +204,17 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
       // Filter products based on selected scope
       const targetProducts = getFilteredProducts();
       const includeOperational = productScopes.includes('operational_inventory');
+      const operationalCandidates = operationalInventory.filter(item => item.type === 'non-fixed');
+      const aggregateOperationalItems = Array.from(operationalCandidates.reduce((groups, item) => {
+        const key = item.uniqueId || item.name.trim().toLowerCase();
+        const current = groups.get(key);
+        if (!current || item.branchId === selectedBranchId) groups.set(key, item);
+        return groups;
+      }, new Map<string, OperationalInventory>()).values());
       const targetOperationalItems = includeOperational
-        ? operationalInventory.filter(item => item.branchId === selectedBranchId && item.type === 'non-fixed')
+        ? mode === 'hq_aggregate'
+          ? aggregateOperationalItems
+          : operationalCandidates.filter(item => item.branchId === selectedBranchId)
         : [];
       if (targetProducts.length === 0 && targetOperationalItems.length === 0) {
         throw new Error('No tenant-created items were found for the selected scopes and branch.');
@@ -218,9 +235,8 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
         const product = targetProducts[i];
         
         // Core Forecasting
-        const forecast = await calculateProductForecast({
+        const forecastInput = {
           tenantId,
-          branchId: selectedBranchId,
           productId: product.id,
           analysisStartDate,
           analysisEndDate,
@@ -229,7 +245,17 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
           includeExceptionalConsumption: !excludeExceptional, // opposite of exclude unusual sales
           temporaryDemandMultiplier: tempMultiplier,
           useSeasonality: applySeasonality
-        }, product, settings);
+        };
+        const forecast = mode === 'hq_aggregate'
+          ? await calculateAggregateProductForecast({
+              ...forecastInput,
+              branchIds: branches.map(branch => branch.id).filter(id => id !== 'HQ'),
+              inventoryBranchId: selectedBranchId
+            }, product, settings)
+          : await calculateProductForecast({
+              ...forecastInput,
+              branchId: selectedBranchId
+            }, product, settings);
 
         const unitsPerPack = product.unitsPerPack || 1;
         
@@ -240,7 +266,11 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
         if (forecast.calculationAllowed && forecast.grossNetRequirement > 0) {
           // Network Fulfilment allocations
-          const allocation = await getNetworkFulfilmentRecommendations({
+          const allocation = mode === 'hq_aggregate' ? {
+            centralAllocation: 0,
+            donorAllocations: [],
+            remainingRequirement: forecast.grossNetRequirement
+          } : await getNetworkFulfilmentRecommendations({
             tenantId,
             branchId: selectedBranchId,
             productId: product.id,
@@ -340,10 +370,18 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
       const analysisStartMs = start.getTime();
       const analysisEndMs = end.getTime();
       for (const item of targetOperationalItems) {
+        const matchingInventoryIds = mode === 'hq_aggregate'
+          ? operationalInventory
+              .filter(candidate => candidate.type === 'non-fixed' && (
+                (item.uniqueId && candidate.uniqueId === item.uniqueId) ||
+                (!item.uniqueId && candidate.name.trim().toLowerCase() === item.name.trim().toLowerCase())
+              ))
+              .map(candidate => candidate.id)
+          : [item.id];
         const issuedUnits = operationalUsage
           .filter(log =>
-            log.branchId === selectedBranchId &&
-            log.inventoryId === item.id &&
+            (mode === 'hq_aggregate' || log.branchId === selectedBranchId) &&
+            matchingInventoryIds.includes(log.inventoryId) &&
             new Date(log.timestamp).getTime() >= analysisStartMs &&
             new Date(log.timestamp).getTime() <= analysisEndMs
           )
@@ -353,7 +391,12 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
         const unitsPerPack = Math.max(1, Number(item.unitPerPack || 1));
         const projectedUsage = (issuedUnits / Math.max(1, lookbackDays)) * coverageDays * tempMultiplier;
-        const recommendationUnits = Math.max(0, Math.ceil(projectedUsage - Number(item.quantityInStock || 0)));
+        const currentStockUnits = mode === 'hq_aggregate'
+          ? operationalInventory
+              .filter(candidate => candidate.branchId === selectedBranchId && matchingInventoryIds.includes(candidate.id))
+              .reduce((sum, candidate) => sum + Number(candidate.quantityInStock || 0), 0)
+          : Number(item.quantityInStock || 0);
+        const recommendationUnits = Math.max(0, Math.ceil(projectedUsage - currentStockUnits));
         const purchasePacks = Math.ceil(recommendationUnits / unitsPerPack);
         if (purchasePacks <= 0) continue;
 
@@ -381,7 +424,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
             costPricePerPack: Number(item.costPerPack || 0),
             supplierId: item.supplier || 'unknown_supplier',
             historicalIssuedUnits: issuedUnits,
-            currentStockUnits: Number(item.quantityInStock || 0)
+            currentStockUnits
           },
           calculationOutputs: {
             projectedUsage,
@@ -389,7 +432,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
           },
           confidenceScore: 100,
           warnings: [],
-          explanation: `Based on ${issuedUnits} units issued during the previous ${lookbackDays} days, projected usage is ${projectedUsage.toFixed(1)} units for the coverage period. Current stock of ${item.quantityInStock || 0} units was deducted.`,
+          explanation: `Based on ${issuedUnits} units issued ${mode === 'hq_aggregate' ? 'across all branches ' : ''}during the previous ${lookbackDays} days, projected usage is ${projectedUsage.toFixed(1)} units for the coverage period. Current ${mode === 'hq_aggregate' ? 'HQ ' : ''}stock of ${currentStockUnits} units was deducted.`,
           wasOverridden: false,
           overrideReason: null,
           overriddenBy: null,
@@ -425,7 +468,8 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
           applySeasonality,
           budgetCeiling: budgetCeiling === '' ? null : budgetCeiling,
           temporaryDemandMultiplier: tempMultiplier,
-          productScopes
+          productScopes,
+          demandScope: mode === 'hq_aggregate' ? 'all_branches' : 'branch'
         },
         calculationVersion: 1,
         productCountAnalysed: totalTargetCount,
@@ -637,8 +681,8 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
               <RotateCw className="animate-spin-slow" size={20} />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-zinc-900">Auto-Generate Order Replenishment</h2>
-              <p className="text-xs text-zinc-500">Deterministic multi-criteria forecasting & network donor allocation</p>
+              <h2 className="text-xl font-bold text-zinc-900">{mode === 'hq_aggregate' ? 'HQ Aggregate Replenishment' : 'Auto-Generate Order Replenishment'}</h2>
+              <p className="text-xs text-zinc-500">{mode === 'hq_aggregate' ? 'Branch-level forecasts aggregated into one HQ sourcing requirement' : 'Deterministic multi-criteria forecasting & network donor allocation'}</p>
             </div>
           </div>
           {step !== 'processing' && (
@@ -655,10 +699,10 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
               <h3 className="text-sm font-bold text-zinc-800 uppercase tracking-wider border-b pb-2">carried-forward properties</h3>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-600">Operating Branch</label>
+                  <label className="text-xs font-semibold text-zinc-600">{mode === 'hq_aggregate' ? 'Receiving Store' : 'Operating Branch'}</label>
                   <input 
                     type="text" 
-                    value={branches.find(b => b.id === selectedBranchId)?.name || 'Current Branch'}
+                    value={mode === 'hq_aggregate' ? 'HQ Central Store' : branches.find(b => b.id === selectedBranchId)?.name || 'Current Branch'}
                     disabled
                     className="w-full px-4 py-2.5 bg-zinc-100 border border-zinc-200 rounded-xl outline-none text-sm font-bold text-zinc-600 cursor-not-allowed"
                   />
@@ -779,6 +823,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
               <div className="space-y-4">
                 <div className="flex gap-4">
+                  {mode !== 'hq_aggregate' && <>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input 
                       type="checkbox" 
@@ -788,7 +833,6 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                     />
                     <span className="text-xs font-bold text-zinc-700">Check Central Store</span>
                   </label>
-
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input 
                       type="checkbox" 
@@ -798,6 +842,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                     />
                     <span className="text-xs font-bold text-zinc-700">Check Other Branches</span>
                   </label>
+                  </>}
 
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input 
@@ -1137,7 +1182,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
             </div>
             <div className="text-center space-y-2">
               <h3 className="text-xl font-bold text-zinc-900">Replenishments Staged Successfully!</h3>
-              <p className="text-sm text-zinc-500">Draft orders and interbranch transfer invoices have been generated and reservations completed.</p>
+              <p className="text-sm text-zinc-500">{mode === 'hq_aggregate' ? 'The HQ sourcing order has been submitted to Procurement for the normal approval and GRN workflow.' : 'Draft orders and interbranch transfer invoices have been generated and reservations completed.'}</p>
             </div>
             <button onClick={onClose} className="px-6 py-2.5 bg-zinc-900 text-white font-bold rounded-xl text-sm hover:bg-zinc-800 transition-colors shadow-lg">
               Close Console

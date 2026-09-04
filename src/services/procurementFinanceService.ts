@@ -160,6 +160,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
   }
   const branchId = order.requesting_branch_id || 'UNKNOWN';
   const branchName = order.requesting_branch_name || 'Branch';
+  const isHqDestination = branchId === 'HQ';
 
   if (financeValue > 0 && supplierId === 'UNKNOWN') throw new Error('A supplier is required for externally purchased stock.');
   if (paymentType === 'cash' && financeValue > 0) {
@@ -277,9 +278,10 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
       transaction.set(refs.transfer, {
         tenantId, transfer_number: `TI-${grnNumber}`, order_id: order.id, grn_id: ids.grnId,
         invoice_id: financeValue > 0 ? ids.invoiceId : null, invoice_ref: invoiceRefValue,
-        source_branch_id: 'HQ', source_branch_name: 'Central HQ',
+        source_branch_id: isHqDestination ? 'PROCUREMENT' : 'HQ',
+        source_branch_name: isHqDestination ? supplierName : 'Central HQ',
         destination_branch_id: branchId, destination_branch_name: branchName,
-        transfer_type: 'central_to_branch', status: 'dispatched', dispatched_at: now.toDate().toISOString(),
+        transfer_type: isHqDestination ? 'procurement_grn' : 'central_to_branch', status: 'dispatched', dispatched_at: now.toDate().toISOString(),
         dispatchedAt: now, dispatched_by: user.uid, dispatched_by_name: user.name,
         total_items: receivedItems.length, total_value_ugx: transferValue, createdAt: now, updatedAt: now
       }, { merge: true });

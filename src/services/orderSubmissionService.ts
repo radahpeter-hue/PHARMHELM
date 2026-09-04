@@ -19,7 +19,7 @@ import {
   Product,
   ProductBatch
 } from '../types';
-import { calculateProductForecast } from './forecastingService';
+import { calculateAggregateProductForecast, calculateProductForecast } from './forecastingService';
 
 export interface RevalidationResult {
   hasChanges: boolean;
@@ -31,6 +31,9 @@ export interface RevalidationResult {
     details: any;
   }[];
 }
+
+export const getHqAutoOrderId = (runId: string, groupKey: string) =>
+  `auto_order_${`${runId}_${groupKey}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180)}`;
 
 /**
  * Perform live pre-submission revalidation for an order run.
@@ -96,16 +99,32 @@ export async function revalidateOrderRun(runId: string): Promise<RevalidationRes
       const product = prodSnap.data() as Product;
 
       // Revalidate stockout / usable stock
-      const forecast = await calculateProductForecast({
-        tenantId,
-        branchId,
-        productId: line.productId,
-        analysisStartDate: run.configuration.analysisStartDate,
-        analysisEndDate: run.configuration.analysisEndDate,
-        forecastCoverageDays: run.configuration.forecastCoverageDays,
-        includeExceptionalConsumption: run.configuration.includeExceptionalConsumption,
-        useSeasonality: run.configuration.applySeasonality
-      });
+      let forecast;
+      if (run.configuration.demandScope === 'all_branches') {
+        const branchesSnap = await getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenantId)));
+        forecast = await calculateAggregateProductForecast({
+          tenantId,
+          branchIds: branchesSnap.docs.map(snapshot => snapshot.id).filter(id => id !== branchId),
+          inventoryBranchId: branchId,
+          productId: line.productId,
+          analysisStartDate: run.configuration.analysisStartDate,
+          analysisEndDate: run.configuration.analysisEndDate,
+          forecastCoverageDays: run.configuration.forecastCoverageDays,
+          includeExceptionalConsumption: run.configuration.includeExceptionalConsumption,
+          useSeasonality: run.configuration.applySeasonality
+        }, product);
+      } else {
+        forecast = await calculateProductForecast({
+          tenantId,
+          branchId,
+          productId: line.productId,
+          analysisStartDate: run.configuration.analysisStartDate,
+          analysisEndDate: run.configuration.analysisEndDate,
+          forecastCoverageDays: run.configuration.forecastCoverageDays,
+          includeExceptionalConsumption: run.configuration.includeExceptionalConsumption,
+          useSeasonality: run.configuration.applySeasonality
+        });
+      }
 
       // Check if usable stock has dropped
       if (forecast.expiryAdjustedUsableStock < line.calculationOutputs?.expiryAdjustedUsableStock) {
@@ -182,6 +201,9 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
       throw new Error('Run snapshot does not exist');
     }
     const run = runSnap.data() as AutoGenerateOrderRun;
+    if (run.status === 'SUBMITTED') {
+      return { orderIds: [], transferIds: [] };
+    }
     const tenantId = run.tenantId;
     const destinationBranchId = run.branchId;
 
@@ -238,33 +260,51 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
       if (items.length === 0) continue;
       const supplierId = groupKey.split('::').slice(1).join('::');
 
-      const orderRef = doc(collection(db, 'stock_orders'));
-      const orderNumber = `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
+      const isHqAggregate = run.configuration.demandScope === 'all_branches';
+      const stableOrderPart = `${runId}_${groupKey}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+      const orderRef = isHqAggregate
+        ? doc(db, 'stock_orders', getHqAutoOrderId(runId, groupKey))
+        : doc(collection(db, 'stock_orders'));
+      const orderNumber = isHqAggregate
+        ? `HQR-${runId.slice(-6)}-${supplierId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'GEN'}`
+        : `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
       const totalCost = items.reduce((sum, item) => sum + item.finalPurchasePacks * ((item.calculationInputs as any)?.costPricePerPack || 0), 0);
+      const now = new Date().toISOString();
+      const isEmergency = Number(run.configuration.temporaryDemandMultiplier || 1) > 1;
 
       const poData = {
         tenantId,
         order_number: orderNumber,
         requesting_branch_id: destinationBranchId,
-        requesting_branch_name: '', // Will populate on read fallback
+        requesting_branch_name: isHqAggregate ? 'HQ Central Store' : '', // Will populate on read fallback
         supplier_id: supplierId,
-        order_type: run.configuration.temporaryDemandMultiplier ? 'emergency' : 'monthly',
+        order_type: isEmergency ? 'emergency' : 'monthly',
         category: items.every(item => item.isOperational) ? 'non_sellable' : 'sellable_non_cosmetic',
         generation_method: 'auto_generated',
-        status: 'draft',
-        is_emergency: !!run.configuration.temporaryDemandMultiplier,
+        status: isHqAggregate ? 'submitted' : 'draft',
+        is_emergency: isEmergency,
         submitted_by: userId,
         total_order_value_ugx: totalCost,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
+        created_at: now,
+        submitted_at: isHqAggregate ? now : null,
         created_by: userId,
         autoGenerateRunId: runId
       };
 
       await runTransaction(db, async (tx) => {
-        tx.set(orderRef, poData);
-        for (const item of items) {
-          const lineRef = doc(collection(db, 'stock_order_lines'));
-          tx.set(lineRef, {
+        const lineRefs = items.map(item => isHqAggregate
+            ? doc(db, 'stock_order_lines', `auto_line_${stableOrderPart}_${item.productId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100)}`)
+            : doc(collection(db, 'stock_order_lines'))
+        );
+        const snapshots = await Promise.all([
+          tx.get(orderRef),
+          ...lineRefs.map(lineRef => tx.get(lineRef))
+        ]);
+        if (!snapshots[0].exists()) tx.set(orderRef, poData);
+        items.forEach((item, index) => {
+          if (snapshots[index + 1].exists()) return;
+          tx.set(lineRefs[index], {
             tenantId,
             order_id: orderRef.id,
             product_id: item.productId,
@@ -272,11 +312,11 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
             qty_ordered: item.finalPurchasePacks,
             unit_cost_ugx: (item.calculationInputs as any)?.costPricePerPack || 0,
             line_total_ugx: item.finalPurchasePacks * ((item.calculationInputs as any)?.costPricePerPack || 0),
-            line_status: 'ordered',
+            line_status: isHqAggregate ? 'pending' : 'ordered',
             isOperational: !!item.isOperational,
-            createdAt: new Date().toISOString()
+            createdAt: now
           });
-        }
+        });
       });
       orderIds.push(orderRef.id);
     }

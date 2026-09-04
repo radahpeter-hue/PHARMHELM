@@ -1005,8 +1005,8 @@ export interface TransferInvoice {
   source_branch_name?: string;
   destination_branch_id: string;
   destination_branch_name?: string;
-  transfer_type: 'branch_to_branch' | 'central_to_branch' | 'branch_to_central' | 'query_return';
-  status: 'draft' | 'dispatched' | 'received' | 'cancelled' | 'fully_accepted' | 'queried';
+  transfer_type: 'branch_to_branch' | 'central_to_branch' | 'branch_to_central' | 'query_return' | 'procurement_grn';
+  status: 'draft' | 'dispatched' | 'receiving' | 'received' | 'cancelled' | 'fully_accepted' | 'queried';
   dispatched_by: string;
   dispatched_by_name?: string;
   dispatched_at: string;
@@ -1639,6 +1639,7 @@ export interface AutoGenerateOrderRun {
     budgetCeiling?: number | null;
     temporaryDemandMultiplier?: number | null;
     productScopes?: string[];
+    demandScope?: 'branch' | 'all_branches';
   };
   calculationVersion: number;
   productCountAnalysed: number;
