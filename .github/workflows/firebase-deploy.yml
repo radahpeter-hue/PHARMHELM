@@ -76,7 +76,7 @@ jobs:
               ruleset_json=$(curl --fail --silent --show-error \
                 -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
                 "https://firebaserules.googleapis.com/v1/${ruleset_name}")
-              active_rules=$(printf '%s' "$ruleset_json" | jq -r '.source.files[] | select(.name == "firestore.rules") | .content' | head -n 1)
+              active_rules=$(printf '%s' "$ruleset_json" | jq -r 'first(.source.files[] | select(.name == "firestore.rules") | .content) // empty')
               if [ -n "$active_rules" ] && [ "$active_rules" = "$(cat firestore.rules)" ]; then
                 echo "The active named-database release exactly matches firestore.rules; accepting the Firebase CLI 409 as an idempotent success."
                 deploy_status=0
@@ -90,7 +90,7 @@ jobs:
                 candidate_json=$(curl --fail --silent --show-error \
                   -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
                   "https://firebaserules.googleapis.com/v1/${candidate_ruleset}")
-                candidate_rules=$(printf '%s' "$candidate_json" | jq -r '.source.files[] | select(.name == "firestore.rules") | .content' | head -n 1)
+                candidate_rules=$(printf '%s' "$candidate_json" | jq -r 'first(.source.files[] | select(.name == "firestore.rules") | .content) // empty')
                 if [ -n "$candidate_rules" ] && [ "$candidate_rules" = "$(cat firestore.rules)" ]; then
                   matching_ruleset="$candidate_ruleset"
                   break
@@ -138,7 +138,7 @@ jobs:
               candidate_status=$?
               set -e
               [ "$candidate_status" -ne 0 ] && continue
-              candidate_rules=$(printf '%s' "$candidate_json" | jq -r '.source.files[]? | select(.name == "firestore.rules") | .content' | head -n 1)
+              candidate_rules=$(printf '%s' "$candidate_json" | jq -r 'first(.source.files[]? | select(.name == "firestore.rules") | .content) // empty')
               if [ -n "$candidate_rules" ] && [ "$candidate_rules" = "$(cat firestore.rules)" ]; then
                 matching_ruleset="$candidate_ruleset"
                 break
