@@ -200,11 +200,11 @@ export const firestoreService = {
     }
   },
 
-  runTransaction: async <T>(updateFunction: (transaction: any) => Promise<T>) => {
+  runTransaction: async <T>(updateFunction: (transaction: any) => Promise<T>, operationPath = 'transaction') => {
     try {
       return await runTransaction(db, updateFunction);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'transaction');
+      handleFirestoreError(error, OperationType.WRITE, operationPath);
     }
   }
 };

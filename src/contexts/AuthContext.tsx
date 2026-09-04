@@ -6,7 +6,6 @@ import { Staff, Branch, SystemSettings, PlatformUser } from '../types';
 import { toast } from 'sonner';
 import { useTenant } from './TenantContext';
 import { sanitizeInput } from '../utils/sanitize';
-import { deduplicateStaff } from '../utils/deduplicateStaff';
 
 export interface ModulePermission {
   access: 'none' | 'view' | 'operate' | 'all';
@@ -747,23 +746,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const staffData = staffSnap.data() as Staff;
               if (staffData.tenantId === tenant.id && (staffData.status === 'active' || staffData.active)) {
                 currentProfile = { ...staffData, id: staffSnap.id };
-                // Historical activation flows could leave a second legacy staff
-                // document containing newer role or branch assignments. Merge it
-                // into the authenticated profile until the migration removes it.
-                if (userEmail) {
-                  try {
-                    const legacySnap = await getDocs(query(
-                      collection(db, 'staff'),
-                      where('authEmail', '==', userEmail.toLowerCase().trim())
-                    ));
-                    const sameTenantProfiles = legacySnap.docs
-                      .filter(candidate => (candidate.data() as Staff).tenantId === tenant.id)
-                      .map(candidate => ({ ...(candidate.data() as Staff), id: candidate.id }));
-                    currentProfile = deduplicateStaff([currentProfile, ...sameTenantProfiles])[0] || currentProfile;
-                  } catch (mergeError) {
-                    console.warn('Could not merge legacy staff assignments into the active profile.', mergeError);
-                  }
-                }
+                // The UID-keyed document is the same authority used by Firestore
+                // rules. Do not merge role, secondary-role or branch grants from
+                // legacy duplicates into the authenticated client profile.
               } else {
                 toast.error('Access denied: Staff account inactive or not assigned to this workspace.');
                 await signOut(auth);

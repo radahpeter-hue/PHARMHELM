@@ -41,11 +41,17 @@ service cloud.firestore {
         request.auth.token.email == "peter.sentongo@pharmhelm" ||
         request.auth.token.email == "peter.sentongo@pharmhelm.com" ||
         request.auth.token.role == 'owner' ||
+        request.auth.token.role == 'Owner' ||
         request.auth.token.role == 'CEO' ||
+        request.auth.token.role == 'ceo' ||
         request.auth.token.role == 'CEO / MD' ||
+        request.auth.token.role == 'ceo / md' ||
         hasRole('owner') ||
+        hasRole('Owner') ||
         hasRole('CEO') ||
-        hasRole('CEO / MD')
+        hasRole('ceo') ||
+        hasRole('CEO / MD') ||
+        hasRole('ceo / md')
       );
     }
 
@@ -153,10 +159,11 @@ service cloud.firestore {
       return isAuthenticated() && (
         hasRole('Cashier') || hasRole('cashier') ||
         hasRole('Pharmacist') || hasRole('pharmacist') ||
-        hasRole('Dispenser') ||
-        hasRole('Trainee') ||
-        hasRole('IT Head') ||
-        hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin') ||
+        hasRole('Dispenser') || hasRole('dispenser') ||
+        hasRole('Trainee') || hasRole('trainee') ||
+        hasRole('IT Head') || hasRole('it head') ||
+        hasRole('Branch Manager') || hasRole('branch manager') ||
+        hasRole('admin') || hasRole('Admin') ||
         isAdmin()
       );
     }

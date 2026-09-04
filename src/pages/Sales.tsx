@@ -29,6 +29,7 @@ import { QuotationPreview } from '../components/sales/QuotationPreview';
 import { A4InvoiceTemplate } from '../components/sales/A4InvoiceTemplate';
 import { QuotationsLog } from '../components/sales/QuotationsLog';
 import { openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
+import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';
 import { db } from '../firebase';
 
 
@@ -48,7 +49,8 @@ function generateUUID() {
 }
 
 const Sales: React.FC = () => {
-  const { profile, activeBranchId, activeBranch } = useAuth();
+  const { profile, activeBranchId, activeBranch, hasPermission } = useAuth();
+  const canProcessSales = canOperatePos(profile, hasPermission('sales', 'operate'));
   const [view, setView] = useState<'pos' | 'ledger' | 'quotations'>('pos');
   const [products, setProducts] = useState<Product[]>([]);
   const [batches, setBatches] = useState<ProductBatch[]>([]);
@@ -501,6 +503,11 @@ const Sales: React.FC = () => {
   }, [selectedInstitution, selectedPatient]);
 
   const handleCheckout = async () => {
+    if (!canProcessSales) {
+      toast.error('Your account can view Sales / POS but is not authorised to process sales.');
+      return;
+    }
+
     if (cart.length === 0) {
       toast.error('Cart is empty');
       return;
@@ -543,6 +550,12 @@ const Sales: React.FC = () => {
   const completeSale = async (receiptWindow?: Window | null) => {
     if (!profile) {
       receiptWindow?.close();
+      return;
+    }
+
+    if (!canProcessSales) {
+      receiptWindow?.close();
+      toast.error('Your account is not authorised to process sales.');
       return;
     }
 
@@ -804,7 +817,7 @@ const Sales: React.FC = () => {
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
           });
-        });
+        }, 'sales/product_batches/products');
 
         finalReceiptId = saleDocumentId;
         completedSale = saleData;
@@ -927,8 +940,7 @@ const Sales: React.FC = () => {
     } catch (error) {
       receiptWindow?.close();
       console.error(error);
-      const message = error instanceof Error ? error.message : 'Unknown checkout error';
-      toast.error(`Failed to process sale: ${message}`);
+      toast.error(`Failed to process sale: ${formatPosCheckoutError(error)}`);
     } finally {
       setIsProcessing(false);
     }
@@ -1238,11 +1250,14 @@ const Sales: React.FC = () => {
         <div className="flex bg-zinc-100 p-1 rounded-xl border border-zinc-200">
           <button
             onClick={() => setView('pos')}
+            disabled={!canProcessSales}
+            title={!canProcessSales ? 'This account has view-only Sales / POS access' : undefined}
             className={cn(
               "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
               view === 'pos' 
                 ? "bg-white text-zinc-900 shadow-sm border border-zinc-200" 
-                : "text-zinc-500 hover:text-zinc-700"
+                : "text-zinc-500 hover:text-zinc-700",
+              !canProcessSales && "cursor-not-allowed opacity-50"
             )}
           >
             <ShoppingCart className="w-4 h-4" />
@@ -1275,7 +1290,25 @@ const Sales: React.FC = () => {
         </div>
       </div>
 
-      {view === 'pos' && (
+      {view === 'pos' && !canProcessSales && (
+        <div className="flex-1 rounded-3xl border border-amber-200 bg-amber-50 p-8 flex items-center justify-center text-center">
+          <div className="max-w-xl space-y-2">
+            <h2 className="text-lg font-black text-amber-950">Sales processing is not enabled for this account</h2>
+            <p className="text-sm text-amber-800">
+              You can review receipts and quotations, but completing a sale requires Sales / POS operate access and an authorised POS role.
+            </p>
+            <button
+              type="button"
+              onClick={() => setView('ledger')}
+              className="mt-3 rounded-xl bg-amber-900 px-5 py-3 text-xs font-black uppercase tracking-wider text-white"
+            >
+              Open Receipt Ledger
+            </button>
+          </div>
+        </div>
+      )}
+
+      {view === 'pos' && canProcessSales && (
         <div className="flex-1 flex flex-col gap-6 overflow-visible lg:overflow-hidden animate-fade-in">
           {/* Top Bar: Context Selection & Receipt Ledger Toggle */}
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 w-full bg-zinc-50/50 p-4 rounded-3xl border border-zinc-200/60 shadow-sm">
@@ -2222,7 +2255,7 @@ const Sales: React.FC = () => {
                   <div>
                     <button 
                       onClick={() => completeSale(openReceiptPrintWindow())}
-                      disabled={isProcessing}
+                      disabled={isProcessing || !canProcessSales}
                       className="w-full py-4 bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-400 text-white rounded-2xl font-bold text-xs transition-all flex items-center justify-center gap-1.5"
                     >
                       {isProcessing ? (
