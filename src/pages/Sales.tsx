@@ -11,7 +11,9 @@ import {
   logMovementAndAggregateInTx, 
   getBranchProductBatchRefs, 
   getBaseUnitMultiplier,
-  logSaleMovements
+  logSaleMovements,
+  reconcileSaleConsumptionMovements,
+  isInventoryBatchUnexpired
 } from '../services/consumptionService';
 import { 
   Product, Sale, SaleItem, SaleContext, PaymentMethodType, 
@@ -224,6 +226,16 @@ const Sales: React.FC = () => {
   }, [profile?.tenantId, profile?.uid, activeBranchId]);
 
   useEffect(() => {
+    if (!profile?.tenantId || !activeBranchId) return;
+    reconcileSaleConsumptionMovements({
+      tenantId: profile.tenantId,
+      branchId: activeBranchId,
+      createdBy: profile.uid,
+      maxSales: 100
+    }).catch(error => console.warn('Pending sale consumption reconciliation could not complete:', error));
+  }, [profile?.tenantId, profile?.uid, activeBranchId]);
+
+  useEffect(() => {
     if (selectedPatient?.discountRate) {
       setDiscountPercentage(selectedPatient.discountRate);
     } else if (selectedInstitution?.discountRate) {
@@ -281,7 +293,7 @@ const Sales: React.FC = () => {
       // FEFO Rule: Pick batch with nearest expiry
       const productBatches = batches
         .filter(b => b.productId === product.id && b.quantity >= multiplier && b.batch_status === 'active')
-        .filter(b => new Date(b.expiryDate) > new Date()) // Never add expired batches
+        .filter(b => isInventoryBatchUnexpired(b.expiryDate)) // Never add expired batches
         .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
 
       if (productBatches.length === 0) {
@@ -409,7 +421,7 @@ const Sales: React.FC = () => {
 
       const otherBatches = batches
         .filter(b => b.productId === productId && b.batchNumber !== batchNumber && b.quantity >= multiplier && b.batch_status === 'active')
-        .filter(b => new Date(b.expiryDate) > new Date())
+        .filter(b => isInventoryBatchUnexpired(b.expiryDate))
         .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
 
       if (otherBatches.length === 0) {
@@ -548,8 +560,9 @@ const Sales: React.FC = () => {
     // POM/Controlled drug check
     const hasControlled = cart.some(item => {
       const product = products.find(p => p.id === item.productId);
-      // Assuming we have a way to check if product is POM/Controlled
-      return false; // Placeholder
+      if (!product) return false;
+      const category = String(product.prescriptionCategory || '').trim().toLowerCase();
+      return category === 'controlled' || category === 'prescription only' || category === 'pom' || category === 'prescription-only'
     });
 
     if (hasControlled && !selectedPrescriber) {
@@ -728,69 +741,127 @@ const Sales: React.FC = () => {
         };
 
         const saleRef = doc(db, 'sales', saleDocumentId);
-        const stockLines = cart.filter(item => !item.isService).map(item => {
-          const batch = batches.find(b => b.productId === item.productId && b.batchNumber === item.batchNumber);
-          const product = products.find(p => p.id === item.productId);
-          if (!batch || !product) {
-            throw new Error(`Stock record is missing for ${item.productName}. Refresh the page and try again.`);
-          }
-          return {
-            item,
-            batch,
-            product,
-            batchRef: doc(db, 'product_batches', batch.id),
-            productRef: doc(db, 'products', product.id),
-            multiplier: getBaseUnitMultiplier(product)
-          };
-        });
+        const stockItems = cart.filter(item => !item.isService);
+        const uniqueProductIds = Array.from(new Set(stockItems.map(item => item.productId)));
+        const productMap = new Map(uniqueProductIds.map(productId => {
+          const product = products.find(p => p.id === productId);
+          if (!product) throw new Error(`Product ${productId} is missing. Refresh the page and try again.`);
+          return [productId, product] as const;
+        }));
+        const batchRefsByProduct = new Map<string, { ref: any; id: string }[]>();
+        for (const productId of uniqueProductIds) {
+          batchRefsByProduct.set(productId, await getBranchProductBatchRefs(profile.tenantId, activeBranchId!, productId));
+        }
 
+        let finalizedSaleItems = saleData.items;
         await firestoreService.runTransaction(async transaction => {
           const existingSale = await transaction.get(saleRef);
-          if (existingSale.exists()) return;
+          if (existingSale.exists()) {
+            finalizedSaleItems = ((existingSale.data() as Sale).items || saleData.items);
+            return;
+          }
 
-          // Firestore requires every read to complete before the first write.
-          const batchSnapshots = new Map<string, any>();
           const productSnapshots = new Map<string, any>();
-          for (const line of stockLines) {
-            if (!batchSnapshots.has(line.batch.id)) {
-              batchSnapshots.set(line.batch.id, await transaction.get(line.batchRef));
+          const batchSnapshotsByProduct = new Map<string, Array<{ id: string; ref: any; data: any }>>();
+
+          // Complete every read before the first write. All candidate batches are read so
+          // a transaction retry can re-run FEFO against the latest quantities.
+          for (const productId of uniqueProductIds) {
+            const productRef = doc(db, 'products', productId);
+            productSnapshots.set(productId, await transaction.get(productRef));
+            const rows: Array<{ id: string; ref: any; data: any }> = [];
+            for (const batchRef of batchRefsByProduct.get(productId) || []) {
+              const snapshot = await transaction.get(batchRef.ref);
+              if (snapshot.exists()) rows.push({ id: batchRef.id, ref: batchRef.ref, data: snapshot.data() });
             }
-            if (!productSnapshots.has(line.product.id)) {
-              productSnapshots.set(line.product.id, await transaction.get(line.productRef));
-            }
+            batchSnapshotsByProduct.set(productId, rows);
           }
 
-          const batchDeductions = new Map<string, number>();
+          const allocationsByProduct = new Map<string, Array<{ batchId: string; batchNumber: string; expiryDate?: string; baseQuantity: number; costPerBaseUnit: number }>>();
           const productDeductions = new Map<string, number>();
-          for (const line of stockLines) {
-            batchDeductions.set(line.batch.id, (batchDeductions.get(line.batch.id) || 0) + (line.item.quantity * line.multiplier));
-            productDeductions.set(line.product.id, (productDeductions.get(line.product.id) || 0) + (line.item.quantity * line.multiplier));
+
+          for (const productId of uniqueProductIds) {
+            const product = productMap.get(productId)!;
+            const multiplier = getBaseUnitMultiplier(product);
+            const requestedBaseUnits = stockItems
+              .filter(item => item.productId === productId)
+              .reduce((sum, item) => sum + Number(item.quantity || 0) * multiplier, 0);
+            productDeductions.set(productId, requestedBaseUnits);
+
+            const candidates = (batchSnapshotsByProduct.get(productId) || [])
+              .filter(row => row.data.tenantId === profile.tenantId && row.data.branchId === activeBranchId)
+              .filter(row => String(row.data.batch_status || '').toLowerCase() === 'active')
+              .filter(row => isInventoryBatchUnexpired(row.data.expiryDate))
+              .filter(row => Number(row.data.quantity || 0) > 0)
+              .sort((a, b) => new Date(a.data.expiryDate || '9999-12-31').getTime() - new Date(b.data.expiryDate || '9999-12-31').getTime());
+
+            let remaining = requestedBaseUnits;
+            const allocations: Array<{ batchId: string; batchNumber: string; expiryDate?: string; baseQuantity: number; costPerBaseUnit: number }> = [];
+            for (const candidate of candidates) {
+              if (remaining <= 0) break;
+              const available = Math.max(0, Number(candidate.data.quantity || 0));
+              const take = Math.min(remaining, available);
+              if (take <= 0) continue;
+              allocations.push({
+                batchId: candidate.id,
+                batchNumber: String(candidate.data.batchNumber || 'UNSPECIFIED'),
+                expiryDate: candidate.data.expiryDate,
+                baseQuantity: take,
+                costPerBaseUnit: Number(candidate.data.purchasePrice || 0)
+              });
+              remaining -= take;
+            }
+
+            if (remaining > 0) {
+              throw new Error(`Insufficient unexpired FEFO stock for ${product.name}. Missing ${remaining} base units.`);
+            }
+
+            const actualCost = allocations.reduce((sum, allocation) => sum + allocation.baseQuantity * allocation.costPerBaseUnit, 0);
+            const productGrossRevenue = stockItems.filter(item => item.productId === productId).reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+            const productNetRevenue = productGrossRevenue * (1 - (discountPercentage / 100));
+            if (productNetRevenue + 0.0001 < actualCost) {
+              throw new Error(`Checkout blocked after FEFO reallocation: ${product.name} would sell below the actual allocated batch cost. Minimum UGX ${Math.ceil(actualCost).toLocaleString()}, net line revenue UGX ${Math.floor(productNetRevenue).toLocaleString()}.`);
+            }
+            allocationsByProduct.set(productId, allocations);
           }
 
-          for (const line of stockLines) {
-            if (batchDeductions.has(line.batch.id)) {
-              const snapshot = batchSnapshots.get(line.batch.id);
-              if (!snapshot?.exists()) throw new Error(`Batch ${line.batch.batchNumber} no longer exists.`);
-              const available = Number(snapshot.data().quantity || 0);
-              const deduction = batchDeductions.get(line.batch.id)!;
-              if (deduction > available) throw new Error(`Insufficient stock for ${line.item.productName}. Available base units: ${available}.`);
-              transaction.update(line.batchRef, { quantity: available - deduction, updatedAt: serverTimestamp() });
-              batchDeductions.delete(line.batch.id);
-            }
-            if (productDeductions.has(line.product.id)) {
-              const snapshot = productSnapshots.get(line.product.id);
-              if (!snapshot?.exists()) throw new Error(`Product ${line.item.productName} no longer exists.`);
-              const currentStock = Number(snapshot.data().stock || 0);
-              const deduction = productDeductions.get(line.product.id)!;
-              if (deduction > currentStock) {
-                throw new Error(`Inventory aggregate mismatch for ${line.item.productName}. Product stock has ${currentStock} base units but the sale requires ${deduction}. Reconcile inventory before retrying.`);
-              }
-              transaction.update(line.productRef, { stock: currentStock - deduction, updatedAt: serverTimestamp() });
-              productDeductions.delete(line.product.id);
+          // Apply FEFO batch deductions.
+          for (const [productId, allocations] of allocationsByProduct) {
+            const rows = batchSnapshotsByProduct.get(productId) || [];
+            for (const allocation of allocations) {
+              const row = rows.find(candidate => candidate.id === allocation.batchId);
+              if (!row) throw new Error(`Allocated batch ${allocation.batchNumber} disappeared during checkout.`);
+              const available = Number(row.data.quantity || 0);
+              transaction.update(row.ref, { quantity: available - allocation.baseQuantity, updatedAt: serverTimestamp() });
             }
           }
 
-          const cleanSaleData = JSON.parse(JSON.stringify(saleData));
+          // Keep product aggregate stock synchronized with base-unit batch deductions.
+          for (const [productId, deduction] of productDeductions) {
+            const snapshot = productSnapshots.get(productId);
+            const product = productMap.get(productId)!;
+            if (!snapshot?.exists()) throw new Error(`Product ${product.name} no longer exists.`);
+            if (snapshot.data().tenantId !== profile.tenantId) throw new Error(`Product tenant mismatch for ${product.name}.`);
+            const currentStock = Number(snapshot.data().stock || 0);
+            if (deduction > currentStock) {
+              throw new Error(`Inventory aggregate mismatch for ${product.name}. Product stock has ${currentStock} base units but FEFO requires ${deduction}. Reconcile inventory before retrying.`);
+            }
+            transaction.update(doc(db, 'products', productId), { stock: currentStock - deduction, updatedAt: serverTimestamp() });
+          }
+
+          finalizedSaleItems = saleData.items.map(item => {
+            if (item.isService) return item;
+            const allocations = allocationsByProduct.get(item.productId) || [];
+            return {
+              ...item,
+              batchId: allocations.length === 1 ? allocations[0].batchId : item.batchId,
+              batchNumber: allocations.length === 1 ? allocations[0].batchNumber : (allocations.length > 1 ? 'FEFO-MULTI' : item.batchNumber),
+              expiryDate: allocations.length === 1 ? allocations[0].expiryDate : (allocations.length > 1 ? 'Multiple' : item.expiryDate),
+              batchAllocations: allocations
+            };
+          });
+
+          const cleanSaleData = JSON.parse(JSON.stringify({ ...saleData, items: finalizedSaleItems }));
           transaction.set(saleRef, {
             ...cleanSaleData,
             inventoryPosted: true,
@@ -801,7 +872,7 @@ const Sales: React.FC = () => {
         }, 'sales/product_batches/products');
 
         finalReceiptId = saleDocumentId;
-        completedSale = saleData;
+        completedSale = { ...saleData, items: finalizedSaleItems };
         stockPostedAtomically = true;
         try {
           await logSaleMovements(saleDocumentId, completedSale, false, null, profile.uid, true);
@@ -939,7 +1010,7 @@ const Sales: React.FC = () => {
     let expDate = 'N/A';
     let oldestBatch = null;
     
-    const productBatches = batches.filter(b => b.productId === product.id && b.quantity > 0 && b.batch_status === 'active');
+    const productBatches = batches.filter(b => b.productId === product.id && b.quantity > 0 && b.batch_status === 'active' && isInventoryBatchUnexpired(b.expiryDate));
     if (productBatches.length > 0) {
       oldestBatch = productBatches.sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime())[0];
       batchNum = oldestBatch.batchNumber;

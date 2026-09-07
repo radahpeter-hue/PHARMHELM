@@ -20,6 +20,66 @@ import {
 import { calculateProductForecast, getReplenishmentSettings } from './forecastingService';
 
 /**
+ * Returns confirmed outbound commitments for a branch/product across both
+ * canonical transfer line documents and live transfer reservations.
+ */
+async function getConfirmedOutboundCommitments(
+  tenantId: string,
+  sourceBranchId: string,
+  productId: string
+): Promise<number> {
+  const activeStatuses = new Set(['pending_approval', 'approved', 'dispatched', 'receiving', 'in_transit']);
+  let transferQty = 0;
+
+  const transferSnap = await getDocs(query(
+    collection(db, 'transfer_invoices'),
+    where('tenantId', '==', tenantId),
+    where('source_branch_id', '==', sourceBranchId)
+  ));
+  const activeTransfers = transferSnap.docs.filter(d => activeStatuses.has(String(d.data().status || '').toLowerCase()));
+
+  for (const transferDoc of activeTransfers) {
+    const transfer = transferDoc.data() as any;
+    const embeddedItems = Array.isArray(transfer.items) ? transfer.items : [];
+    for (const item of embeddedItems) {
+      if (item.product_id === productId) {
+        transferQty += Math.max(0, Number(item.qty_dispatched ?? item.qty_requested ?? 0));
+      }
+    }
+
+    const lineSnap = await getDocs(query(
+      collection(db, 'transfer_invoice_lines'),
+      where('tenantId', '==', tenantId),
+      where('transfer_id', '==', transferDoc.id)
+    ));
+    lineSnap.forEach(lineDoc => {
+      const line = lineDoc.data() as any;
+      if (line.product_id === productId) {
+        transferQty += Math.max(0, Number(line.qty_dispatched ?? line.qty_requested ?? 0));
+      }
+    });
+  }
+
+  let reservedQty = 0;
+  const reservationsSnap = await getDocs(query(
+    collection(db, 'inventoryTransferReservations'),
+    where('tenantId', '==', tenantId),
+    where('sourceBranchId', '==', sourceBranchId),
+    where('productId', '==', productId),
+    where('status', 'in', ['PENDING', 'ACTIVE'])
+  ));
+  const nowIso = new Date().toISOString();
+  reservationsSnap.forEach(d => {
+    const reservation = d.data() as InventoryTransferReservation;
+    if (reservation.expiresAt > nowIso) {
+      reservedQty += Math.max(0, Number(reservation.reservedQuantityBaseUnits || 0));
+    }
+  });
+
+  return transferQty + reservedQty;
+}
+
+/**
  * Calculates a potential donor branch's transferable excess stock.
  */
 export async function calculateDonorTransferableExcess(
@@ -67,55 +127,8 @@ export async function calculateDonorTransferableExcess(
     };
   }
 
-  // 2. Query outstanding outbound transfer commitments (dispatched or pending approvals)
-  let pendingTransfersQty = 0;
-  try {
-    const outboundTransfersSnap = await getDocs(
-      query(
-        collection(db, 'transfer_invoices'),
-        where('tenantId', '==', tenantId),
-        where('source_branch_id', '==', donorBranchId),
-        where('status', 'in', ['pending_approval', 'approved', 'dispatched'])
-      )
-    );
-
-    outboundTransfersSnap.forEach(docSnap => {
-      const transfer = docSnap.data();
-      const items = transfer.items || [];
-      const item = items.find((i: any) => i.product_id === productId);
-      if (item) {
-        pendingTransfersQty += item.qty_dispatched || item.qty_requested || 0;
-      }
-    });
-  } catch (e) {
-    console.warn('Error fetching outbound transfers:', e);
-  }
-
-  // 3. Query active unexpired reservations for this donor branch
-  let reservedQty = 0;
-  try {
-    const activeReservationsSnap = await getDocs(
-      query(
-        collection(db, 'inventoryTransferReservations'),
-        where('tenantId', '==', tenantId),
-        where('sourceBranchId', '==', donorBranchId),
-        where('productId', '==', productId),
-        where('status', 'in', ['PENDING', 'ACTIVE'])
-      )
-    );
-
-    const now = new Date().toISOString();
-    activeReservationsSnap.forEach(docSnap => {
-      const res = docSnap.data() as InventoryTransferReservation;
-      if (res.expiresAt > now) {
-        reservedQty += res.reservedQuantityBaseUnits;
-      }
-    });
-  } catch (e) {
-    console.warn('Error fetching reservations:', e);
-  }
-
-  const confirmedOutboundCommitments = pendingTransfersQty + reservedQty;
+  // 2. Canonical commitments include embedded transfer lines, separate transfer_invoice_lines, and live reservations.
+  const confirmedOutboundCommitments = await getConfirmedOutboundCommitments(tenantId, donorBranchId, productId);
 
   // Donor Protected Requirement = Projected Consumption + Lead-Time Stock + Safety Buffer + Confirmed Outbound Commitments
   const protectedRequirement = forecast.projectedConsumption + 
@@ -267,7 +280,7 @@ export async function getNetworkFulfilmentRecommendations(params: {
           // As per prompt: HQ allocatable stock is Usable Stock minus outbound commitments and protected emergency stock.
           // Let's assume HQ's usable stock is its expiryAdjustedUsableStock.
           // Central store allocation: MIN(Gross Net Requirement, Central Store Allocatable Stock)
-          const hqCommitments = 0; // Simple stub
+          const hqCommitments = await getConfirmedOutboundCommitments(tenantId, hqBranchId, productId);
           const hqAllocatable = Math.max(0, centralForecast.expiryAdjustedUsableStock - hqCommitments);
           
           centralAllocation = Math.min(remaining, hqAllocatable);
@@ -418,9 +431,19 @@ export async function createTransferReservationTx(params: {
       if (!snapshot.exists()) return;
       const batch = snapshot.data();
       const status = String(batch.batch_status || '').toLowerCase();
-      const expiryMs = batch.expiryDate ? new Date(`${batch.expiryDate}T23:59:59`).getTime() : Number.POSITIVE_INFINITY;
+      const rawExpiry = String(batch.expiryDate || '').trim();
+      let expiryMs = Number.POSITIVE_INFINITY;
+      if (/^\d{4}-\d{2}$/.test(rawExpiry)) {
+        const [year, month] = rawExpiry.split('-').map(Number);
+        expiryMs = new Date(year, month, 0, 23, 59, 59, 999).getTime();
+      } else if (/^\d{4}-\d{2}-\d{2}$/.test(rawExpiry)) {
+        const [year, month, day] = rawExpiry.split('-').map(Number);
+        expiryMs = new Date(year, month - 1, day, 23, 59, 59, 999).getTime();
+      } else if (rawExpiry) {
+        expiryMs = new Date(rawExpiry).getTime();
+      }
       if (['quarantined', 'expired', 'recalled', 'blocked'].includes(status)) return;
-      if (Number.isFinite(expiryMs) && expiryMs <= now.getTime()) return;
+      if (!Number.isFinite(expiryMs) || expiryMs < now.getTime()) return;
       totalUsable += Math.max(0, Number(batch.quantity || 0));
     });
 

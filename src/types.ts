@@ -588,7 +588,9 @@ export interface SaleItem {
   isService?: boolean;
   batchNumber?: string;
   expiryDate?: string;
+  batchAllocations?: Array<{ batchId: string; batchNumber: string; expiryDate?: string; baseQuantity: number; costPerBaseUnit: number }>;
 }
+
 
 export type SaleContext = string;
 

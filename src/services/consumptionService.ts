@@ -6,7 +6,8 @@ import {
   where, 
   serverTimestamp, 
   Timestamp,
-  runTransaction
+  runTransaction,
+  getDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Product, ProductBatch, InventoryMovementEvent, BranchConsumptionDaily, Sale, SaleItem } from '../types';
@@ -15,6 +16,28 @@ import { Product, ProductBatch, InventoryMovementEvent, BranchConsumptionDaily, 
  * Utility to determine quantity multiplier to convert commercial units (packs, strips)
  * to the base inventory units (e.g. tablets, capsules, ml).
  */
+export function isInventoryBatchUnexpired(expiryDate?: string, now: Date = new Date()): boolean {
+  if (!expiryDate) return true;
+  const raw = String(expiryDate).trim();
+  if (!raw) return true;
+
+  // Regulatory stock records frequently store YYYY-MM-DD or YYYY-MM.
+  // A dated batch remains usable through the end of its recorded expiry day,
+  // while month-only expiry remains usable through the final day of the month.
+  let expiry: Date;
+  if (/^\d{4}-\d{2}$/.test(raw)) {
+    const [year, month] = raw.split('-').map(Number);
+    expiry = new Date(year, month, 0, 23, 59, 59, 999);
+  } else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const [year, month, day] = raw.split('-').map(Number);
+    expiry = new Date(year, month - 1, day, 23, 59, 59, 999);
+  } else {
+    expiry = new Date(raw);
+    if (Number.isNaN(expiry.getTime())) return false;
+  }
+  return expiry.getTime() >= now.getTime();
+}
+
 export function getBaseUnitMultiplier(product: Product): number {
   if (!product) return 1;
   const unit = (product.unitOfSell || product.unit || '').toLowerCase();
@@ -139,7 +162,7 @@ export async function logMovementAndAggregateInTx(
     const bSnap = await transaction.get(bRef.ref);
     if (bSnap.exists()) {
       const batch = bSnap.data() as ProductBatch;
-      const isUnexpired = batch.expiryDate ? new Date(batch.expiryDate) > new Date() : true;
+      const isUnexpired = isInventoryBatchUnexpired(batch.expiryDate);
       const isActive = batch.batch_status === 'active';
       if (isActive && isUnexpired) {
         currentUsableStock += batch.quantity || 0;
@@ -334,4 +357,71 @@ export async function logSaleMovements(
       });
     });
   }
+}
+
+
+/**
+ * Reconciles durable sales against deterministic movement events.
+ * Safe to call repeatedly because logSaleMovements uses deterministic event IDs.
+ * Voided sales are guaranteed to have both the original SALE and SALE_REVERSAL events,
+ * producing a net-zero consumption effect while preserving the audit trail.
+ */
+export async function reconcileSaleConsumptionMovements(params: {
+  tenantId: string;
+  branchId: string;
+  createdBy?: string;
+  maxSales?: number;
+}): Promise<{ checked: number; repaired: number; failures: number }> {
+  const { tenantId, branchId, createdBy = 'system-reconciliation', maxSales = 100 } = params;
+  if (!tenantId || !branchId) return { checked: 0, repaired: 0, failures: 0 };
+
+  const salesSnap = await getDocs(query(
+    collection(db, 'sales'),
+    where('tenantId', '==', tenantId),
+    where('branchId', '==', branchId)
+  ));
+
+  const candidateDocs = salesSnap.docs
+    .filter(d => ['completed', 'voided'].includes(String(d.data().status || '').toLowerCase()))
+    .sort((a, b) => new Date(String(b.data().timestamp || 0)).getTime() - new Date(String(a.data().timestamp || 0)).getTime())
+    .slice(0, maxSales);
+
+  let repaired = 0;
+  let failures = 0;
+
+  for (const saleDoc of candidateDocs) {
+    const sale = { id: saleDoc.id, ...saleDoc.data() } as Sale;
+    try {
+      const productIds = Array.from(new Set((sale.items || []).filter(i => !i.isService).map(i => i.productId)));
+      let missing = false;
+      for (const productId of productIds) {
+        const eventId = `sales_${sale.id}_${productId}_${productId}`;
+        const eventSnap = await getDoc(doc(db, 'inventoryMovementEvents', eventId));
+        if (!eventSnap.exists()) missing = true;
+      }
+
+      if (missing) {
+        await logSaleMovements(sale.id, sale, false, null, createdBy, true);
+        repaired += 1;
+      }
+
+      if (sale.status === 'voided') {
+        let reversalMissing = false;
+        for (const productId of productIds) {
+          const reversalId = `sales_${sale.id}_${productId}_reversal_${productId}`;
+          const reversalSnap = await getDoc(doc(db, 'inventoryMovementEvents', reversalId));
+          if (!reversalSnap.exists()) reversalMissing = true;
+        }
+        if (reversalMissing) {
+          await logSaleMovements(sale.id, sale, true, `sales_${sale.id}`, createdBy, true);
+          repaired += 1;
+        }
+      }
+    } catch (error) {
+      failures += 1;
+      console.warn(`Consumption reconciliation failed for sale ${sale.id}:`, error);
+    }
+  }
+
+  return { checked: candidateDocs.length, repaired, failures };
 }
