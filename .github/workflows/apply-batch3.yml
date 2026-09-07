@@ -20,14 +20,28 @@ jobs:
         shell: bash
         run: |
           set -e
-          if [ ! -f scripts/apply_batch3_planning_compliance.py ]; then
-            echo "Batch 3 patch already applied."
-            exit 0
-          fi
-          python3 scripts/apply_batch3_planning_compliance.py
-          rm scripts/apply_batch3_planning_compliance.py
+          patched=false
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/pages/Sales.tsx src/services/consumptionService.ts src/services/networkFulfilmentService.ts src/types.ts scripts/apply_batch3_planning_compliance.py
-          git commit -m "fix: harden batch 3 planning and compliance"
+
+          if [ -f scripts/apply_batch3_planning_compliance.py ]; then
+            python3 scripts/apply_batch3_planning_compliance.py
+            rm scripts/apply_batch3_planning_compliance.py
+            patched=true
+          fi
+
+          if [ -f scripts/apply_batch3_commitment_correction.py ]; then
+            python3 scripts/apply_batch3_commitment_correction.py
+            rm scripts/apply_batch3_commitment_correction.py
+            patched=true
+          fi
+
+          if [ "$patched" != "true" ]; then
+            echo "Batch 3 patches already applied."
+            exit 0
+          fi
+
+          git add src/pages/Sales.tsx src/services/consumptionService.ts src/services/networkFulfilmentService.ts src/types.ts scripts/apply_batch3_planning_compliance.py scripts/apply_batch3_commitment_correction.py 2>/dev/null || true
+          git add -A
+          git commit -m "fix: finalize batch 3 planning and compliance"
           git push origin HEAD:main
