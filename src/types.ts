@@ -547,6 +547,14 @@ export interface Sale {
   secondaryPaymentMethod?: string;
   secondaryAmount?: number;
   welfareAmount?: number;
+  welfareBeneficiaryIsStaff?: boolean;
+  welfarePostingStatus?: 'pending' | 'posted' | 'reversed' | 'not_applicable';
+  welfarePostingId?: string;
+  welfarePostingAmount?: number;
+  welfarePostingUpdatedAt?: unknown;
+  sourceQuotationId?: string;
+  quotationConversionStatus?: 'pending' | 'converted' | 'not_applicable';
+  quotationConvertedAt?: string;
   cashierId: string;
   clientId?: string;
   patientId?: string;
