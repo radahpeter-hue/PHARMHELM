@@ -1,0 +1,33 @@
+name: Apply Batch 3 Patch
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  apply_patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Apply Batch 3 patch once
+        shell: bash
+        run: |
+          set -e
+          if [ ! -f scripts/apply_batch3_planning_compliance.py ]; then
+            echo "Batch 3 patch already applied."
+            exit 0
+          fi
+          python3 scripts/apply_batch3_planning_compliance.py
+          rm scripts/apply_batch3_planning_compliance.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pages/Sales.tsx src/services/consumptionService.ts src/services/networkFulfilmentService.ts src/types.ts scripts/apply_batch3_planning_compliance.py
+          git commit -m "fix: harden batch 3 planning and compliance"
+          git push origin HEAD:main
