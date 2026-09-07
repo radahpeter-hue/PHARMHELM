@@ -30,6 +30,7 @@ import { A4InvoiceTemplate } from '../components/sales/A4InvoiceTemplate';
 import { QuotationsLog } from '../components/sales/QuotationsLog';
 import { openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
 import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';
+import { reviseSaleInventoryAtomically, voidSaleInventoryAtomically } from '../services/saleInventoryIntegrityService';
 import { db } from '../firebase';
 
 
@@ -513,6 +514,11 @@ const Sales: React.FC = () => {
       return;
     }
 
+    if (!activeBranchId) {
+      toast.error('Select an active branch before processing a sale.');
+      return;
+    }
+
     // Check if any cart item's price is below cost price of that specific batch
     const belowCostItem = cart.find(item => !item.isService && item.unitPrice < item.costPrice);
     if (belowCostItem) {
@@ -556,6 +562,12 @@ const Sales: React.FC = () => {
     if (!canProcessSales) {
       receiptWindow?.close();
       toast.error('Your account is not authorised to process sales.');
+      return;
+    }
+
+    if (!editingSaleId && !activeBranchId) {
+      receiptWindow?.close();
+      toast.error('Select an active branch before processing a sale.');
       return;
     }
 
@@ -610,117 +622,68 @@ const Sales: React.FC = () => {
 
       if (editingSaleId) {
         const originalSale = sales.find(s => s.id === editingSaleId);
-        if (originalSale) {
-          // 1. Return old stock
-          for (const item of originalSale.items) {
-            if (!item.isService) {
-              const batch = batches.find(b => b.productId === item.productId && b.batchNumber === item.batchNumber);
-              const product = products.find(p => p.id === item.productId);
-              const multiplier = product?.unitOfSell === 'pack' ? (product.unitsPerPack || 1) : 
-                                product?.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
-              if (batch) {
-                await firestoreService.updateDocument('product_batches', batch.id, {
-                  quantity: batch.quantity + (item.quantity * multiplier)
-                });
-              }
-              if (product) {
-                await firestoreService.updateDocument('products', product.id, {
-                  stock: (product.stock || 0) + item.quantity
-                });
-              }
-            }
-          }
+        if (!originalSale) throw new Error('The receipt being edited is no longer available. Reload the Receipt Ledger.');
+        const editBranchId = originalSale.branchId || activeBranchId;
+        if (!editBranchId) throw new Error('The receipt has no branch assignment and cannot be edited safely.');
 
-          // 2. Record revision
-          const revision: SaleRevision = {
-            id: generateUUID(),
-            saleId: editingSaleId,
-            tenantId: profile.tenantId,
-            timestamp: new Date().toISOString(),
-            revisedBy: profile.full_name || 'Unknown',
-            reason: 'Manual Edit',
-            beforeJson: JSON.stringify(originalSale),
-            afterJson: JSON.stringify({
-              items: itemsWithVat,
-              subtotal,
-              taxAmount: totalVatAmount,
-              discountAmount,
-              discountPercentage,
-              total: finalTotal,
-              totalAmount: finalTotal,
-              paymentMethod,
-              secondaryPaymentMethod: isWelfareSplit ? secondaryPaymentMethod : undefined,
-              welfareAmount: paymentMethod === 'staff_welfare' ? (isWelfareSplit ? welfareBalance : totalAmount) : undefined,
-              secondaryAmount: isWelfareSplit ? (totalAmount - welfareBalance) : undefined
-            })
-          };
-          await firestoreService.addDocument('sale_revisions', revision);
+        const saleUpdates = {
+          subtotal,
+          taxAmount: totalVatAmount,
+          discountAmount,
+          discountPercentage,
+          total: finalTotal,
+          totalAmount: finalTotal,
+          paymentMethod,
+          secondaryPaymentMethod: isWelfareSplit ? secondaryPaymentMethod : undefined,
+          welfareAmount: paymentMethod === 'staff_welfare' ? (isWelfareSplit ? welfareBalance : totalAmount) : undefined,
+          secondaryAmount: isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
+          context,
+          patientId: selectedPatient?.id || null,
+          patientName: selectedPatient?.full_name || null,
+          institutionId: selectedInstitution?.id || null,
+          institutionName: selectedInstitution?.supplier_name || null,
+          prescriberId: selectedPrescriber?.id || null,
+          prescriberName: selectedPrescriber?.full_name || null,
+          lastEditedAt: new Date().toISOString(),
+          lastEditedBy: profile.uid,
+          isExceptionalConsumption,
+          exceptionalConsumptionReason: isExceptionalConsumption ? exceptionalConsumptionReason : null
+        };
 
-          // Log reversal of old sale items
+        await reviseSaleInventoryAtomically({
+          tenantId: profile.tenantId,
+          branchId: editBranchId,
+          saleId: editingSaleId,
+          originalSale,
+          updatedItems: itemsWithVat,
+          saleUpdates,
+          products,
+          actor: { uid: profile.uid, name: profile.full_name || 'Unknown', role: profile.role },
+          reason: 'Manual Edit',
+          actionType: 'EDIT',
+          revisionId: generateUUID(),
+          auditId: generateUUID()
+        });
+
+        const updatedSaleData: Sale = {
+          ...originalSale,
+          ...saleUpdates,
+          items: itemsWithVat
+        } as Sale;
+        completedSale = updatedSaleData;
+        stockPostedAtomically = true;
+        try {
           await logSaleMovements(editingSaleId, originalSale, true, `sales_${editingSaleId}`, profile.uid);
-
-          // 3. Update sale document
-          await firestoreService.updateDocument('sales', editingSaleId, {
-            items: itemsWithVat,
-            subtotal,
-            taxAmount: totalVatAmount,
-            discountAmount,
-            discountPercentage,
-            total: finalTotal,
-            totalAmount: finalTotal,
-            paymentMethod,
-            secondaryPaymentMethod: isWelfareSplit ? secondaryPaymentMethod : undefined,
-            welfareAmount: paymentMethod === 'staff_welfare' ? (isWelfareSplit ? welfareBalance : totalAmount) : undefined,
-            secondaryAmount: isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
-            context,
-            patientId: selectedPatient?.id || null,
-            patientName: selectedPatient?.full_name || null,
-            institutionId: selectedInstitution?.id || null,
-            institutionName: selectedInstitution?.supplier_name || null,
-            prescriberId: selectedPrescriber?.id || null,
-            prescriberName: selectedPrescriber?.full_name || null,
-            lastEditedAt: new Date().toISOString(),
-            lastEditedBy: profile.uid,
-            isExceptionalConsumption,
-            exceptionalConsumptionReason: isExceptionalConsumption ? exceptionalConsumptionReason : null
-          });
-
-          // Log new sale items
-          const updatedSaleData: Sale = {
-            ...originalSale,
-            items: itemsWithVat,
-            isExceptionalConsumption,
-            exceptionalConsumptionReason: isExceptionalConsumption ? exceptionalConsumptionReason : null,
-            timestamp: new Date().toISOString(),
-            subtotal,
-            total: finalTotal,
-            totalAmount: finalTotal
-          };
-          completedSale = updatedSaleData;
           await logSaleMovements(editingSaleId, updatedSaleData, false, null, profile.uid);
-
-          // 4. Create Audit Log
-          const auditLog: AuditLog = {
-            id: generateUUID(),
-            tenantId: profile.tenantId,
-            userId: profile.uid,
-            userName: profile.full_name || 'unknown',
-            userRole: profile.role || 'unknown',
-            module: 'SALES',
-            actionType: 'EDIT',
-            objectAffected: 'SALE',
-            objectId: editingSaleId,
-            receipt_id: editingSaleId,
-            timestamp: new Date().toISOString()
-          };
-          await firestoreService.addDocument('audit_logs', auditLog);
+        } catch (movementError) {
+          console.warn('Receipt edit completed, but consumption analytics logging will need reconciliation:', movementError);
         }
       } else {
         const saleDocumentId = checkoutAttemptRef.current!.saleId;
         const saleData: Sale = {
           id: saleDocumentId,
           tenantId: profile.tenantId,
-          branchId: activeBranchId || 'main',
+          branchId: activeBranchId!,
           cashierId: profile.uid,
           context,
           patientId: selectedPatient?.id,
@@ -786,7 +749,7 @@ const Sales: React.FC = () => {
           const productDeductions = new Map<string, number>();
           for (const line of stockLines) {
             batchDeductions.set(line.batch.id, (batchDeductions.get(line.batch.id) || 0) + (line.item.quantity * line.multiplier));
-            productDeductions.set(line.product.id, (productDeductions.get(line.product.id) || 0) + line.item.quantity);
+            productDeductions.set(line.product.id, (productDeductions.get(line.product.id) || 0) + (line.item.quantity * line.multiplier));
           }
 
           for (const line of stockLines) {
@@ -804,7 +767,10 @@ const Sales: React.FC = () => {
               if (!snapshot?.exists()) throw new Error(`Product ${line.item.productName} no longer exists.`);
               const currentStock = Number(snapshot.data().stock || 0);
               const deduction = productDeductions.get(line.product.id)!;
-              transaction.update(line.productRef, { stock: Math.max(0, currentStock - deduction), updatedAt: serverTimestamp() });
+              if (deduction > currentStock) {
+                throw new Error(`Inventory aggregate mismatch for ${line.item.productName}. Product stock has ${currentStock} base units but the sale requires ${deduction}. Reconcile inventory before retrying.`);
+              }
+              transaction.update(line.productRef, { stock: currentStock - deduction, updatedAt: serverTimestamp() });
               productDeductions.delete(line.product.id);
             }
           }
@@ -1064,77 +1030,16 @@ const Sales: React.FC = () => {
       const newDiscountAmount = Math.round(newSubtotal * (editedDiscountPercentage / 100));
       const newTotalAmount = newSubtotal - newDiscountAmount;
 
-      // Adjust inventories in Firestore using net differences to prevent race conditions or duplicate writes
-      const stockAdjustments: { [key: string]: { productId: string; batchNumber: string; isService: boolean; qOrig: number; qNew: number } } = {};
+      const editBranchId = ledgerEditingSale.branchId || activeBranchId;
+      if (!editBranchId) throw new Error('This receipt has no branch assignment and cannot be edited safely.');
 
-      for (const item of ledgerEditingSale.items) {
-        const key = `${item.productId}::${item.batchNumber || 'N/A'}`;
-        if (!stockAdjustments[key]) {
-          stockAdjustments[key] = {
-            productId: item.productId,
-            batchNumber: item.batchNumber || 'N/A',
-            isService: !!item.isService,
-            qOrig: 0,
-            qNew: 0
-          };
-        }
-        stockAdjustments[key].qOrig += item.quantity || 0;
-      }
-
-      for (const item of updatedItemsWithSpecs) {
-        const key = `${item.productId}::${item.batchNumber || 'N/A'}`;
-        if (!stockAdjustments[key]) {
-          stockAdjustments[key] = {
-            productId: item.productId,
-            batchNumber: item.batchNumber || 'N/A',
-            isService: !!item.isService,
-            qOrig: 0,
-            qNew: 0
-          };
-        }
-        stockAdjustments[key].qNew += item.quantity || 0;
-      }
-
-      for (const key of Object.keys(stockAdjustments)) {
-        const adj = stockAdjustments[key];
-        if (adj.isService) continue;
-
-        const netDiff = adj.qNew - adj.qOrig;
-        if (netDiff === 0) continue;
-
-        const batch = batches.find(b => b.productId === adj.productId && b.batchNumber === adj.batchNumber);
-        const product = products.find(p => p.id === adj.productId);
-        const multiplier = product?.unitOfSell === 'pack' ? (product.unitsPerPack || 1) : 
-                           product?.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
-
-        if (batch) {
-          const currentBatch = await firestoreService.getDocument<ProductBatch>('product_batches', batch.id);
-          const currentQty = currentBatch ? currentBatch.quantity : batch.quantity;
-          await firestoreService.updateDocument('product_batches', batch.id, {
-            quantity: currentQty - (netDiff * multiplier)
-          });
-        }
-
-        if (product) {
-          const currentProd = await firestoreService.getDocument<Product>('products', product.id);
-          const currentStock = currentProd ? (currentProd.stock || 0) : (product.stock || 0);
-          await firestoreService.updateDocument('products', product.id, {
-            stock: currentStock - netDiff
-          });
-        }
-      }
-
-      // Record revision
-      const revision: SaleRevision = {
-        id: generateUUID(),
-        saleId: ledgerEditingSale.id,
+      await reviseSaleInventoryAtomically({
         tenantId: profile.tenantId,
-        timestamp: new Date().toISOString(),
-        revisedBy: profile.full_name || 'Unknown',
-        reason: 'Ledger Direct Edit',
-        beforeJson: JSON.stringify(ledgerEditingSale),
-        afterJson: JSON.stringify({
-          items: updatedItemsWithSpecs,
+        branchId: editBranchId,
+        saleId: ledgerEditingSale.id,
+        originalSale: ledgerEditingSale,
+        updatedItems: updatedItemsWithSpecs,
+        saleUpdates: {
           subtotal: newSubtotal,
           taxAmount: totalVatAmount,
           discountAmount: newDiscountAmount,
@@ -1143,44 +1048,18 @@ const Sales: React.FC = () => {
           totalAmount: newTotalAmount,
           paymentMethod: editedPaymentMethod,
           context: editedContext,
-          patientId: editedPatientId,
-          patientName: editedPatientName
-        })
-      };
-      await firestoreService.addDocument('sale_revisions', revision);
-
-      // Update sale document in Firestore
-      await firestoreService.updateDocument('sales', ledgerEditingSale.id, {
-        items: updatedItemsWithSpecs,
-        subtotal: newSubtotal,
-        taxAmount: totalVatAmount,
-        discountAmount: newDiscountAmount,
-        discountPercentage: editedDiscountPercentage,
-        total: newTotalAmount,
-        totalAmount: newTotalAmount,
-        paymentMethod: editedPaymentMethod,
-        context: editedContext,
-        patientId: editedPatientId || null,
-        patientName: editedPatientName || null,
-        lastEditedAt: new Date().toISOString(),
-        lastEditedBy: profile.uid
-      });
-
-      // Create Audit Log
-      const auditLog: AuditLog = {
-        id: generateUUID(),
-        tenantId: profile.tenantId,
-        userId: profile.uid,
-        userName: profile.full_name || 'unknown',
-        userRole: profile.role || 'unknown',
-        module: 'SALES',
+          patientId: editedPatientId || null,
+          patientName: editedPatientName || null,
+          lastEditedAt: new Date().toISOString(),
+          lastEditedBy: profile.uid
+        },
+        products,
+        actor: { uid: profile.uid, name: profile.full_name || 'Unknown', role: profile.role },
+        reason: 'Ledger Direct Edit',
         actionType: 'EDIT_IN_LEDGER',
-        objectAffected: 'SALE',
-        objectId: ledgerEditingSale.id,
-        receipt_id: ledgerEditingSale.id,
-        timestamp: new Date().toISOString()
-      };
-      await firestoreService.addDocument('audit_logs', auditLog);
+        revisionId: generateUUID(),
+        auditId: generateUUID()
+      });
 
       toast.success(`Receipt #${ledgerEditingSale.receiptNumber} successfully updated within Ledger!`);
       setLedgerEditingSale(null);
@@ -2292,60 +2171,33 @@ const Sales: React.FC = () => {
             if (!sale) return;
             
             try {
-              // Log reversal movements
-              await logSaleMovements(saleId, sale, true, `sales_${saleId}`, profile?.uid || 'system');
+              if (!profile?.tenantId) throw new Error('A tenant profile is required to void this sale.');
+              const voidBranchId = sale.branchId || activeBranchId;
+              if (!voidBranchId) throw new Error('This receipt has no branch assignment and cannot be voided safely.');
 
-              // 1. Update sale status
-              await firestoreService.updateDocument('sales', saleId, {
-                status: 'voided',
-                voidReason: reason,
-                voidedAt: new Date().toISOString(),
-                voidedBy: profile?.uid
+              const changed = await voidSaleInventoryAtomically({
+                tenantId: profile.tenantId,
+                branchId: voidBranchId,
+                sale,
+                products,
+                actor: {
+                  uid: profile.uid || 'unknown',
+                  name: profile.full_name || 'unknown',
+                  role: profile.role
+                },
+                reason,
+                auditId: generateUUID()
               });
 
-              // 2. Create Audit Log
-              const auditLog: AuditLog = {
-                id: generateUUID(),
-                tenantId: profile?.tenantId || '',
-                userId: profile?.uid || 'unknown',
-                userName: profile?.full_name || 'unknown',
-                userRole: profile?.role || 'unknown',
-                module: 'SALES',
-                actionType: 'VOID',
-                objectAffected: 'SALE',
-                objectId: saleId,
-                receipt_id: saleId,
-                timestamp: new Date().toISOString()
-              };
-              await firestoreService.addDocument('audit_logs', auditLog);
-
-              // 3. Return stock to inventory
-              for (const item of sale.items) {
-                const product = await firestoreService.getDocument<Product>('products', item.productId);
-                if (product) {
-                  await firestoreService.updateDocument('products', item.productId, {
-                    stock: (product.stock || 0) + item.quantity
-                  });
-                }
-
-                // Also restore quantity in specific product_batches
-                if (item.batchNumber && item.batchNumber !== 'N/A' && profile?.tenantId) {
-                  const batchesQuery = await firestoreService.getDocumentsByQuery<ProductBatch>('product_batches', [
-                    { field: 'productId', operator: '==', value: item.productId },
-                    { field: 'batchNumber', operator: '==', value: item.batchNumber },
-                    { field: 'branchId', operator: '==', value: sale.branchId || 'main' }
-                  ]);
-                  if (batchesQuery.length > 0) {
-                    const matchedBatch = batchesQuery[0];
-                    await firestoreService.updateDocument('product_batches', matchedBatch.id, {
-                      quantity: (matchedBatch.quantity || 0) + item.quantity,
-                      lastUpdated: new Date().toISOString()
-                    });
-                  }
+              if (changed) {
+                try {
+                  await logSaleMovements(saleId, sale, true, `sales_${saleId}`, profile.uid || 'system');
+                } catch (movementError) {
+                  console.warn('Sale voided, but consumption analytics reversal needs reconciliation:', movementError);
                 }
               }
 
-              toast.success('Sale voided successfully');
+              toast.success(changed ? 'Sale voided successfully' : 'Sale was already voided');
             } catch (error) {
               console.error('Error voiding sale:', error);
               toast.error('Failed to void sale');

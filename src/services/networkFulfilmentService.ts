@@ -368,57 +368,86 @@ export async function createTransferReservationTx(params: {
     reservationTtlMinutes = 30
   } = params;
 
-  // Run in database transaction
-  const reservationRef = doc(collection(db, 'inventoryTransferReservations'));
+  if (!tenantId || !sourceBranchId || !destinationBranchId || !productId || !autoGenerateRunId) {
+    throw new Error('Tenant, source, destination, product and order run are required for a transfer reservation.');
+  }
+  if (!Number.isFinite(qtyBaseUnits) || qtyBaseUnits <= 0) throw new Error('Reservation quantity must be greater than zero.');
 
-  await runTransaction(db, async (transaction) => {
-    // 1. Verify source has enough transferable excess
-    // In Firestore transaction, we should read the batches to confirm stock
-    // Since calculateDonorTransferableExcess makes async reads, we compute it and do a sanity check.
-    // To ensure strict atomic reservation, we check:
-    // Expiry adjusted stock minus active reservations must be >= requested qty.
-    const activeReservationsQuery = query(
+  const stablePart = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+  const reservationId = stablePart(`reservation_${tenantId}_${autoGenerateRunId}_${sourceBranchId}_${destinationBranchId}_${productId}`);
+  const lockId = stablePart(`lock_${tenantId}_${sourceBranchId}_${productId}`);
+  const reservationRef = doc(db, 'inventoryTransferReservations', reservationId);
+  const lockRef = doc(db, 'inventoryTransferReservations', lockId);
+
+  await runTransaction(db, async transaction => {
+    const [lockSnapshot, existingReservation] = await Promise.all([
+      transaction.get(lockRef),
+      transaction.get(reservationRef)
+    ]);
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    if (existingReservation.exists()) {
+      const existing = existingReservation.data() as InventoryTransferReservation;
+      if (existing.tenantId !== tenantId) throw new Error('Reservation ID collision across tenants.');
+      if (existing.status === 'CONVERTED') return;
+      if (['PENDING', 'ACTIVE'].includes(existing.status) && existing.expiresAt > nowIso) return;
+    }
+
+    // The lock document serializes reservation creators for one source/product.
+    // Queries are re-run when Firestore retries the transaction after lock contention.
+    const activeReservationsSnap = await getDocs(query(
       collection(db, 'inventoryTransferReservations'),
       where('tenantId', '==', tenantId),
       where('sourceBranchId', '==', sourceBranchId),
       where('productId', '==', productId),
       where('status', 'in', ['PENDING', 'ACTIVE'])
-    );
-    const reservationsSnap = await getDocs(activeReservationsQuery);
-    
-    let currentReserved = 0;
-    const now = new Date().toISOString();
-    reservationsSnap.forEach(d => {
-      const res = d.data() as InventoryTransferReservation;
-      if (res.expiresAt > now) {
-        currentReserved += res.reservedQuantityBaseUnits;
-      }
-    });
+    ));
 
-    // Load batches of the source branch
-    const batchesQuery = query(
+    const batchesSnap = await getDocs(query(
       collection(db, 'product_batches'),
       where('tenantId', '==', tenantId),
       where('branchId', '==', sourceBranchId),
       where('productId', '==', productId)
-    );
-    const batchesSnap = await getDocs(batchesQuery);
+    ));
+    if (batchesSnap.empty) throw new Error('No stock batches exist at the selected source branch.');
+
+    const batchSnapshots = await Promise.all(batchesSnap.docs.map(batchDoc => transaction.get(batchDoc.ref)));
     let totalUsable = 0;
-    batchesSnap.forEach(d => {
-      const b = d.data();
-      if (b.batch_status !== 'quarantined' && b.batch_status !== 'expired') {
-        totalUsable += b.quantity || 0;
-      }
+    batchSnapshots.forEach(snapshot => {
+      if (!snapshot.exists()) return;
+      const batch = snapshot.data();
+      const status = String(batch.batch_status || '').toLowerCase();
+      const expiryMs = batch.expiryDate ? new Date(`${batch.expiryDate}T23:59:59`).getTime() : Number.POSITIVE_INFINITY;
+      if (['quarantined', 'expired', 'recalled', 'blocked'].includes(status)) return;
+      if (Number.isFinite(expiryMs) && expiryMs <= now.getTime()) return;
+      totalUsable += Math.max(0, Number(batch.quantity || 0));
+    });
+
+    let currentReserved = 0;
+    activeReservationsSnap.forEach(reservationDoc => {
+      if (reservationDoc.id === reservationId) return;
+      const reservation = reservationDoc.data() as InventoryTransferReservation;
+      if (reservation.expiresAt > nowIso) currentReserved += Math.max(0, Number(reservation.reservedQuantityBaseUnits || 0));
     });
 
     const available = Math.max(0, totalUsable - currentReserved);
     if (available < qtyBaseUnits) {
-      throw new Error(`Insufficient stock available at source branch: ${available} available, ${qtyBaseUnits} requested.`);
+      throw new Error(`Insufficient stock available at source branch: ${available} base units available after active reservations, ${qtyBaseUnits} requested.`);
     }
 
-    const expiresAt = new Date(Date.now() + reservationTtlMinutes * 60 * 1000).toISOString();
+    const expiresAt = new Date(now.getTime() + reservationTtlMinutes * 60 * 1000).toISOString();
+    transaction.set(lockRef, {
+      tenantId,
+      sourceBranchId,
+      productId,
+      status: 'LOCK',
+      isReservationLock: true,
+      version: Number(lockSnapshot.exists() ? lockSnapshot.data().version || 0 : 0) + 1,
+      updatedAt: nowIso
+    }, { merge: true });
 
-    const reservationDoc: InventoryTransferReservation = {
+    transaction.set(reservationRef, {
       tenantId,
       sourceBranchId,
       destinationBranchId,
@@ -429,12 +458,11 @@ export async function createTransferReservationTx(params: {
       reservedQuantityBaseUnits: qtyBaseUnits,
       status: 'ACTIVE',
       createdBy,
-      createdAt: new Date().toISOString(),
+      createdAt: existingReservation.exists() ? existingReservation.data().createdAt || nowIso : nowIso,
+      updatedAt: nowIso,
       expiresAt,
       convertedTransferRequestId: null
-    };
-
-    transaction.set(reservationRef, reservationDoc);
+    }, { merge: true });
   });
 
   return reservationRef.id;

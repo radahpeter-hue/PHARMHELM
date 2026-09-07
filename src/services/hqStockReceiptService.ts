@@ -39,6 +39,7 @@ export async function receiveHqTransfer(input: ReceiveHqTransferInput): Promise<
   if (!lines.length) throw new Error('This shipment has no product lines and cannot be received.');
 
   const transferRef = doc(db, 'transfer_invoices', transfer.id);
+  const claimTimeoutMs = 10 * 60 * 1000;
   let claimed = false;
   try {
     await runTransaction(db, async transaction => {
@@ -49,10 +50,15 @@ export async function receiveHqTransfer(input: ReceiveHqTransferInput): Promise<
       if (['fully_accepted', 'received', 'queried'].includes(current.status)) {
         throw new Error('This shipment has already been received. No stock was added again.');
       }
+
       if (current.status === 'receiving') {
-        throw new Error('This shipment is already being received by another session.');
+        const claimedAt = Date.parse(String(current.reception_claimed_at || ''));
+        const claimIsFresh = Number.isFinite(claimedAt) && Date.now() - claimedAt < claimTimeoutMs;
+        if (claimIsFresh) throw new Error('This shipment is already being received by another session.');
+      } else if (current.status !== 'dispatched') {
+        throw new Error('Only a dispatched shipment can be received.');
       }
-      if (current.status !== 'dispatched') throw new Error('Only a dispatched shipment can be received.');
+
       if (isHqProcurementDelivery({ id: snapshot.id, ...current } as TransferInvoice) && current.order_id) {
         const orderSnapshot = await transaction.get(doc(db, 'stock_orders', current.order_id));
         if (orderSnapshot.exists() && orderSnapshot.data().status === 'fully_received') {
@@ -76,8 +82,28 @@ export async function receiveHqTransfer(input: ReceiveHqTransferInput): Promise<
       ])
     ));
 
+    const uniqueProductIds = Array.from(new Set(lines.filter(line => Number(line.qty_dispatched || 0) > 0).map(line => line.product_id)));
+    const productDocs = await Promise.all(uniqueProductIds.map(productId => firestoreService.getDocument<any>('products', productId)));
+    productDocs.forEach((product, index) => {
+      if (!product) throw new Error(`Product ${uniqueProductIds[index]} no longer exists.`);
+      if (product.tenantId !== tenantId) throw new Error('Product tenant mismatch during HQ receipt.');
+    });
+
+    lines.forEach((line, index) => {
+      const existingBatch = existing[index][0];
+      if (!existingBatch) return;
+      const incomingExpiry = String(line.expiry_date || '').trim();
+      const existingExpiry = String(existingBatch.expiryDate || '').trim();
+      if (incomingExpiry && existingExpiry && incomingExpiry !== existingExpiry) {
+        throw new Error(`Batch identity conflict for ${line.product_name || line.product_id} batch ${line.batch_number}. Existing expiry is ${existingExpiry}, incoming expiry is ${incomingExpiry}.`);
+      }
+    });
+
     const now = new Date().toISOString();
     const batch = writeBatch(db);
+    const productIncrements = new Map<string, number>();
+    const stablePart = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+
     lines.forEach((line, index) => {
       const quantity = Number(line.qty_dispatched || 0);
       if (quantity <= 0) return;
@@ -85,28 +111,39 @@ export async function receiveHqTransfer(input: ReceiveHqTransferInput): Promise<
       if (existingBatch) {
         batch.update(doc(db, 'product_batches', existingBatch.id), {
           quantity: increment(quantity),
-          lastUpdated: now
+          lastUpdated: now,
+          updatedAt: now
         });
       } else {
-        batch.set(doc(collection(db, 'product_batches')), {
+        const deterministicBatchId = stablePart(`hq_${tenantId}_${line.product_id}_${line.batch_number || 'UNSPECIFIED'}_${line.expiry_date || 'NOEXP'}`);
+        batch.set(doc(db, 'product_batches', deterministicBatchId), {
           tenantId,
           branchId: 'HQ',
           productId: line.product_id,
           batchNumber: line.batch_number || 'UNSPECIFIED',
           expiryDate: line.expiry_date || '',
-          quantity,
+          quantity: increment(quantity),
           purchasePrice: Number(line.unit_cost_ugx || 0),
           sellingPrice: Number(line.unit_cost_ugx || 0) * 1.3,
           batch_status: 'active',
           sourceType: isHqProcurementDelivery(transfer) ? 'procurement' : 'transfer',
           createdAt: now,
-          lastUpdated: now
-        });
+          lastUpdated: now,
+          updatedAt: now
+        }, { merge: true });
       }
+      productIncrements.set(line.product_id, (productIncrements.get(line.product_id) || 0) + quantity);
       batch.update(doc(db, 'transfer_invoice_lines', line.id), {
         qty_received: quantity,
         qty_accepted: quantity,
         line_status: 'received',
+        updatedAt: now
+      });
+    });
+
+    productIncrements.forEach((quantity, productId) => {
+      batch.update(doc(db, 'products', productId), {
+        stock: increment(quantity),
         updatedAt: now
       });
     });
@@ -117,6 +154,8 @@ export async function receiveHqTransfer(input: ReceiveHqTransferInput): Promise<
       received_at: now,
       received_by: user.uid,
       received_by_name: user.name,
+      reception_claimed_by: null,
+      reception_claimed_at: null,
       updatedAt: now
     });
     const orderId = (transfer as any).order_id;
