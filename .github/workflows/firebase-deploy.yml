@@ -9,47 +9,11 @@ jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       id-token: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
-      - name: Apply pending Batch 1 integrity patch
-        shell: bash
-        run: |
-          set -e
-          if [ -f scripts/apply-batch1-integrity-fixes.cjs ]; then
-            python3 - <<'PY'
-          from pathlib import Path
-          path = Path('scripts/apply-batch1-integrity-fixes.cjs')
-          source = path.read_text()
-          source = source.replace(
-              "  if (!matches) throw new Error(`Patch target not found: ${label}`);",
-              "  if (!matches) { console.warn(`Patch target not found, continuing: ${label}`); return; }"
-          )
-          path.write_text(source)
-          PY
-            node scripts/apply-batch1-integrity-fixes.cjs
-            python3 - <<'PY'
-          from pathlib import Path
-          path = Path('src/pages/Sales.tsx')
-          source = path.read_text()
-          old = "productDeductions.set(line.product.id, (productDeductions.get(line.product.id) || 0) + line.item.quantity);"
-          new = "productDeductions.set(line.product.id, (productDeductions.get(line.product.id) || 0) + (line.item.quantity * line.multiplier));"
-          if old in source:
-              source = source.replace(old, new, 1)
-          path.write_text(source)
-          PY
-            rm scripts/apply-batch1-integrity-fixes.cjs
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src/pages/Sales.tsx src/services/hqStockReceiptService.ts src/services/networkFulfilmentService.ts src/services/saleInventoryIntegrityService.ts scripts/apply-batch1-integrity-fixes.cjs
-            if ! git diff --cached --quiet; then
-              git commit -m "fix: harden batch 1 stock integrity"
-              git push origin HEAD:main
-            fi
-          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
