@@ -42,151 +42,117 @@ jobs:
       - name: Deploy Firestore rules
         shell: bash
         env:
+          FIREBASE_PROJECT_ID: gen-lang-client-0911422817
           FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
         run: |
+          set -u
           deploy_status=1
+          deploy_output=""
+
           for attempt in 1 2 3 4; do
             set +e
-            deploy_output=$(npx firebase-tools deploy --only firestore:rules --project gen-lang-client-0911422817 --non-interactive 2>&1)
+            deploy_output=$(npx firebase-tools deploy --only firestore:rules --project "$FIREBASE_PROJECT_ID" --non-interactive 2>&1)
             deploy_status=$?
             set -e
             echo "$deploy_output"
+
             if [ "$deploy_status" -eq 0 ]; then
+              echo "Firestore rules deployed through Firebase CLI."
               break
             fi
+
             if [[ "$deploy_output" != *"HTTP Error: 503"* ]] || [ "$attempt" -eq 4 ]; then
               break
             fi
+
             retry_delay=$((attempt * 15))
-            echo "Firebase Rules API returned 503. Retrying in ${retry_delay} seconds (attempt $((attempt + 1)) of 4)."
+            echo "Firebase Rules API returned 503. Retrying in ${retry_delay} seconds."
             sleep "$retry_delay"
           done
-          plain_deploy_output=$(printf '%s' "$deploy_output" | sed -E $'s/\x1B\\[[0-9;]*[mK]//g')
-          if [ "$deploy_status" -ne 0 ] && [[ "$plain_deploy_output" == *"HTTP Error: 409"* ]] && [[ "$plain_deploy_output" == *"already up to date, skipping upload"* ]]; then
-            echo "Firestore rules are already the active latest version; accepting the Firebase CLI 409 as an idempotent success."
-            deploy_status=0
-          elif [ "$deploy_status" -ne 0 ] && [[ "$plain_deploy_output" == *"HTTP Error: 409"* ]] && [[ "$plain_deploy_output" == *"rules file"*"compiled successfully"* ]]; then
-            FIREBASE_ACCESS_TOKEN=$(gcloud auth application-default print-access-token)
-            release_url="https://firebaserules.googleapis.com/v1/projects/gen-lang-client-0911422817/releases/cloud.firestore/${FIRESTORE_DATABASE_ID}"
-            release_json=$(curl --fail --silent --show-error \
-              -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
-              "$release_url")
-            ruleset_name=$(printf '%s' "$release_json" | jq -r '.rulesetName // empty')
-            if [ -n "$ruleset_name" ]; then
-              ruleset_json=$(curl --fail --silent --show-error \
-                -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
-                "https://firebaserules.googleapis.com/v1/${ruleset_name}")
-              active_rules=$(printf '%s' "$ruleset_json" | jq -r 'first(.source.files[] | select(.name == "firestore.rules") | .content) // empty')
-              if [ -n "$active_rules" ] && [ "$active_rules" = "$(cat firestore.rules)" ]; then
-                echo "The active named-database release exactly matches firestore.rules; accepting the Firebase CLI 409 as an idempotent success."
-                deploy_status=0
-              fi
-            fi
-            if [ "$deploy_status" -ne 0 ]; then
-              rulesets_url="https://firebaserules.googleapis.com/v1/projects/gen-lang-client-0911422817/rulesets?pageSize=20"
-              matching_ruleset=""
-              while IFS= read -r candidate_ruleset; do
-                [ -z "$candidate_ruleset" ] && continue
-                candidate_json=$(curl --fail --silent --show-error \
-                  -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
-                  "https://firebaserules.googleapis.com/v1/${candidate_ruleset}")
-                candidate_rules=$(printf '%s' "$candidate_json" | jq -r 'first(.source.files[] | select(.name == "firestore.rules") | .content) // empty')
-                if [ -n "$candidate_rules" ] && [ "$candidate_rules" = "$(cat firestore.rules)" ]; then
-                  matching_ruleset="$candidate_ruleset"
-                  break
-                fi
-              done < <(curl --fail --silent --show-error \
-                -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
-                "$rulesets_url" | jq -r '.rulesets[]?.name')
 
-              if [ -n "$matching_ruleset" ]; then
-                release_name="projects/gen-lang-client-0911422817/releases/cloud.firestore/${FIRESTORE_DATABASE_ID}"
-                patch_body=$(jq -n \
-                  --arg name "$release_name" \
-                  --arg rulesetName "$matching_ruleset" \
-                  '{name: $name, rulesetName: $rulesetName}')
-                patched_release=$(curl --fail --silent --show-error \
-                  -X PATCH \
-                  -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
-                  -H "Content-Type: application/json" \
-                  --data "$patch_body" \
-                  "https://firebaserules.googleapis.com/v1/${release_name}?updateMask=rulesetName")
-                patched_ruleset=$(printf '%s' "$patched_release" | jq -r '.rulesetName // empty')
-                if [ "$patched_ruleset" = "$matching_ruleset" ]; then
-                  echo "Updated the named Firestore release to the matching compiled ruleset after Firebase CLI 409."
-                  deploy_status=0
-                fi
-              fi
-            fi
-          fi
-          if [ "$deploy_status" -ne 0 ] && ([[ "$plain_deploy_output" == *"HTTP Error: 503"* ]] || [[ "$plain_deploy_output" == *"HTTP Error: 409"* ]]); then
+          if [ "$deploy_status" -ne 0 ]; then
+            echo "Firebase CLI rules deployment did not complete. Using the Firebase Rules REST API fallback."
+
             FIREBASE_ACCESS_TOKEN=$(gcloud auth application-default print-access-token)
-            rulesets_url="https://firebaserules.googleapis.com/v1/projects/gen-lang-client-0911422817/rulesets?pageSize=50"
-            matching_ruleset=""
+            RULES_API="https://firebaserules.googleapis.com/v1"
+            ATTACHMENT_POINT="firestore.googleapis.com/databases/${FIRESTORE_DATABASE_ID}"
+            RELEASE_NAME="projects/${FIREBASE_PROJECT_ID}/releases/cloud.firestore/${FIRESTORE_DATABASE_ID}"
+            FINGERPRINT=$(openssl dgst -sha256 -binary firestore.rules | base64 -w 0)
+
+            create_body=$(jq -n \
+              --rawfile rules firestore.rules \
+              --arg fingerprint "$FINGERPRINT" \
+              --arg attachmentPoint "$ATTACHMENT_POINT" \
+              '{source: {files: [{name: "firestore.rules", content: $rules, fingerprint: $fingerprint}], attachmentPoint: $attachmentPoint}}')
 
             set +e
-            rulesets_json=$(curl --retry 4 --retry-all-errors --retry-delay 10 --fail --silent --show-error \
+            created_ruleset=$(curl --retry 4 --retry-all-errors --retry-delay 10 --fail --silent --show-error \
+              -X POST \
               -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
-              "$rulesets_url")
+              -H "Content-Type: application/json" \
+              --data "$create_body" \
+              "${RULES_API}/projects/${FIREBASE_PROJECT_ID}/rulesets")
+            create_status=$?
             set -e
-            while IFS= read -r candidate_ruleset; do
-              [ -z "$candidate_ruleset" ] && continue
-              set +e
-              candidate_json=$(curl --retry 4 --retry-all-errors --retry-delay 10 --fail --silent --show-error \
-                -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
-                "https://firebaserules.googleapis.com/v1/${candidate_ruleset}")
-              candidate_status=$?
-              set -e
-              [ "$candidate_status" -ne 0 ] && continue
-              candidate_rules=$(printf '%s' "$candidate_json" | jq -r 'first(.source.files[]? | select(.name == "firestore.rules") | .content) // empty')
-              if [ -n "$candidate_rules" ] && [ "$candidate_rules" = "$(cat firestore.rules)" ]; then
-                matching_ruleset="$candidate_ruleset"
-                break
-              fi
-            done < <(printf '%s' "$rulesets_json" | jq -r '.rulesets[]?.name')
 
-            if [ -z "$matching_ruleset" ]; then
-              create_body=$(jq -n --rawfile rules firestore.rules \
-                '{source: {files: [{name: "firestore.rules", content: $rules}]}}')
-              set +e
-              created_ruleset=$(curl --retry 4 --retry-all-errors --retry-delay 10 --fail --silent --show-error \
-                -X POST \
-                -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
-                -H "Content-Type: application/json" \
-                --data "$create_body" \
-                "https://firebaserules.googleapis.com/v1/projects/gen-lang-client-0911422817/rulesets")
-              create_status=$?
-              set -e
-              if [ "$create_status" -eq 0 ]; then
-                matching_ruleset=$(printf '%s' "$created_ruleset" | jq -r '.name // empty')
-              fi
+            if [ "$create_status" -ne 0 ]; then
+              echo "::error title=Firestore ruleset creation failed::Firebase CLI failed and the REST ruleset creation fallback also failed."
+              exit 2
             fi
 
-            if [ -n "$matching_ruleset" ]; then
-              release_name="projects/gen-lang-client-0911422817/releases/cloud.firestore/${FIRESTORE_DATABASE_ID}"
-              patch_body=$(jq -n --arg name "$release_name" --arg rulesetName "$matching_ruleset" \
-                '{name: $name, rulesetName: $rulesetName}')
+            ruleset_name=$(printf '%s' "$created_ruleset" | jq -r '.name // empty')
+            if [ -z "$ruleset_name" ]; then
+              echo "::error title=Firestore ruleset creation failed::Rules API returned no ruleset name."
+              exit 2
+            fi
+
+            release_body=$(jq -n \
+              --arg name "$RELEASE_NAME" \
+              --arg rulesetName "$ruleset_name" \
+              '{name: $name, rulesetName: $rulesetName}')
+
+            set +e
+            existing_release=$(curl --silent --show-error \
+              -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
+              "${RULES_API}/${RELEASE_NAME}")
+            get_release_status=$?
+            existing_release_name=$(printf '%s' "$existing_release" | jq -r '.name // empty' 2>/dev/null)
+            set -e
+
+            if [ "$get_release_status" -eq 0 ] && [ "$existing_release_name" = "$RELEASE_NAME" ]; then
               set +e
-              patched_release=$(curl --retry 4 --retry-all-errors --retry-delay 10 --fail --silent --show-error \
+              released=$(curl --retry 4 --retry-all-errors --retry-delay 10 --fail --silent --show-error \
                 -X PATCH \
                 -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
                 -H "Content-Type: application/json" \
-                --data "$patch_body" \
-                "https://firebaserules.googleapis.com/v1/${release_name}?updateMask=rulesetName")
-              patch_status=$?
+                --data "$release_body" \
+                "${RULES_API}/${RELEASE_NAME}?updateMask=rulesetName")
+              release_status=$?
               set -e
-              if [ "$patch_status" -eq 0 ] && [ "$(printf '%s' "$patched_release" | jq -r '.rulesetName // empty')" = "$matching_ruleset" ]; then
-                echo "Activated the matching Firestore ruleset through the Rules REST API after Firebase CLI service errors."
-                deploy_status=0
-              fi
+            else
+              set +e
+              released=$(curl --retry 4 --retry-all-errors --retry-delay 10 --fail --silent --show-error \
+                -X POST \
+                -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
+                -H "Content-Type: application/json" \
+                --data "$release_body" \
+                "${RULES_API}/projects/${FIREBASE_PROJECT_ID}/releases")
+              release_status=$?
+              set -e
             fi
-          fi
-          if [ "$deploy_status" -ne 0 ]; then
-            escaped_output=${deploy_output//'%'/'%25'}
-            escaped_output=${escaped_output//$'\r'/'%0D'}
-            escaped_output=${escaped_output//$'\n'/'%0A'}
-            echo "::error title=Firestore rules deployment failed::$escaped_output"
-            exit "$deploy_status"
+
+            if [ "$release_status" -ne 0 ]; then
+              echo "::error title=Firestore rules release failed::Ruleset was created but could not be activated for the named Firestore database."
+              exit 2
+            fi
+
+            active_ruleset=$(printf '%s' "$released" | jq -r '.rulesetName // empty')
+            if [ "$active_ruleset" != "$ruleset_name" ]; then
+              echo "::error title=Firestore rules verification failed::The activated release does not reference the ruleset that was just created."
+              exit 2
+            fi
+
+            echo "Firestore rules activated successfully through the Rules REST API fallback."
           fi
 
       - name: Deploy Firebase Storage rules
