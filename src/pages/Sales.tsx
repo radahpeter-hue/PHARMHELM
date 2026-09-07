@@ -742,7 +742,7 @@ const Sales: React.FC = () => {
 
         const saleRef = doc(db, 'sales', saleDocumentId);
         const stockItems = cart.filter(item => !item.isService);
-        const uniqueProductIds = Array.from(new Set(stockItems.map(item => item.productId)));
+        const uniqueProductIds: string[] = Array.from(new Set<string>(stockItems.map(item => String(item.productId))));
         const productMap = new Map(uniqueProductIds.map(productId => {
           const product = products.find(p => p.id === productId);
           if (!product) throw new Error(`Product ${productId} is missing. Refresh the page and try again.`);
