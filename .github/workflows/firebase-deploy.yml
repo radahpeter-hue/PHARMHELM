@@ -75,15 +75,13 @@ jobs:
 
             FIREBASE_ACCESS_TOKEN=$(gcloud auth application-default print-access-token)
             RULES_API="https://firebaserules.googleapis.com/v1"
-            ATTACHMENT_POINT="firestore.googleapis.com/databases/${FIRESTORE_DATABASE_ID}"
             RELEASE_NAME="projects/${FIREBASE_PROJECT_ID}/releases/cloud.firestore/${FIRESTORE_DATABASE_ID}"
             FINGERPRINT=$(openssl dgst -sha256 -binary firestore.rules | base64 -w 0)
 
             create_body=$(jq -n \
               --rawfile rules firestore.rules \
               --arg fingerprint "$FINGERPRINT" \
-              --arg attachmentPoint "$ATTACHMENT_POINT" \
-              '{source: {files: [{name: "firestore.rules", content: $rules, fingerprint: $fingerprint}], attachment_point: $attachmentPoint}}')
+              '{source: {files: [{name: "firestore.rules", content: $rules, fingerprint: $fingerprint}]}}')
 
             set +e
             created_ruleset=$(curl --retry 4 --retry-all-errors --retry-delay 10 --fail-with-body --silent --show-error \
