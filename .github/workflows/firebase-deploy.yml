@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -39,7 +41,26 @@ jobs:
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v3
 
+      - name: Detect Firestore rules changes
+        id: firestore_changes
+        shell: bash
+        run: |
+          set -e
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            if git diff --quiet HEAD^ HEAD -- firestore.rules firebase.json; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "Firestore rules configuration is unchanged. Skipping rules deployment."
+            else
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              echo "Firestore rules configuration changed. Rules deployment is required."
+            fi
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "No parent commit is available. Deploying Firestore rules defensively."
+          fi
+
       - name: Deploy Firestore rules
+        if: steps.firestore_changes.outputs.changed == 'true'
         shell: bash
         env:
           FIREBASE_PROJECT_ID: gen-lang-client-0911422817
@@ -58,6 +79,11 @@ jobs:
 
             if [ "$deploy_status" -eq 0 ]; then
               echo "Firestore rules deployed through Firebase CLI."
+              break
+            fi
+
+            if [[ "$deploy_output" == *"HTTP Error: 409"* ]] || [[ "$deploy_output" == *"Requested entity already exists"* ]]; then
+              echo "Firebase CLI encountered an existing named-database release. Switching to REST release update."
               break
             fi
 
@@ -84,7 +110,7 @@ jobs:
               '{source: {files: [{name: "firestore.rules", content: $rules, fingerprint: $fingerprint}]}}')
 
             set +e
-            created_ruleset=$(curl --retry 4 --retry-all-errors --retry-delay 10 --fail-with-body --silent --show-error \
+            created_ruleset=$(curl --retry 6 --retry-all-errors --retry-delay 15 --fail-with-body --silent --show-error \
               -X POST \
               -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
               -H "Content-Type: application/json" \
@@ -95,7 +121,7 @@ jobs:
 
             if [ "$create_status" -ne 0 ]; then
               echo "$created_ruleset"
-              echo "::error title=Firestore ruleset creation failed::Firebase CLI failed and the REST ruleset creation fallback also failed."
+              echo "::error title=Firestore ruleset creation failed::The Rules API remained unavailable after retries. Hosting was not blocked on commits where rules were unchanged, but this commit changed Firestore rules and therefore cannot be deployed safely without activating them."
               exit 2
             fi
 
@@ -117,7 +143,7 @@ jobs:
               '{release: {name: $name, rulesetName: $rulesetName}, updateMask: "rulesetName"}')
 
             set +e
-            existing_release=$(curl --silent --show-error \
+            existing_release=$(curl --retry 4 --retry-all-errors --retry-delay 10 --silent --show-error \
               -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
               "${RULES_API}/${RELEASE_NAME}")
             get_release_status=$?
@@ -126,7 +152,7 @@ jobs:
 
             if [ "$get_release_status" -eq 0 ] && [ "$existing_release_name" = "$RELEASE_NAME" ]; then
               set +e
-              released=$(curl --retry 4 --retry-all-errors --retry-delay 10 --fail-with-body --silent --show-error \
+              released=$(curl --retry 6 --retry-all-errors --retry-delay 15 --fail-with-body --silent --show-error \
                 -X PATCH \
                 -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
                 -H "Content-Type: application/json" \
@@ -136,7 +162,7 @@ jobs:
               set -e
             else
               set +e
-              released=$(curl --retry 4 --retry-all-errors --retry-delay 10 --fail-with-body --silent --show-error \
+              released=$(curl --retry 6 --retry-all-errors --retry-delay 15 --fail-with-body --silent --show-error \
                 -X POST \
                 -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
                 -H "Content-Type: application/json" \
@@ -144,6 +170,18 @@ jobs:
                 "${RULES_API}/projects/${FIREBASE_PROJECT_ID}/releases")
               release_status=$?
               set -e
+
+              if [ "$release_status" -ne 0 ] && [[ "$released" == *"ALREADY_EXISTS"* || "$released" == *"already exists"* ]]; then
+                set +e
+                released=$(curl --retry 6 --retry-all-errors --retry-delay 15 --fail-with-body --silent --show-error \
+                  -X PATCH \
+                  -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
+                  -H "Content-Type: application/json" \
+                  --data "$patch_release_body" \
+                  "${RULES_API}/${RELEASE_NAME}")
+                release_status=$?
+                set -e
+              fi
             fi
 
             if [ "$release_status" -ne 0 ]; then
