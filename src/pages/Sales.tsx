@@ -31,6 +31,7 @@ import { QuotationsLog } from '../components/sales/QuotationsLog';
 import { openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
 import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';
 import { reviseSaleInventoryAtomically, voidSaleInventoryAtomically } from '../services/saleInventoryIntegrityService';
+import { convertQuotationToSale, reconcilePendingPosFinancials, reconcilePosWelfarePosting } from '../services/posFinancialPostingService';
 import { db } from '../firebase';
 
 
@@ -213,6 +214,14 @@ const Sales: React.FC = () => {
       };
     }
   }, [profile?.tenantId, activeBranchId]);
+
+  useEffect(() => {
+    if (!profile?.tenantId || !activeBranchId) return;
+    reconcilePendingPosFinancials({
+      tenantId: profile.tenantId, branchId: activeBranchId, actorId: profile.uid,
+      actorName: profile.full_name || profile.displayName || 'POS Staff'
+    }).catch(error => console.warn('Pending POS finance reconciliation could not complete:', error));
+  }, [profile?.tenantId, profile?.uid, activeBranchId]);
 
   useEffect(() => {
     if (selectedPatient?.discountRate) {
@@ -636,6 +645,8 @@ const Sales: React.FC = () => {
           paymentMethod,
           secondaryPaymentMethod: isWelfareSplit ? secondaryPaymentMethod : undefined,
           welfareAmount: paymentMethod === 'staff_welfare' ? (isWelfareSplit ? welfareBalance : totalAmount) : undefined,
+          welfareBeneficiaryIsStaff: paymentMethod === 'staff_welfare' ? Boolean(selectedPatient?.isStaff) : undefined,
+          welfarePostingStatus: paymentMethod === 'staff_welfare' ? 'pending' : 'not_applicable',
           secondaryAmount: isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
           context,
           patientId: selectedPatient?.id || null,
@@ -699,7 +710,11 @@ const Sales: React.FC = () => {
           paymentMethod,
           secondaryPaymentMethod: isWelfareSplit ? secondaryPaymentMethod : undefined,
           welfareAmount: paymentMethod === 'staff_welfare' ? (isWelfareSplit ? welfareBalance : totalAmount) : undefined,
+          welfareBeneficiaryIsStaff: paymentMethod === 'staff_welfare' ? Boolean(selectedPatient?.isStaff) : undefined,
+          welfarePostingStatus: paymentMethod === 'staff_welfare' ? 'pending' : 'not_applicable',
           secondaryAmount: isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
+          sourceQuotationId: resumedQuotationId || undefined,
+          quotationConversionStatus: resumedQuotationId ? 'pending' : 'not_applicable',
           timestamp: new Date().toISOString(),
           status: 'completed',
           receiptNumber,
@@ -796,48 +811,16 @@ const Sales: React.FC = () => {
         }
       }
       
-      // Handle Welfare Payment posting
-      if (paymentMethod === 'staff_welfare' && selectedPatient) {
-        const welfareUsed = isWelfareSplit ? welfareBalance : totalAmount;
-        const collection = selectedPatient.isStaff ? 'staff' : 'clients';
-        
-        await firestoreService.updateDocument(collection, selectedPatient.id, {
-          welfare_spent: (selectedPatient.welfare_spent || 0) + welfareUsed,
-          welfare_used_ytd: (selectedPatient.welfare_used_ytd || 0) + welfareUsed
-        });
-
-        await firestoreService.addDocument('welfare', {
-          tenantId: profile.tenantId,
-          staffId: selectedPatient.id,
-          isStaff: selectedPatient.isStaff,
-          type: 'medical',
-          amount: welfareUsed,
-          date: new Date().toISOString(),
-          status: 'approved',
-          notes: `${editingSaleId ? 'Edit' : 'POS'} Purchase: ${receiptNumber}`
-        });
-
-        await firestoreService.addDocument('branch_expenses', {
-          tenantId: profile.tenantId,
-          branchId: activeBranchId || 'main',
-          category: 'Staff Welfare',
-          amount: welfareUsed,
-          date: new Date().toISOString(),
-          description: `Staff Welfare Benefit - Receipt ${receiptNumber}`,
-          payment_method: 'System Adjustment',
-          status: 'approved',
-          logged_by: profile.full_name || 'Unknown'
-        });
-
-        // Add a Cash Transfer from 'welfare' to 'banked' portfolio so that Cash & Banking updates instantly
-        await firestoreService.addDocument('cashTransfers', {
-          tenantId: profile.tenantId,
-          fromPortfolio: 'welfare',
-          toPortfolio: 'banked',
-          amount: welfareUsed,
-          processedBy: profile.full_name || 'POS Staff',
-          notes: `POS Purchase Staff Welfare: ${receiptNumber}`
-        });
+      if (finalReceiptId) {
+        try {
+          await reconcilePosWelfarePosting({
+            tenantId: profile.tenantId, saleId: finalReceiptId, actorId: profile.uid,
+            actorName: profile.full_name || profile.displayName || 'POS Staff'
+          });
+        } catch (welfareError) {
+          console.warn('Sale completed, but welfare finance posting remains pending:', welfareError);
+          if (paymentMethod === 'staff_welfare') toast.warning('Sale completed. Staff welfare finance posting is pending automatic reconciliation.');
+        }
       }
 
       // Update stock levels (FEFO confirmed)
@@ -861,17 +844,12 @@ const Sales: React.FC = () => {
         }
       }
 
-      // Link with resumed quotation if applicable
-      if (resumedQuotationId) {
+      if (resumedQuotationId && finalReceiptId) {
         try {
-          await firestoreService.updateDocument('pos_quotations', resumedQuotationId, {
-            status: 'Converted',
-            convertedReceiptId: finalReceiptId || receiptNumber,
-            convertedAt: new Date().toISOString(),
-            convertedValue: finalTotal
-          });
-        } catch (e) {
-          console.warn('Failed to update resumed quotation status:', e);
+          await convertQuotationToSale({ tenantId: profile.tenantId, quotationId: resumedQuotationId, saleId: finalReceiptId, convertedValue: finalTotal });
+        } catch (quotationError) {
+          console.warn('Sale completed, but quotation conversion remains pending:', quotationError);
+          toast.warning('Sale completed. The quotation link needs reconciliation, but no second sale was created.');
         }
         setResumedQuotationId(null);
       }
@@ -2068,7 +2046,7 @@ const Sales: React.FC = () => {
                     { id: 'card', label: 'Card / POS', icon: CreditCard },
                     { id: 'insurance', label: 'Insurance', icon: ShieldCheck },
                     { id: 'institutional_credit', label: 'Inst. Credit', icon: Building2 },
-                    { id: 'staff_welfare', label: 'Staff Welfare', icon: User, disabled: !isEmployee || totalAmount > welfareBalance }
+                    { id: 'staff_welfare', label: 'Staff Welfare', icon: User, disabled: !isEmployee }
                   ].map(method => (
                     <button
                       key={method.id}

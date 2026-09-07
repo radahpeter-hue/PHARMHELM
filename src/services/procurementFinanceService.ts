@@ -56,6 +56,33 @@ const toTimestamp = (date: string) => {
   return Timestamp.fromDate(parsed);
 };
 
+
+const pettyCashLeaseRef = (tenantId: string) => doc(db, 'petty_cash_posting_locks', stablePart(tenantId));
+
+async function acquirePettyCashLease(tenantId: string, postingId: string, userId: string) {
+  const lockRef = pettyCashLeaseRef(tenantId);
+  await runTransaction(db, async transaction => {
+    const snapshot = await transaction.get(lockRef);
+    const nowMs = Date.now();
+    if (snapshot.exists()) {
+      const lock = snapshot.data();
+      if (lock.postingId !== postingId && Number(lock.expiresAtMs || 0) > nowMs) {
+        throw new Error('Another Management Petty Cash posting is currently being processed. Please retry in a moment.');
+      }
+    }
+    transaction.set(lockRef, { tenantId, postingId, userId, acquiredAt: Timestamp.now(), expiresAtMs: nowMs + 120000 }, { merge: true });
+  });
+}
+
+async function releasePettyCashLease(tenantId: string, postingId: string) {
+  const lockRef = pettyCashLeaseRef(tenantId);
+  await runTransaction(db, async transaction => {
+    const snapshot = await transaction.get(lockRef);
+    if (!snapshot.exists() || snapshot.data().postingId !== postingId) return;
+    transaction.set(lockRef, { tenantId, postingId: null, userId: null, releasedAt: Timestamp.now(), expiresAtMs: 0 }, { merge: true });
+  });
+}
+
 /**
  * Posts a procurement GRN, its Finance representation and its dispatch as one
  * idempotent Firestore transaction. Deterministic document IDs make a retry a
@@ -163,18 +190,26 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
   const isHqDestination = branchId === 'HQ';
 
   if (financeValue > 0 && supplierId === 'UNKNOWN') throw new Error('A supplier is required for externally purchased stock.');
+  let pettyCashLeaseAcquired = false;
   if (paymentType === 'cash' && financeValue > 0) {
+    await acquirePettyCashLease(tenantId, ids.pettyCashId, user.uid);
+    pettyCashLeaseAcquired = true;
     const ledger = await getDocs(query(collection(db, 'petty_cash_ledger'), where('tenantId', '==', tenantId)));
     const available = ledger.docs.reduce((sum, snap) => {
       const data = snap.data();
-      return sum + (data.type === 'incoming' ? Number(data.amount || 0) : -Number(data.amount || 0));
+      const type = String(data.type || '').toLowerCase();
+      return sum + (['incoming', 'deposit', 'topup'].includes(type) ? Number(data.amount || 0) : -Number(data.amount || 0));
     }, 0);
     if (available < financeValue) {
+      await releasePettyCashLease(tenantId, ids.pettyCashId);
+      pettyCashLeaseAcquired = false;
       throw new Error(`Insufficient Management Petty Cash. Available: UGX ${available.toLocaleString()}, required: UGX ${financeValue.toLocaleString()}.`);
     }
   }
 
-  const result = await runTransaction(db, async transaction => {
+  let result: { alreadyProcessed: boolean };
+  try {
+    result = await runTransaction(db, async transaction => {
     const refs = {
       grn: doc(db, 'grn_records', ids.grnId),
       invoice: doc(db, 'invoices', ids.invoiceId),
@@ -206,7 +241,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
       supplierInvoiceNumber: invoiceRefValue, grnId: ids.grnId, grnRef: grnNumber,
       branchId, branchName, supplierId, supplierName, invoiceValue: financeValue,
       paymentType,
-      paymentStatus: existingInvoice?.paymentStatus || paymentType,
+      paymentStatus: paymentType === 'cash' ? 'Paid' : (existingCredit && Number(existingCredit.remainingCreditBalance ?? existingCredit.balance ?? financeValue) <= 0 ? 'Paid' : (existingCredit && Number(existingCredit.remainingCreditBalance ?? existingCredit.balance ?? financeValue) < financeValue ? 'Partially Paid' : 'Outstanding')) ,
       creditBalance: existingInvoice?.creditBalance ?? (paymentType === 'credit' ? financeValue : 0),
       invoiceDate: invoiceTimestamp, dueDate, createdAt: existingInvoice?.createdAt || now, updatedAt: now,
       type: 'payable', items: financeItems,
@@ -305,7 +340,12 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
       financialPostingTimestamp: now, reconciliation: false
     }, { merge: true });
     return { alreadyProcessed: false };
-  });
+    });
+  } finally {
+    if (pettyCashLeaseAcquired) {
+      await releasePettyCashLease(tenantId, ids.pettyCashId).catch(error => console.error('Failed to release petty cash posting lease:', error));
+    }
+  }
 
   return {
     grnId: ids.grnId, grnNumber,

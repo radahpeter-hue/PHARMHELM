@@ -7,7 +7,6 @@ import {
   where,
   runTransaction,
   Timestamp,
-  addDoc,
   updateDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -95,7 +94,11 @@ export async function revalidateOrderRun(runId: string): Promise<RevalidationRes
       }
       // Fetch product detail live
       const prodSnap = await getDoc(doc(db, 'products', line.productId));
-      if (!prodSnap.exists()) continue;
+      if (!prodSnap.exists()) {
+        result.hasChanges = true;
+        result.warnings.push({ productId: line.productId, productName: line.productName, type: 'STOCK_DROP', message: 'This product no longer exists and must be removed from the order before submission.', details: {} });
+        continue;
+      }
       const product = prodSnap.data() as Product;
 
       // Revalidate stockout / usable stock
@@ -262,12 +265,9 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
 
       const isHqAggregate = run.configuration.demandScope === 'all_branches';
       const stableOrderPart = `${runId}_${groupKey}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
-      const orderRef = isHqAggregate
-        ? doc(db, 'stock_orders', getHqAutoOrderId(runId, groupKey))
-        : doc(collection(db, 'stock_orders'));
-      const orderNumber = isHqAggregate
-        ? `HQR-${runId.slice(-6)}-${supplierId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'GEN'}`
-        : `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
+      const orderRef = doc(db, 'stock_orders', getHqAutoOrderId(runId, groupKey));
+      const supplierSuffix = supplierId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'GEN';
+      const orderNumber = isHqAggregate ? `HQR-${runId.slice(-6)}-${supplierSuffix}` : `ORD-${runId.slice(-6)}-${supplierSuffix}`;
       const totalCost = items.reduce((sum, item) => sum + item.finalPurchasePacks * ((item.calculationInputs as any)?.costPricePerPack || 0), 0);
       const now = new Date().toISOString();
       const isEmergency = Number(run.configuration.temporaryDemandMultiplier || 1) > 1;
@@ -293,9 +293,8 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
       };
 
       await runTransaction(db, async (tx) => {
-        const lineRefs = items.map(item => isHqAggregate
-            ? doc(db, 'stock_order_lines', `auto_line_${stableOrderPart}_${item.productId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100)}`)
-            : doc(collection(db, 'stock_order_lines'))
+        const lineRefs = items.map(item =>
+          doc(db, 'stock_order_lines', `auto_line_${stableOrderPart}_${item.id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100)}`)
         );
         const snapshots = await Promise.all([
           tx.get(orderRef),
@@ -326,8 +325,9 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
       const items = transfersByDonor[donorId] as any[];
       if (items.length === 0) continue;
 
-      const transferRef = doc(collection(db, 'transfer_invoices'));
-      const transferNumber = `TRF-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
+      const stableTransferPart = `${runId}_${donorId}_${destinationBranchId}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+      const transferRef = doc(db, 'transfer_invoices', `auto_transfer_${stableTransferPart}`);
+      const transferNumber = `TRF-${runId.slice(-6)}-${donorId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'SRC'}`;
 
       const transferData = {
         tenantId,
@@ -342,73 +342,44 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
         autoGenerateRunId: runId
       };
 
-      await runTransaction(db, async (tx) => {
-        tx.set(transferRef, transferData);
-        for (const item of items) {
-          const lineRef = doc(collection(db, 'transfer_invoice_lines'));
+      const lineRefs = items.map(item => doc(db, 'transfer_invoice_lines', `auto_transfer_line_${stableTransferPart}_${String(item.id || item.productId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100)}`));
+      const reservationsSnap = await getDocs(query(
+        collection(db, 'inventoryTransferReservations'),
+        where('tenantId', '==', tenantId), where('autoGenerateRunId', '==', runId), where('sourceBranchId', '==', donorId)
+      ));
+      const reservationRefs = reservationsSnap.docs.map(snapshot => snapshot.ref);
+
+      await runTransaction(db, async tx => {
+        const snapshots = await Promise.all([tx.get(transferRef), ...lineRefs.map(ref => tx.get(ref)), ...reservationRefs.map(ref => tx.get(ref))]);
+        if (!snapshots[0].exists()) tx.set(transferRef, transferData);
+        items.forEach((item, index) => {
+          if (snapshots[index + 1].exists()) return;
           const cost = (item.calculationInputs as any)?.costPricePerPack || 0;
-          tx.set(lineRef, {
-            tenantId,
-            transfer_id: transferRef.id,
-            product_id: item.productId,
-            product_name: item.productName,
-            qty_requested: item.qtyToTransferBaseUnits, // base units
-            qty_dispatched: 0,
-            qty_received: 0,
-            unit_cost_ugx: cost,
-            createdAt: new Date().toISOString()
-          });
-        }
+          tx.set(lineRefs[index], { tenantId, transfer_id: transferRef.id, product_id: item.productId, product_name: item.productName, qty_requested: item.qtyToTransferBaseUnits, qty_dispatched: 0, qty_received: 0, unit_cost_ugx: cost, createdAt: new Date().toISOString() });
+        });
+        reservationRefs.forEach((ref, index) => {
+          const snapshot = snapshots[1 + lineRefs.length + index];
+          if (!snapshot.exists()) return;
+          const reservation = snapshot.data();
+          if (reservation.status === 'CONVERTED' && reservation.convertedTransferRequestId && reservation.convertedTransferRequestId !== transferRef.id) throw new Error('A stock reservation was already converted into a different transfer request.');
+          if (['ACTIVE', 'PENDING', 'CONVERTED'].includes(reservation.status)) tx.update(ref, { status: 'CONVERTED', convertedTransferRequestId: transferRef.id, updatedAt: new Date().toISOString() });
+        });
       });
-
-      // 3. Mark active reservations as CONVERTED
-      try {
-        const reservationsSnap = await getDocs(
-          query(
-            collection(db, 'inventoryTransferReservations'),
-            where('tenantId', '==', tenantId),
-            where('autoGenerateRunId', '==', runId),
-            where('sourceBranchId', '==', donorId),
-            where('status', '==', 'ACTIVE')
-          )
-        );
-
-        for (const resDoc of reservationsSnap.docs) {
-          await updateDoc(doc(db, 'inventoryTransferReservations', resDoc.id), {
-            status: 'CONVERTED',
-            convertedTransferRequestId: transferRef.id,
-            updatedAt: new Date().toISOString()
-          });
-        }
-      } catch (e) {
-        console.warn('Failed to convert reservations:', e);
-      }
 
       transferIds.push(transferRef.id);
     }
 
-    // 4. Update Run Status
-    await updateDoc(runRef, {
-      status: 'SUBMITTED',
-      submittedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
-
-    // 5. Create Audit Log
-    try {
-      await addDoc(collection(db, 'global_audit_logs'), {
-        tenantId,
-        action: 'AUTO_GENERATE_ORDER_SUBMITTED',
-        category: 'PROCUREMENT',
+    const submittedAt = new Date().toISOString();
+    await runTransaction(db, async tx => {
+      const latestRun = await tx.get(runRef);
+      if (!latestRun.exists()) throw new Error('Run snapshot disappeared during submission.');
+      tx.update(runRef, { status: 'SUBMITTED', submittedAt, updatedAt: submittedAt, submittedOrderIds: orderIds, submittedTransferIds: transferIds });
+      tx.set(doc(db, 'global_audit_logs', `auto_order_submit_${runId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180)}`), {
+        tenantId, action: 'AUTO_GENERATE_ORDER_SUBMITTED', category: 'PROCUREMENT',
         description: `Auto-generated order run ${runId} submitted. Created ${orderIds.length} purchase orders and ${transferIds.length} interbranch transfers.`,
-        actor: userEmail,
-        timestamp: new Date().toISOString(),
-        ipAddress: 'client-side',
-        device: 'PharmHelm Pro ERP Console'
-      });
-    } catch (e) {
-      console.warn('Audit logger failed:', e);
-    }
+        actor: userEmail, timestamp: submittedAt, ipAddress: 'client-side', device: 'PharmHelm Pro ERP Console'
+      }, { merge: true });
+    });
 
   } catch (e: any) {
     console.error('Order submission failed:', e);
