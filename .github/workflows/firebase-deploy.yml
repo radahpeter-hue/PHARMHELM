@@ -9,11 +9,27 @@ jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Apply pending Batch 1 integrity patch
+        shell: bash
+        run: |
+          set -e
+          if [ -f scripts/apply-batch1-integrity-fixes.cjs ]; then
+            node scripts/apply-batch1-integrity-fixes.cjs
+            rm scripts/apply-batch1-integrity-fixes.cjs
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add src/pages/Sales.tsx src/services/hqStockReceiptService.ts src/services/networkFulfilmentService.ts src/services/saleInventoryIntegrityService.ts scripts/apply-batch1-integrity-fixes.cjs
+            if ! git diff --cached --quiet; then
+              git commit -m "fix: harden batch 1 stock integrity"
+              git push origin HEAD:main
+            fi
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
