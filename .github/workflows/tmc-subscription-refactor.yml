@@ -35,9 +35,24 @@ jobs:
           new = "if (matches.length < 1) throw new Error(`${label}: expected at least one match, found 0`); if (matches.length > 1) console.warn(`${label}: ${matches.length} matches found; applying the first source-order match.`);"
           if old not in text:
               raise SystemExit('Expected patcher assertion was not found')
-          path.write_text(text.replace(old, new, 1))
+          text = text.replace(old, new, 1)
+          text = text.replace("  ['src/pages/Finance.tsx', false]\n", "  ['src/pages/Finance.tsx', false]\n")
+          path.write_text(text)
           PY
           node scripts/applyTmcSubscriptionRefactor.mjs
+          # Finance still legitimately uses useTenant in ManagementFinance. Restore only that import after stale UpgradeRequiredCard cleanup.
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/pages/Finance.tsx')
+          text = path.read_text()
+          marker = "import { useAuth } from '../contexts/AuthContext';\n"
+          tenant_import = "import { useTenant } from '../contexts/TenantContext';\n"
+          if tenant_import not in text:
+              if marker not in text:
+                  raise SystemExit('Finance useAuth import marker not found')
+              text = text.replace(marker, marker + tenant_import, 1)
+          path.write_text(text)
+          PY
 
       - name: Install dependencies
         run: npm ci
