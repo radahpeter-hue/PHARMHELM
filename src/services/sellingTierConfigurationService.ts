@@ -86,6 +86,20 @@ export function validateSellingTierConfiguration(product: Partial<Product>): str
   return Array.from(new Set(errors));
 }
 
+/**
+ * Maintains safe compatibility with legacy fields while multi-tier selling is enabled.
+ *
+ * `sellingPricePerUnit` is consumed elsewhere as a true base-unit price when new
+ * ProductBatch records are created. It must therefore never be overwritten with a
+ * Strip or Pack commercial price. When an explicit Unit tier exists, that Unit price
+ * is the only multi-tier price that may synchronize into `sellingPricePerUnit`.
+ * Otherwise the existing legacy base-unit value is preserved.
+ *
+ * `unitOfSell` is also preserved when already present because pre-multi-tier historical
+ * records may still rely on that legacy multiplier during reconciliation. New tier-aware
+ * POS behaviour uses `defaultSellingTierCode` directly and does not need this legacy
+ * field to be rewritten.
+ */
 export function applyLegacySellingTierMirror<T extends Partial<Product>>(product: T): T {
   const defaultCode = product.defaultSellingTierCode;
   const defaultTier = defaultCode ? product.sellingTiers?.[defaultCode] : undefined;
@@ -93,10 +107,15 @@ export function applyLegacySellingTierMirror<T extends Partial<Product>>(product
     return product;
   }
 
+  const unitTier = product.sellingTiers?.unit;
+  const unitTierPrice = unitTier?.enabled && Number.isFinite(Number(unitTier.price)) && Number(unitTier.price) > 0
+    ? Number(unitTier.price)
+    : null;
+
   return {
     ...product,
-    unitOfSell: defaultCode,
-    sellingPricePerUnit: Number(defaultTier.price),
+    unitOfSell: product.unitOfSell || defaultCode,
+    sellingPricePerUnit: unitTierPrice ?? product.sellingPricePerUnit,
     sellingTierSchemaVersion: Math.max(1, Number(product.sellingTierSchemaVersion || 0))
   };
 }
