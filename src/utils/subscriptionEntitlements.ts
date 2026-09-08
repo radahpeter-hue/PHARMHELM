@@ -13,14 +13,15 @@ export const SUBSCRIPTION_TIER_LABELS: Record<SubscriptionTier, string> = {
 };
 
 export type BranchLimitSource = 'tier_default' | 'manual' | 'trial';
+export type DateLike = string | Date | { toDate: () => Date };
 
 export interface TrialStatusData {
   isTrial: boolean;
   trialBranchLimit: number;
-  trialStartDate: string;
-  trialEndDate: string;
+  trialStartDate: DateLike;
+  trialEndDate: DateLike;
   grantedBy: string;
-  grantedAt: string;
+  grantedAt: DateLike;
   notes?: string;
   previousBranchLimit?: number | null;
   previousBranchLimitSource?: BranchLimitSource | null;
@@ -30,11 +31,11 @@ export interface TrialStatusData {
 
 export interface ComplimentaryPeriodData {
   isActive: boolean;
-  startDate: string;
-  endDate: string;
+  startDate: DateLike;
+  endDate: DateLike;
   reason: string;
   grantedBy: string;
-  grantedAt: string;
+  grantedAt: DateLike;
 }
 
 export const getDefaultBranchLimit = (tier?: string | null): number => {
@@ -57,13 +58,27 @@ export const isValidBranchLimit = (value: unknown): value is number => (
   typeof value === 'number' && Number.isInteger(value) && value >= 0
 );
 
+const toDate = (value?: DateLike | null): Date | null => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === 'string') {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  if (typeof value === 'object' && typeof value.toDate === 'function') {
+    const parsed = value.toDate();
+    return parsed instanceof Date && !Number.isNaN(parsed.getTime()) ? parsed : null;
+  }
+  return null;
+};
+
 export const isTrialExpired = (
   trialStatus?: Pick<TrialStatusData, 'isTrial' | 'trialEndDate'> | null,
   now = new Date()
 ): boolean => {
   if (!trialStatus?.isTrial || !trialStatus.trialEndDate) return false;
-  const end = new Date(trialStatus.trialEndDate);
-  if (Number.isNaN(end.getTime())) return false;
+  const end = toDate(trialStatus.trialEndDate);
+  if (!end) return false;
   return end.getTime() < now.getTime();
 };
 
@@ -72,9 +87,9 @@ export const isComplimentaryPeriodActive = (
   now = new Date()
 ): boolean => {
   if (!complimentaryPeriod?.isActive) return false;
-  const start = new Date(complimentaryPeriod.startDate);
-  const end = new Date(complimentaryPeriod.endDate);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+  const start = toDate(complimentaryPeriod.startDate);
+  const end = toDate(complimentaryPeriod.endDate);
+  if (!start || !end) return false;
   return start.getTime() <= now.getTime() && now.getTime() <= end.getTime();
 };
 
