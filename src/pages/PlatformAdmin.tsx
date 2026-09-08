@@ -34,7 +34,7 @@ import {
   RefreshCw,
   Menu
 } from 'lucide-react';
-import { collection, query, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc, orderBy, limit, where, setDoc, onSnapshot } from 'firebase/firestore';
+import { collection, query, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc, orderBy, limit, where, setDoc, onSnapshot, Timestamp } from 'firebase/firestore';
 import { db, auth, registerAuthUser } from '../firebase';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
@@ -47,6 +47,7 @@ import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { deduplicateStaff } from '../utils/deduplicateStaff';
+import { getDefaultBranchLimit, isTrialExpired, isValidBranchLimit } from '../utils/subscriptionEntitlements';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -398,66 +399,152 @@ const PlatformAdmin = () => {
         toast.success(`Tenant ${reauthTenant.name} has been permanently deleted.`);
       } else if (reauthAction === 'updateBranchLimit') {
         const payload = reauthPayload || {};
+        if (!isValidBranchLimit(payload.newLimit)) {
+          throw new Error('Branch limit must be a whole number of zero or greater.');
+        }
         const tenantRef = doc(db, 'tenants', reauthTenant.id);
-        await updateDoc(tenantRef, { branchLimit: payload.newLimit });
+        const oldLimit = typeof reauthTenant.branchLimit === 'number' ? reauthTenant.branchLimit : null;
+        const changedAt = new Date().toISOString();
+        const actor = auth.currentUser?.uid || 'system';
+        await updateDoc(tenantRef, {
+          branchLimit: payload.newLimit,
+          branchLimitSource: payload.resetToTierDefault ? 'tier_default' : 'manual',
+          branchLimitManuallyOverridden: !payload.resetToTierDefault,
+          branchLimitUpdatedAt: changedAt,
+          branchLimitUpdatedBy: actor
+        });
         await addDoc(collection(db, 'global_audit_logs'), {
           action: 'BRANCH_LIMIT_CHANGED',
           category: 'TENANT',
-          description: `Changed branchLimit from ${payload.oldLimit} to ${payload.newLimit}`,
-          timestamp: new Date().toISOString(),
+          description: `Changed branchLimit from ${oldLimit ?? 'unset'} to ${payload.newLimit}`,
+          oldValue: {
+            branchLimit: oldLimit,
+            branchLimitSource: reauthTenant.branchLimitSource || null,
+            branchLimitManuallyOverridden: reauthTenant.branchLimitManuallyOverridden === true
+          },
+          newValue: {
+            branchLimit: payload.newLimit,
+            branchLimitSource: payload.resetToTierDefault ? 'tier_default' : 'manual',
+            branchLimitManuallyOverridden: !payload.resetToTierDefault
+          },
+          timestamp: changedAt,
           tenantId: reauthTenant.id,
-          actor: auth.currentUser?.uid || 'system',
+          actor,
           ipAddress: 'client-side',
           device: window.navigator.userAgent || 'web'
         });
         toast.success(`Branch limit updated to ${payload.newLimit} for ${reauthTenant.name}`);
       } else if (reauthAction === 'grantTrial') {
         const payload = reauthPayload || {};
+        if (!['inactive', 'unsubscribed'].includes(reauthTenant.subscription_status)) {
+          throw new Error('Trial access is only available to new or unbilled tenants.');
+        }
+        if (!isValidBranchLimit(payload.trialBranchLimit) || payload.trialBranchLimit < 1) {
+          throw new Error('Trial branch limit must be at least 1.');
+        }
         const tenantRef = doc(db, 'tenants', reauthTenant.id);
+        const actor = auth.currentUser?.uid || 'system';
+        const grantedAt = Timestamp.now();
         const trialStatus = {
           isTrial: true,
           trialBranchLimit: payload.trialBranchLimit,
-          trialStartDate: payload.trialStartDate,
-          trialEndDate: payload.trialEndDate,
-          grantedBy: auth.currentUser?.uid || 'system',
-          grantedAt: new Date().toISOString(),
-          notes: payload.notes || ''
+          trialStartDate: Timestamp.fromDate(new Date(payload.trialStartDate)),
+          trialEndDate: Timestamp.fromDate(new Date(`${payload.trialEndDate}T23:59:59`)),
+          grantedBy: actor,
+          grantedAt,
+          notes: payload.notes || '',
+          previousBranchLimit: typeof reauthTenant.branchLimit === 'number' ? reauthTenant.branchLimit : null,
+          previousBranchLimitSource: reauthTenant.branchLimitSource || null,
+          previousBranchLimitManuallyOverridden: reauthTenant.branchLimitManuallyOverridden === true,
+          previousSubscriptionStatus: reauthTenant.subscription_status || 'inactive'
         };
-        await updateDoc(tenantRef, { trialStatus: trialStatus, branchLimit: payload.trialBranchLimit });
+        await updateDoc(tenantRef, {
+          trialStatus,
+          subscription_status: 'trial',
+          branchLimit: payload.trialBranchLimit,
+          branchLimitSource: 'trial',
+          branchLimitManuallyOverridden: false,
+          branchLimitUpdatedAt: grantedAt,
+          branchLimitUpdatedBy: actor
+        });
         await addDoc(collection(db, 'global_audit_logs'), {
           action: 'TRIAL_GRANTED',
           category: 'TENANT',
           description: `Trial granted: branchLimit=${payload.trialBranchLimit}, end=${payload.trialEndDate}`,
-          timestamp: new Date().toISOString(),
+          oldValue: {
+            trialStatus: reauthTenant.trialStatus || null,
+            branchLimit: typeof reauthTenant.branchLimit === 'number' ? reauthTenant.branchLimit : null,
+            subscriptionStatus: reauthTenant.subscription_status || null
+          },
+          newValue: {
+            trialStatus,
+            branchLimit: payload.trialBranchLimit,
+            subscriptionStatus: 'trial'
+          },
+          timestamp: grantedAt,
           tenantId: reauthTenant.id,
-          actor: auth.currentUser?.uid || 'system',
+          actor,
           ipAddress: 'client-side',
           device: window.navigator.userAgent || 'web'
         });
         toast.success(`Trial access granted for ${reauthTenant.name}`);
       } else if (reauthAction === 'grantComplimentary') {
         const payload = reauthPayload || {};
+        if (reauthTenant.subscription_status !== 'active') {
+          throw new Error('Complimentary periods are only available to active paid tenants.');
+        }
         const tenantRef = doc(db, 'tenants', reauthTenant.id);
+        const actor = auth.currentUser?.uid || 'system';
+        const grantedAt = Timestamp.now();
         const complimentaryPeriod = {
           isActive: true,
-          startDate: payload.startDate,
-          endDate: payload.endDate,
+          startDate: Timestamp.fromDate(new Date(`${payload.startDate}T00:00:00`)),
+          endDate: Timestamp.fromDate(new Date(`${payload.endDate}T23:59:59`)),
           reason: payload.reason || '',
-          grantedBy: auth.currentUser?.uid || 'system',
-          grantedAt: new Date().toISOString()
+          grantedBy: actor,
+          grantedAt
         };
         await updateDoc(tenantRef, { complimentaryPeriod });
         await addDoc(collection(db, 'global_audit_logs'), {
           action: 'COMPLIMENTARY_PERIOD_GRANTED',
           category: 'TENANT',
           description: `Complimentary period granted: ${payload.startDate} to ${payload.endDate} - ${payload.reason}`,
-          timestamp: new Date().toISOString(),
+          oldValue: reauthTenant.complimentaryPeriod || null,
+          newValue: complimentaryPeriod,
+          timestamp: grantedAt,
           tenantId: reauthTenant.id,
-          actor: auth.currentUser?.uid || 'system',
+          actor,
           ipAddress: 'client-side',
           device: window.navigator.userAgent || 'web'
         });
         toast.success(`Complimentary period granted for ${reauthTenant.name}`);
+      } else if (reauthAction === 'deactivateExpiredTrial') {
+        const tenantRef = doc(db, 'tenants', reauthTenant.id);
+        const actor = auth.currentUser?.uid || 'system';
+        const changedAt = new Date().toISOString();
+        await updateDoc(tenantRef, {
+          status: 'inactive',
+          subscription_status: 'expired',
+          trialStatus: {
+            ...(reauthTenant.trialStatus || {}),
+            isTrial: false,
+            deactivatedAt: changedAt,
+            deactivatedBy: actor
+          }
+        });
+        await addDoc(collection(db, 'global_audit_logs'), {
+          action: 'EXPIRED_TRIAL_TENANT_DEACTIVATED',
+          category: 'TENANT',
+          description: 'Expired trial tenant manually deactivated by superadmin.',
+          oldValue: { status: reauthTenant.status, subscriptionStatus: reauthTenant.subscription_status, trialStatus: reauthTenant.trialStatus || null },
+          newValue: { status: 'inactive', subscriptionStatus: 'expired', trialActive: false },
+          timestamp: changedAt,
+          tenantId: reauthTenant.id,
+          actor,
+          ipAddress: 'client-side',
+          device: window.navigator.userAgent || 'web'
+        });
+        toast.success(`${reauthTenant.name} has been deactivated.`);
       }
 
       // Reset modal state
@@ -563,14 +650,66 @@ const PlatformAdmin = () => {
     try {
       // 1. Update Tenant subscription details in Firestore
       const tenantRef = doc(db, 'tenants', selectedTenantForSub);
+      const convertingTrial = tenantToUpdate.trialStatus?.isTrial === true;
+      const conversionTimestamp = new Date().toISOString();
+      const restoredBranchLimit = convertingTrial
+        ? (typeof tenantToUpdate.trialStatus?.previousBranchLimit === 'number'
+          ? tenantToUpdate.trialStatus.previousBranchLimit
+          : getDefaultBranchLimit(subPackage))
+        : tenantToUpdate.branchLimit;
+      const restoredBranchLimitSource = convertingTrial
+        ? (tenantToUpdate.trialStatus?.previousBranchLimitSource || 'tier_default')
+        : tenantToUpdate.branchLimitSource;
+      const restoredManualOverride = convertingTrial
+        ? (tenantToUpdate.trialStatus?.previousBranchLimitManuallyOverridden === true)
+        : tenantToUpdate.branchLimitManuallyOverridden;
+
       await updateDoc(tenantRef, {
         subscription_status: 'active',
         subscription_tier: subPackage,
         subscription_cycle: subCycle,
         subscription_start: subStartDate,
         subscription_end: subEndDate,
-        status: 'active'
+        status: 'active',
+        ...(convertingTrial ? {
+          trialStatus: {
+            ...tenantToUpdate.trialStatus,
+            isTrial: false,
+            convertedAt: conversionTimestamp,
+            convertedBy: auth.currentUser?.uid || 'system'
+          },
+          branchLimit: restoredBranchLimit,
+          branchLimitSource: restoredBranchLimitSource,
+          branchLimitManuallyOverridden: restoredManualOverride,
+          branchLimitUpdatedAt: conversionTimestamp,
+          branchLimitUpdatedBy: auth.currentUser?.uid || 'system'
+        } : {})
       });
+
+      if (convertingTrial) {
+        await addDoc(collection(db, 'global_audit_logs'), {
+          action: 'TRIAL_CONVERTED_TO_PAID',
+          category: 'TENANT',
+          description: `Trial converted to paid ${subPackage} subscription.`,
+          oldValue: {
+            subscriptionStatus: tenantToUpdate.subscription_status,
+            trialStatus: tenantToUpdate.trialStatus,
+            branchLimit: tenantToUpdate.branchLimit
+          },
+          newValue: {
+            subscriptionStatus: 'active',
+            subscriptionTier: subPackage,
+            trialActive: false,
+            branchLimit: restoredBranchLimit,
+            branchLimitSource: restoredBranchLimitSource
+          },
+          tenantId: tenantToUpdate.id,
+          actor: auth.currentUser?.uid || 'system',
+          timestamp: conversionTimestamp,
+          ipAddress: 'client-side',
+          device: window.navigator.userAgent || 'web'
+        });
+      }
 
       // 2. Add transaction to platform_revenue log
       await addDoc(collection(db, 'platform_revenue'), {
@@ -2721,6 +2860,11 @@ const PlatformAdmin = () => {
         <EditTenantModal 
           tenant={editingTenant}
           platformEmail={platformProfile?.email || ''}
+          onOpenSubscription={() => {
+            setSelectedTenantForSub(editingTenant.id);
+            setEditingTenant(null);
+            setActiveTab('subscriptions');
+          }}
           onRequestReauth={(action, payload) => {
             setReauthTenant(editingTenant);
             setReauthEmail(auth.currentUser?.email || '');
@@ -2880,6 +3024,12 @@ const PlatformAdmin = () => {
           iconColor = 'bg-emerald-50 text-emerald-600';
           btnColor = 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20';
           btnText = reauthSaving ? 'Granting...' : 'Confirm Grant';
+        } else if (reauthAction === 'deactivateExpiredTrial') {
+          title = 'Confirm Trial Deactivation';
+          desc = <span>Please verify your credentials to deactivate expired trial tenant <strong>{reauthTenant?.name}</strong>.</span>;
+          iconColor = 'bg-red-50 text-red-600';
+          btnColor = 'bg-red-600 hover:bg-red-700 shadow-red-500/20';
+          btnText = reauthSaving ? 'Deactivating...' : 'Confirm Deactivation';
         }
 
         return (
@@ -2952,7 +3102,7 @@ const PlatformAdmin = () => {
   );
 };
 
-const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess, onRequestReauth }: { tenant: Tenant, platformEmail: string, onClose: () => void, onSuccess: () => void, onRequestReauth: (action: string, payload: any) => void }) => {
+const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess, onRequestReauth, onOpenSubscription }: { tenant: Tenant, platformEmail: string, onClose: () => void, onSuccess: () => void, onRequestReauth: (action: string, payload: any) => void, onOpenSubscription: () => void }) => {
   const [branchCount, setBranchCount] = useState<number | null>(null);
   const [branchLimitInput, setBranchLimitInput] = useState<number | ''>(tenant.branchLimit ?? '');
   const [resetToTierDefault, setResetToTierDefault] = useState(false);
@@ -2988,6 +3138,7 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess, onRequestR
   const [activeModalTab, setActiveModalTab] = useState<'details' | 'predictive'>('details');
   const [predictiveData, setPredictiveData] = useState<any[]>([]);
   const [loadingPredictive, setLoadingPredictive] = useState(false);
+  const trialExpired = isTrialExpired(tenant.trialStatus);
 
   useEffect(() => {
     if (activeModalTab === 'predictive') {
@@ -3146,6 +3297,18 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess, onRequestR
 
         {activeModalTab === 'details' ? (
           <form onSubmit={handleSubmit} className="p-8 space-y-6 max-h-[70vh] overflow-y-auto">
+          {trialExpired && (
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <p className="text-xs font-black tracking-widest text-red-700">TRIAL EXPIRED</p>
+                <p className="text-xs text-red-600 mt-1">The evaluation period has ended. Access remains unchanged until a superadmin makes a decision.</p>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={onOpenSubscription} className="px-3 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold">Convert to Paid Subscription</button>
+                <button type="button" onClick={() => onRequestReauth('deactivateExpiredTrial', {})} className="px-3 py-2 bg-red-600 text-white rounded-xl text-xs font-bold">Deactivate Tenant</button>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-6">
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-[#141414]/40 uppercase tracking-widest">Pharmacy Name</label>
@@ -3207,21 +3370,24 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess, onRequestR
                   type="button"
                   onClick={() => {
                     // trigger reauth modal for branch limit change
-                    const tierDefault = tenant.subscription_tier === 'basic' ? 1 : (tenant.subscription_tier === 'standard' ? 5 : 15);
+                    const tierDefault = getDefaultBranchLimit(formData.subscription_tier);
                     const newLimit = resetToTierDefault ? tierDefault : branchLimitInput;
-                    onRequestReauth('updateBranchLimit', { oldLimit: tenant.branchLimit ?? null, newLimit });
+                    if (!isValidBranchLimit(newLimit)) { toast.error('Branch limit must be a whole number of zero or greater'); return; }
+                    onRequestReauth('updateBranchLimit', { oldLimit: tenant.branchLimit ?? null, newLimit, resetToTierDefault });
                   }}
                   className="px-3 py-3 bg-emerald-500 text-white rounded-xl font-bold text-xs uppercase tracking-widest"
                 >
                   Save
                 </button>
               </div>
-              <p className="text-xs text-zinc-400">Current branches: {branchCount ?? '—'} • Tier default: {tenant.subscription_tier === 'basic' ? 1 : tenant.subscription_tier === 'standard' ? 5 : 15}</p>
+              <p className="text-xs text-zinc-400">Current branches: {branchCount ?? '—'} • Tier default: {getDefaultBranchLimit(formData.subscription_tier)} • Source: {tenant.branchLimitSource || 'legacy/default'}</p>
               <label className="inline-flex items-center gap-2 text-xs mt-2"><input type="checkbox" checked={resetToTierDefault} onChange={(e) => setResetToTierDefault(e.target.checked)} /> Reset branchLimit to tier default on save</label>
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-[#141414]/40 uppercase tracking-widest">Trial Access</label>
-              {!showTrialForm ? (
+              {!['inactive', 'unsubscribed'].includes(tenant.subscription_status) ? (
+                <p className="text-xs text-zinc-400">Available only for new or unbilled tenants.</p>
+              ) : !showTrialForm ? (
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setShowTrialForm(true)} className="px-3 py-2 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold">Grant Trial Access</button>
                 </div>
@@ -3243,7 +3409,9 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess, onRequestR
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-[#141414]/40 uppercase tracking-widest">Complimentary Period</label>
-              {!showComplimentaryForm ? (
+              {tenant.subscription_status !== 'active' ? (
+                <p className="text-xs text-zinc-400">Available only for active paid tenants.</p>
+              ) : !showComplimentaryForm ? (
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setShowComplimentaryForm(true)} className="px-3 py-2 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold">Grant Complimentary Period</button>
                 </div>
@@ -3596,7 +3764,10 @@ const CreateTenantModal = ({ onClose, onSuccess, logAction }: { onClose: () => v
         subscription_status: 'inactive',
         subscription_start: '',
         subscription_end: '',
-        modules_enabled: ['inventory', 'sales', 'finance', 'hr', 'logistics'],
+        branchLimit: getDefaultBranchLimit(formData.subscription_tier),
+        branchLimitSource: 'tier_default',
+        branchLimitManuallyOverridden: false,
+        modules_enabled: ['dashboard', 'pos', 'inventory', 'clients', 'procurement', 'finance', 'hr', 'logistics', 'qa', 'predictive', 'marketing', 'settings'],
         status: 'active',
         created_at: now.toISOString(),
         created_by: 'system'

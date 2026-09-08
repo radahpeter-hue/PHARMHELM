@@ -45,6 +45,35 @@ export interface Tenant {
   modules_enabled: string[];
   deployment_mode: 'single_branch' | 'multi_branch';
   branchLimit?: number;
+  branchLimitSource?: 'tier_default' | 'manual' | 'trial';
+  branchLimitManuallyOverridden?: boolean;
+  branchLimitUpdatedAt?: string;
+  branchLimitUpdatedBy?: string;
+  trialStatus?: {
+    isTrial: boolean;
+    trialBranchLimit: number;
+    trialStartDate: string | { toDate: () => Date };
+    trialEndDate: string | { toDate: () => Date };
+    grantedBy: string;
+    grantedAt: string | { toDate: () => Date };
+    notes?: string;
+    previousBranchLimit?: number | null;
+    previousBranchLimitSource?: 'tier_default' | 'manual' | 'trial' | null;
+    previousBranchLimitManuallyOverridden?: boolean;
+    previousSubscriptionStatus?: string;
+    convertedAt?: string;
+    convertedBy?: string;
+    deactivatedAt?: string;
+    deactivatedBy?: string;
+  };
+  complimentaryPeriod?: {
+    isActive: boolean;
+    startDate: string | { toDate: () => Date };
+    endDate: string | { toDate: () => Date };
+    reason: string;
+    grantedBy: string;
+    grantedAt: string;
+  };
   status: 'active' | 'inactive' | 'suspended' | 'deleted';
   created_at: string;
   created_by: string;
