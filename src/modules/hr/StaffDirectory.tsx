@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
 import { registerAuthUser } from '../../firebase';
 import { deduplicateStaff } from '../../utils/deduplicateStaff';
+import { roleRealmId } from '../../config/rbac';
 
 export const StaffDirectory: React.FC = () => {
   const { profile } = useAuth();
@@ -472,13 +473,24 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
 
     setIsSubmitting(true);
     try {
+      const selectedCustomRole = (customRoles || []).find((role: any) =>
+        role.name?.trim().toLowerCase() === String(formData.role || '').trim().toLowerCase()
+      );
+      const primaryRoleRealmId = selectedCustomRole
+        ? roleRealmId(profile.tenantId, selectedCustomRole.name)
+        : null;
+
       if (staff?.id) {
-        await firestoreService.updateDocument('staff', staff.id, formData);
+        await firestoreService.updateDocument('staff', staff.id, {
+          ...formData,
+          roleRealmId: primaryRoleRealmId,
+        });
         toast.success('Staff member updated');
       } else {
         // Save staff record to Firestore as pending activation
         const staffId = await firestoreService.addDocument('staff', {
           ...formData,
+          roleRealmId: primaryRoleRealmId,
           username: '',
           loginHandle: '',
           authEmail: '',

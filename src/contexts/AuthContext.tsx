@@ -6,6 +6,7 @@ import { Staff, Branch, SystemSettings, PlatformUser } from '../types';
 import { toast } from 'sonner';
 import { useTenant } from './TenantContext';
 import { sanitizeInput } from '../utils/sanitize';
+import { SYSTEM_ROLE_PERMISSIONS } from '../config/rbac';
 
 export interface ModulePermission {
   access: 'none' | 'view' | 'operate' | 'all';
@@ -70,7 +71,7 @@ const mergePermissions = (target: RolePermissions, source?: RolePermissions) => 
   });
 };
 
-export const ROLE_REGISTRY: Record<string, RolePermissions> = {
+const LEGACY_ROLE_REGISTRY: Record<string, RolePermissions> = {
   owner: {
     sales: { access: 'all' },
     inventory: { access: 'all' },
@@ -435,6 +436,13 @@ export const ROLE_REGISTRY: Record<string, RolePermissions> = {
     marketing: { access: 'none' },
     settings: { access: 'none' }
   }
+};
+
+// System-generated roles are authoritative and immutable. Legacy keys are retained
+// only for backwards compatibility with historical staff records.
+export const ROLE_REGISTRY: Record<string, RolePermissions> = {
+  ...LEGACY_ROLE_REGISTRY,
+  ...(SYSTEM_ROLE_PERMISSIONS as Record<string, RolePermissions>)
 };
 
 interface AuthContextType {
@@ -835,8 +843,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               realmDocs.forEach((realmDoc, index) => {
                 const role = allUserRoles[index];
                 const registryKey = Object.keys(ROLE_REGISTRY).find(k => k.toLowerCase() === role.toLowerCase()) || role;
+                const isSystemRole = Boolean(ROLE_REGISTRY[registryKey]);
                 let rolePerms = ROLE_REGISTRY[registryKey];
-                if (realmDoc.exists()) {
+
+                // Tenant role-realm documents configure custom roles only. System roles are
+                // code-defined and cannot be weakened, expanded or silently changed in Firestore.
+                if (!isSystemRole && realmDoc.exists()) {
                   const configured = realmDoc.data().permissions || {};
                   const configuredPerms: RolePermissions = {};
                   Object.entries(configured).forEach(([rawModule, value]: [string, any]) => {

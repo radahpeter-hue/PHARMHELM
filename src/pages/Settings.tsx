@@ -51,6 +51,7 @@ import { twMerge } from 'tailwind-merge';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { BranchManager } from '../modules/hr/BranchManager';
+import { RolesManager } from '../modules/hr/RolesManager';
 import { uploadFileToObjectStorage } from '../utils/storage';
 
 function cn(...inputs: ClassValue[]) {
@@ -62,6 +63,7 @@ const TABS = [
   { id: 'branches', label: 'Branch Registry', icon: Building2 },
   { id: 'pending', label: 'Pending Activations', icon: UserPlus },
   { id: 'users', label: 'User Accounts', icon: Users },
+  { id: 'roles-access', label: 'Roles & Access', icon: Key },
   { id: 'master-registry', label: 'Master Registries', icon: Database },
   { id: 'it-security', label: 'IT & Security', icon: Shield },
   { id: 'branding', label: 'Branding', icon: Globe },
@@ -1324,6 +1326,10 @@ const Settings = () => {
             </table>
           </div>
         </div>
+      )}
+
+      {activeTab === 'roles-access' && (
+        <RolesManager />
       )}
 
       {activeTab === 'master-registry' && (
