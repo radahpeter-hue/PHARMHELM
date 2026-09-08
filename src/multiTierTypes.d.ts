@@ -20,6 +20,7 @@ declare module './types' {
   }
 
   interface SaleItem extends SaleTierSnapshotFields {
+    lineId?: string;
     tenantId?: string;
     branchId?: string;
     genericName?: string;
