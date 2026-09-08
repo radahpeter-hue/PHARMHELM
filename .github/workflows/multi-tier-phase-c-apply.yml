@@ -1,0 +1,67 @@
+name: Apply Multi Tier Phase C
+
+on:
+  push:
+    branches:
+      - codex/multi-tier-phase-b-20260908
+
+permissions:
+  contents: write
+
+jobs:
+  apply_validate_commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: codex/multi-tier-phase-b-20260908
+          fetch-depth: 2
+
+      - name: Apply Phase C source transformation
+        id: patch
+        shell: bash
+        run: |
+          node scripts/apply-multi-tier-phase-c.mjs
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --check
+            git diff --stat
+          fi
+
+      - name: Set up Node.js
+        if: steps.patch.outputs.changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.patch.outputs.changed == 'true'
+        run: |
+          npm ci
+          npm install @tailwindcss/oxide-linux-x64-gnu --save-optional --no-save
+
+      - name: TypeScript validation
+        if: steps.patch.outputs.changed == 'true'
+        run: npm run lint
+
+      - name: Test suite
+        if: steps.patch.outputs.changed == 'true'
+        run: npm test
+
+      - name: Production build
+        if: steps.patch.outputs.changed == 'true'
+        run: npm run build
+
+      - name: Commit validated Phase C screens
+        if: steps.patch.outputs.changed == 'true'
+        shell: bash
+        run: |
+          git config user.name "radahpeter-hue"
+          git config user.email "peterssentongo61@gmail.com"
+          git add src/components/inventory/ProductModal.tsx src/pages/Inventory.tsx src/pages/Sales.tsx
+          git commit -m "feat: implement multi-tier phase c inventory and pos cart"
+          git push origin HEAD:codex/multi-tier-phase-b-20260908
