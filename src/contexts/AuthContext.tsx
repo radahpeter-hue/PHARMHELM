@@ -6,6 +6,7 @@ import { Staff, Branch, SystemSettings, PlatformUser } from '../types';
 import { toast } from 'sonner';
 import { useTenant } from './TenantContext';
 import { sanitizeInput } from '../utils/sanitize';
+import { SYSTEM_ROLE_PERMISSIONS } from '../config/rbac';
 
 export interface ModulePermission {
   access: 'none' | 'view' | 'operate' | 'all';
@@ -70,7 +71,7 @@ const mergePermissions = (target: RolePermissions, source?: RolePermissions) => 
   });
 };
 
-export const ROLE_REGISTRY: Record<string, RolePermissions> = {
+const LEGACY_ROLE_REGISTRY: Record<string, RolePermissions> = {
   owner: {
     sales: { access: 'all' },
     inventory: { access: 'all' },
@@ -435,6 +436,24 @@ export const ROLE_REGISTRY: Record<string, RolePermissions> = {
     marketing: { access: 'none' },
     settings: { access: 'none' }
   }
+};
+
+// System-generated roles are authoritative and immutable. Registry keys are normalized
+// so historical casing cannot override the current role definition.
+const ROLE_ALIASES: Record<string, string> = {
+  'ceo / md': 'ceo',
+  'it support personnel': 'it support staff',
+  'procurement personnel': 'procurement officer'
+};
+
+export const ROLE_REGISTRY: Record<string, RolePermissions> = {
+  ...Object.fromEntries(
+    Object.entries(LEGACY_ROLE_REGISTRY).map(([role, permissions]) => [role.toLowerCase(), permissions])
+  ),
+  ...Object.fromEntries(
+    Object.entries(SYSTEM_ROLE_PERMISSIONS as Record<string, RolePermissions>)
+      .map(([role, permissions]) => [role.toLowerCase(), permissions])
+  )
 };
 
 interface AuthContextType {
@@ -834,9 +853,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }));
               realmDocs.forEach((realmDoc, index) => {
                 const role = allUserRoles[index];
-                const registryKey = Object.keys(ROLE_REGISTRY).find(k => k.toLowerCase() === role.toLowerCase()) || role;
+                const normalizedRole = role.trim().toLowerCase();
+                const registryKey = ROLE_ALIASES[normalizedRole] || normalizedRole;
+                const isSystemRole = Boolean(ROLE_REGISTRY[registryKey]);
                 let rolePerms = ROLE_REGISTRY[registryKey];
-                if (realmDoc.exists()) {
+
+                // Tenant role-realm documents configure custom roles only. System roles are
+                // code-defined and cannot be weakened, expanded or silently changed in Firestore.
+                if (!isSystemRole && realmDoc.exists()) {
                   const configured = realmDoc.data().permissions || {};
                   const configuredPerms: RolePermissions = {};
                   Object.entries(configured).forEach(([rawModule, value]: [string, any]) => {
@@ -850,7 +874,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } catch (error) {
               console.warn('Could not load configured role realms. Using system role defaults.', error);
               allUserRoles.forEach(role => {
-                const registryKey = Object.keys(ROLE_REGISTRY).find(k => k.toLowerCase() === role.toLowerCase()) || role;
+                const normalizedRole = role.trim().toLowerCase();
+                const registryKey = ROLE_ALIASES[normalizedRole] || normalizedRole;
                 mergePermissions(mergedPerms, ROLE_REGISTRY[registryKey]);
               });
             }
@@ -890,7 +915,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Fetch branches
             const allRoles = [currentProfile.role || 'staff', ...(currentProfile.secondaryRoles || [])];
             const isAllBranchRole = allRoles.some(role =>
-              ['owner', 'ceo', 'ceo / md', 'it head', 'it support staff'].includes(role.toLowerCase())
+              ['owner', 'ceo', 'ceo / md', 'it head', 'it support staff', 'it support personnel'].includes(role.toLowerCase())
             );
             if (isAllBranchRole) {
               const bSnap = await getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenant.id)));

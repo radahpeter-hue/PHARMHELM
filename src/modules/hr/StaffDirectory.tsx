@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
 import { registerAuthUser } from '../../firebase';
 import { deduplicateStaff } from '../../utils/deduplicateStaff';
+import { roleRealmId, SYSTEM_ROLES } from '../../config/rbac';
 
 export const StaffDirectory: React.FC = () => {
   const { profile } = useAuth();
@@ -393,20 +394,17 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
   const { tenant } = useTenant();
   const [isSubmitting, setIsSubmitting] = useState(false);
   
-  const systemDefaultRoleNames = [
-    'owner', 'admin', 'pharmacist', 'cashier', 'qa head', 'qa officer', 
-    'finance head', 'finance officer', 'procurement head', 'procurement officer', 
-    'ceo', 'hr head', 'hr support personnel', 'it head', 'it support staff', 
-    'logistics head', 'transport & logistics personnel', 'dispenser', 'trainee',
-    'branch manager', 'cleaner', 'marketing head', 'marketing personnel'
-  ];
+  const systemDefaultRoleNames = SYSTEM_ROLES
+    .flatMap(role => [role.name, role.label])
+    .map(role => role.toLowerCase());
+
+  const systemRoleDisplayName = (roleName: string) =>
+    SYSTEM_ROLES.find(role =>
+      role.name.toLowerCase() === roleName.toLowerCase() || role.label.toLowerCase() === roleName.toLowerCase()
+    )?.label || roleName;
 
   const allAvailableRoles = [
-    'owner', 'admin', 'pharmacist', 'cashier', 'QA Head', 'QA Officer', 
-    'Finance Head', 'Finance Officer', 'Procurement Head', 'Procurement Officer', 
-    'CEO', 'HR Head', 'HR Support Personnel', 'IT Head', 'IT Support Staff', 
-    'Logistics Head', 'Transport & Logistics Personnel', 'Marketing Head', 'Marketing Personnel', 'Dispenser', 'Trainee',
-    'branch manager', 'cleaner',
+    ...SYSTEM_ROLES.map(role => role.name),
     ...(customRoles || [])
       .map((r: any) => r.name?.trim())
       .filter(roleName => roleName && !systemDefaultRoleNames.includes(roleName.toLowerCase()))
@@ -472,13 +470,24 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
 
     setIsSubmitting(true);
     try {
+      const selectedCustomRole = (customRoles || []).find((role: any) =>
+        role.name?.trim().toLowerCase() === String(formData.role || '').trim().toLowerCase()
+      );
+      const primaryRoleRealmId = selectedCustomRole
+        ? roleRealmId(profile.tenantId, selectedCustomRole.name)
+        : null;
+
       if (staff?.id) {
-        await firestoreService.updateDocument('staff', staff.id, formData);
+        await firestoreService.updateDocument('staff', staff.id, {
+          ...formData,
+          roleRealmId: primaryRoleRealmId,
+        });
         toast.success('Staff member updated');
       } else {
         // Save staff record to Firestore as pending activation
         const staffId = await firestoreService.addDocument('staff', {
           ...formData,
+          roleRealmId: primaryRoleRealmId,
           username: '',
           loginHandle: '',
           authEmail: '',
@@ -578,28 +587,10 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
                   <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Primary Role *</label>
                   <select required className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900" value={formData.role || ''} onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}>
                     <option value="">Select Primary...</option>
-                    <optgroup label="System Defaults">
-                      <option value="owner">Owner</option>
-                      <option value="admin">Admin</option>
-                      <option value="pharmacist">Pharmacist</option>
-                      <option value="cashier">Cashier</option>
-                      <option value="QA Head">QA Head</option>
-                      <option value="QA Officer">QA Officer</option>
-                      <option value="Finance Head">Finance Head</option>
-                      <option value="Finance Officer">Finance Officer</option>
-                      <option value="Procurement Head">Procurement Head</option>
-                      <option value="Procurement Officer">Procurement Officer</option>
-                      <option value="CEO">CEO</option>
-                      <option value="HR Head">HR Head</option>
-                      <option value="HR Support Personnel">HR Support Personnel</option>
-                      <option value="IT Head">IT Head</option>
-                      <option value="IT Support Staff">IT Support Staff</option>
-                      <option value="Logistics Head">Logistics Head</option>
-                      <option value="Transport & Logistics Personnel">Transport & Logistics Personnel</option>
-                      <option value="Dispenser">Dispenser</option>
-                      <option value="Trainee">Trainee</option>
-                      <option value="branch manager">Branch Manager</option>
-                      <option value="cleaner">Cleaner</option>
+                    <optgroup label="System Generated Roles">
+                      {SYSTEM_ROLES.map(role => (
+                        <option key={role.name} value={role.name}>{role.label}</option>
+                      ))}
                     </optgroup>
                     {customRoles.length > 0 && (
                       <optgroup label="Custom Roles">
@@ -630,7 +621,7 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
                               onChange={() => toggleSecondaryRole(roleName)}
                               className="rounded border-slate-300 text-indigo-650 focus:ring-indigo-500/20"
                             />
-                            <span className="text-xs font-semibold text-slate-700 capitalize">{roleName}</span>
+                            <span className="text-xs font-semibold text-slate-700">{systemRoleDisplayName(roleName)}</span>
                           </label>
                         );
                       })}
