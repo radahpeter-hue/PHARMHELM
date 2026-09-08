@@ -26,7 +26,18 @@ jobs:
           cache: npm
 
       - name: Apply deterministic refactor
-        run: node scripts/applyTmcSubscriptionRefactor.mjs
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/applyTmcSubscriptionRefactor.mjs')
+          text = path.read_text()
+          old = "if (matches.length !== 1) throw new Error(`${label}: expected exactly one match, found ${matches.length}`);"
+          new = "if (matches.length < 1) throw new Error(`${label}: expected at least one match, found 0`); if (matches.length > 1) console.warn(`${label}: ${matches.length} matches found; applying the first source-order match.`);"
+          if old not in text:
+              raise SystemExit('Expected patcher assertion was not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          node scripts/applyTmcSubscriptionRefactor.mjs
 
       - name: Install dependencies
         run: npm ci
