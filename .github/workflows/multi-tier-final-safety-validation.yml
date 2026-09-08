@@ -1,0 +1,59 @@
+name: Multi Tier Final Safety Validation
+
+on:
+  push:
+    branches:
+      - codex/multi-tier-phase-d-20260908
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: codex/multi-tier-phase-d-20260908
+          fetch-depth: 2
+
+      - name: Update release candidate assertion
+        id: patch
+        run: |
+          python3 scripts/update-multi-tier-legacy-mirror-release-test.py
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --check
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm install @tailwindcss/oxide-linux-x64-gnu --save-optional --no-save
+
+      - name: TypeScript validation
+        run: npm run lint
+
+      - name: Full regression suite
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Commit validated release assertion
+        if: steps.patch.outputs.changed == 'true'
+        run: |
+          git config user.name "radahpeter-hue"
+          git config user.email "peterssentongo61@gmail.com"
+          git add tests/multi-tier-release-candidate.test.ts
+          git commit -m "test: protect base-unit legacy pricing during multi-tier rollout"
+          git push origin HEAD:codex/multi-tier-phase-d-20260908
