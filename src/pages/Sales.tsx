@@ -1602,7 +1602,8 @@ const Sales: React.FC = () => {
                   <button 
                     type="button"
                     onClick={() => setShowQuotationModal(true)}
-                    disabled={cart.length === 0}
+                    disabled={cart.length === 0 || cart.some(item => !item.isService && Boolean(item.tierCode))}
+                    title={cart.some(item => !item.isService && Boolean(item.tierCode)) ? 'Multi-tier quotations will be enabled in the quotation integration phase.' : undefined}
                     className="w-full sm:w-auto px-6 py-4 bg-zinc-100 hover:bg-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 text-zinc-700 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                   >
                     <FileText size={16} strokeWidth={3} />

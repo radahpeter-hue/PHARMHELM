@@ -453,7 +453,7 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
               >
                 <option value="unit">Per Unit</option>
                 <option value="pack">Per Pack</option>
-                {(formData.dosageForm === 'Tablet' || formData.dosageForm === 'Capsule') && (
+                {tierEligibility.eligible && (
                   <option value="strip">Per Strip</option>
                 )}
               </select>
