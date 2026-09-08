@@ -52,10 +52,10 @@ export interface Tenant {
   trialStatus?: {
     isTrial: boolean;
     trialBranchLimit: number;
-    trialStartDate: string;
-    trialEndDate: string;
+    trialStartDate: string | { toDate: () => Date };
+    trialEndDate: string | { toDate: () => Date };
     grantedBy: string;
-    grantedAt: string;
+    grantedAt: string | { toDate: () => Date };
     notes?: string;
     previousBranchLimit?: number | null;
     previousBranchLimitSource?: 'tier_default' | 'manual' | 'trial' | null;
@@ -68,8 +68,8 @@ export interface Tenant {
   };
   complimentaryPeriod?: {
     isActive: boolean;
-    startDate: string;
-    endDate: string;
+    startDate: string | { toDate: () => Date };
+    endDate: string | { toDate: () => Date };
     reason: string;
     grantedBy: string;
     grantedAt: string;

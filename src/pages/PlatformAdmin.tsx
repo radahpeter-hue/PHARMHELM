@@ -34,7 +34,7 @@ import {
   RefreshCw,
   Menu
 } from 'lucide-react';
-import { collection, query, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc, orderBy, limit, where, setDoc, onSnapshot } from 'firebase/firestore';
+import { collection, query, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc, orderBy, limit, where, setDoc, onSnapshot, Timestamp } from 'firebase/firestore';
 import { db, auth, registerAuthUser } from '../firebase';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
@@ -436,17 +436,20 @@ const PlatformAdmin = () => {
         toast.success(`Branch limit updated to ${payload.newLimit} for ${reauthTenant.name}`);
       } else if (reauthAction === 'grantTrial') {
         const payload = reauthPayload || {};
+        if (!['inactive', 'unsubscribed'].includes(reauthTenant.subscription_status)) {
+          throw new Error('Trial access is only available to new or unbilled tenants.');
+        }
         if (!isValidBranchLimit(payload.trialBranchLimit) || payload.trialBranchLimit < 1) {
           throw new Error('Trial branch limit must be at least 1.');
         }
         const tenantRef = doc(db, 'tenants', reauthTenant.id);
         const actor = auth.currentUser?.uid || 'system';
-        const grantedAt = new Date().toISOString();
+        const grantedAt = Timestamp.now();
         const trialStatus = {
           isTrial: true,
           trialBranchLimit: payload.trialBranchLimit,
-          trialStartDate: payload.trialStartDate,
-          trialEndDate: payload.trialEndDate,
+          trialStartDate: Timestamp.fromDate(new Date(payload.trialStartDate)),
+          trialEndDate: Timestamp.fromDate(new Date(`${payload.trialEndDate}T23:59:59`)),
           grantedBy: actor,
           grantedAt,
           notes: payload.notes || '',
@@ -487,13 +490,16 @@ const PlatformAdmin = () => {
         toast.success(`Trial access granted for ${reauthTenant.name}`);
       } else if (reauthAction === 'grantComplimentary') {
         const payload = reauthPayload || {};
+        if (reauthTenant.subscription_status !== 'active') {
+          throw new Error('Complimentary periods are only available to active paid tenants.');
+        }
         const tenantRef = doc(db, 'tenants', reauthTenant.id);
         const actor = auth.currentUser?.uid || 'system';
-        const grantedAt = new Date().toISOString();
+        const grantedAt = Timestamp.now();
         const complimentaryPeriod = {
           isActive: true,
-          startDate: payload.startDate,
-          endDate: payload.endDate,
+          startDate: Timestamp.fromDate(new Date(`${payload.startDate}T00:00:00`)),
+          endDate: Timestamp.fromDate(new Date(`${payload.endDate}T23:59:59`)),
           reason: payload.reason || '',
           grantedBy: actor,
           grantedAt
@@ -644,6 +650,20 @@ const PlatformAdmin = () => {
     try {
       // 1. Update Tenant subscription details in Firestore
       const tenantRef = doc(db, 'tenants', selectedTenantForSub);
+      const convertingTrial = tenantToUpdate.trialStatus?.isTrial === true;
+      const conversionTimestamp = new Date().toISOString();
+      const restoredBranchLimit = convertingTrial
+        ? (typeof tenantToUpdate.trialStatus?.previousBranchLimit === 'number'
+          ? tenantToUpdate.trialStatus.previousBranchLimit
+          : getDefaultBranchLimit(subPackage))
+        : tenantToUpdate.branchLimit;
+      const restoredBranchLimitSource = convertingTrial
+        ? (tenantToUpdate.trialStatus?.previousBranchLimitSource || 'tier_default')
+        : tenantToUpdate.branchLimitSource;
+      const restoredManualOverride = convertingTrial
+        ? (tenantToUpdate.trialStatus?.previousBranchLimitManuallyOverridden === true)
+        : tenantToUpdate.branchLimitManuallyOverridden;
+
       await updateDoc(tenantRef, {
         subscription_status: 'active',
         subscription_tier: subPackage,
@@ -651,17 +671,45 @@ const PlatformAdmin = () => {
         subscription_start: subStartDate,
         subscription_end: subEndDate,
         status: 'active',
-        ...(tenantToUpdate.trialStatus?.isTrial ? {
+        ...(convertingTrial ? {
           trialStatus: {
             ...tenantToUpdate.trialStatus,
             isTrial: false,
-            convertedAt: new Date().toISOString(),
+            convertedAt: conversionTimestamp,
             convertedBy: auth.currentUser?.uid || 'system'
           },
-          branchLimitSource: tenantToUpdate.branchLimitSource === 'trial' ? 'manual' : tenantToUpdate.branchLimitSource,
-          branchLimitManuallyOverridden: tenantToUpdate.branchLimitSource === 'trial' ? true : tenantToUpdate.branchLimitManuallyOverridden
+          branchLimit: restoredBranchLimit,
+          branchLimitSource: restoredBranchLimitSource,
+          branchLimitManuallyOverridden: restoredManualOverride,
+          branchLimitUpdatedAt: conversionTimestamp,
+          branchLimitUpdatedBy: auth.currentUser?.uid || 'system'
         } : {})
       });
+
+      if (convertingTrial) {
+        await addDoc(collection(db, 'global_audit_logs'), {
+          action: 'TRIAL_CONVERTED_TO_PAID',
+          category: 'TENANT',
+          description: `Trial converted to paid ${subPackage} subscription.`,
+          oldValue: {
+            subscriptionStatus: tenantToUpdate.subscription_status,
+            trialStatus: tenantToUpdate.trialStatus,
+            branchLimit: tenantToUpdate.branchLimit
+          },
+          newValue: {
+            subscriptionStatus: 'active',
+            subscriptionTier: subPackage,
+            trialActive: false,
+            branchLimit: restoredBranchLimit,
+            branchLimitSource: restoredBranchLimitSource
+          },
+          tenantId: tenantToUpdate.id,
+          actor: auth.currentUser?.uid || 'system',
+          timestamp: conversionTimestamp,
+          ipAddress: 'client-side',
+          device: window.navigator.userAgent || 'web'
+        });
+      }
 
       // 2. Add transaction to platform_revenue log
       await addDoc(collection(db, 'platform_revenue'), {
@@ -3337,7 +3385,9 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess, onRequestR
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-[#141414]/40 uppercase tracking-widest">Trial Access</label>
-              {!showTrialForm ? (
+              {!['inactive', 'unsubscribed'].includes(tenant.subscription_status) ? (
+                <p className="text-xs text-zinc-400">Available only for new or unbilled tenants.</p>
+              ) : !showTrialForm ? (
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setShowTrialForm(true)} className="px-3 py-2 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold">Grant Trial Access</button>
                 </div>
@@ -3359,7 +3409,9 @@ const EditTenantModal = ({ tenant, platformEmail, onClose, onSuccess, onRequestR
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-[#141414]/40 uppercase tracking-widest">Complimentary Period</label>
-              {!showComplimentaryForm ? (
+              {tenant.subscription_status !== 'active' ? (
+                <p className="text-xs text-zinc-400">Available only for active paid tenants.</p>
+              ) : !showComplimentaryForm ? (
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setShowComplimentaryForm(true)} className="px-3 py-2 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold">Grant Complimentary Period</button>
                 </div>
