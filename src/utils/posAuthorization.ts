@@ -1,37 +1,19 @@
 import type { Staff } from '../types';
 
-const DEFAULT_POS_OPERATOR_ROLES = new Set([
-  'owner',
-  'ceo',
-  'ceo / md',
-  'admin',
-  'cashier',
-  'pharmacist',
-  'dispenser',
-  'trainee',
-  'it head',
-  'branch manager'
-]);
-
-const normalizeRole = (role?: string) => (role || '').trim().toLowerCase();
-
 /**
- * Firestore currently authorizes POS stock mutations by operational role.
- * Keep the client gate equally strict so view-only and unsupported custom roles
- * cannot reach a checkout that the database will reject.
+ * POS checkout authority is capability-based, not job-title based.
+ *
+ * AuthContext resolves the effective `sales:operate` permission from the
+ * authenticated user's primary role, secondary roles and any tenant custom
+ * role realm. Firestore separately enforces the actual transaction and stock
+ * mutation rules. Keeping another hard-coded role whitelist here would create
+ * a second RBAC system and can reject users who legitimately have functional
+ * POS access.
  */
-export const hasTrustedPosOperatorRole = (
-  profile?: Pick<Staff, 'role' | 'secondaryRoles'> | null
-) => {
-  if (!profile) return false;
-  return [profile.role, ...(profile.secondaryRoles || [])]
-    .some(role => DEFAULT_POS_OPERATOR_ROLES.has(normalizeRole(role)));
-};
-
 export const canOperatePos = (
   profile: Pick<Staff, 'role' | 'secondaryRoles'> | null | undefined,
   hasSalesOperatePermission: boolean
-) => hasSalesOperatePermission && hasTrustedPosOperatorRole(profile);
+) => Boolean(profile) && hasSalesOperatePermission;
 
 export const formatPosCheckoutError = (error: unknown) => {
   const rawMessage = error instanceof Error ? error.message : String(error || '');
@@ -41,11 +23,11 @@ export const formatPosCheckoutError = (error: unknown) => {
     const parsed = JSON.parse(rawMessage);
     message = typeof parsed?.error === 'string' ? parsed.error : rawMessage;
   } catch {
-    // Non-JSON application errors are already safe to display below.
+    // Non-JSON application errors are already safe to classify below.
   }
 
   if (/missing or insufficient permissions|permission-denied/i.test(message)) {
-    return 'Your account is not authorised to create this sale or update stock. Confirm your POS role and active branch, then sign in again.';
+    return 'The sale was blocked by a transaction permission check. Your POS functional access may be valid, but one of the sale or stock writes was rejected. No stock was deducted.';
   }
 
   if (/^(Stock record is missing|Batch .* no longer exists|Product .* no longer exists|Insufficient stock)/i.test(message)) {
