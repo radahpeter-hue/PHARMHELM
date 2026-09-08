@@ -274,6 +274,16 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
           onChange={e => setFormData({ ...formData, unitsPerPack: parseFloat(e.target.value) || 0 })}
         />
       </div>
+      <div className="space-y-1">
+        <label className="text-[10px] font-black text-pink-700 uppercase tracking-wider">Units per Strip</label>
+        <input
+          type="number"
+          min="0"
+          className="w-full px-3 py-2 bg-white border border-pink-200 rounded-xl focus:ring-2 focus:ring-pink-500/20 outline-none text-sm"
+          value={isNaN(formData.unitsPerStrip as number) ? '' : formData.unitsPerStrip || 0}
+          onChange={e => setFormData({ ...formData, unitsPerStrip: parseFloat(e.target.value) || 0 })}
+        />
+      </div>
     </div>
   );
 
@@ -304,6 +314,16 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
           className="w-full px-3 py-2 bg-white border border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none text-sm"
           value={isNaN(formData.unitsPerPack as number) ? '' : formData.unitsPerPack || 0}
           onChange={e => setFormData({ ...formData, unitsPerPack: parseFloat(e.target.value) || 0 })}
+        />
+      </div>
+      <div className="space-y-1">
+        <label className="text-[10px] font-black text-blue-700 uppercase tracking-wider">Units per Strip</label>
+        <input
+          type="number"
+          min="0"
+          className="w-full px-3 py-2 bg-white border border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none text-sm"
+          value={isNaN(formData.unitsPerStrip as number) ? '' : formData.unitsPerStrip || 0}
+          onChange={e => setFormData({ ...formData, unitsPerStrip: parseFloat(e.target.value) || 0 })}
         />
       </div>
     </div>
