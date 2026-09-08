@@ -438,11 +438,22 @@ const LEGACY_ROLE_REGISTRY: Record<string, RolePermissions> = {
   }
 };
 
-// System-generated roles are authoritative and immutable. Legacy keys are retained
-// only for backwards compatibility with historical staff records.
+// System-generated roles are authoritative and immutable. Registry keys are normalized
+// so historical casing cannot override the current role definition.
+const ROLE_ALIASES: Record<string, string> = {
+  'ceo / md': 'ceo',
+  'it support personnel': 'it support staff',
+  'procurement personnel': 'procurement officer'
+};
+
 export const ROLE_REGISTRY: Record<string, RolePermissions> = {
-  ...LEGACY_ROLE_REGISTRY,
-  ...(SYSTEM_ROLE_PERMISSIONS as Record<string, RolePermissions>)
+  ...Object.fromEntries(
+    Object.entries(LEGACY_ROLE_REGISTRY).map(([role, permissions]) => [role.toLowerCase(), permissions])
+  ),
+  ...Object.fromEntries(
+    Object.entries(SYSTEM_ROLE_PERMISSIONS as Record<string, RolePermissions>)
+      .map(([role, permissions]) => [role.toLowerCase(), permissions])
+  )
 };
 
 interface AuthContextType {
@@ -842,7 +853,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }));
               realmDocs.forEach((realmDoc, index) => {
                 const role = allUserRoles[index];
-                const registryKey = Object.keys(ROLE_REGISTRY).find(k => k.toLowerCase() === role.toLowerCase()) || role;
+                const normalizedRole = role.trim().toLowerCase();
+                const registryKey = ROLE_ALIASES[normalizedRole] || normalizedRole;
                 const isSystemRole = Boolean(ROLE_REGISTRY[registryKey]);
                 let rolePerms = ROLE_REGISTRY[registryKey];
 
@@ -862,7 +874,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } catch (error) {
               console.warn('Could not load configured role realms. Using system role defaults.', error);
               allUserRoles.forEach(role => {
-                const registryKey = Object.keys(ROLE_REGISTRY).find(k => k.toLowerCase() === role.toLowerCase()) || role;
+                const normalizedRole = role.trim().toLowerCase();
+                const registryKey = ROLE_ALIASES[normalizedRole] || normalizedRole;
                 mergePermissions(mergedPerms, ROLE_REGISTRY[registryKey]);
               });
             }
@@ -902,7 +915,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Fetch branches
             const allRoles = [currentProfile.role || 'staff', ...(currentProfile.secondaryRoles || [])];
             const isAllBranchRole = allRoles.some(role =>
-              ['owner', 'ceo', 'ceo / md', 'it head', 'it support staff'].includes(role.toLowerCase())
+              ['owner', 'ceo', 'ceo / md', 'it head', 'it support staff', 'it support personnel'].includes(role.toLowerCase())
             );
             if (isAllBranchRole) {
               const bSnap = await getDocs(query(collection(db, 'branches'), where('tenantId', '==', tenant.id)));

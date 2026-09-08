@@ -154,10 +154,8 @@ service cloud.firestore {
     function isInventoryOperator() {
       return isAuthenticated() && (
         hasRole('Branch Manager') || hasRole('branch manager') ||
-        hasRole('Pharmacist') || hasRole('pharmacist') || hasRole('Dispenser') ||
+        hasRole('Pharmacist') || hasRole('pharmacist') ||
         hasRole('Procurement Head') || hasRole('Procurement Officer') ||
-        hasRole('QA Head') || hasRole('QA Officer') ||
-        hasRole('Logistics Head') || hasRole('Logistics Manager') ||
         hasCustomModuleFunctional('inventory') ||
         isAdmin()
       );
@@ -167,9 +165,8 @@ service cloud.firestore {
       return isAuthenticated() && (
         hasRole('Branch Manager') || hasRole('branch manager') ||
         hasRole('Pharmacist') || hasRole('pharmacist') ||
+        hasRole('Dispenser') || hasRole('dispenser') ||
         hasRole('Procurement Head') || hasRole('Procurement Officer') || hasRole('Procurement Manager') ||
-        hasRole('QA Head') ||
-        hasRole('Logistics Head') || hasRole('Logistics Manager') ||
         hasCustomModuleFunctional('stock') ||
         isAdmin()
       );
@@ -189,9 +186,45 @@ service cloud.firestore {
     function isMarketing() {
       return isAuthenticated() && (
         hasRole('Marketing Head') || hasRole('Marketing Personnel') || hasRole('Marketing Manager') ||
-        hasCustomModuleFunctional('marketing') || isAdmin()
+        hasRole('admin') || hasRole('Admin') || hasCustomModuleFunctional('marketing') || isAdmin()
       );
     }
+
+    function hasCustomModuleView(moduleKey) {
+      return isAuthenticated()
+        && ('roleRealmId' in getUserData())
+        && getUserData().roleRealmId is string
+        && getUserData().roleRealmId.size() > 0
+        && exists(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId))
+        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.tenantId == getUserData().tenantId
+        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleType == 'custom'
+        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleName == getUserData().role
+        && moduleKey in get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions
+        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions[moduleKey].accessLevel in ['view_only', 'view_functional', 'all'];
+    }
+
+    function canViewFinance() {
+      return isFinance() || isITPersonnel() || hasCustomModuleView('finance');
+    }
+
+    function canViewProcurement() {
+      return isProcurement()
+        || isFinance()
+        || hasRole('QA Head') || hasRole('QA Officer')
+        || hasRole('Logistics Head')
+        || hasRole('Pharmacist') || hasRole('pharmacist')
+        || isITPersonnel()
+        || hasCustomModuleView('procurement');
+    }
+
+    function canViewMarketing() {
+      return isMarketing()
+        || hasRole('QA Head')
+        || hasRole('Finance Head')
+        || isITPersonnel()
+        || hasCustomModuleView('marketing');
+    }
+
 
     function isOwner(userId) {
       return isAuthenticated() && (
@@ -298,8 +331,15 @@ service cloud.firestore {
         isTenantMember(resource.data.tenantId)
       );
       allow create: if isAuthenticated() && (isAdmin() || isIT() || isHR()) && isTenantMember(request.resource.data.tenantId);
+      // HR assigns organisational roles and branch placement. IT may perform account
+      // activation/support updates but cannot silently change the HR-assigned role realm.
       allow update: if isAuthenticated() && (
-        isAdmin() || isIT() || isHR() ||
+        isAdmin() || isHR() ||
+        (isITPersonnel() &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'tenantId', 'role', 'secondaryRoles', 'roleRealmId',
+            'assigned_branches', 'branch_id', 'default_branch_id'
+          ])) ||
         (request.auth.uid == staffId &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
             'tenantId', 'role', 'secondaryRoles', 'assigned_branches',
@@ -391,7 +431,7 @@ service cloud.firestore {
     }
 
     match /finance_ledger/{entryId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isFinance();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
       allow write: if isFinance() && isTenantMember(request.resource.data.tenantId);
     }
 
@@ -434,12 +474,12 @@ service cloud.firestore {
     }
 
     match /credit_receivables/{receivableId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isFinance();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
       allow write: if isFinance();
     }
 
     match /supplier_payables/{payableId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isFinance();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
       allow write: if isFinance();
     }
 
@@ -449,23 +489,23 @@ service cloud.firestore {
     }
 
     match /client_credit_ledger/{entryId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isFinance();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
       allow write: if isFinance();
     }
 
     match /institution_credit_ledger/{entryId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isFinance();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
       allow write: if isFinance();
     }
 
     match /supplier_credit_ledger/{entryId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isFinance();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
       allow write: if isFinance();
     }
 
     match /creditPayments/{paymentId} {
       allow get: if isAuthenticated() && isFinance() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isFinance();
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
       allow create: if isAuthenticated() && isFinance() && isTenantMember(request.resource.data.tenantId);
       allow update, delete: if false;
     }
@@ -483,42 +523,42 @@ service cloud.firestore {
     }
 
     match /campaigns/{campaignId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isMarketing();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewMarketing();
       allow create: if isMarketing() && isTenantMember(request.resource.data.tenantId);
       allow update: if isMarketing() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin();
     }
 
     match /health_messages/{messageId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isMarketing();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewMarketing();
       allow create: if isMarketing() && isTenantMember(request.resource.data.tenantId);
       allow update: if isMarketing() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin();
     }
 
     match /marketing_expenses/{expenseId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isMarketing() || isFinance());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewMarketing();
       allow create: if isMarketing() && isTenantMember(request.resource.data.tenantId);
       allow update: if (isMarketing() || isFinance()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin();
     }
 
     match /outreach_events/{eventId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isMarketing();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewMarketing();
       allow create: if isMarketing() && isTenantMember(request.resource.data.tenantId);
       allow update: if isMarketing() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin();
     }
 
     match /prescriber_disbursements/{disbursementId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isMarketing() || isFinance());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewMarketing();
       allow create: if isMarketing() && isTenantMember(request.resource.data.tenantId);
       allow update: if (isMarketing() || isFinance()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin();
     }
 
     match /pharmpoints_settings/{settingsId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isMarketing();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewMarketing();
       allow create: if isMarketing() && isTenantMember(request.resource.data.tenantId);
       allow update: if isMarketing() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin();
@@ -699,13 +739,13 @@ service cloud.firestore {
 
     // Procurement, transfers, billing, and welfare collections
     match /stock_orders/{orderId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isProcurement() || isBranchManager());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (canViewProcurement() || isBranchManager());
       allow create: if isAuthenticated() && (isProcurement() || isBranchManager()) && isTenantMember(request.resource.data.tenantId);
       allow update: if isAuthenticated() && (isProcurement() || isBranchManager()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin();
     }
     match /stock_order_lines/{lineId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isProcurement() || isBranchManager());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (canViewProcurement() || isBranchManager());
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
       allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
@@ -724,7 +764,7 @@ service cloud.firestore {
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /hq_order_drafts/{draftId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isProcurement();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewProcurement();
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && isProcurement();
       allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && isProcurement();
       allow delete: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isProcurement();
