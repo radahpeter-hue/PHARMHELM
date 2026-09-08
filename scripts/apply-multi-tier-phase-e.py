@@ -19,3 +19,31 @@ replace_once(
     """    const commercialQuantity = Number(item.quantity ?? item.commercialQuantity ?? 0);\n    if (!Number.isInteger(commercialQuantity) || commercialQuantity <= 0) {\n      throw new Error(`${item.productName || item.name || product.name} must have a positive whole commercial quantity.`);\n    }\n    const storedMultiplier = Number(item.tierMultiplier || 0);\n    const legacyUnit = String(product.unitOfSell || product.unit || '').trim().toLowerCase();\n    const legacyMultiplier = legacyUnit === 'pack'\n      ? Math.max(1, Number(product.unitsPerPack || 1))\n      : legacyUnit === 'strip'\n        ? Math.max(1, Number(product.unitsPerStrip || 1))\n        : 1;\n    const multiplier = Number.isFinite(storedMultiplier) && storedMultiplier > 0 ? storedMultiplier : legacyMultiplier;\n    const targetBaseQuantity = commercialQuantity * multiplier;\n    if (!Number.isFinite(targetBaseQuantity) || targetBaseQuantity <= 0) throw new Error(`${product.name} has an invalid revised base quantity.`);\n""",
     'revision quantity authority'
 )
+
+replace_once(
+    'src/services/posTierCartService.ts',
+    """import { buildSaleTierSnapshot } from './sellingTierService';\n""",
+    """import { buildSaleTierSnapshot } from './sellingTierService';\nimport { createSaleLineId } from './saleTierHistoryService';\n""",
+    'tier cart line id import'
+)
+
+replace_once(
+    'src/services/posTierCartService.ts',
+    """  return {\n    productId: product.id,\n    tenantId,\n""",
+    """  return {\n    lineId: createSaleLineId(),\n    productId: product.id,\n    tenantId,\n""",
+    'tier cart stable line id'
+)
+
+replace_once(
+    'src/services/posCheckoutTierService.ts',
+    """import { resolveSellingTiers } from './sellingTierService';\n""",
+    """import { resolveSellingTiers } from './sellingTierService';\nimport { createSaleLineId } from './saleTierHistoryService';\n""",
+    'checkout line id import'
+)
+
+replace_once(
+    'src/services/posCheckoutTierService.ts',
+    """    return {\n      ...item,\n      quantity: commercialQuantity,\n""",
+    """    return {\n      ...item,\n      lineId: item.lineId || createSaleLineId(),\n      quantity: commercialQuantity,\n""",
+    'checkout stable line id'
+)
