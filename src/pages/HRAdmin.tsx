@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { 
+import React, { useEffect, useMemo, useState } from 'react';
+import {
   Users,
   Building2,
   DollarSign,
@@ -8,17 +8,15 @@ import {
   Briefcase,
   ShieldAlert,
   GraduationCap,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Lock,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
-import { UpgradeRequiredCard } from '../components/UpgradeRequiredCard';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
-// Import HR Modules
 import { StaffDirectory } from '../modules/hr/StaffDirectory';
-import { RolesManager } from '../modules/hr/RolesManager';
 import { AttendanceTracker } from '../modules/hr/AttendanceTracker';
 import { PayrollManager } from '../modules/hr/PayrollManager';
 import { BranchManager } from '../modules/hr/BranchManager';
@@ -33,66 +31,141 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const HRAdmin: React.FC = () => {
-  const { profile } = useAuth();
-  const { tenant } = useTenant();
-  const [activeTab, setActiveTab] = useState<'staff' | 'roles' | 'attendance' | 'payroll' | 'leave_advance' | 'branches' | 'recruitment' | 'trainees' | 'performance' | 'reports' | 'settings'>('staff');
+type HRTab =
+  | 'staff'
+  | 'attendance'
+  | 'payroll'
+  | 'leave_advance'
+  | 'branches'
+  | 'recruitment'
+  | 'trainees'
+  | 'performance'
+  | 'reports'
+  | 'settings';
 
-  const userRoles = [profile?.role || 'staff', ...(profile?.secondaryRoles || [])];
-  const isManagement = userRoles.some(r => ['owner', 'CEO', 'CEO / MD', 'HR Head', 'admin'].includes(r));
+const HRAdmin: React.FC = () => {
+  const { profile, hasPermission } = useAuth();
+  const { tenant } = useTenant();
+  const [activeTab, setActiveTab] = useState<HRTab>('staff');
+
+  const normalizedRoles = useMemo(
+    () => [profile?.role || '', ...(profile?.secondaryRoles || [])].map(role => role.trim().toLowerCase()),
+    [profile?.role, profile?.secondaryRoles]
+  );
+
+  const hasAnyFixedRole = (roles: string[]) => roles.some(role => normalizedRoles.includes(role));
+  const isExecutive = hasAnyFixedRole(['owner', 'ceo', 'ceo / md']);
+  const isGeneralAdmin = hasAnyFixedRole(['admin']);
+  const isHRHead = hasAnyFixedRole(['hr head']);
+  const isHRSupport = hasAnyFixedRole(['hr support personnel']);
+  const isIT = hasAnyFixedRole(['it head', 'it support staff', 'it support personnel', 'it staff']);
+  const isBranchManager = hasAnyFixedRole(['branch manager']);
+  const hasOtherHRAuthority = isExecutive || isGeneralAdmin || isHRHead || isHRSupport;
+  const isRestrictedBranchManager = isBranchManager && !hasOtherHRAuthority;
+
+  const canOperateHR = hasPermission('hr', 'operate');
+  const canViewHR = hasPermission('hr', 'view');
+  const customOrGeneralOperator = canOperateHR && !isRestrictedBranchManager && !isIT;
+
+  const allowedTabs = useMemo<HRTab[]>(() => {
+    const allowed = new Set<HRTab>();
+
+    if (customOrGeneralOperator || isExecutive || isGeneralAdmin || isHRHead || isHRSupport) {
+      ['staff', 'attendance', 'payroll', 'leave_advance', 'recruitment', 'trainees', 'performance', 'reports'].forEach(tab => allowed.add(tab as HRTab));
+    }
+
+    if (isRestrictedBranchManager) {
+      // Branch Managers use HR only to raise and follow branch performance / disciplinary incidents.
+      allowed.add('performance');
+    }
+
+    if (isIT) {
+      // IT has diagnostic HR visibility, not routine HR administration.
+      allowed.add('reports');
+    }
+
+    if (canViewHR && !canOperateHR && !isIT && !isRestrictedBranchManager) {
+      // View-only custom roles are intentionally kept to the report console so they cannot
+      // reach transactional HR editors that pre-date capability-level UI guards.
+      allowed.add('reports');
+    }
+
+    if (isExecutive || isGeneralAdmin) {
+      allowed.add('branches');
+      allowed.add('settings');
+    }
+
+    return Array.from(allowed);
+  }, [customOrGeneralOperator, isExecutive, isGeneralAdmin, isHRHead, isHRSupport, isRestrictedBranchManager, isIT, canViewHR, canOperateHR]);
+
+  useEffect(() => {
+    if (allowedTabs.length > 0 && !allowedTabs.includes(activeTab)) {
+      setActiveTab(allowedTabs[0]);
+    }
+  }, [allowedTabs, activeTab]);
+
   const isBasic = tenant?.subscription_tier === 'basic';
+  void isBasic;
+
+  if (allowedTabs.length === 0) {
+    return (
+      <div className="rounded-3xl border border-slate-200 bg-white p-10 text-center">
+        <Lock className="mx-auto mb-3 text-slate-400" size={28} />
+        <h2 className="font-black text-slate-900">HR access is restricted</h2>
+        <p className="mt-2 text-sm text-slate-500">Your assigned role does not include an HR function or report view.</p>
+      </div>
+    );
+  }
+
+  const show = (tab: HRTab) => allowedTabs.includes(tab);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight">HR & Administration</h1>
-          <p className="text-slate-500 text-sm font-medium">Manage your workforce, branches, and system-wide configurations.</p>
+          <h1 className="text-3xl font-black tracking-tight text-slate-900">HR & Administration</h1>
+          <p className="text-sm font-medium text-slate-500">Role-scoped workforce administration and employee governance.</p>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl w-full overflow-x-auto no-scrollbar">
-        <TabButton active={activeTab === 'staff'} onClick={() => setActiveTab('staff')} icon={Users} label="Staff" />
-        <TabButton active={activeTab === 'roles'} onClick={() => setActiveTab('roles')} icon={Briefcase} label="Roles" />
-        <TabButton active={activeTab === 'attendance'} onClick={() => setActiveTab('attendance')} icon={UserCheck} label="Attendance" />
-        <TabButton active={activeTab === 'payroll'} onClick={() => setActiveTab('payroll')} icon={DollarSign} label="Payroll" />
-        <TabButton active={activeTab === 'leave_advance'} onClick={() => setActiveTab('leave_advance')} icon={Briefcase} label="Leave & Advances" />
-        <TabButton active={activeTab === 'branches'} onClick={() => setActiveTab('branches')} icon={Building2} label="Branches" />
-        <TabButton active={activeTab === 'recruitment'} onClick={() => setActiveTab('recruitment')} icon={Briefcase} label="Recruitment" />
-        <TabButton active={activeTab === 'trainees'} onClick={() => setActiveTab('trainees')} icon={GraduationCap} label="Trainees" />
-        <TabButton active={activeTab === 'performance'} onClick={() => setActiveTab('performance')} icon={ShieldAlert} label="Performance" />
-        <TabButton active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} icon={FileSpreadsheet} label="Reports" />
-        {isManagement && (
-          <TabButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={Settings} label="Settings" />
-        )}
+      <div className="flex w-full items-center gap-2 overflow-x-auto rounded-2xl bg-slate-100 p-1.5 no-scrollbar">
+        {show('staff') && <TabButton active={activeTab === 'staff'} onClick={() => setActiveTab('staff')} icon={Users} label="Staff" />}
+        {show('attendance') && <TabButton active={activeTab === 'attendance'} onClick={() => setActiveTab('attendance')} icon={UserCheck} label="Attendance" />}
+        {show('payroll') && <TabButton active={activeTab === 'payroll'} onClick={() => setActiveTab('payroll')} icon={DollarSign} label="Payroll" />}
+        {show('leave_advance') && <TabButton active={activeTab === 'leave_advance'} onClick={() => setActiveTab('leave_advance')} icon={Briefcase} label="Leave & Advances" />}
+        {show('branches') && <TabButton active={activeTab === 'branches'} onClick={() => setActiveTab('branches')} icon={Building2} label="Branches" />}
+        {show('recruitment') && <TabButton active={activeTab === 'recruitment'} onClick={() => setActiveTab('recruitment')} icon={Briefcase} label="Recruitment" />}
+        {show('trainees') && <TabButton active={activeTab === 'trainees'} onClick={() => setActiveTab('trainees')} icon={GraduationCap} label="Trainees" />}
+        {show('performance') && <TabButton active={activeTab === 'performance'} onClick={() => setActiveTab('performance')} icon={ShieldAlert} label="Performance" />}
+        {show('reports') && <TabButton active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} icon={FileSpreadsheet} label="Reports" />}
+        {show('settings') && <TabButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={Settings} label="HR Settings" />}
       </div>
 
       <div className="mt-6">
-        {activeTab === 'staff' && <StaffDirectory />}
-        {activeTab === 'roles' && <RolesManager />}
-        {activeTab === 'attendance' && <AttendanceTracker />}
-        {activeTab === 'payroll' && <PayrollManager />}
-        {activeTab === 'branches' && <BranchManager />}
-        {activeTab === 'recruitment' && <RecruitmentManager />}
-        {activeTab === 'trainees' && <TraineesManager />}
-        {activeTab === 'performance' && <PerformanceDiscipline />}
-        {activeTab === 'leave_advance' && <LeaveAdvanceManager />}
-        {activeTab === 'reports' && <HRReportsConsole />}
-        {activeTab === 'settings' && <SystemSettings />}
+        {activeTab === 'staff' && show('staff') && <StaffDirectory />}
+        {activeTab === 'attendance' && show('attendance') && <AttendanceTracker />}
+        {activeTab === 'payroll' && show('payroll') && <PayrollManager />}
+        {activeTab === 'branches' && show('branches') && <BranchManager />}
+        {activeTab === 'recruitment' && show('recruitment') && <RecruitmentManager />}
+        {activeTab === 'trainees' && show('trainees') && <TraineesManager />}
+        {activeTab === 'performance' && show('performance') && <PerformanceDiscipline />}
+        {activeTab === 'leave_advance' && show('leave_advance') && <LeaveAdvanceManager />}
+        {activeTab === 'reports' && show('reports') && <HRReportsConsole />}
+        {activeTab === 'settings' && show('settings') && <SystemSettings />}
       </div>
     </div>
   );
 };
 
 const TabButton: React.FC<{ active: boolean; onClick: () => void; icon: any; label: string }> = ({ active, onClick, icon: Icon, label }) => (
-  <button 
+  <button
     onClick={onClick}
     className={cn(
-      "flex items-center gap-2 px-4 py-2 rounded-xl transition-all whitespace-nowrap",
-      active ? "bg-white text-slate-900 shadow-sm" : "text-zinc-500 hover:bg-white/50"
+      'flex items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2 transition-all',
+      active ? 'bg-white text-slate-900 shadow-sm' : 'text-zinc-500 hover:bg-white/50'
     )}
   >
-    <Icon size={18} className={active ? "text-indigo-600" : "text-slate-400"} />
+    <Icon size={18} className={active ? 'text-indigo-600' : 'text-slate-400'} />
     <span className="text-sm font-bold">{label}</span>
   </button>
 );
