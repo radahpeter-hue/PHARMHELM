@@ -1,24 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canOperatePos, formatPosCheckoutError, hasTrustedPosOperatorRole } from '../src/utils/posAuthorization';
+import { canOperatePos, formatPosCheckoutError } from '../src/utils/posAuthorization';
 
-test('supported POS roles are matched without case sensitivity', () => {
-  assert.equal(hasTrustedPosOperatorRole({ role: 'Cashier' }), true);
-  assert.equal(hasTrustedPosOperatorRole({ role: 'IT HEAD' }), true);
-  assert.equal(hasTrustedPosOperatorRole({ role: 'staff', secondaryRoles: ['Branch Manager'] }), true);
-});
-
-test('view-only and unsupported custom roles cannot process a sale', () => {
-  assert.equal(canOperatePos({ role: 'IT Support Staff' }, false), false);
-  assert.equal(canOperatePos({ role: 'Custom Sales Viewer' }, true), false);
-});
-
-test('both operate permission and a trusted role are required', () => {
-  assert.equal(canOperatePos({ role: 'Cashier' }, false), false);
+test('functional sales permission authorizes checkout regardless of job-title label', () => {
   assert.equal(canOperatePos({ role: 'Cashier' }, true), true);
+  assert.equal(canOperatePos({ role: 'Dispenser' }, true), true);
+  assert.equal(canOperatePos({ role: 'Custom Front Counter Role' }, true), true);
+  assert.equal(canOperatePos({ role: 'Trainee', secondaryRoles: ['Custom POS Operator'] }, true), true);
 });
 
-test('permission errors are converted to an actionable, non-technical message', () => {
+test('view-only sales access cannot process a sale even for familiar role names', () => {
+  assert.equal(canOperatePos({ role: 'Cashier' }, false), false);
+  assert.equal(canOperatePos({ role: 'Dispenser' }, false), false);
+  assert.equal(canOperatePos({ role: 'Custom Sales Viewer' }, false), false);
+});
+
+test('an authenticated staff profile is required for checkout', () => {
+  assert.equal(canOperatePos(null, true), false);
+  assert.equal(canOperatePos(undefined, true), false);
+});
+
+test('permission errors are converted to an actionable transaction message', () => {
   const wrapped = new Error(JSON.stringify({
     error: 'Missing or insufficient permissions.',
     operationType: 'write',
@@ -26,7 +28,8 @@ test('permission errors are converted to an actionable, non-technical message', 
   }));
 
   const message = formatPosCheckoutError(wrapped);
-  assert.match(message, /not authorised/);
+  assert.match(message, /transaction permission check/i);
+  assert.match(message, /No stock was deducted/i);
   assert.doesNotMatch(message, /operationType|product_batches/);
 });
 
