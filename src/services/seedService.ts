@@ -20,8 +20,11 @@ export async function seedInitialData() {
       contact_email: 'peterssentongo61@gmail.com',
       contact_phone: '+256 700 000 000',
       subscription_tier: 'enterprise' as const,
-      // Set branchLimit according to tier defaults: enterprise -> 15
+      // Enterprise is the canonical stored tier; every tier has the full application.
+      // Tier only seeds the initial branch entitlement.
       branchLimit: 15,
+      branchLimitSource: 'tier_default' as const,
+      branchLimitManuallyOverridden: false,
       subscription_status: 'active' as const,
       subscription_cycle: 'annual' as const,
       subscription_start: new Date().toISOString(),

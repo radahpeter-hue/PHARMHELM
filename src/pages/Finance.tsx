@@ -41,7 +41,6 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
-import { UpgradeRequiredCard } from '../components/UpgradeRequiredCard';
 import { firestoreService } from '../services/firestore';
 import { FinanceLedger, EODReconciliation, BranchExpense, CashRequisition, CreditReceivable, SupplierPayable, ManagementExpense, ProcurementInvoice, PettyCashRequisition, PettyCashLedger, PettyCashIssue, Branch, SystemSettings, Sale, GRNRecord } from '../types';
 import { toast } from 'sonner';

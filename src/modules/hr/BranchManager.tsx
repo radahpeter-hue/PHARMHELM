@@ -11,6 +11,7 @@ import { Branch, Staff } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
 import { hasAnyRole } from '../../utils/roles';
+import { resolveBranchLimit } from '../../utils/subscriptionEntitlements';
 
 export const BranchManager: React.FC = () => {
   const { profile } = useAuth();
@@ -64,11 +65,13 @@ export const BranchManager: React.FC = () => {
         await firestoreService.updateDocument('branches', editingBranch.id, branchData);
         toast.success('Branch updated successfully');
       } else {
-        // Enforce configurable branch limit: prefer tenant.branchLimit, otherwise fall back to tier defaults (basic=1, standard=5, enterprise/premium=15)
-        const tierDefault = tenant?.subscription_tier === 'basic' ? 1 : (tenant?.subscription_tier === 'standard' ? 5 : 15);
-        const maxBranches = typeof tenant?.branchLimit === 'number' ? tenant.branchLimit : tierDefault;
-        if (branches.length >= maxBranches) {
-          toast.error(`Branch limit reached (${branches.length} of ${maxBranches}). Contact PharmHelm support to increase your limit.`);
+        // Additive commercial entitlement check. RBAC above remains unchanged.
+        // Re-read tenant-scoped branch records at submission time instead of trusting a potentially stale UI subscription.
+        const currentBranches = await firestoreService.getCollection<Branch>('branches', profile.tenantId);
+        const currentBranchCount = currentBranches.length;
+        const maxBranches = resolveBranchLimit(tenant?.branchLimit, tenant?.subscription_tier);
+        if (currentBranchCount >= maxBranches) {
+          toast.error(`Branch limit reached (${currentBranchCount} of ${maxBranches}). Contact PharmHelm support to increase your limit.`);
           setIsSubmitting(false);
           return;
         }
@@ -158,7 +161,13 @@ export const BranchManager: React.FC = () => {
 
     try {
       for (const branch of defaults) {
-        const exists = branches.some(b => b.type === branch.type);
+        const currentBranches = await firestoreService.getCollection<Branch>('branches', profile.tenantId);
+        const maxBranches = resolveBranchLimit(tenant?.branchLimit, tenant?.subscription_tier);
+        if (currentBranches.length >= maxBranches) {
+          toast.error(`Branch limit reached (${currentBranches.length} of ${maxBranches}). Contact PharmHelm support to increase your limit.`);
+          break;
+        }
+        const exists = currentBranches.some(b => b.type === branch.type);
         if (!exists) {
           await firestoreService.addDocument('branches', {
             ...branch,

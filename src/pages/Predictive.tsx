@@ -41,8 +41,6 @@ import {
   ReferenceLine
 } from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
-import { useTenant } from '../contexts/TenantContext';
-import { UpgradeRequiredCard } from '../components/UpgradeRequiredCard';
 import { firestoreService } from '../services/firestore';
 import { Product, Branch } from '../types';
 import { clsx, type ClassValue } from 'clsx';
@@ -64,7 +62,6 @@ interface PredictiveState {
 
 const Predictive: React.FC = () => {
   const { profile, activeBranch } = useAuth();
-  const { tenant } = useTenant();
 
   // Subscription-tier gating removed: Predictive Engine available to role-permitted users
 

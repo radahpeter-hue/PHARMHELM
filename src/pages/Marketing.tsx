@@ -22,8 +22,6 @@ import {
   MapPin
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useTenant } from '../contexts/TenantContext';
-import { UpgradeRequiredCard } from '../components/UpgradeRequiredCard';
 import { firestoreService } from '../services/firestore';
 import { MarketingCampaign, CustomerFeedback } from '../types';
 import { toast } from 'sonner';
@@ -39,7 +37,6 @@ import { CostLedgerPillar } from '../components/marketing/CostLedgerPillar';
 
 const Marketing: React.FC = () => {
   const { profile } = useAuth();
-  const { tenant } = useTenant();
   
   const activeRole = profile?.role || 'Marketing Head';
   const sessionRole = activeRole;
