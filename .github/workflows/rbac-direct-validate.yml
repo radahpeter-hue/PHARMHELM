@@ -1,0 +1,55 @@
+name: Validate RBAC direct finalization
+
+on:
+  push:
+    branches:
+      - codex/rbac-system-custom-roles-20260908
+    paths:
+      - scripts/finalize-rbac-direct.py
+
+permissions:
+  contents: write
+
+jobs:
+  finalize-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/rbac-system-custom-roles-20260908
+          fetch-depth: 0
+
+      - name: Apply final RBAC refinements
+        run: python scripts/finalize-rbac-direct.py
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript validation
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+
+      - name: Diff validation
+        run: git diff --check
+
+      - name: Commit validated RBAC refinements
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No RBAC refinements required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/contexts/AuthContext.tsx src/modules/hr/StaffDirectory.tsx firestore.rules
+          git commit -m "fix(rbac): finalize role assignment and module boundaries"
+          git push origin HEAD:codex/rbac-system-custom-roles-20260908
