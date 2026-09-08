@@ -131,10 +131,12 @@ test('release candidate: invalid configuration cannot save enabled Strip or Pack
   assert.ok(errors.some(error => error.includes('Units per Strip')));
 });
 
-test('release candidate: legacy mirror follows only the configured default tier', () => {
-  const mirrored = applyLegacySellingTierMirror(product());
-  assert.equal(mirrored.unitOfSell, 'strip');
-  assert.equal(mirrored.sellingPricePerUnit, 2500);
+test('release candidate: legacy compatibility preserves base-unit pricing semantics', () => {
+  const mirrored = applyLegacySellingTierMirror(product({ unitOfSell: 'unit', sellingPricePerUnit: 200 }));
+  assert.equal(mirrored.unitOfSell, 'unit');
+  assert.equal(mirrored.sellingPricePerUnit, 300);
+  assert.notEqual(mirrored.sellingPricePerUnit, 2500);
+  assert.notEqual(mirrored.sellingPricePerUnit, 22000);
 });
 
 test('release candidate: Unit, Strip and Pack remain three distinct commercial cart lines', () => {
