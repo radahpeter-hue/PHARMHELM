@@ -62,16 +62,34 @@ test('default tier must be enabled', () => {
   assert.ok(errors.some(error => error.includes('default selling tier')));
 });
 
-test('legacy fields mirror the configured default tier without inventing other prices', () => {
+test('legacy compatibility preserves unitOfSell and keeps sellingPricePerUnit a true base-unit price', () => {
   const updated = applyLegacySellingTierMirror(product({
+    unitOfSell: 'unit',
+    sellingPricePerUnit: 100,
     sellingTiers: {
       unit: { enabled: true, price: 300 },
       strip: { enabled: true, price: 2500 }
     },
     defaultSellingTierCode: 'strip'
   }));
-  assert.equal(updated.unitOfSell, 'strip');
-  assert.equal(updated.sellingPricePerUnit, 2500);
+  assert.equal(updated.unitOfSell, 'unit');
+  assert.equal(updated.sellingPricePerUnit, 300);
   assert.equal(updated.sellingTierSchemaVersion, 1);
   assert.equal(updated.sellingTiers?.pack, undefined);
+});
+
+test('strip or pack commercial prices never overwrite sellingPricePerUnit when Unit tier is disabled', () => {
+  const updated = applyLegacySellingTierMirror(product({
+    unitOfSell: 'strip',
+    sellingPricePerUnit: 175,
+    sellingTiers: {
+      strip: { enabled: true, price: 2500 },
+      pack: { enabled: true, price: 22000 }
+    },
+    defaultSellingTierCode: 'pack'
+  }));
+  assert.equal(updated.unitOfSell, 'strip');
+  assert.equal(updated.sellingPricePerUnit, 175);
+  assert.notEqual(updated.sellingPricePerUnit, 2500);
+  assert.notEqual(updated.sellingPricePerUnit, 22000);
 });
