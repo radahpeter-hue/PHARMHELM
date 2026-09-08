@@ -23,6 +23,7 @@ jobs:
         shell: bash
         run: |
           python3 scripts/apply-multi-tier-phase-d.py
+          python3 scripts/fix-phase-d-settings-type.py
           if git diff --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -57,6 +58,6 @@ jobs:
         run: |
           git config user.name "radahpeter-hue"
           git config user.email "peterssentongo61@gmail.com"
-          git add src/pages/Sales.tsx src/services/consumptionService.ts src/services/saleInventoryIntegrityService.ts
+          git add src/pages/Sales.tsx src/services/consumptionService.ts src/services/saleInventoryIntegrityService.ts src/services/posCheckoutTierService.ts
           git commit -m "feat: integrate multi-tier transactional checkout phase d"
           git push origin HEAD:codex/multi-tier-phase-d-20260908
