@@ -28,12 +28,12 @@ export function getStoredCommercialQuantity(item: SaleItem): number {
 }
 
 export function getStoredBaseQuantity(item: SaleItem, product?: Product): number {
+  const explicitBaseQuantity = Number(item.baseQuantity);
+  if (Number.isFinite(explicitBaseQuantity) && explicitBaseQuantity >= 0) return explicitBaseQuantity;
+
   const commercialQuantity = getStoredCommercialQuantity(item);
   const storedMultiplier = positiveNumber(item.tierMultiplier);
   if (storedMultiplier !== null) return commercialQuantity * storedMultiplier;
-
-  const explicitBaseQuantity = Number(item.baseQuantity);
-  if (Number.isFinite(explicitBaseQuantity) && explicitBaseQuantity >= 0) return explicitBaseQuantity;
 
   if (product) {
     const unit = String(product.unitOfSell || product.unit || '').trim().toLowerCase();
@@ -82,6 +82,21 @@ export function assertExactStoredAllocations(item: SaleItem, product?: Product):
   const allocations = normaliseStoredAllocations(item, product);
   const expected = getStoredBaseQuantity(item, product);
   const allocated = allocations.reduce((sum, allocation) => sum + allocation.baseQuantity, 0);
+
+  const commercialQuantity = Number(item.commercialQuantity ?? item.quantity ?? 0);
+  const multiplier = positiveNumber(item.tierMultiplier);
+  const explicitBaseQuantity = Number(item.baseQuantity);
+  if (
+    multiplier !== null &&
+    Number.isFinite(commercialQuantity) &&
+    commercialQuantity >= 0 &&
+    Number.isFinite(explicitBaseQuantity) &&
+    explicitBaseQuantity >= 0 &&
+    Math.abs(explicitBaseQuantity - commercialQuantity * multiplier) > 0.0001
+  ) {
+    throw new Error(`${item.productName || item.name || item.productId} stored base quantity is inconsistent with its historical commercial quantity and multiplier.`);
+  }
+
   if (expected > 0 && allocations.length === 0) {
     throw new Error(`${item.productName || item.name || item.productId} does not contain exact historical batch allocations.`);
   }
