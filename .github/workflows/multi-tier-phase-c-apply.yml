@@ -22,7 +22,7 @@ jobs:
         id: patch
         shell: bash
         run: |
-          node scripts/apply-multi-tier-phase-c.mjs
+          python3 scripts/apply-multi-tier-phase-c.py
           if git diff --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
