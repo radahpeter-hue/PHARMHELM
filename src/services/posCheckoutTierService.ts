@@ -1,5 +1,5 @@
 import type { Product, SaleItem, SystemSettings } from '../types';
-import type { SellingTierCode } from '../types/sellingTier';
+import type { SellingTierCode, SellingTierFeatureSettings } from '../types/sellingTier';
 import { resolveSellingTiers } from './sellingTierService';
 
 export interface CheckoutBatchAllocation {
@@ -57,7 +57,7 @@ export function resolveCheckoutLineDemand(params: {
   item: SaleItem;
   lineIndex: number;
   liveProduct: Product;
-  settings?: SystemSettings | null;
+  settings?: SystemSettings | SellingTierFeatureSettings | null;
   tenantId: string;
   branchId: string;
 }): CheckoutLineDemand {
@@ -129,7 +129,7 @@ export function resolveCheckoutLineDemand(params: {
 export function buildCheckoutLineDemands(params: {
   items: SaleItem[];
   liveProducts: Map<string, Product>;
-  settings?: SystemSettings | null;
+  settings?: SystemSettings | SellingTierFeatureSettings | null;
   tenantId: string;
   branchId: string;
 }): CheckoutLineDemand[] {

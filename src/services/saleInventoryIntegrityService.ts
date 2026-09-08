@@ -146,6 +146,9 @@ function buildAdjustments(
 
 export async function reviseSaleInventoryAtomically(input: ReviseSaleInventoryInput): Promise<void> {
   if (!input.tenantId || !input.branchId || !input.saleId) throw new Error('Tenant, branch and sale identifiers are required for receipt revision.');
+  if ([...(input.originalSale.items || []), ...(input.updatedItems || [])].some(item => !item.isService && Boolean(item.tierCode))) {
+    throw new Error('Multi-tier receipt inventory revisions require exact batch-allocation support and are temporarily disabled until the receipt-edit integration phase.');
+  }
   if (input.updatedItems.length === 0) throw new Error('A receipt must contain at least one item.');
 
   const productsById = productMap(input.products);
@@ -239,6 +242,9 @@ export async function reviseSaleInventoryAtomically(input: ReviseSaleInventoryIn
 
 export async function voidSaleInventoryAtomically(input: VoidSaleInventoryInput): Promise<boolean> {
   if (!input.tenantId || !input.branchId || !input.sale.id) throw new Error('Tenant, branch and sale identifiers are required to void a sale.');
+  if ((input.sale.items || []).some(item => !item.isService && Boolean(item.tierCode))) {
+    throw new Error('Multi-tier receipt voiding requires exact stored batch-allocation restoration and is temporarily disabled until the receipt-edit integration phase.');
+  }
   const productsById = productMap(input.products);
   const batchRefs = await resolveBatchRefs(input.tenantId, input.branchId, input.sale.items);
   const productTotals = new Map<string, number>();

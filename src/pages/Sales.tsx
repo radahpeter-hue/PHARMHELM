@@ -35,6 +35,7 @@ import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization
 import type { SellingTierCode } from '../types/sellingTier';
 import { resolveSellingTiers } from '../services/sellingTierService';
 import { buildTierCartItem, getCartLineIdentity, getProductUsableBaseStock, getReservedBaseQuantityForProduct, mergeTierCartItem, replaceTierCartPrice, replaceTierCartQuantity } from '../services/posTierCartService';
+import { allocateFefoCheckoutLines, assertCheckoutLineCostFloors, buildCheckoutLineDemands, finalizeCheckoutSaleItems, getCheckoutBatchDeductions, getCheckoutProductDeductions } from '../services/posCheckoutTierService';
 import { reviseSaleInventoryAtomically, voidSaleInventoryAtomically } from '../services/saleInventoryIntegrityService';
 import { convertQuotationToSale, reconcilePendingPosFinancials, reconcilePosWelfarePosting } from '../services/posFinancialPostingService';
 import { db } from '../firebase';
@@ -555,18 +556,13 @@ const Sales: React.FC = () => {
       return;
     }
 
-    if (systemSettings?.features?.multiTierSellingEnabled === true && cart.some(item => !item.isService && item.tierCode)) {
-      toast.error('Multi-tier basket selection is ready, but checkout is blocked until transactional tier-level FEFO integration is completed. No stock has been deducted.');
-      return;
-    }
-
     if (!activeBranchId) {
       toast.error('Select an active branch before processing a sale.');
       return;
     }
 
     // Check if any cart item's price is below cost price of that specific batch
-    const belowCostItem = cart.find(item => !item.isService && item.unitPrice < item.costPrice);
+    const belowCostItem = cart.find(item => !item.isService && !item.tierCode && item.unitPrice < item.costPrice);
     if (belowCostItem) {
       toast.error(`Checkout blocked: ${belowCostItem.productName} is priced at UGX ${(belowCostItem.unitPrice || 0).toLocaleString()}, which is below its batch cost price of UGX ${(belowCostItem.costPrice || 0).toLocaleString()}.`);
       return;
@@ -619,7 +615,7 @@ const Sales: React.FC = () => {
     }
 
     // Check if any cart item's price is below cost price of that specific batch
-    const belowCostItem = cart.find(item => !item.isService && item.unitPrice < item.costPrice);
+    const belowCostItem = cart.find(item => !item.isService && !item.tierCode && item.unitPrice < item.costPrice);
     if (belowCostItem) {
       receiptWindow?.close();
       toast.error(`Checkout blocked: ${belowCostItem.productName} is priced at UGX ${(belowCostItem.unitPrice || 0).toLocaleString()}, which is below its batch cost price of UGX ${(belowCostItem.costPrice || 0).toLocaleString()}.`);
@@ -802,62 +798,67 @@ const Sales: React.FC = () => {
             batchSnapshotsByProduct.set(productId, rows);
           }
 
-          const allocationsByProduct = new Map<string, Array<{ batchId: string; batchNumber: string; expiryDate?: string; baseQuantity: number; costPerBaseUnit: number }>>();
-          const productDeductions = new Map<string, number>();
+          const liveProducts = new Map<string, Product>();
+          const productNames = new Map<string, string>();
+          const checkoutBatchesByProduct = new Map<string, any[]>();
 
           for (const productId of uniqueProductIds) {
-            const product = productMap.get(productId)!;
-            const multiplier = getBaseUnitMultiplier(product);
-            const requestedBaseUnits = stockItems
-              .filter(item => item.productId === productId)
-              .reduce((sum, item) => sum + Number(item.quantity || 0) * multiplier, 0);
-            productDeductions.set(productId, requestedBaseUnits);
+            const snapshot = productSnapshots.get(productId);
+            if (!snapshot?.exists()) throw new Error(`Product ${productId} no longer exists.`);
+            const liveProduct = { id: productId, ...snapshot.data() } as Product;
+            if (liveProduct.tenantId !== profile.tenantId) throw new Error(`Product tenant mismatch for ${liveProduct.name || productId}.`);
+            liveProducts.set(productId, liveProduct);
+            productNames.set(productId, liveProduct.name || productMap.get(productId)?.name || productId);
 
             const candidates = (batchSnapshotsByProduct.get(productId) || [])
               .filter(row => row.data.tenantId === profile.tenantId && row.data.branchId === activeBranchId)
               .filter(row => String(row.data.batch_status || '').toLowerCase() === 'active')
               .filter(row => isInventoryBatchUnexpired(row.data.expiryDate))
               .filter(row => Number(row.data.quantity || 0) > 0)
-              .sort((a, b) => new Date(a.data.expiryDate || '9999-12-31').getTime() - new Date(b.data.expiryDate || '9999-12-31').getTime());
-
-            let remaining = requestedBaseUnits;
-            const allocations: Array<{ batchId: string; batchNumber: string; expiryDate?: string; baseQuantity: number; costPerBaseUnit: number }> = [];
-            for (const candidate of candidates) {
-              if (remaining <= 0) break;
-              const available = Math.max(0, Number(candidate.data.quantity || 0));
-              const take = Math.min(remaining, available);
-              if (take <= 0) continue;
-              allocations.push({
-                batchId: candidate.id,
-                batchNumber: String(candidate.data.batchNumber || 'UNSPECIFIED'),
-                expiryDate: candidate.data.expiryDate,
-                baseQuantity: take,
-                costPerBaseUnit: Number(candidate.data.purchasePrice || 0)
-              });
-              remaining -= take;
-            }
-
-            if (remaining > 0) {
-              throw new Error(`Insufficient unexpired FEFO stock for ${product.name}. Missing ${remaining} base units.`);
-            }
-
-            const actualCost = allocations.reduce((sum, allocation) => sum + allocation.baseQuantity * allocation.costPerBaseUnit, 0);
-            const productGrossRevenue = stockItems.filter(item => item.productId === productId).reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
-            const productNetRevenue = productGrossRevenue * (1 - (discountPercentage / 100));
-            if (productNetRevenue + 0.0001 < actualCost) {
-              throw new Error(`Checkout blocked after FEFO reallocation: ${product.name} would sell below the actual allocated batch cost. Minimum UGX ${Math.ceil(actualCost).toLocaleString()}, net line revenue UGX ${Math.floor(productNetRevenue).toLocaleString()}.`);
-            }
-            allocationsByProduct.set(productId, allocations);
+              .map(row => ({
+                id: row.id,
+                tenantId: String(row.data.tenantId || ''),
+                branchId: String(row.data.branchId || ''),
+                productId,
+                batchNumber: String(row.data.batchNumber || 'UNSPECIFIED'),
+                expiryDate: row.data.expiryDate,
+                batchStatus: String(row.data.batch_status || ''),
+                quantity: Number(row.data.quantity || 0),
+                costPerBaseUnit: Number(row.data.purchasePrice || 0)
+              }));
+            checkoutBatchesByProduct.set(productId, candidates);
           }
 
-          // Apply FEFO batch deductions.
-          for (const [productId, allocations] of allocationsByProduct) {
+          const checkoutDemands = buildCheckoutLineDemands({
+            items: saleData.items,
+            liveProducts,
+            settings: systemSettings,
+            tenantId: profile.tenantId,
+            branchId: activeBranchId!
+          });
+          const lineAllocations = allocateFefoCheckoutLines({
+            demands: checkoutDemands,
+            batchesByProduct: checkoutBatchesByProduct,
+            productNames
+          });
+          assertCheckoutLineCostFloors({
+            items: saleData.items,
+            allocations: lineAllocations,
+            discountPercentage,
+            productNames
+          });
+          const productDeductions = getCheckoutProductDeductions(checkoutDemands);
+          const batchDeductions = getCheckoutBatchDeductions(lineAllocations);
+
+          // Apply exact FEFO batch deductions once, even when several commercial lines share a product.
+          for (const [productId, deductions] of batchDeductions) {
             const rows = batchSnapshotsByProduct.get(productId) || [];
-            for (const allocation of allocations) {
-              const row = rows.find(candidate => candidate.id === allocation.batchId);
-              if (!row) throw new Error(`Allocated batch ${allocation.batchNumber} disappeared during checkout.`);
+            for (const [batchId, deduction] of deductions) {
+              const row = rows.find(candidate => candidate.id === batchId);
+              if (!row) throw new Error(`Allocated batch ${batchId} disappeared during checkout.`);
               const available = Number(row.data.quantity || 0);
-              transaction.update(row.ref, { quantity: available - allocation.baseQuantity, updatedAt: serverTimestamp() });
+              if (deduction > available) throw new Error(`Allocated batch ${row.data.batchNumber || batchId} changed during checkout. Retry the sale.`);
+              transaction.update(row.ref, { quantity: available - deduction, updatedAt: serverTimestamp() });
             }
           }
 
@@ -874,17 +875,7 @@ const Sales: React.FC = () => {
             transaction.update(doc(db, 'products', productId), { stock: currentStock - deduction, updatedAt: serverTimestamp() });
           }
 
-          finalizedSaleItems = saleData.items.map(item => {
-            if (item.isService) return item;
-            const allocations = allocationsByProduct.get(item.productId) || [];
-            return {
-              ...item,
-              batchId: allocations.length === 1 ? allocations[0].batchId : item.batchId,
-              batchNumber: allocations.length === 1 ? allocations[0].batchNumber : (allocations.length > 1 ? 'FEFO-MULTI' : item.batchNumber),
-              expiryDate: allocations.length === 1 ? allocations[0].expiryDate : (allocations.length > 1 ? 'Multiple' : item.expiryDate),
-              batchAllocations: allocations
-            };
-          });
+          finalizedSaleItems = finalizeCheckoutSaleItems(saleData.items, lineAllocations);
 
           const cleanSaleData = JSON.parse(JSON.stringify({ ...saleData, items: finalizedSaleItems }));
           transaction.set(saleRef, {
