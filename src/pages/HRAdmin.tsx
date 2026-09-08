@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { 
+import {
   Users,
   Building2,
   DollarSign,
@@ -11,8 +11,6 @@ import {
   FileSpreadsheet
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useTenant } from '../contexts/TenantContext';
-import { UpgradeRequiredCard } from '../components/UpgradeRequiredCard';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -35,12 +33,10 @@ function cn(...inputs: ClassValue[]) {
 
 const HRAdmin: React.FC = () => {
   const { profile } = useAuth();
-  const { tenant } = useTenant();
   const [activeTab, setActiveTab] = useState<'staff' | 'roles' | 'attendance' | 'payroll' | 'leave_advance' | 'branches' | 'recruitment' | 'trainees' | 'performance' | 'reports' | 'settings'>('staff');
 
   const userRoles = [profile?.role || 'staff', ...(profile?.secondaryRoles || [])];
   const isManagement = userRoles.some(r => ['owner', 'CEO', 'CEO / MD', 'HR Head', 'admin'].includes(r));
-  const isBasic = tenant?.subscription_tier === 'basic';
 
   return (
     <div className="space-y-6">
@@ -85,7 +81,7 @@ const HRAdmin: React.FC = () => {
 };
 
 const TabButton: React.FC<{ active: boolean; onClick: () => void; icon: any; label: string }> = ({ active, onClick, icon: Icon, label }) => (
-  <button 
+  <button
     onClick={onClick}
     className={cn(
       "flex items-center gap-2 px-4 py-2 rounded-xl transition-all whitespace-nowrap",
