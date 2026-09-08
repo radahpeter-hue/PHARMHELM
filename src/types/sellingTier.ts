@@ -1,6 +1,6 @@
 export type SellingTierCode = 'unit' | 'strip' | 'pack';
 
-export type SellingTierPriceSource = 'configured-tier' | 'legacy';
+export type SellingTierPriceSource = 'configured-tier' | 'manual-override' | 'legacy';
 
 export interface SellingTierConfiguration {
   enabled: boolean;
