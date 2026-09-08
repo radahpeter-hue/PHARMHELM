@@ -23,6 +23,7 @@ jobs:
         shell: bash
         run: |
           python3 scripts/apply-multi-tier-phase-c.py
+          sed -i 's/<select $/<select/' src/pages/Sales.tsx
           if git diff --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
