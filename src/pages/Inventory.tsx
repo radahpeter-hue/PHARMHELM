@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Search, Filter, MoreVertical, Edit2, Trash2, Package, X, TrendingUp, History, Activity, Settings, ClipboardList, ArrowLeftRight, BarChart3, Building2 } from 'lucide-react';
-import { Product, ProductBatch, InventoryMovement } from '../types';
+import { Product, ProductBatch, InventoryMovement, SystemSettings } from '../types';
 import { firestoreService } from '../services/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
@@ -29,7 +29,7 @@ const Inventory: React.FC = () => {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [selectedProductForStockcard, setSelectedProductForStockcard] = useState<Product | null>(null);
   const [showOperational, setShowOperational] = useState(false);
-  const [settings, setSettings] = useState<any>(null);
+  const [settings, setSettings] = useState<(SystemSettings & { id?: string }) | null>(null);
   const [branchBatches, setBranchBatches] = useState<ProductBatch[]>([]);
 
   const userRoles = [profile?.role || 'staff', ...(profile?.secondaryRoles || [])];
@@ -68,6 +68,9 @@ const Inventory: React.FC = () => {
               featureToggles: {
                 enableOperationalInventory: false,
               },
+              features: {
+                multiTierSellingEnabled: false,
+              },
               createdAt: new Date().toISOString()
             };
             const newDocId = await firestoreService.addDocument('system_settings', defaultSettings);
@@ -105,6 +108,9 @@ const Inventory: React.FC = () => {
           tenantId: profile.tenantId,
           featureToggles: {
             enableOperationalInventory: newValue,
+          },
+          features: {
+            multiTierSellingEnabled: false,
           },
           createdAt: new Date().toISOString()
         };
@@ -276,6 +282,9 @@ const Inventory: React.FC = () => {
                       const productStock = branchBatches
                         .filter(b => b.productId === product.id)
                         .reduce((acc, curr) => acc + (curr.quantity || 0), 0);
+                      const enabledTierEntries = (['unit', 'strip', 'pack'] as const)
+                        .filter(code => product.sellingTiers?.[code]?.enabled)
+                        .map(code => ({ code, price: Number(product.sellingTiers?.[code]?.price || 0) }));
                       
                       return (
                         <tr 
@@ -288,7 +297,7 @@ const Inventory: React.FC = () => {
                               <div className="flex items-center gap-2">
                                 <span className="font-bold text-zinc-900">{product.name}</span>
                                 <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded text-[8px] font-black uppercase tracking-tighter border border-zinc-200">
-                                  {product.unitOfSell}
+                                  {enabledTierEntries.length > 0 ? 'Multi-tier' : product.unitOfSell}
                                 </span>
                               </div>
                               <div className="flex items-center gap-2 mt-0.5">
@@ -312,13 +321,17 @@ const Inventory: React.FC = () => {
                                 {(productStock || 0).toLocaleString()}
                               </span>
                               <span className="text-[8px] font-black text-zinc-400 uppercase tracking-tighter">
-                                {product.unitOfSell}s
+                                {product.baseUnit || product.unit || 'base units'}
                               </span>
                             </div>
                           </td>
                           <td className="px-6 py-4">
-                          <div className="flex flex-col">
-                            <span className="text-xs font-bold text-zinc-900">Sell: {(product.sellingPricePerUnit || 0).toLocaleString()} UGX</span>
+                          <div className="flex flex-col gap-0.5">
+                            {enabledTierEntries.length > 0 ? enabledTierEntries.map(tier => (
+                              <span key={tier.code} className="text-[10px] font-bold text-zinc-800 uppercase">{tier.code}: {tier.price.toLocaleString()} UGX</span>
+                            )) : (
+                              <span className="text-xs font-bold text-zinc-900">Sell: {(product.sellingPricePerUnit || 0).toLocaleString()} UGX</span>
+                            )}
                             <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cost: {(product.costPricePerPack || 0).toLocaleString()} /pack</span>
                           </div>
                         </td>
@@ -388,7 +401,8 @@ const Inventory: React.FC = () => {
             setIsProductModalOpen(false);
             setEditingProduct(null);
           }} 
-          product={editingProduct} 
+          product={editingProduct}
+          systemSettings={settings}
         />
       )}
 

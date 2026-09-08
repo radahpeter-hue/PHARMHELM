@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, X } from 'lucide-react';
-import { Product } from '../../types';
+import { Product, SystemSettings } from '../../types';
+import type { SellingTierCode } from '../../types/sellingTier';
+import { getMultiTierEligibility, getTierMultiplier } from '../../services/sellingTierService';
+import { applyLegacySellingTierMirror, normaliseSellingTiers, SELLING_TIER_CODES, SELLING_TIER_LABELS, validateSellingTierConfiguration } from '../../services/sellingTierConfigurationService';
 import { 
   PRODUCT_CATEGORIES, 
   DOSAGE_FORMS, 
@@ -16,9 +19,10 @@ interface ProductModalProps {
   isOpen: boolean;
   onClose: () => void;
   product?: Product | null;
+  systemSettings?: SystemSettings | null;
 }
 
-const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product }) => {
+const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, systemSettings }) => {
   const { profile } = useAuth();
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState<Partial<Product>>({
@@ -30,7 +34,9 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product })
     vatPercentage: 0,
     status: 'active',
     unitOfSell: 'unit',
-    ...product
+    ...product,
+    sellingTiers: normaliseSellingTiers(product),
+    defaultSellingTierCode: product?.defaultSellingTierCode
   });
 
   useEffect(() => {
@@ -53,7 +59,9 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product })
         vatPercentage: product.vatPercentage || 18,
         status: product.status || 'active',
         unitOfSell: product.unitOfSell || 'unit'
-      } : {})
+      } : {}),
+      sellingTiers: normaliseSellingTiers(product),
+      defaultSellingTierCode: product?.defaultSellingTierCode
     });
   }, [product, isOpen]);
 
@@ -63,21 +71,36 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product })
     e.preventDefault();
     if (!profile?.tenantId || isSaving) return;
 
-    if ((formData.dosageForm === 'Tablet' || formData.dosageForm === 'Capsule') && (!formData.unitsPerStrip || formData.unitsPerStrip <= 0)) {
-      toast.error('Units per strip is required for Tablets and Capsules');
+    const tierDraft: Partial<Product> = {
+      ...formData,
+      sellingTiers: normaliseSellingTiers(formData)
+    };
+    const tierErrors = validateSellingTierConfiguration(tierDraft);
+    if (tierErrors.length > 0) {
+      toast.error(tierErrors[0]);
       return;
     }
 
+    const packagingChanged = Boolean(product?.id) && (
+      Number(product?.unitsPerStrip || 0) !== Number(formData.unitsPerStrip || 0) ||
+      Number(product?.unitsPerPack || 0) !== Number(formData.unitsPerPack || 0)
+    );
+    if (packagingChanged && Number(product?.stock || product?.quantityInStock || 0) > 0) {
+      const acknowledged = window.confirm('Packaging multipliers are changing while this product has active stock. Existing historical sales will keep their stored tier snapshots, but future sales will use the new multipliers. Continue?');
+      if (!acknowledged) return;
+    }
+
+    const mirroredDraft = applyLegacySellingTierMirror(tierDraft);
     setIsSaving(true);
     try {
       // Never send the synthetic document id or server-managed timestamps back
       // to Firestore. Existing products include these fields after subscription.
-      const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...editableFields } = formData as any;
+      const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...editableFields } = mirroredDraft as any;
       const productData = {
         ...editableFields,
         tenantId: profile.tenantId,
-        productId: formData.productId || `PRD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
-        sku: formData.sku || `SKU-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+        productId: mirroredDraft.productId || `PRD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+        sku: mirroredDraft.sku || `SKU-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
       };
 
       if (product?.id) {
@@ -286,6 +309,92 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product })
     </div>
   );
 
+  const tierEligibility = getMultiTierEligibility(formData as Product);
+
+  const updateTier = (code: SellingTierCode, patch: Partial<{ enabled: boolean; price: number }>) => {
+    setFormData(current => {
+      const tiers = normaliseSellingTiers(current);
+      const nextTier = { ...tiers[code]!, ...patch };
+      const nextDefault = patch.enabled === false && current.defaultSellingTierCode === code
+        ? undefined
+        : current.defaultSellingTierCode;
+      return {
+        ...current,
+        sellingTiers: { ...tiers, [code]: nextTier },
+        defaultSellingTierCode: nextDefault
+      };
+    });
+  };
+
+  const renderSellingTierConfiguration = () => {
+    if (!tierEligibility.eligible) return null;
+    const tiers = normaliseSellingTiers(formData);
+    const featureEnabled = systemSettings?.features?.multiTierSellingEnabled === true;
+
+    return (
+      <div className="space-y-4 p-5 bg-emerald-50/40 border border-emerald-100 rounded-3xl">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+          <div>
+            <h3 className="text-xs font-black text-emerald-900 uppercase tracking-widest">Multi-tier Selling Configuration</h3>
+            <p className="text-[10px] text-emerald-700 mt-1">Configure only the commercial tiers this product can actually be sold in. Prices are explicit and are never generated from another tier.</p>
+          </div>
+          <span className={featureEnabled ? 'px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border bg-emerald-600 text-white border-emerald-600' : 'px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border bg-white text-amber-700 border-amber-200'}>
+            {featureEnabled ? 'POS feature active' : 'POS feature off'}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2">
+          {SELLING_TIER_CODES.map(code => {
+            const config = tiers[code]!;
+            const multiplier = getTierMultiplier(formData as Product, code);
+            const multiplierValid = code === 'unit' || Boolean(multiplier && multiplier > 0);
+            return (
+              <div key={code} className="grid grid-cols-12 items-center gap-3 bg-white border border-emerald-100 rounded-2xl px-4 py-3">
+                <div className="col-span-12 sm:col-span-3 flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={config.enabled}
+                    disabled={!multiplierValid}
+                    onChange={e => updateTier(code, { enabled: e.target.checked })}
+                    className="h-4 w-4 rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <div>
+                    <p className="text-xs font-black text-zinc-900">{SELLING_TIER_LABELS[code]}</p>
+                    <p className="text-[9px] text-zinc-400">{code === 'unit' ? '1 base unit' : multiplierValid ? String(multiplier) + ' base units' : 'Packaging multiplier required'}</p>
+                  </div>
+                </div>
+                <div className="col-span-8 sm:col-span-6">
+                  <label className="text-[8px] font-black text-zinc-400 uppercase tracking-wider block mb-1">Selling price (UGX)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    disabled={!config.enabled}
+                    value={Number.isFinite(Number(config.price)) ? config.price : 0}
+                    onChange={e => updateTier(code, { price: Number(e.target.value || 0) })}
+                    className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold disabled:opacity-40"
+                  />
+                </div>
+                <label className="col-span-4 sm:col-span-3 flex items-center justify-end gap-2 text-[9px] font-black uppercase text-zinc-500">
+                  <input
+                    type="radio"
+                    name="default-selling-tier"
+                    checked={formData.defaultSellingTierCode === code}
+                    disabled={!config.enabled}
+                    onChange={() => setFormData(current => ({ ...current, defaultSellingTierCode: code }))}
+                  />
+                  Default
+                </label>
+              </div>
+            );
+          })}
+        </div>
+        {!featureEnabled && (
+          <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">You can preconfigure these tiers safely. POS continues using legacy behaviour until the tenant feature flag is explicitly enabled.</p>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/40 backdrop-blur-sm">
       <div className="bg-white w-full max-w-4xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -363,6 +472,8 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product })
             </div>
           </div>
 
+          {renderSellingTierConfiguration()}
+
           {/* Pricing & Tax */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 p-6 bg-zinc-50 rounded-3xl border border-zinc-100">
             <div className="space-y-1">
@@ -376,7 +487,7 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product })
               />
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">Selling Price (Per Unit) *</label>
+              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">Legacy Selling Price *</label>
               <input
                 required
                 type="number"
