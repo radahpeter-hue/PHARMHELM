@@ -19,7 +19,10 @@ declare module './types' {
     };
   }
 
-  interface SaleItem extends SaleTierSnapshotFields {}
+  interface SaleItem extends SaleTierSnapshotFields {
+    tenantId?: string;
+    branchId?: string;
+  }
 }
 
 export {};
