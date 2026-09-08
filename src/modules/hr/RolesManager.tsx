@@ -1,702 +1,627 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Users, Briefcase, Plus, Search, Trash2, Edit2, 
-  X, HelpCircle, Shield, ShieldCheck, Activity, Save,
-  Sliders, Lock, Unlock, Settings, Eye, Check, Ban, AlertCircle, Building2
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  AlertCircle,
+  Check,
+  Eye,
+  Lock,
+  Plus,
+  Save,
+  Search,
+  Shield,
+  ShieldCheck,
+  Trash2,
+  Users,
+  X,
 } from 'lucide-react';
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  onSnapshot,
+  query,
+  setDoc,
+  where,
+  writeBatch,
+} from 'firebase/firestore';
+import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { firestoreService } from '../../services/firestore';
-import { Staff, Branch } from '../../types';
+import { Staff } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
+import {
+  customRoleBaselinePermissions,
+  isITRoleName,
+  isSystemRoleName,
+  RBAC_MODULES,
+  RBAC_SCHEMA_VERSION,
+  RBAC_SYSTEM_VERSION,
+  RealmAccessLevel,
+  RealmPermissionRecord,
+  RbacModuleKey,
+  roleRealmId,
+  SYSTEM_ROLES,
+  systemRoleRealmPermissions,
+} from '../../config/rbac';
 
 export interface CustomRole {
   id: string;
   tenantId: string;
   name: string;
   description: string;
-  isCustom: boolean;
+  isCustom: true;
   created_at: string;
   created_by: string;
+  updated_at?: string;
+  updated_by?: string;
 }
 
-export const DEFAULT_ROLES_LIST = [
-  { name: 'owner', label: 'Owner', description: 'Business owner with full admin control' },
-  { name: 'admin', label: 'Admin', description: 'System administrator with wide access' },
-  { name: 'pharmacist', label: 'Pharmacist', description: 'Qualified pharmacy professional managing prescriptions' },
-  { name: 'cashier', label: 'Cashier', description: 'Handles payments and POS checkout' },
-  { name: 'QA Head', label: 'QA Head', description: 'Manages quality assurance and compliance operations' },
-  { name: 'QA Officer', label: 'QA Officer', description: 'Quality assurance team member' },
-  { name: 'Finance Head', label: 'Finance Head', description: 'Oversees financial control and reconciliation' },
-  { name: 'Finance Officer', label: 'Finance Officer', description: 'Handles financial entries and accounting support' },
-  { name: 'Procurement Head', label: 'Procurement Head', description: 'Oversees purchase requisitions and stock orders' },
-  { name: 'Procurement Officer', label: 'Procurement Officer', description: 'Assists with purchase order creations' },
-  { name: 'CEO', label: 'CEO', description: 'Chief Executive Officer' },
-  { name: 'HR Head', label: 'HR Head', description: 'Manager of human resources and admin tracking' },
-  { name: 'HR Support Personnel', label: 'HR Support Personnel', description: 'Assists with payroll, attendance, and leave' },
-  { name: 'IT Head', label: 'IT Head', description: 'Manages technology infrastructures and password resets' },
-  { name: 'IT Support Staff', label: 'IT Support Staff', description: 'Assists with hardware, software setup' },
-  { name: 'Logistics Head', label: 'Logistics Head', description: 'Oversees fleet, fuel logs, and dispatch delivery' },
-  { name: 'Transport & Logistics Personnel', label: 'Transport & Logistics Personnel', description: 'Drivers and warehouse transport staff' },
-  { name: 'Dispenser', label: 'Dispenser', description: 'Prepares and assists in dispensing pharmacy stock' },
-  { name: 'Trainee', label: 'Trainee', description: 'Intern or trainee learning standard operations' },
-  { name: 'branch manager', label: 'Branch Manager', description: 'Manages branch specific operations, sales and cash' },
-  { name: 'cleaner', label: 'Cleaner', description: 'Handles facility maintenance and sanitation' }
-];
+type RealmPermissions = Record<RbacModuleKey, RealmPermissionRecord>;
 
-export const SYSTEM_MODULES = [
-  { id: 'dashboard', name: 'Dashboard', submodules: 'Main Dashboard, Quick Action Widgets' },
-  { id: 'sales', name: 'Sales / POS', submodules: 'Point of Sale, Active Sales, Sales Invoices' },
-  { id: 'inventory', name: 'Inventory', submodules: 'Product Catalog, FEFO Stock Levels, Stock Movements' },
-  { id: 'clients', name: 'Clients & Institutions', submodules: 'Client Register, Institutional Credit Accounts' },
-  { id: 'stock', name: 'Stock In/Out', submodules: 'Direct Stock-in, Branch Transfers, Audits' },
-  { id: 'procurement', name: 'Procurement', submodules: 'Purchase Orders, Supplier Lists, Price Queries' },
-  { id: 'logistics', name: 'Fleet & Logistics', submodules: 'Vehicle Registry, Fuel Tracker, Delivery Dispatch' },
-  { id: 'finance', name: 'Finance', submodules: 'Management Ledgers, Tax Engine, Cash & Banking, Petty Cash' },
-  { id: 'compliance', name: 'Compliance / QA', submodules: 'Batch Verifications, Quality Assurance Logs' },
-  { id: 'hr', name: 'HR Admin', submodules: 'Staff Registry, Roles Manager, Payroll Engine, Attendance' },
-  { id: 'welfare', name: 'Welfare Portal', submodules: 'Staff Welfare Funds, Employee Requests' },
-  { id: 'predictive', name: 'Predictive Engine', submodules: 'FEFO Expiry Warnings, Demand Forecasting' },
-  { id: 'analytics', name: 'Analytics', submodules: 'Financial Reports, Sales Trend Visualizers' },
-  { id: 'marketing', name: 'Marketing', submodules: 'Promotional Campaigns, Customer Loyalty' },
-  { id: 'settings', name: 'Settings', submodules: 'Tenant Profile, Branch Configurations, Backup Tools' }
-];
+type RoleCard = {
+  id: string;
+  name: string;
+  label: string;
+  description: string;
+  isCustom: boolean;
+  customRole?: CustomRole;
+};
+
+const ACCESS_LABELS: Record<RealmAccessLevel, string> = {
+  none: 'No access',
+  view_only: 'View only',
+  view_functional: 'Functional',
+  all: 'Functional',
+};
+
+const normalizeCustomPermissions = (input: any): RealmPermissions => {
+  const baseline = customRoleBaselinePermissions();
+  RBAC_MODULES.forEach(module => {
+    const incoming = input?.[module.id];
+    if (!incoming) return;
+    const accessLevel: RealmAccessLevel =
+      incoming.accessLevel === 'view' || incoming.accessLevel === 'view_only'
+        ? 'view_only'
+        : incoming.accessLevel === 'operate' || incoming.accessLevel === 'view_functional' || incoming.accessLevel === 'all'
+          ? 'view_functional'
+          : 'none';
+
+    baseline[module.id] = {
+      accessLevel,
+      scope: 'assigned_branches',
+      submodules: incoming.submodules || '',
+    };
+  });
+
+  // These two are constitutional baseline permissions for every tenant account.
+  baseline.dashboard.accessLevel = 'view_only';
+  baseline.welfare.accessLevel = 'view_functional';
+  return baseline;
+};
 
 export const RolesManager: React.FC = () => {
   const { profile } = useAuth();
   const [staff, setStaff] = useState<Staff[]>([]);
   const [customRoles, setCustomRoles] = useState<CustomRole[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingRole, setEditingRole] = useState<CustomRole | null>(null);
-
-  // Realm of Operation Permissions State
-  const [selectedRoleForRealm, setSelectedRoleForRealm] = useState<any | null>(null);
-  const [realmPermissions, setRealmPermissions] = useState<Record<string, { accessLevel: string; scope: string; submodules: string }>>({});
-  const [isRealmSaving, setIsRealmSaving] = useState(false);
-
-  // Form State
+  const [createOpen, setCreateOpen] = useState(false);
+  const [selectedRole, setSelectedRole] = useState<RoleCard | null>(null);
   const [roleName, setRoleName] = useState('');
-  const [roleDesc, setRoleDesc] = useState('');
+  const [roleDescription, setRoleDescription] = useState('');
+  const [realmPermissions, setRealmPermissions] = useState<RealmPermissions>(customRoleBaselinePermissions());
+  const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
-  // Fetch Realm of Operation Permissions on role selection
-  useEffect(() => {
-    if (selectedRoleForRealm && profile?.tenantId) {
-      const docId = `${profile.tenantId}_${selectedRoleForRealm.name.replace(/\s+/g, '_').toLowerCase()}`;
-      const docRef = doc(db, 'role_realms_of_operation', docId);
-      getDoc(docRef)
-        .then(docSnap => {
-          if (docSnap.exists() && docSnap.data().permissions) {
-            setRealmPermissions(docSnap.data().permissions);
-          } else {
-            // Default initial state based on the selected role's standard privilege
-            const initialPerms: Record<string, any> = {};
-            const isFullPower = ['owner', 'ceo', 'ceo / md'].includes(selectedRoleForRealm.name.toLowerCase());
-            SYSTEM_MODULES.forEach(mod => {
-              initialPerms[mod.id] = {
-                accessLevel: isFullPower ? 'view_functional' : 'none',
-                scope: 'all',
-                submodules: ''
-              };
-            });
-            setRealmPermissions(initialPerms);
-          }
-        })
-        .catch(err => {
-          console.error("Error loading realm permissions:", err);
-          toast.error("Failed to load custom permission realms");
-        });
-    }
-  }, [selectedRoleForRealm, profile?.tenantId]);
-
-  const handleSaveRealmOfOperation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!profile?.tenantId || !selectedRoleForRealm) return;
-
-    setIsRealmSaving(true);
-    try {
-      const docId = `${profile.tenantId}_${selectedRoleForRealm.name.replace(/\s+/g, '_').toLowerCase()}`;
-      const docRef = doc(db, 'role_realms_of_operation', docId);
-
-      const payload = {
-        tenantId: profile.tenantId,
-        roleName: selectedRoleForRealm.name,
-        roleLabel: selectedRoleForRealm.label,
-        permissions: realmPermissions,
-        updatedAt: new Date().toISOString(),
-        updatedBy: profile.full_name || profile.email || 'IT Manager'
-      };
-
-      await setDoc(docRef, payload, { merge: true });
-      toast.success(`Realm of Operation for "${selectedRoleForRealm.label}" saved successfully!`);
-      setSelectedRoleForRealm(null);
-    } catch (err) {
-      console.error("Error saving realm permissions:", err);
-      toast.error("Failed to save Realm of Operation config.");
-    } finally {
-      setIsRealmSaving(false);
-    }
-  };
+  const assignedRoles = [profile?.role || '', ...(profile?.secondaryRoles || [])];
+  const canManageRoles = assignedRoles.some(isITRoleName);
 
   useEffect(() => {
-    if (profile?.tenantId) {
-      const unsubStaff = firestoreService.subscribeToCollection<Staff>(
-        'staff',
-        profile.tenantId,
-        setStaff
-      );
-      const unsubRoles = firestoreService.subscribeToCollection<CustomRole>(
-        'hr_roles',
-        profile.tenantId,
-        setCustomRoles
-      );
-      return () => {
-        unsubStaff();
-        unsubRoles();
-      };
-    }
-  }, [profile?.tenantId]);
-
-  // Combine Default System Roles and Custom Roles
-  const systemRolesMapped = DEFAULT_ROLES_LIST.map(role => ({
-    id: `system-${role.name}`,
-    tenantId: profile?.tenantId || '',
-    name: role.name, // internal key
-    label: role.label, // readable label
-    description: role.description,
-    isCustom: false,
-    created_at: '',
-    created_by: 'System'
-  }));
-
-  const customRolesMapped = customRoles.map(role => ({
-    id: role.id,
-    tenantId: role.tenantId,
-    name: role.name, // both the same for custom roles
-    label: role.name,
-    description: role.description,
-    isCustom: true,
-    created_at: role.created_at,
-    created_by: role.created_by
-  }));
-
-  const allRolesCombined = [...systemRolesMapped, ...customRolesMapped];
-
-  const filteredRoles = allRolesCombined.filter(r => 
-    r.label.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    r.description.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const getStaffCountForRole = (roleName: string) => {
-    return staff.filter(s => s.role?.toLowerCase() === roleName.toLowerCase()).length;
-  };
-
-  const handleCreateOrUpdateRole = async (e: React.FormEvent) => {
-    e.preventDefault();
     if (!profile?.tenantId) return;
 
-    if (!roleName.trim()) {
-      toast.error('Role name is required');
-      return;
+    const staffQuery = query(collection(db, 'staff'), where('tenantId', '==', profile.tenantId));
+    const rolesQuery = query(collection(db, 'hr_roles'), where('tenantId', '==', profile.tenantId));
+
+    const unsubStaff = onSnapshot(staffQuery, snap => {
+      setStaff(snap.docs.map(d => ({ id: d.id, ...d.data() } as Staff)));
+    });
+    const unsubRoles = onSnapshot(rolesQuery, snap => {
+      setCustomRoles(snap.docs.map(d => ({ id: d.id, ...d.data() } as CustomRole)));
+    });
+
+    return () => {
+      unsubStaff();
+      unsubRoles();
+    };
+  }, [profile?.tenantId]);
+
+  const syncSystemRoles = async () => {
+    if (!profile?.tenantId || !canManageRoles || syncing) return;
+    setSyncing(true);
+    try {
+      const checks = await Promise.all(
+        SYSTEM_ROLES.map(async role => {
+          const ref = doc(db, 'role_realms_of_operation', roleRealmId(profile.tenantId, role.name));
+          const snap = await getDoc(ref);
+          const permissions = systemRoleRealmPermissions(role);
+          const current = snap.exists() ? snap.data() : null;
+          const needsWrite = !current
+            || current.systemVersion !== RBAC_SYSTEM_VERSION
+            || current.schemaVersion !== RBAC_SCHEMA_VERSION
+            || JSON.stringify(current.permissions || {}) !== JSON.stringify(permissions);
+          return { role, ref, permissions, needsWrite };
+        })
+      );
+
+      const changed = checks.filter(item => item.needsWrite);
+      if (changed.length > 0) {
+        const batch = writeBatch(db);
+        changed.forEach(({ role, ref, permissions }) => {
+          batch.set(ref, {
+            tenantId: profile.tenantId,
+            roleName: role.name,
+            roleLabel: role.label,
+            roleType: 'system',
+            isSystemRole: true,
+            immutable: true,
+            schemaVersion: RBAC_SCHEMA_VERSION,
+            systemVersion: RBAC_SYSTEM_VERSION,
+            permissions,
+            updatedAt: new Date().toISOString(),
+            updatedBy: profile.full_name || profile.email || profile.id,
+          });
+        });
+        await batch.commit();
+      }
+    } catch (error) {
+      console.error('Failed to synchronize system RBAC realms', error);
+      toast.error('System role registry could not be synchronized.');
+    } finally {
+      setSyncing(false);
     }
+  };
 
-    // Check if name conflict exists in system roles
-    const nameLower = roleName.trim().toLowerCase();
-    const isSystemConflict = DEFAULT_ROLES_LIST.some(r => r.name.toLowerCase() === nameLower || r.label.toLowerCase() === nameLower);
-    const isCustomConflict = customRoles.some(r => r.id !== editingRole?.id && r.name.toLowerCase() === nameLower);
+  useEffect(() => {
+    // System roles are code-defined and immutable. IT synchronizes a tenant-side
+    // mirror for inspection/audit, but runtime authorization uses the code registry.
+    void syncSystemRoles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.tenantId, canManageRoles]);
 
-    if (isSystemConflict || isCustomConflict) {
-      toast.error('A role with this name already exists.');
+  const allRoles = useMemo<RoleCard[]>(() => {
+    const systemCards: RoleCard[] = SYSTEM_ROLES.map(role => ({
+      id: `system-${role.name}`,
+      name: role.name,
+      label: role.label,
+      description: role.description,
+      isCustom: false,
+    }));
+
+    const customCards: RoleCard[] = customRoles.map(role => ({
+      id: role.id,
+      name: role.name,
+      label: role.name,
+      description: role.description,
+      isCustom: true,
+      customRole: role,
+    }));
+
+    return [...systemCards, ...customCards];
+  }, [customRoles]);
+
+  const filteredRoles = allRoles.filter(role => {
+    const needle = searchTerm.trim().toLowerCase();
+    if (!needle) return true;
+    return role.label.toLowerCase().includes(needle) || role.description.toLowerCase().includes(needle);
+  });
+
+  const countAssigned = (roleName: string) => staff.filter(member => {
+    const primary = member.role?.toLowerCase() === roleName.toLowerCase();
+    const secondary = (member.secondaryRoles || []).some(role => role.toLowerCase() === roleName.toLowerCase());
+    return primary || secondary;
+  }).length;
+
+  const openRole = async (role: RoleCard) => {
+    setSelectedRole(role);
+    if (!profile?.tenantId) return;
+
+    if (!role.isCustom) {
+      const definition = SYSTEM_ROLES.find(item => item.name.toLowerCase() === role.name.toLowerCase());
+      if (definition) setRealmPermissions(systemRoleRealmPermissions(definition));
       return;
     }
 
     try {
-      if (editingRole) {
-        await firestoreService.updateDocument('hr_roles', editingRole.id, {
-          name: roleName.trim(),
-          description: roleDesc.trim(),
-        });
-        toast.success('Role updated successfully');
-      } else {
-        await firestoreService.addDocument('hr_roles', {
-          tenantId: profile.tenantId,
-          name: roleName.trim(),
-          description: roleDesc.trim(),
-          isCustom: true,
-          created_at: new Date().toISOString(),
-          created_by: profile.full_name || profile.displayName || 'Manager'
-        });
-        toast.success('New role created successfully');
-      }
-      setIsModalOpen(false);
-      resetForm();
+      const snap = await getDoc(doc(db, 'role_realms_of_operation', roleRealmId(profile.tenantId, role.name)));
+      setRealmPermissions(normalizeCustomPermissions(snap.exists() ? snap.data().permissions : null));
     } catch (error) {
-      toast.error('Failed to save role');
+      console.error('Failed to load custom role realm', error);
+      setRealmPermissions(customRoleBaselinePermissions());
+      toast.error('Could not load the custom role permissions.');
     }
   };
 
-  const handleDeleteRole = async (roleId: string, roleName: string) => {
-    const assignedCount = getStaffCountForRole(roleName);
-    if (assignedCount > 0) {
-      toast.error(`Cannot delete role "${roleName}" because ${assignedCount} staff member(s) are currently assigned to it.`);
+  const handleCreateRole = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!profile?.tenantId || !canManageRoles || saving) return;
+
+    const name = roleName.trim();
+    if (!name) {
+      toast.error('Role name is required.');
+      return;
+    }
+    if (isSystemRoleName(name) || customRoles.some(role => role.name.toLowerCase() === name.toLowerCase())) {
+      toast.error('A system or custom role with that name already exists.');
       return;
     }
 
-    if (window.confirm(`Are you sure you want to delete the custom role "${roleName}"?`)) {
-      try {
-        await firestoreService.deleteDocument('hr_roles', roleId);
-        toast.success('Role deleted');
-      } catch (error) {
-        toast.error('Failed to delete role');
+    setSaving(true);
+    try {
+      const now = new Date().toISOString();
+      const created = await addDoc(collection(db, 'hr_roles'), {
+        tenantId: profile.tenantId,
+        name,
+        description: roleDescription.trim(),
+        isCustom: true,
+        created_at: now,
+        created_by: profile.full_name || profile.email || profile.id,
+        updated_at: now,
+        updated_by: profile.full_name || profile.email || profile.id,
+      });
+
+      const permissions = customRoleBaselinePermissions();
+      await setDoc(doc(db, 'role_realms_of_operation', roleRealmId(profile.tenantId, name)), {
+        tenantId: profile.tenantId,
+        roleName: name,
+        roleLabel: name,
+        roleType: 'custom',
+        isSystemRole: false,
+        immutable: false,
+        schemaVersion: RBAC_SCHEMA_VERSION,
+        permissions,
+        updatedAt: now,
+        updatedBy: profile.full_name || profile.email || profile.id,
+      });
+
+      await addDoc(collection(db, 'global_audit_logs'), {
+        tenantId: profile.tenantId,
+        action: 'RBAC_CUSTOM_ROLE_CREATED',
+        category: 'SECURITY',
+        description: `Custom role ${name} created by IT personnel.`,
+        timestamp: now,
+        actor: profile.email || profile.full_name || profile.id,
+        objectId: created.id,
+      });
+
+      setCreateOpen(false);
+      setRoleName('');
+      setRoleDescription('');
+      toast.success(`Custom role "${name}" created. Configure its realm of operation next.`);
+    } catch (error) {
+      console.error('Failed to create custom role', error);
+      toast.error('Failed to create the custom role.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveRealm = async () => {
+    if (!profile?.tenantId || !selectedRole?.isCustom || !canManageRoles || saving) return;
+    setSaving(true);
+    try {
+      const now = new Date().toISOString();
+      const safePermissions = normalizeCustomPermissions(realmPermissions);
+      await setDoc(doc(db, 'role_realms_of_operation', roleRealmId(profile.tenantId, selectedRole.name)), {
+        tenantId: profile.tenantId,
+        roleName: selectedRole.name,
+        roleLabel: selectedRole.label,
+        roleType: 'custom',
+        isSystemRole: false,
+        immutable: false,
+        schemaVersion: RBAC_SCHEMA_VERSION,
+        permissions: safePermissions,
+        updatedAt: now,
+        updatedBy: profile.full_name || profile.email || profile.id,
+      }, { merge: true });
+
+      if (selectedRole.customRole) {
+        await setDoc(doc(db, 'hr_roles', selectedRole.customRole.id), {
+          updated_at: now,
+          updated_by: profile.full_name || profile.email || profile.id,
+        }, { merge: true });
       }
+
+      await addDoc(collection(db, 'global_audit_logs'), {
+        tenantId: profile.tenantId,
+        action: 'RBAC_CUSTOM_ROLE_PERMISSIONS_UPDATED',
+        category: 'SECURITY',
+        description: `Realm of operation updated for custom role ${selectedRole.name}.`,
+        timestamp: now,
+        actor: profile.email || profile.full_name || profile.id,
+        objectId: selectedRole.id,
+      });
+
+      setRealmPermissions(safePermissions);
+      toast.success(`Realm of operation for "${selectedRole.name}" saved.`);
+    } catch (error) {
+      console.error('Failed to save custom role permissions', error);
+      toast.error('Failed to save the custom role permissions.');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const openEditModal = (role: typeof customRolesMapped[0]) => {
-    const originalRole = customRoles.find(r => r.id === role.id);
-    if (originalRole) {
-      setEditingRole(originalRole);
-      setRoleName(originalRole.name);
-      setRoleDesc(originalRole.description);
-      setIsModalOpen(true);
+  const handleDeleteRole = async (role: RoleCard) => {
+    if (!profile?.tenantId || !role.isCustom || !role.customRole || !canManageRoles) return;
+    const assigned = countAssigned(role.name);
+    if (assigned > 0) {
+      toast.error(`Cannot delete "${role.name}" because ${assigned} staff account(s) use it as a primary or secondary role.`);
+      return;
+    }
+    if (!window.confirm(`Delete the custom role "${role.name}" and its realm of operation?`)) return;
+
+    try {
+      const now = new Date().toISOString();
+      await deleteDoc(doc(db, 'role_realms_of_operation', roleRealmId(profile.tenantId, role.name)));
+      await deleteDoc(doc(db, 'hr_roles', role.customRole.id));
+      await addDoc(collection(db, 'global_audit_logs'), {
+        tenantId: profile.tenantId,
+        action: 'RBAC_CUSTOM_ROLE_DELETED',
+        category: 'SECURITY',
+        description: `Custom role ${role.name} deleted by IT personnel.`,
+        timestamp: now,
+        actor: profile.email || profile.full_name || profile.id,
+        objectId: role.customRole.id,
+      });
+      if (selectedRole?.id === role.id) setSelectedRole(null);
+      toast.success(`Custom role "${role.name}" deleted.`);
+    } catch (error) {
+      console.error('Failed to delete custom role', error);
+      toast.error('Failed to delete the custom role.');
     }
   };
 
-  const resetForm = () => {
-    setEditingRole(null);
-    setRoleName('');
-    setRoleDesc('');
+  const setModuleAccess = (moduleId: RbacModuleKey, accessLevel: RealmAccessLevel) => {
+    if (!selectedRole?.isCustom || !canManageRoles) return;
+    if (moduleId === 'dashboard' || moduleId === 'welfare') return;
+    setRealmPermissions(previous => ({
+      ...previous,
+      [moduleId]: {
+        ...(previous[moduleId] || customRoleBaselinePermissions()[moduleId]),
+        accessLevel,
+        scope: 'assigned_branches',
+      },
+    }));
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-200">
-      {/* Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white p-6 rounded-[24px] border border-slate-200 shadow-sm flex items-center justify-between">
+    <div className="space-y-6">
+      <div className="rounded-3xl border border-indigo-100 bg-indigo-50/60 p-5">
+        <div className="flex items-start gap-3">
+          <ShieldCheck className="mt-0.5 text-indigo-600" size={20} />
           <div>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total System Roles</p>
-            <p className="text-2xl font-bold text-slate-900">{DEFAULT_ROLES_LIST.length}</p>
-          </div>
-          <div className="h-10 w-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-500">
-            <Shield size={20} />
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-[24px] border border-slate-200 shadow-sm flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Custom Created Roles</p>
-            <p className="text-2xl font-bold text-slate-900">{customRoles.length}</p>
-          </div>
-          <div className="h-10 w-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600">
-            <Briefcase size={20} />
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-[24px] border border-slate-200 shadow-sm flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Active Staff Members</p>
-            <p className="text-2xl font-bold text-slate-900">{staff.length}</p>
-          </div>
-          <div className="h-10 w-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600">
-            <Users size={20} />
+            <h3 className="font-black text-slate-900">Constitutional access baseline</h3>
+            <p className="mt-1 text-sm leading-6 text-slate-600">
+              Every authenticated tenant account receives the Opening Dashboard and Welfare Portal. System roles are generated by PharmHelm and cannot be edited by a tenant. IT personnel may create custom operational roles and define every other module as Functional, View only, or No access. Branch visibility continues to follow the staff member's assigned branches.
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Control Actions */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Staff Roles Directory</h2>
-          <p className="text-xs text-slate-400 font-bold uppercase mt-1">Manage static system profiles and create custom workforce designations.</p>
-        </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SummaryCard label="System-generated roles" value={SYSTEM_ROLES.length} icon={Shield} />
+        <SummaryCard label="Custom roles" value={customRoles.length} icon={Users} />
+        <SummaryCard label="Active role assignments" value={staff.length} icon={ShieldCheck} />
+      </div>
 
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-xl font-black text-slate-900">Roles Registry</h2>
+          <p className="text-sm text-slate-500">System roles are immutable. Custom roles are tenant-specific and managed by IT personnel only.</p>
+        </div>
         <div className="flex items-center gap-3">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input 
-              type="text" 
-              placeholder="Search roles..." 
-              className="pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/20 outline-none w-64 text-sm font-semibold text-slate-700"
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+            <input
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={event => setSearchTerm(event.target.value)}
+              placeholder="Search roles..."
+              className="w-64 rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20"
             />
           </div>
-          <button 
-            onClick={() => {
-              resetForm();
-              setIsModalOpen(true);
-            }}
-            className="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 shadow-lg shadow-slate-200 text-sm"
-          >
-            <Plus size={18} />
-            Create Role
-          </button>
+          {canManageRoles && (
+            <button
+              onClick={() => setCreateOpen(true)}
+              className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
+            >
+              <Plus size={17} />
+              New custom role
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Roles Master Table */}
-      <div className="bg-white rounded-[32px] border border-slate-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100 bg-slate-50/50">
-                <th className="px-6 py-4">Role Profile & Name</th>
-                <th className="px-6 py-4">Designation Type</th>
-                <th className="px-6 py-4">Job Description</th>
-                <th className="px-6 py-4 text-center">Assigned Staff</th>
-                <th className="px-6 py-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredRoles.map((role) => {
-                const assignedCount = getStaffCountForRole(role.name);
-                return (
-                  <tr key={role.id} className="hover:bg-slate-50/50 transition-colors group">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className={cn(
-                          "h-10 w-10 rounded-xl bg-slate-100 flex items-center justify-center transition-colors group-hover:bg-indigo-50",
-                          role.isCustom ? "text-indigo-600" : "text-slate-400"
-                        )}>
-                          <Briefcase size={20} />
-                        </div>
-                        <div>
-                          <p className="font-bold text-slate-900">{role.label}</p>
-                          <p className="text-[9px] font-black tracking-wider text-slate-400 uppercase">Code: {role.name}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      {role.isCustom ? (
-                        <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-100">
-                          Custom Role
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200">
-                          System Default
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 max-w-sm">
-                      <p className="text-sm font-semibold text-slate-600 truncate" title={role.description}>
-                        {role.description || '-'}
-                      </p>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <div className={cn(
-                        "inline-flex items-center justify-center font-bold px-3 py-1 rounded-full text-xs",
-                        assignedCount > 0 ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-50 text-slate-400"
-                      )}>
-                        {assignedCount} Assigned
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button 
-                          onClick={() => setSelectedRoleForRealm(role)}
-                          className="px-2.5 py-1 text-indigo-600 hover:text-white bg-indigo-50 hover:bg-indigo-600 rounded-lg text-xs font-bold transition-all flex items-center gap-1 border border-indigo-100"
-                          title="Configure module permissions, functions, and submodule scope for this role."
-                        >
-                          <Shield size={12} />
-                          <span>Realm</span>
-                        </button>
-
-                        {role.isCustom ? (
-                          <>
-                            <button 
-                              onClick={() => openEditModal(role)}
-                              className="p-1.5 text-slate-400 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-all"
-                              title="Edit Role Settings"
-                            >
-                              <Edit2 size={14} />
-                            </button>
-                            <button 
-                              onClick={() => handleDeleteRole(role.id, role.name)}
-                              className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
-                              title="Delete Role Designation"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </>
-                        ) : (
-                          <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider pl-1 select-none opacity-40">System</span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-              {filteredRoles.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
-                    <HelpCircle className="mx-auto text-slate-300 mb-2" size={32} />
-                    <p className="font-bold text-sm">No roles found matching "{searchTerm}"</p>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Create / Edit Role Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/40 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-md rounded-[32px] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-              <h2 className="text-lg font-black text-slate-900 uppercase tracking-tight">
-                {editingRole ? 'Edit Custom Role' : 'Create Custom Role'}
-              </h2>
-              <button 
-                onClick={() => {
-                  setIsModalOpen(false);
-                  resetForm();
-                }} 
-                className="text-slate-400 hover:text-slate-600 transition-colors"
-              >
-                <X size={24} />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateOrUpdateRole}>
-              <div className="p-8 space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Role Designation Name *</label>
-                  <input 
-                    required 
-                    type="text" 
-                    placeholder="e.g. Registered Nurse, Assistant Dispenser" 
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 outline-none font-bold text-slate-900 text-sm"
-                    value={roleName} 
-                    onChange={(e) => setRoleName(e.target.value)} 
-                  />
-                  <p className="text-[10px] text-zinc-400 font-medium">Use a distinct human-readable title. This title will be selectable in the Staff Registry.</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Job Description</label>
-                  <textarea 
-                    rows={3}
-                    placeholder="Describe main responsibilities and domain authorizations of this staff designation..." 
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 outline-none font-semibold text-slate-700 text-sm resize-none"
-                    value={roleDesc} 
-                    onChange={(e) => setRoleDesc(e.target.value)} 
-                  />
-                </div>
-              </div>
-
-              <div className="px-8 py-6 bg-slate-50 border-t border-slate-100 flex justify-end gap-3 rounded-b-[32px]">
-                <button 
-                  type="button" 
-                  onClick={() => {
-                    setIsModalOpen(false);
-                    resetForm();
-                  }} 
-                  className="px-6 py-2.5 border border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-100 transition-colors uppercase text-[10px] tracking-widest"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit" 
-                  className="px-8 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold transition-all shadow-lg shadow-slate-200 uppercase text-[10px] tracking-widest flex items-center gap-2"
-                >
-                  <Save size={14} />
-                  {editingRole ? 'Update Role' : 'Create Role'}
-                </button>
-              </div>
-            </form>
-          </div>
+      {!canManageRoles && (
+        <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <Lock size={17} className="mt-0.5" />
+          <span>You can inspect the Roles Registry, but only IT Head or IT Support Personnel may create, change or delete custom role definitions.</span>
         </div>
       )}
 
-      {/* Realm of Operation Modal */}
-      {selectedRoleForRealm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white w-full max-w-4xl rounded-[32px] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 my-8 flex flex-col max-h-[90vh]">
-            <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 flex-shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                  <ShieldCheck size={24} />
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        {filteredRoles.map(role => (
+          <div key={role.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-black text-slate-900">{role.label}</h3>
+                  <span className={cn(
+                    'rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider',
+                    role.isCustom ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-600'
+                  )}>
+                    {role.isCustom ? 'Custom' : 'System generated'}
+                  </span>
+                  {!role.isCustom && (
+                    <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                      <Lock size={10} /> Immutable
+                    </span>
+                  )}
                 </div>
-                <div>
-                  <h2 className="text-lg font-black text-slate-900 uppercase tracking-tight">
-                    Realm of Operation: {selectedRoleForRealm.label}
-                  </h2>
-                  <p className="text-xs text-slate-400 font-bold uppercase mt-0.5">
-                    Define access permissions, active functions and sub-modules for this designation.
-                  </p>
-                </div>
+                <p className="mt-2 text-sm leading-5 text-slate-500">{role.description || 'Tenant-defined operational role.'}</p>
+                <p className="mt-3 text-xs font-bold text-slate-400">{countAssigned(role.name)} staff assignment(s)</p>
               </div>
-              <button 
-                onClick={() => setSelectedRoleForRealm(null)} 
-                className="text-slate-400 hover:text-slate-600 transition-colors p-1.5 hover:bg-slate-100 rounded-xl"
-              >
-                <X size={20} />
-              </button>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  onClick={() => void openRole(role)}
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                >
+                  <Eye size={14} />
+                  {role.isCustom && canManageRoles ? 'Configure' : 'View'}
+                </button>
+                {role.isCustom && canManageRoles && (
+                  <button
+                    onClick={() => void handleDeleteRole(role)}
+                    className="rounded-xl p-2 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    title="Delete custom role"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {createOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+          <form onSubmit={handleCreateRole} className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl">
+            <div className="mb-6 flex items-start justify-between">
+              <div>
+                <h3 className="text-xl font-black text-slate-900">Create custom role</h3>
+                <p className="mt-1 text-sm text-slate-500">The role name becomes immutable after creation so existing staff assignments cannot silently break.</p>
+              </div>
+              <button type="button" onClick={() => setCreateOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><X size={18} /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1.5 block text-xs font-black uppercase tracking-wider text-slate-500">Role name</label>
+                <input required value={roleName} onChange={event => setRoleName(event.target.value)} className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20" />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-black uppercase tracking-wider text-slate-500">Description</label>
+                <textarea value={roleDescription} onChange={event => setRoleDescription(event.target.value)} rows={3} className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20" />
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setCreateOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button disabled={saving} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{saving ? 'Creating...' : 'Create role'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {selectedRole && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+          <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b border-slate-100 px-7 py-6">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xl font-black text-slate-900">{selectedRole.label}</h3>
+                  <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-black uppercase', selectedRole.isCustom ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-600')}>
+                    {selectedRole.isCustom ? 'Custom role' : 'System role'}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-slate-500">
+                  {selectedRole.isCustom ? 'Realm of operation. Dashboard and Welfare are universal and cannot be removed.' : 'Read-only system-generated permission profile.'}
+                </p>
+              </div>
+              <button onClick={() => setSelectedRole(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><X size={19} /></button>
             </div>
 
-            <form onSubmit={handleSaveRealmOfOperation} className="flex-1 overflow-y-auto p-8 space-y-6">
-              <div className="bg-amber-50 border border-amber-200/60 p-4 rounded-2xl flex gap-3 text-amber-800">
-                <AlertCircle className="flex-shrink-0 text-amber-600" size={20} />
-                <div className="text-xs">
-                  <p className="font-bold uppercase tracking-wider mb-1">Operational Realm Enforcement Directive</p>
-                  <p className="font-semibold leading-relaxed">
-                    Changes applied here affect all system users logged under this role. Ensure designated personnel are notified before making bulk role permission updates.
-                  </p>
+            <div className="overflow-y-auto px-7 py-5">
+              <div className="overflow-hidden rounded-2xl border border-slate-200">
+                <div className="grid grid-cols-[1.4fr_1fr] bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  <span>Module</span>
+                  <span>Realm of operation</span>
                 </div>
-              </div>
-
-              <div className="space-y-4">
-                <div className="grid grid-cols-12 gap-4 text-[10px] font-black text-slate-400 uppercase tracking-widest px-4">
-                  <div className="col-span-4">Module Name</div>
-                  <div className="col-span-3 text-center">Access Level</div>
-                  <div className="col-span-2 text-center">Scope Reach</div>
-                  <div className="col-span-3">Submodule Scope (if specific)</div>
-                </div>
-
-                <div className="divide-y divide-slate-100 border border-slate-200/60 rounded-3xl overflow-hidden bg-slate-50/20">
-                  {SYSTEM_MODULES.map((mod) => {
-                    const perm = realmPermissions[mod.id] || { accessLevel: 'none', scope: 'all', submodules: '' };
-                    return (
-                      <div key={mod.id} className={cn(
-                        "grid grid-cols-12 gap-4 items-center p-4 transition-all",
-                        perm.accessLevel === 'none' ? 'bg-slate-50/40 opacity-70' : 'bg-white'
-                      )}>
-                        {/* Module Name & Info */}
-                        <div className="col-span-4">
-                          <p className="font-bold text-sm text-slate-900">{mod.name}</p>
-                          <p className="text-[10px] text-slate-400 font-semibold truncate" title={mod.submodules}>
-                            Submodules: {mod.submodules}
-                          </p>
+                {RBAC_MODULES.map(module => {
+                  const lockedBaseline = module.id === 'dashboard' || module.id === 'welfare';
+                  const permission = realmPermissions[module.id] || customRoleBaselinePermissions()[module.id];
+                  const displayedLevel = permission.accessLevel === 'all' ? 'view_functional' : permission.accessLevel;
+                  return (
+                    <div key={module.id} className="grid grid-cols-[1.4fr_1fr] items-center gap-4 border-t border-slate-100 px-4 py-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-bold text-slate-800">{module.name}</p>
+                          {lockedBaseline && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[9px] font-black uppercase text-indigo-700">Universal</span>}
                         </div>
-
-                        {/* Access Level Selector */}
-                        <div className="col-span-3 flex justify-center">
-                          <div className="bg-slate-100 p-1 rounded-xl flex gap-1 w-full max-w-[240px]">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setRealmPermissions(prev => ({
-                                  ...prev,
-                                  [mod.id]: { ...perm, accessLevel: 'none' }
-                                }));
-                              }}
-                              className={cn(
-                                "flex-1 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all",
-                                perm.accessLevel === 'none' 
-                                  ? "bg-slate-800 text-white shadow-sm" 
-                                  : "text-slate-500 hover:text-slate-800"
-                              )}
-                            >
-                              None
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setRealmPermissions(prev => ({
-                                  ...prev,
-                                  [mod.id]: { ...perm, accessLevel: 'view_only' }
-                                }));
-                              }}
-                              className={cn(
-                                "flex-1 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all",
-                                perm.accessLevel === 'view_only' 
-                                  ? "bg-amber-500 text-white shadow-sm" 
-                                  : "text-slate-500 hover:text-amber-600"
-                              )}
-                            >
-                              View
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setRealmPermissions(prev => ({
-                                  ...prev,
-                                  [mod.id]: { ...perm, accessLevel: 'view_functional' }
-                                }));
-                              }}
-                              className={cn(
-                                "flex-1 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all",
-                                perm.accessLevel === 'view_functional' 
-                                  ? "bg-emerald-600 text-white shadow-sm" 
-                                  : "text-slate-500 hover:text-emerald-600"
-                              )}
-                            >
-                              Full
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Scope Reach */}
-                        <div className="col-span-2 flex justify-center">
-                          <select
-                            disabled={perm.accessLevel === 'none'}
-                            className="text-xs font-bold py-1 px-2 border border-slate-200 rounded-lg bg-white disabled:bg-slate-100 disabled:text-slate-400 focus:ring-2 focus:ring-indigo-500/20 outline-none"
-                            value={perm.scope || 'all'}
-                            onChange={(e) => {
-                              setRealmPermissions(prev => ({
-                                ...prev,
-                                [mod.id]: { ...perm, scope: e.target.value }
-                              }));
-                            }}
-                          >
-                            <option value="all">Full Module</option>
-                            <option value="specific">Submodule</option>
-                          </select>
-                        </div>
-
-                        {/* Specific Submodule Input */}
-                        <div className="col-span-3">
-                          <input
-                            type="text"
-                            disabled={perm.accessLevel === 'none' || perm.scope === 'all'}
-                            placeholder="e.g. POS Billing ONLY"
-                            className="w-full text-xs font-semibold py-1 px-3 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 outline-none disabled:bg-slate-100 disabled:text-slate-400 placeholder:text-slate-300"
-                            value={perm.submodules || ''}
-                            onChange={(e) => {
-                              setRealmPermissions(prev => ({
-                                ...prev,
-                                [mod.id]: { ...perm, submodules: e.target.value }
-                              }));
-                            }}
-                          />
-                        </div>
+                        <p className="mt-0.5 text-xs text-slate-400">{module.description}</p>
                       </div>
-                    );
-                  })}
-                </div>
+                      {selectedRole.isCustom && canManageRoles ? (
+                        <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
+                          {(['none', 'view_only', 'view_functional'] as RealmAccessLevel[]).map(level => {
+                            const disabled = lockedBaseline && level !== displayedLevel;
+                            return (
+                              <button
+                                key={level}
+                                type="button"
+                                disabled={disabled}
+                                onClick={() => setModuleAccess(module.id, level)}
+                                className={cn(
+                                  'flex-1 rounded-lg px-2 py-1.5 text-[10px] font-black transition-all',
+                                  displayedLevel === level ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-700',
+                                  disabled && 'cursor-not-allowed opacity-30'
+                                )}
+                              >
+                                {ACCESS_LABELS[level]}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                          {displayedLevel === 'none' ? <X className="text-slate-400" size={15} /> : displayedLevel === 'view_only' ? <Eye className="text-blue-500" size={15} /> : <Check className="text-emerald-600" size={15} />}
+                          {ACCESS_LABELS[displayedLevel]}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
-              {/* Modal Actions */}
-              <div className="pt-4 border-t border-slate-100 flex justify-end gap-3 flex-shrink-0">
-                <button 
-                  type="button" 
-                  onClick={() => setSelectedRoleForRealm(null)} 
-                  className="px-6 py-2.5 border border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-100 transition-colors uppercase text-[10px] tracking-widest"
-                >
-                  Cancel
+              {selectedRole.isCustom && (
+                <div className="mt-4 flex items-start gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs leading-5 text-slate-600">
+                  <AlertCircle size={16} className="mt-0.5 shrink-0 text-slate-500" />
+                  Functional access permits normal operations inside that module but does not automatically grant reserved approvals, executive overrides, cross-tenant access, or branches not assigned to the staff account. Existing transaction-specific approval checks continue to apply.
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-slate-100 px-7 py-5">
+              <button onClick={() => setSelectedRole(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600">Close</button>
+              {selectedRole.isCustom && canManageRoles && (
+                <button onClick={() => void handleSaveRealm()} disabled={saving} className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
+                  <Save size={16} />
+                  {saving ? 'Saving...' : 'Save realm'}
                 </button>
-                <button 
-                  type="submit" 
-                  disabled={isRealmSaving}
-                  className="px-8 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white rounded-xl font-bold transition-all shadow-lg shadow-slate-200 uppercase text-[10px] tracking-widest flex items-center gap-2"
-                >
-                  {isRealmSaving ? (
-                    <span>Saving...</span>
-                  ) : (
-                    <>
-                      <Save size={14} />
-                      <span>Save Realm Configuration</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
+              )}
+            </div>
           </div>
         </div>
       )}
     </div>
   );
 };
+
+const SummaryCard: React.FC<{ label: string; value: number; icon: React.ComponentType<{ size?: number; className?: string }> }> = ({ label, value, icon: Icon }) => (
+  <div className="flex items-center justify-between rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div>
+      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</p>
+      <p className="mt-1 text-2xl font-black text-slate-900">{value}</p>
+    </div>
+    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-50 text-slate-500">
+      <Icon size={19} />
+    </div>
+  </div>
+);
