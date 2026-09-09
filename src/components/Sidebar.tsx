@@ -38,6 +38,9 @@ interface SidebarProps {
   setMobileOpen?: (open: boolean) => void;
 }
 
+const buildSha = (import.meta.env.VITE_BUILD_SHA || 'local').slice(0, 7);
+const buildTime = import.meta.env.VITE_BUILD_TIME || 'local';
+
 const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
   const location = useLocation();
   const { profile, activeBranch, logout, hasPermission } = useAuth();
@@ -145,6 +148,10 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, 
             <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">{profile.role}</p>
           </div>
         )}
+        <div className={cn("px-3", collapsed && "md:hidden")} data-build-sha={buildSha} data-build-time={buildTime}>
+          <p className="text-[10px] text-zinc-600 font-mono tracking-wide">Build {buildSha}</p>
+          <p className="text-[9px] text-zinc-700 font-mono truncate">{buildTime}</p>
+        </div>
         <button 
           onClick={logout}
           className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-red-500/10 hover:text-red-500 transition-all text-zinc-500"
