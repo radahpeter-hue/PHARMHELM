@@ -29,7 +29,11 @@ jobs:
           npm install @tailwindcss/oxide-linux-x64-gnu --save-optional --no-save
 
       - name: Build project
+        env:
+          VITE_BUILD_SHA: ${{ github.sha }}
+          VITE_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
         run: |
+          echo "Building commit ${VITE_BUILD_SHA} at ${VITE_BUILD_TIME}"
           npm run lint
           npm run build
 
