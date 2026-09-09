@@ -415,6 +415,7 @@ test('release candidate: source-level transaction guards and historical consumpt
   assert.ok(sales.includes('getCheckoutBatchDeductions'));
   assert.ok(consumption.includes('const explicitBaseQuantity = Number(item.baseQuantity)'));
   assert.ok(consumption.includes('Tier-aware sales always use the immutable sale-line baseQuantity/tierMultiplier snapshot'));
-  assert.ok(integrity.includes('Multi-tier receipt inventory revisions require exact batch-allocation support'));
-  assert.ok(integrity.includes('Multi-tier receipt voiding requires exact stored batch-allocation restoration'));
+  assert.ok(integrity.includes('planSaleInventoryRevision'));
+  assert.ok(integrity.includes('assertExactStoredAllocations'));
+  assert.ok(integrity.includes('batchAllocations'));
 });

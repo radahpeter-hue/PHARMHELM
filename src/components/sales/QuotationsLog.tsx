@@ -23,6 +23,7 @@ import {
 import { db } from '../../firebase';
 import { format } from 'date-fns';
 import { QuotationPreview } from './QuotationPreview';
+import { buildResumedQuotationProductLine, buildResumedServiceLine } from '../../services/quotationTierService';
 
 interface QuotationsLogProps {
   activeBranchId: string;
@@ -76,6 +77,7 @@ export const QuotationsLog: React.FC<QuotationsLogProps> = ({
   const [warnings, setWarnings] = useState<string[]>([]);
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [refetchedItems, setRefetchedItems] = useState<any[]>([]);
+  const [hasBlockingWarnings, setHasBlockingWarnings] = useState(false);
 
   // Preview Modal
   const [previewQuotation, setPreviewQuotation] = useState<any | null>(null);
@@ -163,58 +165,50 @@ export const QuotationsLog: React.FC<QuotationsLogProps> = ({
     const basketItems: any[] = [];
 
     try {
-      for (const line of item.lineItems) {
-        const prodSnap = await getDoc(doc(db, 'products', line.productId));
-        if (!prodSnap.exists()) {
-          itemWarnings.push(`Product "${line.productName}" no longer exists in inventory.`);
+      let blockingFound = false;
+      for (const line of item.lineItems || []) {
+        if (line.isService) {
+          basketItems.push(buildResumedServiceLine(line));
           continue;
         }
-        const product = prodSnap.data() as any;
 
-        // Check SOH from product batches
+        const prodSnap = await getDoc(doc(db, 'products', line.productId));
+        if (!prodSnap.exists()) {
+          itemWarnings.push(`Product \"${line.productName}\" no longer exists in inventory.`);
+          blockingFound = true;
+          continue;
+        }
+        const product = { id: prodSnap.id, ...prodSnap.data() } as any;
         const batchesSnap = await getDocs(
           query(
             collection(db, 'product_batches'),
             where('tenantId', '==', profile.tenantId),
             where('branchId', '==', activeBranchId),
             where('productId', '==', line.productId),
-            where('batch_status', '==', 'available')
+            where('batch_status', '==', 'active')
           )
         );
-        const batchesList = batchesSnap.docs.map(d => d.data());
-        const totalSOH = batchesList.reduce((sum, b) => sum + (b.quantity || 0), 0);
-
-        // Check unit price change
-        const currentPrice = product.costPricePerPack || line.unitPrice; // standard pricing or default
-        // In the app, products are sold by packs or unit price. If price changed:
-        if (product.sellingPricePerUnit !== line.unitPrice) {
-          // Adjust price or flag warning
-          itemWarnings.push(`Price for "${line.productName}" changed from UGX ${line.unitPrice.toLocaleString()} to UGX ${product.sellingPricePerUnit.toLocaleString()}.`);
+        const batchesList = batchesSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
+        const result = buildResumedQuotationProductLine({
+          line, product, batches: batchesList, systemSettings, settings: systemSettings,
+          tenantId: profile.tenantId, branchId: activeBranchId
+        } as any);
+        itemWarnings.push(...result.warnings);
+        if (result.blocking || !result.item) {
+          blockingFound = true;
+          continue;
         }
-
-        if (totalSOH < line.qty) {
-          itemWarnings.push(`Stock on Hand for "${line.productName}" is insufficient. Requested: ${line.qty}, Available: ${totalSOH} base units.`);
-        }
-
-        basketItems.push({
-          productId: line.productId,
-          productName: line.productName,
-          genericName: line.genericName,
-          quantity: line.qty,
-          unitPrice: product.sellingPricePerUnit || line.unitPrice,
-          costPrice: product.costPricePerPack || 0,
-          isService: false
-        });
+        basketItems.push(result.item);
       }
 
       setRefetchedItems(basketItems);
       setResumingQuotation(item);
+      setHasBlockingWarnings(blockingFound);
 
-      if (itemWarnings.length > 0) {
-        setWarnings(itemWarnings);
+      if (itemWarnings.length > 0 || blockingFound) {
+        setWarnings(itemWarnings.length > 0 ? itemWarnings : ['One or more quotation lines cannot be resumed safely.']);
         setShowWarningModal(true);
       } else {
-        // Direct conversion
         loadBasketAndRedirect(basketItems, item);
       }
 
@@ -479,15 +473,16 @@ export const QuotationsLog: React.FC<QuotationsLogProps> = ({
                 Cancel Resume
               </button>
               <button 
+                disabled={hasBlockingWarnings}
                 onClick={() => {
                   setShowWarningModal(false);
-                  if (resumingQuotation) {
+                  if (resumingQuotation && !hasBlockingWarnings) {
                     loadBasketAndRedirect(refetchedItems, resumingQuotation);
                   }
                 }} 
-                className="px-4 py-2 bg-emerald-600 text-white font-bold rounded-lg text-xs hover:bg-emerald-700"
+                className="px-4 py-2 bg-emerald-600 disabled:bg-zinc-300 disabled:cursor-not-allowed text-white font-bold rounded-lg text-xs hover:bg-emerald-700"
               >
-                Acknowledge & Continue
+                {hasBlockingWarnings ? 'Resolve Blocking Changes' : 'Acknowledge & Continue'}
               </button>
             </div>
           </div>
@@ -507,11 +502,13 @@ export const QuotationsLog: React.FC<QuotationsLogProps> = ({
           selectedPatient={clients.find(c => c.id === previewQuotation.clientId)}
           selectedInstitution={institutions.find(i => i.id === previewQuotation.institutionId)}
           cart={previewQuotation.lineItems?.map((l: any) => ({
-            productId: l.productId,
-            productName: l.productName,
-            genericName: l.genericName,
-            quantity: l.qty,
-            unitPrice: l.unitPrice
+            ...l,
+            lineId: l.lineId,
+            quantity: l.commercialQuantity ?? l.qty,
+            commercialQuantity: l.commercialQuantity ?? l.qty,
+            unitPrice: l.actualUnitPrice ?? l.unitPrice,
+            actualUnitPrice: l.actualUnitPrice ?? l.unitPrice,
+            lineTotal: l.lineTotal ?? ((l.commercialQuantity ?? l.qty) * (l.actualUnitPrice ?? l.unitPrice))
           })) || []}
           subtotal={previewQuotation.subtotal || 0}
           taxTotal={previewQuotation.taxTotal || 0}

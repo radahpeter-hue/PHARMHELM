@@ -977,85 +977,94 @@ const Sales: React.FC = () => {
     }
   };
 
-  const updateLedgerItemQuantity = (productId: string, batchNumber: string | undefined, delta: number) => {
+  const matchesLedgerLine = (item: SaleItem, lineId: string | undefined, productId: string, batchNumber: string | undefined) =>
+    lineId && item.lineId ? item.lineId === lineId : item.productId === productId && (item.isService || item.batchNumber === batchNumber);
+
+  const updateLedgerItemQuantity = (lineId: string | undefined, productId: string, batchNumber: string | undefined, delta: number) => {
     setEditedItems(prev => prev.map(item => {
-      const matchBatch = item.isService ? true : item.batchNumber === batchNumber;
-      if (item.productId === productId && matchBatch) {
-        const newQty = Math.max(1, item.quantity + delta);
-        return {
-          ...item,
-          quantity: newQty,
-          total: item.unitPrice * newQty,
-          subtotal: item.unitPrice * newQty
-        };
-      }
-      return item;
+      if (!matchesLedgerLine(item, lineId, productId, batchNumber)) return item;
+      const newQty = Math.max(1, Number(item.quantity || 0) + delta);
+      const lineTotal = newQty * Number(item.unitPrice || 0);
+      return {
+        ...item,
+        quantity: newQty,
+        commercialQuantity: item.tierCode ? newQty : item.commercialQuantity,
+        baseQuantity: item.tierCode && item.tierMultiplier ? newQty * Number(item.tierMultiplier) : item.baseQuantity,
+        subtotal: lineTotal, total: lineTotal, lineTotal
+      };
     }));
   };
 
-  const updateLedgerItemPrice = (productId: string, batchNumber: string | undefined, newPrice: number) => {
+  const updateLedgerItemPrice = (lineId: string | undefined, productId: string, batchNumber: string | undefined, newPrice: number) => {
     setEditedItems(prev => prev.map(item => {
-      const matchBatch = item.isService ? true : item.batchNumber === batchNumber;
-      if (item.productId === productId && matchBatch) {
-        return {
-          ...item,
-          unitPrice: newPrice,
-          total: newPrice * item.quantity,
-          subtotal: newPrice * item.quantity
-        };
+      if (!matchesLedgerLine(item, lineId, productId, batchNumber)) return item;
+      const lineTotal = Number(item.quantity || 0) * newPrice;
+      return {
+        ...item,
+        unitPrice: newPrice,
+        actualUnitPrice: item.tierCode ? newPrice : item.actualUnitPrice,
+        priceSource: item.tierCode ? (newPrice === Number(item.configuredPrice) ? 'configured-tier' : 'manual-override') : item.priceSource,
+        subtotal: lineTotal, total: lineTotal, lineTotal
+      };
+    }));
+  };
+
+  const removeLedgerItem = (lineId: string | undefined, productId: string, batchNumber: string | undefined) => {
+    setEditedItems(prev => prev.filter(item => !matchesLedgerLine(item, lineId, productId, batchNumber)));
+  };
+
+  const addProductToLedgerEdit = (product: Product, requestedTierCode?: SellingTierCode) => {
+    const resolution = resolveSellingTiers(product, systemSettings);
+    if (resolution.mode === 'multi-tier') {
+      const tier = requestedTierCode
+        ? resolution.tiers.find(candidate => candidate.code === requestedTierCode)
+        : resolution.defaultTier;
+      if (!tier) {
+        toast.error('The selected selling tier is not available.');
+        return;
       }
-      return item;
-    }));
-  };
+      if (editedItems.some(item => item.productId === product.id && item.tierCode === tier.code)) {
+        toast.info(`${product.name} ${tier.label} is already in the receipt.`);
+        return;
+      }
+      const editBranchId = ledgerEditingSale?.branchId || activeBranchId;
+      if (!profile?.tenantId || !editBranchId) {
+        toast.error('A tenant and branch are required before adding this line.');
+        return;
+      }
+      try {
+        const newItem = buildTierCartItem({ product, tier, batches, tenantId: profile.tenantId, branchId: editBranchId, commercialQuantity: 1 });
+        setEditedItems(prev => [...prev, newItem]);
+        setLedgerEditSearchTerm('');
+        toast.success(`Added ${product.name} ${tier.label} to the list`);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Unable to add tier line.');
+      }
+      return;
+    }
 
-  const removeLedgerItem = (productId: string, batchNumber: string | undefined) => {
-    setEditedItems(prev => prev.filter(item => {
-      const matchBatch = item.isService ? true : item.batchNumber === batchNumber;
-      return !(item.productId === productId && matchBatch);
-    }));
-  };
-
-  const addProductToLedgerEdit = (product: Product) => {
-    const existing = editedItems.find(item => item.productId === product.id);
+    const existing = editedItems.find(item => item.productId === product.id && !item.tierCode);
     if (existing) {
       toast.info(`${product.name} is already in the receipt!`);
       return;
     }
-
-    let batchNum = 'N/A';
-    let expDate = 'N/A';
-    let oldestBatch = null;
-    
-    const productBatches = batches.filter(b => b.productId === product.id && b.quantity > 0 && b.batch_status === 'active' && isInventoryBatchUnexpired(b.expiryDate));
-    if (productBatches.length > 0) {
-      oldestBatch = productBatches.sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime())[0];
-      batchNum = oldestBatch.batchNumber;
-      expDate = oldestBatch.expiryDate;
-    } else {
-      toast.error(`No active batches with stock found for ${product.name}`);
+    const productBatches = batches
+      .filter(b => b.productId === product.id && b.quantity > 0)
+      .sort((a, b) => new Date(a.expiryDate || '9999-12-31').getTime() - new Date(b.expiryDate || '9999-12-31').getTime());
+    const oldestBatch = productBatches[0];
+    if (!oldestBatch) {
+      toast.error(`${product.name} has no available stock.`);
       return;
     }
-
-    const multiplier = product.unitOfSell === 'pack' ? (product.unitsPerPack || 1) : 
-                      product.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
-    const unitPrice = oldestBatch ? (oldestBatch.sellingPrice * multiplier) : (product.sellingPricePerUnit || 0);
-    const costPrice = oldestBatch ? (oldestBatch.purchasePrice * multiplier) : (product.costPricePerPack || 0);
-
+    const multiplier = product.unitOfSell === 'pack' ? (product.unitsPerPack || 1) :
+      product.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
+    const unitPrice = oldestBatch ? oldestBatch.sellingPrice * multiplier : (product.sellingPricePerUnit || 0);
+    const costPrice = oldestBatch ? oldestBatch.purchasePrice * multiplier : (product.costPricePerPack || 0);
     const newItem: SaleItem = {
-      productId: product.id,
-      batchId: oldestBatch?.id || '',
-      name: product.name,
-      productName: product.name,
-      quantity: 1,
-      unitPrice: unitPrice,
-      total: unitPrice,
-      subtotal: unitPrice,
-      costPrice: costPrice,
-      isService: false,
-      batchNumber: batchNum,
-      expiryDate: expDate
+      productId: product.id, batchId: oldestBatch.id || '', name: product.name, productName: product.name,
+      genericName: product.genericName, quantity: 1, unitPrice, total: unitPrice, subtotal: unitPrice, costPrice,
+      isService: false, batchNumber: oldestBatch.batchNumber, expiryDate: oldestBatch.expiryDate
     };
-
     setEditedItems(prev => [...prev, newItem]);
     setLedgerEditSearchTerm('');
     toast.success(`Added ${product.name} to the list`);
@@ -2465,7 +2474,7 @@ const Sales: React.FC = () => {
                               <div className="flex-1 min-w-0">
                                 <p className="text-xs font-bold text-zinc-900 truncate">{item.productName || item.name}</p>
                                 <p className="text-[10px] text-zinc-400 mt-0.5">
-                                  {item.isService ? 'Standard Service' : `Batch: ${item.batchNumber || 'N/A'}`}
+                                  {item.isService ? 'Standard Service' : item.tierCode ? `${item.tierLabel || item.tierCode} • ${item.baseQuantity ?? 0} base units • ${item.batchAllocations?.length || 0} allocation${item.batchAllocations?.length === 1 ? '' : 's'}` : `Batch: ${item.batchNumber || 'N/A'}`}
                                 </p>
                               </div>
 
@@ -2476,7 +2485,7 @@ const Sales: React.FC = () => {
                                   type="number"
                                   className="w-full px-2 py-1 text-xs border border-zinc-200 rounded-lg bg-white font-semibold text-zinc-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                                   value={item.unitPrice}
-                                  onChange={(e) => updateLedgerItemPrice(item.productId, item.batchNumber, parseInt(e.target.value) || 0)}
+                                  onChange={(e) => updateLedgerItemPrice(item.lineId, item.productId, item.batchNumber, parseInt(e.target.value) || 0)}
                                 />
                               </div>
 
@@ -2484,7 +2493,7 @@ const Sales: React.FC = () => {
                               <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  onClick={() => updateLedgerItemQuantity(item.productId, item.batchNumber, -1)}
+                                  onClick={() => updateLedgerItemQuantity(item.lineId, item.productId, item.batchNumber, -1)}
                                   className="p-1 hover:bg-zinc-200 rounded-lg text-zinc-500 active:scale-95 transition-all"
                                 >
                                   <Minus size={12} strokeWidth={2.5} />
@@ -2497,12 +2506,12 @@ const Sales: React.FC = () => {
                                   onChange={(e) => {
                                     const val = parseInt(e.target.value) || 1;
                                     const delta = val - item.quantity;
-                                    updateLedgerItemQuantity(item.productId, item.batchNumber, delta);
+                                    updateLedgerItemQuantity(item.lineId, item.productId, item.batchNumber, delta);
                                   }}
                                 />
                                 <button
                                   type="button"
-                                  onClick={() => updateLedgerItemQuantity(item.productId, item.batchNumber, 1)}
+                                  onClick={() => updateLedgerItemQuantity(item.lineId, item.productId, item.batchNumber, 1)}
                                   className="p-1 hover:bg-zinc-200 rounded-lg text-zinc-500 active:scale-95 transition-all"
                                 >
                                   <Plus size={12} strokeWidth={2.5} />
@@ -2520,7 +2529,7 @@ const Sales: React.FC = () => {
                               {/* Remove item */}
                               <button
                                 type="button"
-                                onClick={() => removeLedgerItem(item.productId, item.batchNumber)}
+                                onClick={() => removeLedgerItem(item.lineId, item.productId, item.batchNumber)}
                                 className="p-1.5 text-zinc-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
                               >
                                 <Trash2 size={14} />

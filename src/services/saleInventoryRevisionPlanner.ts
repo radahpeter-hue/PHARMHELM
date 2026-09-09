@@ -176,11 +176,19 @@ export function planSaleInventoryRevision(params: {
       throw new Error('Changing the product identity of an existing receipt line is not allowed. Remove the line and add a new product line instead.');
     }
 
-    const commercialQuantity = getStoredCommercialQuantity(item);
+    const commercialQuantity = Number(item.quantity ?? item.commercialQuantity ?? 0);
     if (!Number.isInteger(commercialQuantity) || commercialQuantity <= 0) {
       throw new Error(`${item.productName || item.name || product.name} must have a positive whole commercial quantity.`);
     }
-    const targetBaseQuantity = getStoredBaseQuantity({ ...item, baseQuantity: undefined } as SaleItem, product);
+    const storedMultiplier = Number(item.tierMultiplier || 0);
+    const legacyUnit = String(product.unitOfSell || product.unit || '').trim().toLowerCase();
+    const legacyMultiplier = legacyUnit === 'pack'
+      ? Math.max(1, Number(product.unitsPerPack || 1))
+      : legacyUnit === 'strip'
+        ? Math.max(1, Number(product.unitsPerStrip || 1))
+        : 1;
+    const multiplier = Number.isFinite(storedMultiplier) && storedMultiplier > 0 ? storedMultiplier : legacyMultiplier;
+    const targetBaseQuantity = commercialQuantity * multiplier;
     if (!Number.isFinite(targetBaseQuantity) || targetBaseQuantity <= 0) throw new Error(`${product.name} has an invalid revised base quantity.`);
 
     const originalAllocations = original?.allocations || [];

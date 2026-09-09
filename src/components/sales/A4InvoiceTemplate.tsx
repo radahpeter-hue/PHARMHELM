@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Sale, SaleItem } from '../../types';
+import { describeSaleItemQuantity } from '../../services/saleTierHistoryService';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
@@ -235,15 +236,18 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
                       <td className="p-3 font-semibold text-zinc-900">{item.productName}</td>
                       <td className="p-3 text-zinc-500 italic">{item.genericName || 'N/A'}</td>
                       <td className="p-3 text-zinc-600 font-mono text-[10px]">
-                        <div>{item.batchNumber || 'N/A'}</div>
+                        <div>{item.batchAllocations?.length > 1 ? item.batchAllocations.map((allocation: any) => `${allocation.batchNumber}: ${allocation.baseQuantity}`).join(', ') : (item.batchNumber || 'N/A')}</div>
                         {item.expiryDate && <div className="text-zinc-400 mt-0.5">Exp: {item.expiryDate}</div>}
                       </td>
-                      <td className="p-3 text-center font-bold text-zinc-800">{item.quantity}</td>
-                      <td className="p-3 text-right text-zinc-600">UGX {(item.unitPrice || 0).toLocaleString()}</td>
+                      <td className="p-3 text-center font-bold text-zinc-800">
+                        <div>{describeSaleItemQuantity(item).commercialText}</div>
+                        {describeSaleItemQuantity(item).baseText && <div className="text-[9px] font-medium text-zinc-400 mt-0.5">{describeSaleItemQuantity(item).baseText}</div>}
+                      </td>
+                      <td className="p-3 text-right text-zinc-600">UGX {(item.actualUnitPrice ?? item.unitPrice ?? 0).toLocaleString()}</td>
                       <td className="p-3 text-right text-zinc-500">
                         {item.vatAmount && item.vatAmount > 0 ? `UGX ${item.vatAmount.toLocaleString()} (${item.vatRate}%)` : 'Exempt'}
                       </td>
-                      <td className="p-3 text-right font-bold text-zinc-900">UGX {(item.quantity * item.unitPrice).toLocaleString()}</td>
+                      <td className="p-3 text-right font-bold text-zinc-900">UGX {Number(item.lineTotal ?? item.subtotal ?? item.total ?? (item.quantity * item.unitPrice)).toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>

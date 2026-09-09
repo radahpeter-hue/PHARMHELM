@@ -1,6 +1,7 @@
 import type { Product, SaleItem, SystemSettings } from '../types';
 import type { SellingTierCode, SellingTierFeatureSettings } from '../types/sellingTier';
 import { resolveSellingTiers } from './sellingTierService';
+import { createSaleLineId } from './saleTierHistoryService';
 
 export interface CheckoutBatchAllocation {
   batchId: string;
@@ -260,6 +261,7 @@ export function finalizeCheckoutSaleItems(
 
     return {
       ...item,
+      lineId: item.lineId || createSaleLineId(),
       quantity: commercialQuantity,
       commercialQuantity,
       baseQuantity: result.baseQuantity,

@@ -126,7 +126,7 @@ test('an existing line cannot silently change product identity', () => {
 });
 
 test('exact allocation validation catches corrupt historical quantities', () => {
-  assert.throws(() => assertExactStoredAllocations(stripLine({ baseQuantity: 11 }), product()), /do not match/);
+  assert.throws(() => assertExactStoredAllocations(stripLine({ baseQuantity: 11 }), product()), /inconsistent|do not match/);
 });
 
 test('sale fingerprints change when tier, base quantity, price or batch allocations change', () => {

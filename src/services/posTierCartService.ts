@@ -1,6 +1,7 @@
 import type { Product, ProductBatch, SaleItem } from '../types';
 import type { ResolvedSellingTier, SellingTierCode } from '../types/sellingTier';
 import { buildSaleTierSnapshot } from './sellingTierService';
+import { createSaleLineId } from './saleTierHistoryService';
 
 const normaliseExpiry = (expiryDate?: string, now: Date = new Date()): boolean => {
   if (!expiryDate) return true;
@@ -130,6 +131,7 @@ export function buildTierCartItem(params: {
   }
 
   return {
+    lineId: createSaleLineId(),
     productId: product.id,
     tenantId,
     branchId,
