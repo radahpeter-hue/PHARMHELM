@@ -297,6 +297,29 @@ export async function logMovementAndAggregateInTx(
 /**
  * Logs sale movement events (SALE or SALE_REVERSAL) and updates branchConsumptionDaily summaries.
  */
+function snapshotBaseQuantityForSaleItem(item: SaleItem): number | null {
+  const quantity = Number(item.commercialQuantity ?? item.quantity ?? 0);
+  if (!Number.isFinite(quantity) || quantity < 0) throw new Error('Sale item quantity is invalid.');
+
+  const explicitBaseQuantity = Number(item.baseQuantity);
+  if (Number.isFinite(explicitBaseQuantity) && explicitBaseQuantity > 0) return explicitBaseQuantity;
+
+  const tierMultiplier = Number(item.tierMultiplier);
+  if (item.tierCode) {
+    if (!Number.isFinite(tierMultiplier) || tierMultiplier <= 0) {
+      throw new Error(`Historical tier multiplier is missing for ${item.productName || item.productId}.`);
+    }
+    return quantity * tierMultiplier;
+  }
+
+  return null;
+}
+
+/**
+ * Logs sale movement events (SALE or SALE_REVERSAL) and updates branchConsumptionDaily summaries.
+ * Tier-aware sales always use the immutable sale-line baseQuantity/tierMultiplier snapshot.
+ * Only pre-multi-tier legacy lines fall back to the current Product unitOfSell multiplier.
+ */
 export async function logSaleMovements(
   saleId: string,
   saleData: Sale,
@@ -305,33 +328,38 @@ export async function logSaleMovements(
   createdBy: string = 'system',
   stockAlreadyApplied: boolean = false
 ) {
-  const itemsByProduct = new Map<string, SaleItem>();
+  const itemsByProduct = new Map<string, SaleItem[]>();
   for (const item of saleData.items.filter(item => !item.isService)) {
-    const existing = itemsByProduct.get(item.productId);
-    itemsByProduct.set(item.productId, existing
-      ? { ...existing, quantity: existing.quantity + item.quantity }
-      : { ...item });
+    const rows = itemsByProduct.get(item.productId) || [];
+    rows.push(item);
+    itemsByProduct.set(item.productId, rows);
   }
-  const items = Array.from(itemsByProduct.values());
-  if (items.length === 0) return;
+  if (itemsByProduct.size === 0) return;
 
-  // Use one idempotent transaction per line. This avoids Firestore's prohibition
-  // on reading a second product after the first line has already written events.
-  for (const item of items) {
-    const batchRefs = await getBranchProductBatchRefs(
-      saleData.tenantId,
-      saleData.branchId,
-      item.productId
-    );
+  // Use one deterministic idempotent transaction per product. Multiple tier lines for
+  // the same product are summed in base units without re-reading current packaging.
+  for (const [productId, items] of itemsByProduct) {
+    const batchRefs = await getBranchProductBatchRefs(saleData.tenantId, saleData.branchId, productId);
 
     await runTransaction(db, async (transaction) => {
-      const qty = item.quantity;
-      
-      const productRef = doc(db, 'products', item.productId);
-      const productSnap = await transaction.get(productRef);
-      const product = productSnap.exists() ? (productSnap.data() as Product) : null;
-      const multiplier = product ? getBaseUnitMultiplier(product) : 1;
-      const baseUnits = qty * multiplier;
+      let liveProduct: Product | null = null;
+      let baseUnits = 0;
+
+      for (const item of items) {
+        const snapshotBaseUnits = snapshotBaseQuantityForSaleItem(item);
+        if (snapshotBaseUnits !== null) {
+          baseUnits += snapshotBaseUnits;
+          continue;
+        }
+
+        // Backward compatibility only for receipts created before immutable tier/base snapshots existed.
+        if (!liveProduct) {
+          const productSnap = await transaction.get(doc(db, 'products', productId));
+          liveProduct = productSnap.exists() ? (productSnap.data() as Product) : null;
+        }
+        const quantity = Number(item.quantity || 0);
+        baseUnits += quantity * (liveProduct ? getBaseUnitMultiplier(liveProduct) : 1);
+      }
 
       const qtyDelta = isReversal ? baseUnits : -baseUnits;
       const consumptionDelta = isReversal ? -baseUnits : baseUnits;
@@ -340,7 +368,7 @@ export async function logSaleMovements(
       await logMovementAndAggregateInTx(transaction, batchRefs, {
         tenantId: saleData.tenantId,
         branchId: saleData.branchId,
-        productId: item.productId,
+        productId,
         eventType,
         quantityDeltaBaseUnits: qtyDelta,
         consumptionDeltaBaseUnits: consumptionDelta,
@@ -348,7 +376,7 @@ export async function logSaleMovements(
         exceptionalReason: saleData.isExceptionalConsumption ? (saleData.exceptionalConsumptionReason || 'Exceptional sale') : null,
         sourceCollection: 'sales',
         sourceDocumentId: saleId,
-        sourceLineId: item.productId,
+        sourceLineId: productId,
         reversalOfEventId,
         createdBy,
         effectiveAt: new Date(saleData.timestamp),

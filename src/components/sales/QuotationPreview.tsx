@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { getNextQuotationId } from '../../services/quotationService';
+import { buildQuotationLineSnapshot, quotationQuantityText } from '../../services/quotationTierService';
 import { jsPDF } from 'jspdf';
 
 interface QuotationPreviewProps {
@@ -82,14 +83,7 @@ export const QuotationPreview: React.FC<QuotationPreviewProps> = ({
     if (!quotationId) return;
     setSaving(true);
     try {
-      const lineItems = cart.map(item => ({
-        productId: item.productId,
-        productName: item.productName,
-        genericName: item.genericName || '',
-        qty: item.quantity,
-        unitPrice: item.unitPrice,
-        lineTotal: item.quantity * item.unitPrice
-      }));
+      const lineItems = cart.map(item => buildQuotationLineSnapshot(item));
 
       const newQuotation = {
         tenantId,
@@ -216,11 +210,11 @@ export const QuotationPreview: React.FC<QuotationPreviewProps> = ({
       ctx.fillStyle = '#6b7280';
       ctx.fillText(String(item.genericName || 'N/A'), columns[1] + 18, y + 45, 230);
       ctx.fillStyle = '#111827';
-      ctx.fillText(String(item.quantity), columns[2] + 18, y + 45);
+      ctx.fillText(quotationQuantityText(buildQuotationLineSnapshot(item)), columns[2] + 18, y + 45, 180);
       ctx.textAlign = 'right';
       ctx.fillText(money(item.unitPrice), columns[3] + 160, y + 45);
       ctx.font = '700 24px Arial';
-      ctx.fillText(money(item.quantity * item.unitPrice), columns[4] - 18, y + 45);
+      ctx.fillText(money(item.lineTotal ?? item.subtotal ?? item.total ?? (item.quantity * item.unitPrice)), columns[4] - 18, y + 45);
       ctx.font = '24px Arial';
       ctx.textAlign = 'left';
       ctx.strokeStyle = '#e5e7eb';
@@ -415,9 +409,9 @@ export const QuotationPreview: React.FC<QuotationPreviewProps> = ({
                     <tr key={idx} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50/50">
                       <td className="p-3 font-semibold text-zinc-900">{item.productName}</td>
                       <td className="p-3 text-zinc-500 italic">{item.genericName || 'N/A'}</td>
-                      <td className="p-3 text-center font-bold text-zinc-800">{item.quantity}</td>
-                      <td className="p-3 text-right text-zinc-600">UGX {(item.unitPrice || 0).toLocaleString()}</td>
-                      <td className="p-3 text-right font-bold text-zinc-900">UGX {(item.quantity * item.unitPrice).toLocaleString()}</td>
+                      <td className="p-3 text-center font-bold text-zinc-800">{quotationQuantityText(buildQuotationLineSnapshot(item))}</td>
+                      <td className="p-3 text-right text-zinc-600">UGX {(item.actualUnitPrice ?? item.unitPrice ?? 0).toLocaleString()}</td>
+                      <td className="p-3 text-right font-bold text-zinc-900">UGX {Number(item.lineTotal ?? item.subtotal ?? item.total ?? (item.quantity * item.unitPrice)).toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>

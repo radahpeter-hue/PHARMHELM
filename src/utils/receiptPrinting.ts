@@ -1,4 +1,5 @@
 import { Sale } from '../types';
+import { describeSaleItemQuantity } from '../services/saleTierHistoryService';
 
 export interface ReceiptBranding {
   companyName: string;
@@ -39,10 +40,14 @@ export const printThermalReceipt = (
   const tax = sale.taxAmount ?? sale.tax ?? 0;
   const discount = sale.discountAmount ?? 0;
   const items = (sale.items || []).map(item => {
-    const lineTotal = item.subtotal ?? item.total ?? (item.quantity * item.unitPrice);
+    const lineTotal = item.lineTotal ?? item.subtotal ?? item.total ?? (item.quantity * item.unitPrice);
+    const quantity = describeSaleItemQuantity(item);
+    const batchSummary = item.batchAllocations && item.batchAllocations.length > 1
+      ? item.batchAllocations.map(allocation => `${allocation.batchNumber}:${allocation.baseQuantity}`).join(', ')
+      : item.batchNumber || '';
     return `
       <tr><td colspan="3" class="item-name">${escapeHtml(item.productName || item.name)}</td></tr>
-      <tr class="item-line"><td>${escapeHtml(item.quantity)} × ${Number(item.unitPrice || 0).toLocaleString()}</td><td>${escapeHtml(item.batchNumber || '')}</td><td>${Number(lineTotal).toLocaleString()}</td></tr>`;
+      <tr class="item-line"><td>${escapeHtml(quantity.commercialText)} × ${Number(item.actualUnitPrice ?? item.unitPrice ?? 0).toLocaleString()}${quantity.baseText ? `<div class="base-qty">${escapeHtml(quantity.baseText)}</div>` : ''}</td><td>${escapeHtml(batchSummary)}</td><td>${Number(lineTotal).toLocaleString()}</td></tr>`;
   }).join('');
 
   printWindow.document.open();
@@ -60,8 +65,9 @@ export const printThermalReceipt = (
       th { border-bottom: 1px dashed #555; padding: 3px 0; text-align: left; }
       th:last-child, td:last-child { text-align: right; }
       .item-name { padding-top: 4px; font-weight: 700; overflow-wrap: anywhere; }
-      .item-line td { padding-bottom: 3px; color: #444; font-size: 9px; }
+      .item-line td { padding-bottom: 3px; color: #444; font-size: 9px; vertical-align: top; }
       .item-line td:nth-child(2) { text-align: center; overflow-wrap: anywhere; }
+      .base-qty { color: #666; font-size: 8px; margin-top: 1px; }
       .total { font-size: 13px; font-weight: 900; padding-top: 4px; }
       .duplicate { font-weight: 800; margin-top: 8px; }
       @media print { body { width: 72mm; } }
