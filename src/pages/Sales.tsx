@@ -32,6 +32,10 @@ import { A4InvoiceTemplate } from '../components/sales/A4InvoiceTemplate';
 import { QuotationsLog } from '../components/sales/QuotationsLog';
 import { openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
 import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';
+import type { SellingTierCode } from '../types/sellingTier';
+import { resolveSellingTiers } from '../services/sellingTierService';
+import { buildTierCartItem, getCartLineIdentity, getProductUsableBaseStock, getReservedBaseQuantityForProduct, mergeTierCartItem, replaceTierCartPrice, replaceTierCartQuantity } from '../services/posTierCartService';
+import { allocateFefoCheckoutLines, assertCheckoutLineCostFloors, buildCheckoutLineDemands, finalizeCheckoutSaleItems, getCheckoutBatchDeductions, getCheckoutProductDeductions } from '../services/posCheckoutTierService';
 import { reviseSaleInventoryAtomically, voidSaleInventoryAtomically } from '../services/saleInventoryIntegrityService';
 import { convertQuotationToSale, reconcilePendingPosFinancials, reconcilePosWelfarePosting } from '../services/posFinancialPostingService';
 import { db } from '../firebase';
@@ -284,35 +288,57 @@ const Sales: React.FC = () => {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [cart, context, selectedPatient, selectedInstitution, selectedPrescriber]);
 
-  const addToCart = (item: Product | BillableService) => {
+  const addToCart = (item: Product | BillableService, requestedTierCode?: SellingTierCode) => {
     if (activeTab === 'products') {
       const product = item as Product;
-      const multiplier = product.unitOfSell === 'pack' ? (product.unitsPerPack || 1) : 
-                        product.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
+      const resolution = resolveSellingTiers(product, systemSettings);
 
-      // FEFO Rule: Pick batch with nearest expiry
+      if (resolution.mode === 'multi-tier') {
+        if (!profile?.tenantId || !activeBranchId) {
+          toast.error('Select an active branch before adding multi-tier stock.');
+          return;
+        }
+        const tier = requestedTierCode
+          ? resolution.tiers.find(candidate => candidate.code === requestedTierCode)
+          : resolution.defaultTier;
+        if (!tier) {
+          toast.error('The selected selling tier is not available for this product.');
+          return;
+        }
+
+        const usableBaseStock = getProductUsableBaseStock(batches, product.id);
+        const reservedBaseStock = getReservedBaseQuantityForProduct(cart, product.id);
+        if (reservedBaseStock + tier.multiplier > usableBaseStock) {
+          toast.error(`Insufficient stock for one ${tier.label}. ${product.name} has ${usableBaseStock} usable base units available.`);
+          return;
+        }
+
+        try {
+          const incoming = buildTierCartItem({ product, tier, batches, tenantId: profile.tenantId, branchId: activeBranchId, commercialQuantity: 1 });
+          setCart(current => mergeTierCartItem(current, incoming));
+          toast.success(`${product.name} added as ${tier.label}`);
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : 'Unable to add this selling tier.');
+        }
+        return;
+      }
+
+      const multiplier = product.unitOfSell === 'pack' ? (product.unitsPerPack || 1) :
+                        product.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
       const productBatches = batches
         .filter(b => b.productId === product.id && b.quantity >= multiplier && b.batch_status === 'active')
-        .filter(b => isInventoryBatchUnexpired(b.expiryDate)) // Never add expired batches
+        .filter(b => isInventoryBatchUnexpired(b.expiryDate))
         .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
-
       if (productBatches.length === 0) {
         toast.error('No active/unexpired stock available for this product');
         return;
       }
-
       const bestBatch = productBatches[0];
-      const existingItem = cart.find(i => i.productId === product.id && i.batchNumber === bestBatch.batchNumber);
-
+      const existingItem = cart.find(i => !i.tierCode && i.productId === product.id && i.batchNumber === bestBatch.batchNumber);
       if (existingItem) {
-        updateQuantity(product.id, bestBatch.batchNumber, 1);
+        updateQuantity(product.id, getCartLineIdentity(existingItem), 1);
       } else {
-        const productData = products.find(p => p.id === product.id);
-        const multiplier = productData?.unitOfSell === 'pack' ? (productData.unitsPerPack || 1) : 
-                          productData?.unitOfSell === 'strip' ? (productData.unitsPerStrip || 1) : 1;
         const unitPrice = bestBatch.sellingPrice * multiplier;
-
-        // Products go at the beginning
         setCart([{
           productId: product.id,
           productName: product.name,
@@ -320,23 +346,22 @@ const Sales: React.FC = () => {
           batchNumber: bestBatch.batchNumber,
           expiryDate: bestBatch.expiryDate,
           quantity: 1,
-          unitPrice: unitPrice,
+          unitPrice,
           costPrice: bestBatch.purchasePrice * multiplier,
           subtotal: unitPrice,
           isService: false
         }, ...cart]);
       }
+      toast.success(`${item.name} added to cart`);
     } else {
       const service = item as BillableService;
       const existingItem = cart.find(i => i.productId === service.id && i.isService);
       if (existingItem) {
-        setCart(cart.map(i => 
-          i.productId === service.id && i.isService
-            ? { ...i, quantity: i.quantity + 1, subtotal: (i.quantity + 1) * i.unitPrice }
-            : i
+        setCart(cart.map(i => i.productId === service.id && i.isService
+          ? { ...i, quantity: i.quantity + 1, subtotal: (i.quantity + 1) * i.unitPrice }
+          : i
         ));
       } else {
-        // Services go at the end
         setCart([...cart, {
           productId: service.id,
           productName: service.name,
@@ -349,8 +374,8 @@ const Sales: React.FC = () => {
           isService: true
         }]);
       }
+      toast.success(`${item.name} added to cart`);
     }
-    toast.success(`${item.name} added to cart`);
   };
 
   const changeBatch = (productId: string, oldBatchNumber: string, newBatchNumber: string) => {
@@ -381,15 +406,31 @@ const Sales: React.FC = () => {
     }));
   };
 
-  const updateQuantity = (productId: string, batchNumber: string, delta: number) => {
+  const updateQuantity = (productId: string, lineIdentity: string, delta: number) => {
+    const currentCartItem = cart.find(item => getCartLineIdentity(item) === lineIdentity);
+    if (!currentCartItem) return;
+
+    if (currentCartItem.tierCode) {
+      const product = products.find(p => p.id === productId);
+      if (!product) return;
+      const currentQuantity = Number(currentCartItem.commercialQuantity ?? currentCartItem.quantity ?? 0);
+      const newQuantity = Math.max(0, currentQuantity + delta);
+      try {
+        setCart(current => replaceTierCartQuantity({ cart: current, targetIdentity: lineIdentity, product, batches, commercialQuantity: newQuantity }));
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Unable to change tier quantity.');
+      }
+      return;
+    }
+
+    const batchNumber = currentCartItem.batchNumber;
     const product = products.find(p => p.id === productId);
-    const multiplier = product?.unitOfSell === 'pack' ? (product.unitsPerPack || 1) : 
+    const multiplier = product?.unitOfSell === 'pack' ? (product.unitsPerPack || 1) :
                       product?.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
 
-    const isService = cart.find(i => i.productId === productId && i.batchNumber === batchNumber)?.isService;
-    if (isService) {
+    if (currentCartItem.isService) {
       setCart(cart.map(item => {
-        if (item.productId === productId && item.batchNumber === batchNumber) {
+        if (getCartLineIdentity(item) === lineIdentity) {
           const newQty = Math.max(0, item.quantity + delta);
           return { ...item, quantity: newQty, subtotal: newQty * item.unitPrice };
         }
@@ -398,27 +439,19 @@ const Sales: React.FC = () => {
       return;
     }
 
-    const currentCartItem = cart.find(item => item.productId === productId && item.batchNumber === batchNumber);
-    if (!currentCartItem) return;
-
     const newQty = Math.max(0, currentCartItem.quantity + delta);
-
     const currentBatch = batches.find(b => b.productId === productId && b.batchNumber === batchNumber);
     if (!currentBatch) return;
-
     const currentBatchMaxQty = Math.floor(currentBatch.quantity / multiplier);
 
     if (newQty <= currentBatchMaxQty) {
-      setCart(cart.map(item => {
-        if (item.productId === productId && item.batchNumber === batchNumber) {
-          return { ...item, quantity: newQty, subtotal: newQty * item.unitPrice };
-        }
-        return item;
-      }));
+      setCart(cart.map(item => getCartLineIdentity(item) === lineIdentity
+        ? { ...item, quantity: newQty, subtotal: newQty * item.unitPrice }
+        : item
+      ));
     } else {
       const currentBatchQtyToSet = currentBatchMaxQty;
       const balanceQty = newQty - currentBatchQtyToSet;
-
       const otherBatches = batches
         .filter(b => b.productId === productId && b.batchNumber !== batchNumber && b.quantity >= multiplier && b.batch_status === 'active')
         .filter(b => isInventoryBatchUnexpired(b.expiryDate))
@@ -426,66 +459,50 @@ const Sales: React.FC = () => {
 
       if (otherBatches.length === 0) {
         toast.error(`Insufficient stock! Only ${currentBatchMaxQty} available in this batch.`);
-        setCart(cart.map(item => {
-          if (item.productId === productId && item.batchNumber === batchNumber) {
-            return { ...item, quantity: currentBatchMaxQty, subtotal: currentBatchMaxQty * item.unitPrice };
-          }
-          return item;
-        }));
+        setCart(cart.map(item => getCartLineIdentity(item) === lineIdentity
+          ? { ...item, quantity: currentBatchMaxQty, subtotal: currentBatchMaxQty * item.unitPrice }
+          : item
+        ));
         return;
       }
 
       let remainingBalance = balanceQty;
-      const additionalCartItems: any[] = [];
-
+      const additionalCartItems: SaleItem[] = [];
       for (const batch of otherBatches) {
         if (remainingBalance <= 0) break;
         const maxAvail = Math.floor(batch.quantity / multiplier);
         if (maxAvail <= 0) continue;
-
         const qtyToTake = Math.min(remainingBalance, maxAvail);
         remainingBalance -= qtyToTake;
-
         const unitPrice = batch.sellingPrice * multiplier;
         additionalCartItems.push({
-          productId: productId,
+          productId,
+          batchId: batch.id,
+          name: currentCartItem.productName || currentCartItem.name || productId,
           productName: currentCartItem.productName,
           genericName: currentCartItem.genericName,
           batchNumber: batch.batchNumber,
           expiryDate: batch.expiryDate,
           quantity: qtyToTake,
-          unitPrice: unitPrice,
+          unitPrice,
+          total: qtyToTake * unitPrice,
           costPrice: batch.purchasePrice * multiplier,
           subtotal: qtyToTake * unitPrice,
           isService: false
         });
       }
-
-      if (remainingBalance > 0) {
-        toast.warning(`Insufficient total stock. Distributed max available. Missing ${remainingBalance} units.`);
-      }
-
+      if (remainingBalance > 0) toast.warning(`Insufficient total stock. Missing ${remainingBalance} commercial units.`);
       setCart(prevCart => {
-        let nextCart = prevCart.map(item => {
-          if (item.productId === productId && item.batchNumber === batchNumber) {
-            return { ...item, quantity: currentBatchQtyToSet, subtotal: currentBatchQtyToSet * item.unitPrice };
-          }
-          return item;
-        });
-
+        let nextCart = prevCart.map(item => getCartLineIdentity(item) === lineIdentity
+          ? { ...item, quantity: currentBatchQtyToSet, subtotal: currentBatchQtyToSet * item.unitPrice }
+          : item
+        );
         for (const add of additionalCartItems) {
-          const existingIdx = nextCart.findIndex(item => item.productId === productId && item.batchNumber === add.batchNumber);
-          if (existingIdx !== -1) {
+          const existingIdx = nextCart.findIndex(item => !item.tierCode && item.productId === productId && item.batchNumber === add.batchNumber);
+          if (existingIdx != -1) {
             const existingItem = nextCart[existingIdx];
-            const updatedQty = Math.min(
-              existingItem.quantity + add.quantity,
-              Math.floor((batches.find(b => b.productId === productId && b.batchNumber === add.batchNumber)?.quantity || 0) / multiplier)
-            );
-            nextCart[existingIdx] = {
-              ...existingItem,
-              quantity: updatedQty,
-              subtotal: updatedQty * existingItem.unitPrice
-            };
+            const updatedQty = Math.min(existingItem.quantity + add.quantity, Math.floor((batches.find(b => b.productId === productId && b.batchNumber === add.batchNumber)?.quantity || 0) / multiplier));
+            nextCart[existingIdx] = { ...existingItem, quantity: updatedQty, subtotal: updatedQty * existingItem.unitPrice };
           } else {
             nextCart = [add, ...nextCart];
           }
@@ -496,17 +513,21 @@ const Sales: React.FC = () => {
     }
   };
 
-  const updatePrice = (productId: string, batchNumber: string, newPrice: number) => {
-    setCart(cart.map(item => {
-      if (item.productId === productId && item.batchNumber === batchNumber) {
-        return { ...item, unitPrice: Math.max(0, newPrice), subtotal: item.quantity * Math.max(0, newPrice) };
-      }
-      return item;
-    }));
+  const updatePrice = (productId: string, lineIdentity: string, newPrice: number) => {
+    const target = cart.find(item => getCartLineIdentity(item) === lineIdentity);
+    if (!target) return;
+    if (target.tierCode) {
+      setCart(current => replaceTierCartPrice({ cart: current, targetIdentity: lineIdentity, actualUnitPrice: Math.max(0, newPrice) }));
+      return;
+    }
+    setCart(cart.map(item => getCartLineIdentity(item) === lineIdentity
+      ? { ...item, unitPrice: Math.max(0, newPrice), subtotal: item.quantity * Math.max(0, newPrice) }
+      : item
+    ));
   };
 
-  const removeFromCart = (productId: string, batchNumber: string) => {
-    setCart(cart.filter(item => !(item.productId === productId && item.batchNumber === batchNumber)));
+  const removeFromCart = (lineIdentity: string) => {
+    setCart(cart.filter(item => getCartLineIdentity(item) !== lineIdentity));
   };
 
   const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
@@ -541,7 +562,7 @@ const Sales: React.FC = () => {
     }
 
     // Check if any cart item's price is below cost price of that specific batch
-    const belowCostItem = cart.find(item => !item.isService && item.unitPrice < item.costPrice);
+    const belowCostItem = cart.find(item => !item.isService && !item.tierCode && item.unitPrice < item.costPrice);
     if (belowCostItem) {
       toast.error(`Checkout blocked: ${belowCostItem.productName} is priced at UGX ${(belowCostItem.unitPrice || 0).toLocaleString()}, which is below its batch cost price of UGX ${(belowCostItem.costPrice || 0).toLocaleString()}.`);
       return;
@@ -594,7 +615,7 @@ const Sales: React.FC = () => {
     }
 
     // Check if any cart item's price is below cost price of that specific batch
-    const belowCostItem = cart.find(item => !item.isService && item.unitPrice < item.costPrice);
+    const belowCostItem = cart.find(item => !item.isService && !item.tierCode && item.unitPrice < item.costPrice);
     if (belowCostItem) {
       receiptWindow?.close();
       toast.error(`Checkout blocked: ${belowCostItem.productName} is priced at UGX ${(belowCostItem.unitPrice || 0).toLocaleString()}, which is below its batch cost price of UGX ${(belowCostItem.costPrice || 0).toLocaleString()}.`);
@@ -777,62 +798,67 @@ const Sales: React.FC = () => {
             batchSnapshotsByProduct.set(productId, rows);
           }
 
-          const allocationsByProduct = new Map<string, Array<{ batchId: string; batchNumber: string; expiryDate?: string; baseQuantity: number; costPerBaseUnit: number }>>();
-          const productDeductions = new Map<string, number>();
+          const liveProducts = new Map<string, Product>();
+          const productNames = new Map<string, string>();
+          const checkoutBatchesByProduct = new Map<string, any[]>();
 
           for (const productId of uniqueProductIds) {
-            const product = productMap.get(productId)!;
-            const multiplier = getBaseUnitMultiplier(product);
-            const requestedBaseUnits = stockItems
-              .filter(item => item.productId === productId)
-              .reduce((sum, item) => sum + Number(item.quantity || 0) * multiplier, 0);
-            productDeductions.set(productId, requestedBaseUnits);
+            const snapshot = productSnapshots.get(productId);
+            if (!snapshot?.exists()) throw new Error(`Product ${productId} no longer exists.`);
+            const liveProduct = { id: productId, ...snapshot.data() } as Product;
+            if (liveProduct.tenantId !== profile.tenantId) throw new Error(`Product tenant mismatch for ${liveProduct.name || productId}.`);
+            liveProducts.set(productId, liveProduct);
+            productNames.set(productId, liveProduct.name || productMap.get(productId)?.name || productId);
 
             const candidates = (batchSnapshotsByProduct.get(productId) || [])
               .filter(row => row.data.tenantId === profile.tenantId && row.data.branchId === activeBranchId)
               .filter(row => String(row.data.batch_status || '').toLowerCase() === 'active')
               .filter(row => isInventoryBatchUnexpired(row.data.expiryDate))
               .filter(row => Number(row.data.quantity || 0) > 0)
-              .sort((a, b) => new Date(a.data.expiryDate || '9999-12-31').getTime() - new Date(b.data.expiryDate || '9999-12-31').getTime());
-
-            let remaining = requestedBaseUnits;
-            const allocations: Array<{ batchId: string; batchNumber: string; expiryDate?: string; baseQuantity: number; costPerBaseUnit: number }> = [];
-            for (const candidate of candidates) {
-              if (remaining <= 0) break;
-              const available = Math.max(0, Number(candidate.data.quantity || 0));
-              const take = Math.min(remaining, available);
-              if (take <= 0) continue;
-              allocations.push({
-                batchId: candidate.id,
-                batchNumber: String(candidate.data.batchNumber || 'UNSPECIFIED'),
-                expiryDate: candidate.data.expiryDate,
-                baseQuantity: take,
-                costPerBaseUnit: Number(candidate.data.purchasePrice || 0)
-              });
-              remaining -= take;
-            }
-
-            if (remaining > 0) {
-              throw new Error(`Insufficient unexpired FEFO stock for ${product.name}. Missing ${remaining} base units.`);
-            }
-
-            const actualCost = allocations.reduce((sum, allocation) => sum + allocation.baseQuantity * allocation.costPerBaseUnit, 0);
-            const productGrossRevenue = stockItems.filter(item => item.productId === productId).reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
-            const productNetRevenue = productGrossRevenue * (1 - (discountPercentage / 100));
-            if (productNetRevenue + 0.0001 < actualCost) {
-              throw new Error(`Checkout blocked after FEFO reallocation: ${product.name} would sell below the actual allocated batch cost. Minimum UGX ${Math.ceil(actualCost).toLocaleString()}, net line revenue UGX ${Math.floor(productNetRevenue).toLocaleString()}.`);
-            }
-            allocationsByProduct.set(productId, allocations);
+              .map(row => ({
+                id: row.id,
+                tenantId: String(row.data.tenantId || ''),
+                branchId: String(row.data.branchId || ''),
+                productId,
+                batchNumber: String(row.data.batchNumber || 'UNSPECIFIED'),
+                expiryDate: row.data.expiryDate,
+                batchStatus: String(row.data.batch_status || ''),
+                quantity: Number(row.data.quantity || 0),
+                costPerBaseUnit: Number(row.data.purchasePrice || 0)
+              }));
+            checkoutBatchesByProduct.set(productId, candidates);
           }
 
-          // Apply FEFO batch deductions.
-          for (const [productId, allocations] of allocationsByProduct) {
+          const checkoutDemands = buildCheckoutLineDemands({
+            items: saleData.items,
+            liveProducts,
+            settings: systemSettings,
+            tenantId: profile.tenantId,
+            branchId: activeBranchId!
+          });
+          const lineAllocations = allocateFefoCheckoutLines({
+            demands: checkoutDemands,
+            batchesByProduct: checkoutBatchesByProduct,
+            productNames
+          });
+          assertCheckoutLineCostFloors({
+            items: saleData.items,
+            allocations: lineAllocations,
+            discountPercentage,
+            productNames
+          });
+          const productDeductions = getCheckoutProductDeductions(checkoutDemands);
+          const batchDeductions = getCheckoutBatchDeductions(lineAllocations);
+
+          // Apply exact FEFO batch deductions once, even when several commercial lines share a product.
+          for (const [productId, deductions] of batchDeductions) {
             const rows = batchSnapshotsByProduct.get(productId) || [];
-            for (const allocation of allocations) {
-              const row = rows.find(candidate => candidate.id === allocation.batchId);
-              if (!row) throw new Error(`Allocated batch ${allocation.batchNumber} disappeared during checkout.`);
+            for (const [batchId, deduction] of deductions) {
+              const row = rows.find(candidate => candidate.id === batchId);
+              if (!row) throw new Error(`Allocated batch ${batchId} disappeared during checkout.`);
               const available = Number(row.data.quantity || 0);
-              transaction.update(row.ref, { quantity: available - allocation.baseQuantity, updatedAt: serverTimestamp() });
+              if (deduction > available) throw new Error(`Allocated batch ${row.data.batchNumber || batchId} changed during checkout. Retry the sale.`);
+              transaction.update(row.ref, { quantity: available - deduction, updatedAt: serverTimestamp() });
             }
           }
 
@@ -849,17 +875,7 @@ const Sales: React.FC = () => {
             transaction.update(doc(db, 'products', productId), { stock: currentStock - deduction, updatedAt: serverTimestamp() });
           }
 
-          finalizedSaleItems = saleData.items.map(item => {
-            if (item.isService) return item;
-            const allocations = allocationsByProduct.get(item.productId) || [];
-            return {
-              ...item,
-              batchId: allocations.length === 1 ? allocations[0].batchId : item.batchId,
-              batchNumber: allocations.length === 1 ? allocations[0].batchNumber : (allocations.length > 1 ? 'FEFO-MULTI' : item.batchNumber),
-              expiryDate: allocations.length === 1 ? allocations[0].expiryDate : (allocations.length > 1 ? 'Multiple' : item.expiryDate),
-              batchAllocations: allocations
-            };
-          });
+          finalizedSaleItems = finalizeCheckoutSaleItems(saleData.items, lineAllocations);
 
           const cleanSaleData = JSON.parse(JSON.stringify({ ...saleData, items: finalizedSaleItems }));
           transaction.set(saleRef, {
@@ -961,85 +977,94 @@ const Sales: React.FC = () => {
     }
   };
 
-  const updateLedgerItemQuantity = (productId: string, batchNumber: string | undefined, delta: number) => {
+  const matchesLedgerLine = (item: SaleItem, lineId: string | undefined, productId: string, batchNumber: string | undefined) =>
+    lineId && item.lineId ? item.lineId === lineId : item.productId === productId && (item.isService || item.batchNumber === batchNumber);
+
+  const updateLedgerItemQuantity = (lineId: string | undefined, productId: string, batchNumber: string | undefined, delta: number) => {
     setEditedItems(prev => prev.map(item => {
-      const matchBatch = item.isService ? true : item.batchNumber === batchNumber;
-      if (item.productId === productId && matchBatch) {
-        const newQty = Math.max(1, item.quantity + delta);
-        return {
-          ...item,
-          quantity: newQty,
-          total: item.unitPrice * newQty,
-          subtotal: item.unitPrice * newQty
-        };
-      }
-      return item;
+      if (!matchesLedgerLine(item, lineId, productId, batchNumber)) return item;
+      const newQty = Math.max(1, Number(item.quantity || 0) + delta);
+      const lineTotal = newQty * Number(item.unitPrice || 0);
+      return {
+        ...item,
+        quantity: newQty,
+        commercialQuantity: item.tierCode ? newQty : item.commercialQuantity,
+        baseQuantity: item.tierCode && item.tierMultiplier ? newQty * Number(item.tierMultiplier) : item.baseQuantity,
+        subtotal: lineTotal, total: lineTotal, lineTotal
+      };
     }));
   };
 
-  const updateLedgerItemPrice = (productId: string, batchNumber: string | undefined, newPrice: number) => {
+  const updateLedgerItemPrice = (lineId: string | undefined, productId: string, batchNumber: string | undefined, newPrice: number) => {
     setEditedItems(prev => prev.map(item => {
-      const matchBatch = item.isService ? true : item.batchNumber === batchNumber;
-      if (item.productId === productId && matchBatch) {
-        return {
-          ...item,
-          unitPrice: newPrice,
-          total: newPrice * item.quantity,
-          subtotal: newPrice * item.quantity
-        };
+      if (!matchesLedgerLine(item, lineId, productId, batchNumber)) return item;
+      const lineTotal = Number(item.quantity || 0) * newPrice;
+      return {
+        ...item,
+        unitPrice: newPrice,
+        actualUnitPrice: item.tierCode ? newPrice : item.actualUnitPrice,
+        priceSource: item.tierCode ? (newPrice === Number(item.configuredPrice) ? 'configured-tier' : 'manual-override') : item.priceSource,
+        subtotal: lineTotal, total: lineTotal, lineTotal
+      };
+    }));
+  };
+
+  const removeLedgerItem = (lineId: string | undefined, productId: string, batchNumber: string | undefined) => {
+    setEditedItems(prev => prev.filter(item => !matchesLedgerLine(item, lineId, productId, batchNumber)));
+  };
+
+  const addProductToLedgerEdit = (product: Product, requestedTierCode?: SellingTierCode) => {
+    const resolution = resolveSellingTiers(product, systemSettings);
+    if (resolution.mode === 'multi-tier') {
+      const tier = requestedTierCode
+        ? resolution.tiers.find(candidate => candidate.code === requestedTierCode)
+        : resolution.defaultTier;
+      if (!tier) {
+        toast.error('The selected selling tier is not available.');
+        return;
       }
-      return item;
-    }));
-  };
+      if (editedItems.some(item => item.productId === product.id && item.tierCode === tier.code)) {
+        toast.info(`${product.name} ${tier.label} is already in the receipt.`);
+        return;
+      }
+      const editBranchId = ledgerEditingSale?.branchId || activeBranchId;
+      if (!profile?.tenantId || !editBranchId) {
+        toast.error('A tenant and branch are required before adding this line.');
+        return;
+      }
+      try {
+        const newItem = buildTierCartItem({ product, tier, batches, tenantId: profile.tenantId, branchId: editBranchId, commercialQuantity: 1 });
+        setEditedItems(prev => [...prev, newItem]);
+        setLedgerEditSearchTerm('');
+        toast.success(`Added ${product.name} ${tier.label} to the list`);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Unable to add tier line.');
+      }
+      return;
+    }
 
-  const removeLedgerItem = (productId: string, batchNumber: string | undefined) => {
-    setEditedItems(prev => prev.filter(item => {
-      const matchBatch = item.isService ? true : item.batchNumber === batchNumber;
-      return !(item.productId === productId && matchBatch);
-    }));
-  };
-
-  const addProductToLedgerEdit = (product: Product) => {
-    const existing = editedItems.find(item => item.productId === product.id);
+    const existing = editedItems.find(item => item.productId === product.id && !item.tierCode);
     if (existing) {
       toast.info(`${product.name} is already in the receipt!`);
       return;
     }
-
-    let batchNum = 'N/A';
-    let expDate = 'N/A';
-    let oldestBatch = null;
-    
-    const productBatches = batches.filter(b => b.productId === product.id && b.quantity > 0 && b.batch_status === 'active' && isInventoryBatchUnexpired(b.expiryDate));
-    if (productBatches.length > 0) {
-      oldestBatch = productBatches.sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime())[0];
-      batchNum = oldestBatch.batchNumber;
-      expDate = oldestBatch.expiryDate;
-    } else {
-      toast.error(`No active batches with stock found for ${product.name}`);
+    const productBatches = batches
+      .filter(b => b.productId === product.id && b.quantity > 0)
+      .sort((a, b) => new Date(a.expiryDate || '9999-12-31').getTime() - new Date(b.expiryDate || '9999-12-31').getTime());
+    const oldestBatch = productBatches[0];
+    if (!oldestBatch) {
+      toast.error(`${product.name} has no available stock.`);
       return;
     }
-
-    const multiplier = product.unitOfSell === 'pack' ? (product.unitsPerPack || 1) : 
-                      product.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
-    const unitPrice = oldestBatch ? (oldestBatch.sellingPrice * multiplier) : (product.sellingPricePerUnit || 0);
-    const costPrice = oldestBatch ? (oldestBatch.purchasePrice * multiplier) : (product.costPricePerPack || 0);
-
+    const multiplier = product.unitOfSell === 'pack' ? (product.unitsPerPack || 1) :
+      product.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
+    const unitPrice = oldestBatch ? oldestBatch.sellingPrice * multiplier : (product.sellingPricePerUnit || 0);
+    const costPrice = oldestBatch ? oldestBatch.purchasePrice * multiplier : (product.costPricePerPack || 0);
     const newItem: SaleItem = {
-      productId: product.id,
-      batchId: oldestBatch?.id || '',
-      name: product.name,
-      productName: product.name,
-      quantity: 1,
-      unitPrice: unitPrice,
-      total: unitPrice,
-      subtotal: unitPrice,
-      costPrice: costPrice,
-      isService: false,
-      batchNumber: batchNum,
-      expiryDate: expDate
+      productId: product.id, batchId: oldestBatch.id || '', name: product.name, productName: product.name,
+      genericName: product.genericName, quantity: 1, unitPrice, total: unitPrice, subtotal: unitPrice, costPrice,
+      isService: false, batchNumber: oldestBatch.batchNumber, expiryDate: oldestBatch.expiryDate
     };
-
     setEditedItems(prev => [...prev, newItem]);
     setLedgerEditSearchTerm('');
     toast.success(`Added ${product.name} to the list`);
@@ -1351,7 +1376,7 @@ const Sales: React.FC = () => {
                       const product = products.find(p => p.id === item.productId);
                       return (
                         <div 
-                          key={`${item.productId}-${item.batchNumber}-${index}`}
+                          key={`${getCartLineIdentity(item)}-${index}`}
                           className="grid grid-cols-12 gap-4 items-center py-2 px-3 hover:bg-zinc-50/40 rounded-xl border border-transparent hover:border-zinc-150/40 transition-all select-none group"
                         >
                           {/* Item Details */}
@@ -1365,35 +1390,48 @@ const Sales: React.FC = () => {
                                   Service
                                 </span>
                               )}
+                              {item.tierCode && (
+                                <span className="text-[7px] bg-emerald-50 text-emerald-700 border border-emerald-150 px-1 rounded font-black uppercase">
+                                  {item.tierLabel || item.tierCode}
+                                </span>
+                              )}
                             </div>
                             <p className="text-[9px] text-zinc-400 line-clamp-1 mt-0.5 uppercase tracking-wide">
                               {item.isService ? 'Standard Service' : (item.genericName || product?.genericName || 'Unspecified formula')}
                             </p>
                             
-                            {/* Inner Batch Selection */}
+                            {/* Batch semantics: tier lines stay commercial until transactional FEFO checkout. */}
                             {!item.isService && (
-                              <div className="mt-0.5 flex items-center gap-1 text-[8px] text-zinc-400 font-bold">
-                                <span>Batch:</span>
-                                <select 
-                                  className="p-0 bg-transparent border-none text-[8px] font-extrabold hover:text-emerald-600 focus:ring-0 cursor-pointer text-zinc-500 uppercase"
-                                  value={item.batchNumber}
-                                  onChange={(e) => changeBatch(item.productId, item.batchNumber, e.target.value)}
-                                >
-                                  {batches
-                                    .filter(b => b.productId === item.productId && b.quantity > 0 && b.batch_status === 'active' && new Date(b.expiryDate) > new Date())
-                                    .map(b => {
-                                      const mult = product?.unitOfSell === 'pack' ? (product.unitsPerPack || 1) : 
-                                                   product?.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
-                                      const stockLeft = Math.floor(b.quantity / mult);
-                                      return (
-                                        <option key={b.batchNumber} value={b.batchNumber} className="text-zinc-800">
-                                          {b.batchNumber} (EXP: {b.expiryDate}) • {stockLeft} LEFT
-                                        </option>
-                                      );
-                                    })
-                                  }
-                                </select>
-                              </div>
+                              item.tierCode ? (
+                                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[8px] font-bold">
+                                  <span className="text-emerald-700">{item.commercialQuantity || item.quantity} {item.tierLabel || item.tierCode}</span>
+                                  <span className="text-zinc-300">•</span>
+                                  <span className="text-zinc-500">{item.baseQuantity || 0} {product?.baseUnit || product?.unit || 'base units'}</span>
+                                  <span className="text-zinc-300">•</span>
+                                  <span className="text-amber-600">FEFO allocation will be finalised at checkout</span>
+                                </div>
+                              ) : (
+                                <div className="mt-0.5 flex items-center gap-1 text-[8px] text-zinc-400 font-bold">
+                                  <span>Batch:</span>
+                                  <select
+                                    className="p-0 bg-transparent border-none text-[8px] font-extrabold hover:text-emerald-600 focus:ring-0 cursor-pointer text-zinc-500 uppercase"
+                                    value={item.batchNumber}
+                                    onChange={(e) => changeBatch(item.productId, item.batchNumber, e.target.value)}
+                                  >
+                                    {batches
+                                      .filter(b => b.productId === item.productId && b.quantity > 0 && b.batch_status === 'active' && isInventoryBatchUnexpired(b.expiryDate))
+                                      .map(b => {
+                                        const mult = product?.unitOfSell === 'pack' ? (product.unitsPerPack || 1) : product?.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
+                                        const stockLeft = Math.floor(b.quantity / mult);
+                                        return (
+                                          <option key={b.batchNumber} value={b.batchNumber} className="text-zinc-800">
+                                            {b.batchNumber} (EXP: {b.expiryDate}) • {stockLeft} LEFT
+                                          </option>
+                                        );
+                                      })}
+                                  </select>
+                                </div>
+                              )
                             )}
                           </div>
 
@@ -1404,12 +1442,12 @@ const Sales: React.FC = () => {
                               type="number"
                               className="w-full text-center bg-transparent border-none p-0 text-xs font-black text-zinc-900 focus:ring-0 leading-none focus:outline-none"
                               value={item.unitPrice}
-                              onChange={(e) => updatePrice(item.productId, item.batchNumber, parseInt(e.target.value) || 0)}
+                              onChange={(e) => updatePrice(item.productId, getCartLineIdentity(item), parseInt(e.target.value) || 0)}
                               onBlur={(e) => {
                                 const finalPrice = parseInt(e.target.value) || 0;
                                 if (!item.isService && finalPrice < item.costPrice) {
                                   toast.error(`Selling price cannot be below batch cost price (UGX ${item.costPrice.toLocaleString()})`);
-                                  updatePrice(item.productId, item.batchNumber, item.costPrice);
+                                  updatePrice(item.productId, getCartLineIdentity(item), item.costPrice);
                                 }
                               }}
                             />
@@ -1419,7 +1457,7 @@ const Sales: React.FC = () => {
                           <div className="col-span-2 flex justify-center">
                             <div className="flex items-center gap-0.5 bg-zinc-50/80 p-0.5 rounded-lg border border-zinc-200/60 max-w-[85px] shadow-inner">
                               <button 
-                                onClick={() => updateQuantity(item.productId, item.batchNumber, -1)}
+                                onClick={() => updateQuantity(item.productId, getCartLineIdentity(item), -1)}
                                 className="p-1 hover:bg-white rounded transition-colors text-zinc-500 hover:text-zinc-900 active:scale-90"
                               >
                                 <Minus size={10} strokeWidth={3} />
@@ -1431,21 +1469,21 @@ const Sales: React.FC = () => {
                                 onChange={(e) => {
                                   const text = e.target.value;
                                   if (text === '') {
-                                    updateQuantity(item.productId, item.batchNumber, -item.quantity);
+                                    updateQuantity(item.productId, getCartLineIdentity(item), -item.quantity);
                                   } else {
                                     const val = parseInt(text) || 0;
                                     const delta = val - item.quantity;
-                                    updateQuantity(item.productId, item.batchNumber, delta);
+                                    updateQuantity(item.productId, getCartLineIdentity(item), delta);
                                   }
                                 }}
                                 onBlur={() => {
                                   if (item.quantity === 0) {
-                                    updateQuantity(item.productId, item.batchNumber, 1);
+                                    updateQuantity(item.productId, getCartLineIdentity(item), 1);
                                   }
                                 }}
                               />
                               <button 
-                                onClick={() => updateQuantity(item.productId, item.batchNumber, 1)}
+                                onClick={() => updateQuantity(item.productId, getCartLineIdentity(item), 1)}
                                 className="p-1 hover:bg-white rounded transition-colors text-zinc-500 hover:text-zinc-900 active:scale-90"
                               >
                                 <Plus size={10} strokeWidth={3} />
@@ -1464,7 +1502,7 @@ const Sales: React.FC = () => {
                           {/* Trash Delete Icon */}
                           <div className="col-span-1 text-center">
                             <button 
-                              onClick={() => removeFromCart(item.productId, item.batchNumber)}
+                              onClick={() => removeFromCart(getCartLineIdentity(item))}
                               className="p-1.5 text-zinc-300 hover:text-rose-500 rounded-lg hover:bg-rose-50 transition-all duration-150 inline-flex items-center justify-center opacity-40 group-hover:opacity-100"
                             >
                               <Trash2 size={14} />
@@ -1564,7 +1602,8 @@ const Sales: React.FC = () => {
                   <button 
                     type="button"
                     onClick={() => setShowQuotationModal(true)}
-                    disabled={cart.length === 0}
+                    disabled={cart.length === 0 || cart.some(item => !item.isService && Boolean(item.tierCode))}
+                    title={cart.some(item => !item.isService && Boolean(item.tierCode)) ? 'Multi-tier quotations will be enabled in the quotation integration phase.' : undefined}
                     className="w-full sm:w-auto px-6 py-4 bg-zinc-100 hover:bg-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 text-zinc-700 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                   >
                     <FileText size={16} strokeWidth={3} />
@@ -1867,81 +1906,87 @@ const Sales: React.FC = () => {
                     const isProduct = activeTab === 'products';
                     const product = isProduct ? item as Product : null;
                     const service = !isProduct ? item as BillableService : null;
-                    
-                    const productBatches = isProduct ? batches.filter(b => b.productId === product?.id && b.quantity > 0 && b.batch_status === 'active') : [];
-                    const totalBaseStock = productBatches.reduce((sum, b) => sum + b.quantity, 0);
-                    const multiplier = product?.unitOfSell === 'pack' ? (product.unitsPerPack || 1) : 
-                                      product?.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
-                    const totalStock = Math.floor(totalBaseStock / multiplier);
-                    const price = isProduct ? (productBatches[0]?.sellingPrice || 0) : (service?.defaultFee || 0);
+                    const productBatches = isProduct ? batches.filter(b => b.productId === product?.id && b.quantity > 0 && b.batch_status === 'active' && isInventoryBatchUnexpired(b.expiryDate)) : [];
+                    const totalBaseStock = isProduct && product ? getProductUsableBaseStock(batches, product.id) : 0;
+                    const resolution = isProduct && product ? resolveSellingTiers(product, systemSettings) : null;
+                    const isMultiTier = resolution?.mode === 'multi-tier';
+                    const defaultTier = isMultiTier ? resolution.defaultTier : null;
+                    const legacyMultiplier = product?.unitOfSell === 'pack' ? (product.unitsPerPack || 1) : product?.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
+                    const displayMultiplier = defaultTier?.multiplier || legacyMultiplier;
+                    const price = isProduct ? (defaultTier?.configuredPrice ?? productBatches[0]?.sellingPrice ?? product?.sellingPricePerUnit ?? 0) : (service?.defaultFee || 0);
+                    const defaultHasStock = !isProduct || totalBaseStock >= Math.max(1, displayMultiplier);
 
                     return (
-                      <button 
+                      <div
                         key={item.id}
+                        role="button"
+                        tabIndex={0}
                         onClick={() => {
-                          if (!isProduct || totalStock > 0) {
-                            addToCart(item);
-                          }
+                          if (!isProduct) addToCart(item);
+                          else if (defaultHasStock) addToCart(item, defaultTier?.code);
                         }}
-                        disabled={isProduct && totalStock <= 0}
-                        className="w-full flex items-center justify-between gap-3 p-3 rounded-2xl hover:bg-emerald-50/50 hover:border-emerald-100 border border-transparent group transition-all text-left duration-150 disabled:opacity-40 select-none cursor-pointer"
+                        onKeyDown={e => {
+                          if ((e.key === 'Enter' || e.key === ' ') && (!isProduct || defaultHasStock)) addToCart(item, defaultTier?.code);
+                        }}
+                        className={cn(
+                          "w-full flex items-center justify-between gap-3 p-3 rounded-2xl hover:bg-emerald-50/50 hover:border-emerald-100 border border-transparent group transition-all text-left duration-150 select-none cursor-pointer",
+                          isProduct && !defaultHasStock && "opacity-40"
+                        )}
                       >
                         <div className="flex items-center gap-3 min-w-0">
-                          {/* Standard capsule or billable icon on Left */}
                           <div className={cn(
                             "h-10 w-10 rounded-xl flex items-center justify-center shrink-0 transition-all",
-                            isProduct 
-                              ? "bg-slate-100 text-slate-600 group-hover:bg-emerald-500 group-hover:text-white" 
-                              : "bg-blue-150/40 text-blue-600 group-hover:bg-blue-500 group-hover:text-white"
+                            isProduct ? "bg-slate-100 text-slate-600 group-hover:bg-emerald-500 group-hover:text-white" : "bg-blue-150/40 text-blue-600 group-hover:bg-blue-500 group-hover:text-white"
                           )}>
                             {isProduct ? <Package size={16} strokeWidth={2.5} /> : <ShieldCheck size={16} strokeWidth={2.5} />}
                           </div>
 
                           <div className="min-w-0">
-                            {/* Product Title */}
-                            <p className="font-extrabold text-zinc-900 text-xs truncate uppercase tracking-tight group-hover:text-emerald-950 transition-colors">
-                              {item.name}
-                            </p>
-                            
-                            {/* Stock badge & Generic name */}
-                            <div className="flex items-center gap-1.5 mt-1">
+                            <p className="font-extrabold text-zinc-900 text-xs truncate uppercase tracking-tight group-hover:text-emerald-950 transition-colors">{item.name}</p>
+                            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                               {isProduct ? (
-                                <span className={cn(
-                                  "px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider block",
-                                  totalStock > 50 
-                                    ? "bg-emerald-50 text-emerald-600 border border-emerald-100" 
-                                    : totalStock > 0 
-                                      ? "bg-amber-50 text-amber-600 border border-amber-100" 
-                                      : "bg-rose-50 text-rose-600 border border-rose-100"
-                                )}>
-                                  {totalStock} {product?.unitOfSell || 'Unit'}{totalStock !== 1 ? 's' : ''}
-                                </span>
+                                <>
+                                  <span className={cn("px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider block border", totalBaseStock > 50 ? "bg-emerald-50 text-emerald-600 border-emerald-100" : totalBaseStock > 0 ? "bg-amber-50 text-amber-600 border-amber-100" : "bg-rose-50 text-rose-600 border-rose-100")}>{totalBaseStock} {product?.baseUnit || product?.unit || 'base units'}</span>
+                                  {isMultiTier && <span className="text-[8px] font-black uppercase text-emerald-700">Default: {defaultTier?.label}</span>}
+                                </>
                               ) : (
-                                <span className="bg-blue-50 text-blue-650 border border-blue-100 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider">
-                                  Fee Service
-                                </span>
+                                <span className="bg-blue-50 text-blue-650 border border-blue-100 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider">Fee Service</span>
                               )}
-                              <p className="text-[9px] text-zinc-400 truncate uppercase tracking-tight max-w-[120px]">
-                                {isProduct ? (product?.genericName || '') : 'Clinical'}
-                              </p>
+                              <p className="text-[9px] text-zinc-400 truncate uppercase tracking-tight max-w-[120px]">{isProduct ? (product?.genericName || '') : 'Clinical'}</p>
                             </div>
                           </div>
                         </div>
 
-                        {/* Price & action text on Right */}
-                        <div className="text-right shrink-0">
-                          <p className="font-black text-zinc-850 text-xs tracking-tight group-hover:text-zinc-900 leading-none">
-                            UGX {(price || 0).toLocaleString()}
-                          </p>
-                          {isProduct && totalStock <= 0 ? (
+                        <div className="text-right shrink-0 min-w-[118px]">
+                          <p className="font-black text-zinc-850 text-xs tracking-tight leading-none">UGX {(price || 0).toLocaleString()}</p>
+                          {isProduct && !defaultHasStock ? (
                             <span className="text-[9px] font-black text-rose-500 uppercase tracking-widest mt-1 block">OUT</span>
                           ) : (
-                            <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest mt-1 block group-hover:underline">
-                              ADD +
-                            </span>
+                            <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest mt-1 block">ADD {isMultiTier ? defaultTier?.label : ''} +</span>
+                          )}
+                          {isProduct && isMultiTier && resolution.tiers.length > 1 && (
+                            <div className="mt-2 flex flex-wrap justify-end gap-1">
+                              {resolution.tiers.filter(tier => tier.code !== defaultTier?.code).map(tier => {
+                                const hasTierStock = totalBaseStock >= tier.multiplier;
+                                return (
+                                  <button
+                                    type="button"
+                                    key={tier.code}
+                                    disabled={!hasTierStock}
+                                    onClick={event => {
+                                      event.stopPropagation();
+                                      if (hasTierStock) addToCart(item, tier.code);
+                                    }}
+                                    className="px-2 py-1 rounded-lg border border-emerald-100 bg-white text-[8px] font-black uppercase text-emerald-700 disabled:opacity-30"
+                                  >
+                                    {tier.label} {Number(tier.configuredPrice || 0).toLocaleString()}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           )}
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
 
@@ -2423,13 +2468,13 @@ const Sales: React.FC = () => {
                         {editedItems.map((item, index) => {
                           return (
                             <div 
-                              key={`${item.productId}-${item.batchNumber}-${index}`}
+                              key={`${getCartLineIdentity(item)}-${index}`}
                               className="flex items-center justify-between p-4 bg-zinc-50/50 rounded-2xl border border-zinc-150/80 hover:border-zinc-200 transition-all gap-4"
                             >
                               <div className="flex-1 min-w-0">
                                 <p className="text-xs font-bold text-zinc-900 truncate">{item.productName || item.name}</p>
                                 <p className="text-[10px] text-zinc-400 mt-0.5">
-                                  {item.isService ? 'Standard Service' : `Batch: ${item.batchNumber || 'N/A'}`}
+                                  {item.isService ? 'Standard Service' : item.tierCode ? `${item.tierLabel || item.tierCode} • ${item.baseQuantity ?? 0} base units • ${item.batchAllocations?.length || 0} allocation${item.batchAllocations?.length === 1 ? '' : 's'}` : `Batch: ${item.batchNumber || 'N/A'}`}
                                 </p>
                               </div>
 
@@ -2440,7 +2485,7 @@ const Sales: React.FC = () => {
                                   type="number"
                                   className="w-full px-2 py-1 text-xs border border-zinc-200 rounded-lg bg-white font-semibold text-zinc-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                                   value={item.unitPrice}
-                                  onChange={(e) => updateLedgerItemPrice(item.productId, item.batchNumber, parseInt(e.target.value) || 0)}
+                                  onChange={(e) => updateLedgerItemPrice(item.lineId, item.productId, item.batchNumber, parseInt(e.target.value) || 0)}
                                 />
                               </div>
 
@@ -2448,7 +2493,7 @@ const Sales: React.FC = () => {
                               <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  onClick={() => updateLedgerItemQuantity(item.productId, item.batchNumber, -1)}
+                                  onClick={() => updateLedgerItemQuantity(item.lineId, item.productId, item.batchNumber, -1)}
                                   className="p-1 hover:bg-zinc-200 rounded-lg text-zinc-500 active:scale-95 transition-all"
                                 >
                                   <Minus size={12} strokeWidth={2.5} />
@@ -2461,12 +2506,12 @@ const Sales: React.FC = () => {
                                   onChange={(e) => {
                                     const val = parseInt(e.target.value) || 1;
                                     const delta = val - item.quantity;
-                                    updateLedgerItemQuantity(item.productId, item.batchNumber, delta);
+                                    updateLedgerItemQuantity(item.lineId, item.productId, item.batchNumber, delta);
                                   }}
                                 />
                                 <button
                                   type="button"
-                                  onClick={() => updateLedgerItemQuantity(item.productId, item.batchNumber, 1)}
+                                  onClick={() => updateLedgerItemQuantity(item.lineId, item.productId, item.batchNumber, 1)}
                                   className="p-1 hover:bg-zinc-200 rounded-lg text-zinc-500 active:scale-95 transition-all"
                                 >
                                   <Plus size={12} strokeWidth={2.5} />
@@ -2484,7 +2529,7 @@ const Sales: React.FC = () => {
                               {/* Remove item */}
                               <button
                                 type="button"
-                                onClick={() => removeLedgerItem(item.productId, item.batchNumber)}
+                                onClick={() => removeLedgerItem(item.lineId, item.productId, item.batchNumber)}
                                 className="p-1.5 text-zinc-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
                               >
                                 <Trash2 size={14} />
