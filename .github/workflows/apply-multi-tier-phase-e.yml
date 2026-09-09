@@ -3,7 +3,7 @@ name: Apply Multi Tier Phase E
 on:
   push:
     branches:
-      - codex/multi-tier-phase-e-20260908
+      - codex/multi-tier-integration-cleanup-20260909
 
 permissions:
   contents: write
@@ -15,13 +15,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: codex/multi-tier-phase-e-20260908
+          ref: codex/multi-tier-integration-cleanup-20260909
           fetch-depth: 2
 
       - name: Apply Phase E transformations
         id: patch
         run: |
           python3 scripts/apply-multi-tier-phase-e.py
+          python3 scripts/fix-phase-e-validation.py
           if git diff --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -55,5 +56,5 @@ jobs:
           git config user.name "radahpeter-hue"
           git config user.email "peterssentongo61@gmail.com"
           git add src tests
-          git commit -m "feat: integrate multi-tier phase e history foundation"
-          git push origin HEAD:codex/multi-tier-phase-e-20260908
+          git commit -m "feat: complete multi-tier phase e integration"
+          git push origin HEAD:codex/multi-tier-integration-cleanup-20260909
