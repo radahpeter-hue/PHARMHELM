@@ -31,7 +31,7 @@ export interface SystemRoleDefinition {
 }
 
 export const RBAC_SCHEMA_VERSION = 2;
-export const RBAC_SYSTEM_VERSION = '2026-09-10-v2';
+export const RBAC_SYSTEM_VERSION = '2026-09-10-v3';
 
 export const RBAC_MODULES: Array<{ id: RbacModuleKey; name: string; description: string }> = [
   { id: 'dashboard', name: 'Opening Dashboard', description: 'Universal landing dashboard. Visibility remains scoped to the signed-in user.' },
@@ -128,7 +128,7 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
     name: 'QA Officer',
     label: 'QA Officer',
     description: 'Own-branch QA operations with traceability views of stock, inventory, procurement and sales records.',
-    permissions: makePermissions({ sales: view(), inventory: view(), stock: view(), procurement: view(), qa: operate(), analytics: view() }),
+    permissions: makePermissions({ qa: operate(), analytics: view() }),
   },
   {
     name: 'Finance Head',
@@ -143,7 +143,7 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
     name: 'Finance Officer',
     label: 'Finance Officer',
     description: 'Operates management finance and supports branch reconciliation and investigation without inheriting Finance Head final approvals.',
-    permissions: makePermissions({ sales: view(), inventory: view(), stock: view(), procurement: view(), finance: operate(), analytics: view() }),
+    permissions: makePermissions({ finance: operate() }),
   },
   {
     name: 'Procurement Head',
@@ -226,8 +226,8 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
   {
     name: 'cashier',
     label: 'Cashier',
-    description: 'Operates POS and branch finance functions with stock-availability and own-branch analytical visibility.',
-    permissions: makePermissions({ sales: operate(), inventory: view(), finance: operate(), analytics: view() }),
+    description: 'Branch cashier with POS visibility and branch finance operation. Cashiers do not complete sales transactions.',
+    permissions: makePermissions({ sales: view(), inventory: view(), finance: operate(), analytics: view() }),
   },
   {
     name: 'cleaner',

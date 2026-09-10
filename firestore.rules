@@ -282,6 +282,40 @@ service cloud.firestore {
       return isFinance() || isITPersonnel() || hasCustomModuleView('finance');
     }
 
+    function hasBranchFinanceRole() {
+      return isAuthenticated() && (
+        hasRole('Branch Manager') || hasRole('branch manager') ||
+        hasRole('Cashier') || hasRole('cashier')
+      );
+    }
+
+    function canViewBranchFinance() {
+      return isAuthenticated() && (
+        hasBranchFinanceRole() ||
+        hasRole('Finance Head') || hasRole('Accountant') ||
+        hasRole('admin') || hasRole('Admin') ||
+        isITPersonnel() || hasCustomModuleView('finance') || isAdmin()
+      );
+    }
+
+    function canOperateBranchFinance() {
+      return isAuthenticated() && (
+        hasBranchFinanceRole() ||
+        hasRole('Finance Head') || hasRole('Accountant') ||
+        hasRole('admin') || hasRole('Admin') ||
+        hasCustomModuleFunctional('finance') || isAdmin()
+      );
+    }
+
+    function isProtectedFinanceCollection(collectionName) {
+      return collectionName in [
+        'finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
+        'credit_receivables', 'supplier_payables', 'banking_records',
+        'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
+        'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses'
+      ];
+    }
+
     function canViewProcurement() {
       return isProcurement()
         || isFinance()
@@ -545,22 +579,24 @@ service cloud.firestore {
     }
 
     match /eod_reconciliations/{reconciliationId} {
-      allow read: if isAuthenticated() && (isFinance() || isBranchManager() || isTenantMember(resource.data.tenantId));
-      allow create: if isAuthenticated() && (isBranchManager() || isFinance());
-      allow update: if isAuthenticated() && (isBranchManager() || isFinance());
-      allow delete: if isAdmin();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewBranchFinance();
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /branch_expenses/{expenseId} {
-      allow read: if isAuthenticated() && (isFinance() || isBranchManager() || isTenantMember(resource.data.tenantId));
-      allow write: if isBranchManager() || isFinance();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewBranchFinance();
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /cash_requisitions/{requisitionId} {
-      allow read: if isAuthenticated() && (isFinance() || isBranchManager() || isTenantMember(resource.data.tenantId));
-      allow create: if isAuthenticated() && (isBranchManager() || isFinance());
-      allow update: if isAuthenticated() && (isBranchManager() || isFinance() || isAdmin());
-      allow delete: if isAdmin();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewBranchFinance();
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /credit_receivables/{receivableId} {
@@ -574,8 +610,10 @@ service cloud.firestore {
     }
 
     match /banking_records/{recordId} {
-      allow read: if isAuthenticated() && (isFinance() || isBranchManager() || isTenantMember(resource.data.tenantId));
-      allow write: if isBranchManager() || isFinance();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && isFinance();
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && isFinance();
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /client_credit_ledger/{entryId} {
@@ -610,6 +648,13 @@ service cloud.firestore {
     match /financial_metrics/{metricId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isFinance() || isAdmin());
       allow write: if isFinance() || isAdmin();
+    }
+
+    match /management_expenses/{expenseId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (canViewFinance() || isHR());
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isFinance() || isHR());
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && isFinance();
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /campaigns/{campaignId} {
@@ -954,9 +999,9 @@ service cloud.firestore {
 
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
-      allow read: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow read: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAdmin() && isTenantMember(resource.data.tenantId);
     }
   }
