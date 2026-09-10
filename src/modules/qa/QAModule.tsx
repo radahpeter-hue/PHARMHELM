@@ -58,7 +58,7 @@ export const QAModule = () => {
   const isBranchManager = hasRole('branch manager');
   const isPeopleSupervisor = normalizedRoles.some(role => isPeopleSupervisorRoleName(role));
   const crossFunctionalAppraisalOnly = isPeopleSupervisor && !isExecutive && !isCoreQA && !isHRHead && !isBranchManager;
-  const canAccessHQOps = isHQBranch || isExecutive || isCoreQA || isHRHead || isBranchManager;
+  const canAccessHQOps = isHQBranch || isExecutive || isCoreQA || isHRHead || isBranchManager || crossFunctionalAppraisalOnly;
 
   const allTabs = [
     { id: 'temperature', label: 'Temp Logs', icon: Thermometer, color: 'text-blue-600', bg: 'bg-blue-50', isHQOp: false },
@@ -84,6 +84,9 @@ export const QAModule = () => {
   }, [activeTab, crossFunctionalAppraisalOnly, isHRHead, canAccessHQOps]);
 
   const renderContent = () => {
+    // Never render a sub-function that is outside the role-scoped tab set, even for one frame.
+    if (!tabs.some(tab => tab.id === activeTab)) return null;
+
     // If somehow a non-authorized user navigates to an HQ tab, block and show secure card
     if ((activeTab === 'licenses' || activeTab === 'cme' || activeTab === 'appraisals') && !canAccessHQOps) {
       return (
