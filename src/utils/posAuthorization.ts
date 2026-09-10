@@ -37,5 +37,5 @@ export const formatPosCheckoutError = (error: unknown) => {
     return message;
   }
 
-  return 'The sale could not be completed. No stock was deducted. Refresh the page and try again.';
+  return message;
 };
