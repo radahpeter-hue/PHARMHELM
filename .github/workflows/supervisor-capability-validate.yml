@@ -20,6 +20,9 @@ jobs:
           ref: codex/supervisor-hr-appraisal-access-20260910
           fetch-depth: 0
 
+      - name: Repair precise transform target
+        run: python scripts/repair-supervisor-transform.py
+
       - name: Apply supervisor capability update
         run: python scripts/apply-supervisor-capability-update.py
 
