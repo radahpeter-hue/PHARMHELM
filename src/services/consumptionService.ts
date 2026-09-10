@@ -81,6 +81,8 @@ export async function getBranchProductBatchRefs(tenantId: string, branchId: stri
   const colRef = collection(db, 'product_batches');
   const q = query(
     colRef,
+    where('tenantId', '==', tenantId),
+    where('branchId', '==', branchId),
     where('productId', '==', productId)
   );
   const snap = await getDocs(q);

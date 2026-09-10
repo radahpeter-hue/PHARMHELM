@@ -106,6 +106,61 @@ async function resolveLegacyBatchRefs(
 
     const snapshots = await getDocs(query(
       collection(db, 'product_batches'),
+      where('tenantId', '==', tenantId),
+      where('branchId', '==', branchId),
+      where('productId', '==', item.productId),
+      where('batchNumber', '==', item.batchNumber)
+    ));
+
+    if (snapshots.empty) throw new Error(`Batch ${item.batchNumber} for ${item.productName || item.productId} no longer exists.`);
+    if (snapshots.size > 1) {
+      throw new Error(`Inventory integrity check found duplicate batch records for ${item.productName || item.productId} batch ${item.batchNumber}. Reconcile the duplicate batches before editing this receipt.`);
+    }
+    refs.set(key, snapshots.docs[0].ref);
+  }
+
+  return refs;
+}
+
+function buildLegacyAdjustments(
+  originalItems: SaleItem[],
+  updatedItems: SaleItem[],
+  productsById: Map<string, Product>
+) {
+  const byBatch = new Map<string, StockAdjustment>();
+  const byProduct = new Map<string, number>();
+
+  const apply = (item: SaleItem, sign: 1 | -1) => {
+    if (item.isService) return;
+    const product = productsById.get(item.productId);
+    if (!product) throw new Error(`Product ${item.productName || item.productId} no longer exists in the current tenant catalogue.`);
+    const qty = legacyBaseQuantity(item, product) * sign;
+    const batchNumber = item.batchNumber || 'N/A';
+    const key = stockKey(item.productId, batchNumber);
+    const current = byBatch.get(key) || { productId: item.productId, batchNumber, baseDelta: 0 };
+    current.baseDelta += qty;
+    byBatch.set(key, current);
+    byProduct.set(item.productId, (byProduct.get(item.productId) || 0) + qty);
+  };
+
+  originalItems.forEach(item => apply(item, -1));
+  updatedItems.forEach(item => apply(item, 1));
+  return { byBatch, byProduct };
+}
+
+async function collectExactBatchRefs(
+  tenantId: string,
+  branchId: string,
+  productIds: string[],
+  originalItems: SaleItem[]
+): Promise<Map<string, DocumentReference>> {
+  const refs = new Map<string, DocumentReference>();
+
+  for (const productId of productIds) {
+    const snapshots = await getDocs(query(
+      collection(db, 'product_batches'),
+      where('tenantId', '==', tenantId),
+      where('branchId', '==', branchId),
       where('productId', '==', productId)
     ));
     snapshots.docs.forEach(snapshot => refs.set(snapshot.id, snapshot.ref));
