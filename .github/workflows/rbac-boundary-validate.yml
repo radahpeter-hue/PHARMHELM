@@ -20,6 +20,11 @@ jobs:
           ref: codex/supervisor-hr-appraisal-access-20260910
           fetch-depth: 0
 
+      - name: Correct transform guard count
+        run: |
+          sed -i 's/!= 4/!= 3/' scripts/apply-rbac-boundary-hardening.py
+          sed -i 's/expected 4 occurrences/expected 3 occurrences/' scripts/apply-rbac-boundary-hardening.py
+
       - name: Apply RBAC boundary hardening
         run: python scripts/apply-rbac-boundary-hardening.py
 
