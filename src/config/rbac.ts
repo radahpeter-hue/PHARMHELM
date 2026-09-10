@@ -31,7 +31,7 @@ export interface SystemRoleDefinition {
 }
 
 export const RBAC_SCHEMA_VERSION = 2;
-export const RBAC_SYSTEM_VERSION = '2026-09-08-v1';
+export const RBAC_SYSTEM_VERSION = '2026-09-10-v2';
 
 export const RBAC_MODULES: Array<{ id: RbacModuleKey; name: string; description: string }> = [
   { id: 'dashboard', name: 'Opening Dashboard', description: 'Universal landing dashboard. Visibility remains scoped to the signed-in user.' },
@@ -226,8 +226,8 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
   {
     name: 'cashier',
     label: 'Cashier',
-    description: 'Operates POS and branch finance functions with stock-availability and own-branch analytical visibility.',
-    permissions: makePermissions({ sales: operate(), inventory: view(), finance: operate(), analytics: view() }),
+    description: 'Branch cashier with POS visibility and branch finance operation. Cashiers do not complete sales transactions.',
+    permissions: makePermissions({ sales: view(), inventory: view(), finance: operate(), analytics: view() }),
   },
   {
     name: 'cleaner',
