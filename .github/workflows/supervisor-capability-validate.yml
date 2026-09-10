@@ -26,6 +26,9 @@ jobs:
       - name: Apply supervisor capability update
         run: python scripts/apply-supervisor-capability-update.py
 
+      - name: Normalize generated patch whitespace
+        run: python scripts/normalize-supervisor-transform-output.py
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
