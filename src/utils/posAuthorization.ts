@@ -1,17 +1,22 @@
 import type { Staff } from '../types';
 
 /**
- * POS checkout authority is capability-based, not role-name based.
+ * POS checkout authority is capability-based.
  *
  * AuthContext resolves the effective `sales:operate` permission from the
  * user's primary role, secondary roles and any tenant custom-role realm.
- * Re-checking a hard-coded job-title whitelist here creates a second RBAC
- * system and can reject users who legitimately have functional POS access.
+ * Anyone with effective functional POS access may sell, except the Cashier
+ * role, which is intentionally excluded from completing sales by policy.
  */
 export const canOperatePos = (
   profile: Pick<Staff, 'role' | 'secondaryRoles'> | null | undefined,
   hasSalesOperatePermission: boolean
-) => Boolean(profile) && hasSalesOperatePermission;
+) => {
+  if (!profile || !hasSalesOperatePermission) return false;
+  const primaryRole = String(profile.role || '').trim().toLowerCase();
+  if (primaryRole === 'cashier') return false;
+  return true;
+};
 
 export const formatPosCheckoutError = (error: unknown) => {
   const rawMessage = error instanceof Error ? error.message : String(error || '');
