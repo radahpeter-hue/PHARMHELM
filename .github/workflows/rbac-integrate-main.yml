@@ -20,7 +20,7 @@ jobs:
           ref: codex/supervisor-hr-appraisal-access-20260910
           fetch-depth: 0
 
-      - name: Merge latest main and resolve Firestore overlap
+      - name: Merge latest main and resolve expected RBAC overlaps
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
@@ -31,12 +31,16 @@ jobs:
           merge_status=$?
           set -e
           if [ "$merge_status" -ne 0 ]; then
-            conflicts=$(git diff --name-only --diff-filter=U)
-            if [ "$conflicts" != "firestore.rules" ]; then
-              echo "Unexpected merge conflicts: $conflicts"
+            conflicts=$(git diff --name-only --diff-filter=U | sort)
+            expected=$(printf 'firestore.rules\nsrc/config/rbac.ts')
+            if [ "$conflicts" != "$expected" ]; then
+              echo "Unexpected merge conflicts:"
+              echo "$conflicts"
               exit 2
             fi
-            git checkout --ours firestore.rules
+            # Both conflicts are expected. The RBAC branch already includes the
+            # current Cashier policy. Reapply the new main POS Firestore read fix below.
+            git checkout --ours firestore.rules src/config/rbac.ts
           fi
 
           python - <<'PY'
@@ -45,12 +49,12 @@ jobs:
           text = path.read_text()
 
           old_sales = """    match /sales/{saleId} {
-                allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-          """.replace('        ', '', 1)
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+"""
           new_sales = """    match /sales/{saleId} {
-                allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-                allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-          """.replace('        ', '', 1)
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+"""
           if old_sales in text:
               text = text.replace(old_sales, new_sales, 1)
           elif new_sales not in text:
@@ -58,7 +62,7 @@ jobs:
 
           old_generic = """      allow read: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);"""
           new_generic = """      allow get: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-                allow list: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);""".replace('        ', '', 1)
+      allow list: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);"""
           if old_generic in text:
               text = text.replace(old_generic, new_generic, 1)
           elif new_generic not in text:
@@ -67,7 +71,7 @@ jobs:
           path.write_text(text)
           PY
 
-          git add firestore.rules
+          git add firestore.rules src/config/rbac.ts
 
       - name: Setup Node
         uses: actions/setup-node@v4
