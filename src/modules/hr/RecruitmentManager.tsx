@@ -10,8 +10,9 @@ import { firestoreService } from '../../services/firestore';
 import { HiringApplication, Staff } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
+import { where } from 'firebase/firestore';
 
-export const RecruitmentManager: React.FC = () => {
+export const RecruitmentManager: React.FC<{ supervisorOnly?: boolean }> = ({ supervisorOnly = false }) => {
   const { profile } = useAuth();
   const { tenant } = useTenant();
   const [applications, setApplications] = useState<HiringApplication[]>([]);
@@ -34,14 +35,20 @@ export const RecruitmentManager: React.FC = () => {
   const [practicalScoreInput, setPracticalScoreInput] = useState('');
 
   useEffect(() => {
-    if (profile?.tenantId) {
-      return firestoreService.subscribeToCollection<HiringApplication>(
-        'hiring_applications',
-        profile.tenantId,
-        setApplications
-      );
-    }
-  }, [profile?.tenantId]);
+    if (!profile?.tenantId) return;
+    return supervisorOnly
+      ? firestoreService.subscribeToCollectionByQuery<HiringApplication>(
+          'hiring_applications',
+          profile.tenantId,
+          [where('status', 'in', ['practical_scheduled', 'practical_completed'])],
+          setApplications
+        )
+      : firestoreService.subscribeToCollection<HiringApplication>('hiring_applications', profile.tenantId, setApplications);
+  }, [profile?.tenantId, supervisorOnly]);
+
+  useEffect(() => {
+    if (supervisorOnly && activeTab !== 'practical') setActiveTab('practical');
+  }, [supervisorOnly, activeTab]);
 
   // Filters by status group
   const getSubList = (tab: typeof activeTab) => {
@@ -75,7 +82,7 @@ export const RecruitmentManager: React.FC = () => {
     educationLevel: string;
     experienceYears: number;
   }) => {
-    if (!profile?.tenantId) return;
+    if (!profile?.tenantId || supervisorOnly) return;
 
     try {
       await firestoreService.addDocument('hiring_applications', {
@@ -106,6 +113,7 @@ export const RecruitmentManager: React.FC = () => {
   };
 
   const handleUpdateStatusAndSchedule = async (appId: string, nextStatus: string, dateField?: string, dateVal?: string) => {
+    if (supervisorOnly) return;
     try {
       const updates: Record<string, any> = { status: nextStatus };
       if (dateField && dateVal) {
@@ -121,13 +129,18 @@ export const RecruitmentManager: React.FC = () => {
   };
 
   const handleTransitionToSchedule = (app: HiringApplication, actionName: 'theory' | 'oral' | 'practical') => {
+    if (supervisorOnly) return;
     setActionApp(app);
     setScheduleDate(new Date().toISOString().split('T')[0]);
     setIsScheduleModalOpen(true);
   };
 
   const handleSaveMarks = async () => {
-    if (!actionApp) return;
+    if (!actionApp || !profile) return;
+    if (supervisorOnly && actionApp.status !== 'practical_scheduled') {
+      toast.error('Supervisors may enter marks only for the Practical Assessment stage.');
+      return;
+    }
 
     try {
       const updates: Record<string, any> = {};
@@ -156,6 +169,11 @@ export const RecruitmentManager: React.FC = () => {
         }
         updates.practical_score = score;
         updates.status = 'practical_completed';
+        updates.practical_assessed_by_user_id = profile.uid || profile.id;
+        updates.practical_assessed_by_name = profile.full_name || profile.displayName || profile.email || 'Supervisor';
+        updates.practical_assessed_by_role = String(profile.role || 'Staff');
+        updates.practical_assessed_at = new Date().toISOString();
+        updates.practical_assessed_branch_id = profile.branch_id || '';
       }
 
       await firestoreService.updateDocument('hiring_applications', actionApp.id, updates);
@@ -179,6 +197,7 @@ export const RecruitmentManager: React.FC = () => {
   };
 
   const handleRejectCandidate = async (appId: string) => {
+    if (supervisorOnly) return;
     if (!window.confirm('Are you sure you want to reject this candidate?')) return;
     try {
       await firestoreService.updateDocument('hiring_applications', appId, { status: 'rejected' });
@@ -191,6 +210,7 @@ export const RecruitmentManager: React.FC = () => {
   };
 
   const handleRecommendForTraining = async (appId: string) => {
+    if (supervisorOnly) return;
     if (!window.confirm('Are you sure you want to recommend this candidate for training appraisal?')) return;
     try {
       await firestoreService.updateDocument('hiring_applications', appId, { 
@@ -205,7 +225,7 @@ export const RecruitmentManager: React.FC = () => {
   };
 
   const handleHireCandidate = async (app: HiringApplication) => {
-    if (!profile?.tenantId) return;
+    if (!profile?.tenantId || supervisorOnly) return;
 
     // Strict validation: Must have ALL marks logs added before hiring!
     if (app.theory_score === null || app.theory_score === undefined ||
@@ -308,20 +328,20 @@ export const RecruitmentManager: React.FC = () => {
       {/* Tab Navigation */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-200 pb-2">
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
-          <SubTabButton active={activeTab === 'applied'} onClick={() => setActiveTab('applied')} label="1. Applied Pool" />
-          <SubTabButton active={activeTab === 'theory'} onClick={() => setActiveTab('theory')} label="2. Theoretical Logs" />
-          <SubTabButton active={activeTab === 'oral'} onClick={() => setActiveTab('oral')} label="3. Oral Evaluation" />
-          <SubTabButton active={activeTab === 'practical'} onClick={() => setActiveTab('practical')} label="4. Practical Stage" />
-          <SubTabButton active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="History Archive" />
+          {!supervisorOnly && <SubTabButton active={activeTab === 'applied'} onClick={() => setActiveTab('applied')} label="1. Applied Pool" />}
+          {!supervisorOnly && <SubTabButton active={activeTab === 'theory'} onClick={() => setActiveTab('theory')} label="2. Theoretical Logs" />}
+          {!supervisorOnly && <SubTabButton active={activeTab === 'oral'} onClick={() => setActiveTab('oral')} label="3. Oral Evaluation" />}
+          <SubTabButton active={activeTab === 'practical'} onClick={() => setActiveTab('practical')} label="Practical Assessment" />
+          {!supervisorOnly && <SubTabButton active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="History Archive" />}
         </div>
 
-        <button 
+        {!supervisorOnly && <button
           onClick={() => setIsNewAppModalOpen(true)}
           className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 self-start lg:self-auto shadow-md"
         >
           <UserPlus size={15} />
           New Candidate Application
-        </button>
+        </button>}
       </div>
 
       {/* Info Header */}
@@ -413,7 +433,7 @@ export const RecruitmentManager: React.FC = () => {
                         </button>
 
                         {/* PHASE 1: Applied actions */}
-                        {app.status === 'applied' && (
+                        {!supervisorOnly && app.status === 'applied' && (
                           <button 
                             onClick={() => handleTransitionToSchedule(app, 'theory')}
                             className="p-1 px-2.5 bg-indigo-600 text-white rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-indigo-700 transition-colors"
@@ -423,7 +443,7 @@ export const RecruitmentManager: React.FC = () => {
                         )}
 
                         {/* PHASE 2: Theory and marks action */}
-                        {app.status === 'theoretical_scheduled' && (
+                        {!supervisorOnly && app.status === 'theoretical_scheduled' && (
                           <button 
                             onClick={() => handleOpenLogMarksModal(app)}
                             className="p-1 px-2.5 bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-indigo-200 transition-colors"
@@ -431,7 +451,7 @@ export const RecruitmentManager: React.FC = () => {
                             Add Theory Marks
                           </button>
                         )}
-                        {app.status === 'theoretical_completed' && (
+                        {!supervisorOnly && app.status === 'theoretical_completed' && (
                           <button 
                             onClick={() => handleTransitionToSchedule(app, 'oral')}
                             className="p-1 px-2.5 bg-purple-600 text-white rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-purple-700 transition-colors"
@@ -441,7 +461,7 @@ export const RecruitmentManager: React.FC = () => {
                         )}
 
                         {/* PHASE 3: Oral and marks action */}
-                        {app.status === 'oral_scheduled' && (
+                        {!supervisorOnly && app.status === 'oral_scheduled' && (
                           <button 
                             onClick={() => handleOpenLogMarksModal(app)}
                             className="p-1 px-2.5 bg-purple-100 text-purple-700 border border-purple-200 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-purple-200 transition-colors"
@@ -449,7 +469,7 @@ export const RecruitmentManager: React.FC = () => {
                             Add Oral Marks
                           </button>
                         )}
-                        {app.status === 'oral_completed' && (
+                        {!supervisorOnly && app.status === 'oral_completed' && (
                           <button 
                             onClick={() => handleTransitionToSchedule(app, 'practical')}
                             className="p-1 px-2.5 bg-amber-600 text-white rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-amber-700 transition-colors"
@@ -467,7 +487,7 @@ export const RecruitmentManager: React.FC = () => {
                             Add Practical Marks
                           </button>
                         )}
-                        {app.status === 'practical_completed' && (
+                        {!supervisorOnly && app.status === 'practical_completed' && (
                           <div className="flex gap-1.5">
                             <button 
                               onClick={() => handleHireCandidate(app)}
@@ -485,7 +505,7 @@ export const RecruitmentManager: React.FC = () => {
                         )}
 
                         {/* Fallback actions always present for unverified or custom status */}
-                        {!['hired', 'rejected', 'recommended_training', 'training_accepted'].includes(app.status) && (
+                        {!supervisorOnly && !['hired', 'rejected', 'recommended_training', 'training_accepted'].includes(app.status) && (
                           <button 
                             onClick={() => handleRejectCandidate(app.id)}
                             className="p-1 text-slate-400 hover:text-rose-600 rounded"
@@ -579,6 +599,7 @@ export const RecruitmentManager: React.FC = () => {
                       {selectedApp.practical_score !== null && selectedApp.practical_score !== undefined ? `${selectedApp.practical_score}%` : 'Pending'}
                     </span>
                     {selectedApp.practical_date && <span className="text-[8px] text-slate-400 font-medium block mt-1">{selectedApp.practical_date}</span>}
+                    {selectedApp.practical_assessed_by_name && <span className="text-[8px] text-slate-500 font-semibold block mt-1">Assessed by: {selectedApp.practical_assessed_by_name}</span>}
                   </div>
                 </div>
 
@@ -613,7 +634,7 @@ export const RecruitmentManager: React.FC = () => {
                 Close Dossier
               </button>
 
-              {!['hired', 'rejected'].includes(selectedApp.status) && (
+              {!supervisorOnly && !['hired', 'rejected'].includes(selectedApp.status) && (
                 <>
                   <button 
                     onClick={() => handleRecommendForTraining(selectedApp.id)}
@@ -630,7 +651,7 @@ export const RecruitmentManager: React.FC = () => {
                 </>
               )}
 
-              {selectedApp.status === 'practical_completed' && (
+              {!supervisorOnly && selectedApp.status === 'practical_completed' && (
                 <button 
                   onClick={() => handleHireCandidate(selectedApp)}
                   className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl uppercase tracking-wider"
@@ -644,7 +665,7 @@ export const RecruitmentManager: React.FC = () => {
       )}
 
       {/* MODAL 2: Create New Application Form */}
-      {isNewAppModalOpen && (
+      {!supervisorOnly && isNewAppModalOpen && (
         <CreateApplicationModal 
           isOpen={isNewAppModalOpen} 
           onClose={() => setIsNewAppModalOpen(false)} 
@@ -743,7 +764,7 @@ export const RecruitmentManager: React.FC = () => {
       )}
 
       {/* MODAL 4: Schedule Exam / Interview Form */}
-      {isScheduleModalOpen && actionApp && (
+      {!supervisorOnly && isScheduleModalOpen && actionApp && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/30 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-md rounded-[32px] shadow-2xl overflow-hidden animate-in zoom-in duration-200 text-left">
             <div className="px-8 py-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">

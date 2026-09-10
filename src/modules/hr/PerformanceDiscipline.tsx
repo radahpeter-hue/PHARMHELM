@@ -9,9 +9,10 @@ import { firestoreService } from '../../services/firestore';
 import { Staff, DisciplinaryIncident } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
+import { where } from 'firebase/firestore';
 
-export const PerformanceDiscipline: React.FC = () => {
-  const { profile } = useAuth();
+export const PerformanceDiscipline: React.FC<{ supervisorOnly?: boolean }> = ({ supervisorOnly = false }) => {
+  const { profile, activeBranch } = useAuth();
   const [staff, setStaff] = useState<Staff[]>([]);
   const [incidents, setIncidents] = useState<DisciplinaryIncident[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -19,15 +20,31 @@ export const PerformanceDiscipline: React.FC = () => {
   const [editingIncident, setEditingIncident] = useState<DisciplinaryIncident | null>(null);
 
   useEffect(() => {
-    if (profile?.tenantId) {
-      firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setStaff);
-      return firestoreService.subscribeToCollection<DisciplinaryIncident>(
-        'disciplinary_incidents',
-        profile.tenantId,
-        setIncidents
-      );
-    }
-  }, [profile?.tenantId]);
+    if (!profile?.tenantId) return;
+    const unsubStaff = firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setStaff);
+    const unsubIncidents = supervisorOnly
+      ? firestoreService.subscribeToCollectionByQuery<DisciplinaryIncident>(
+          'disciplinary_incidents',
+          profile.tenantId,
+          [where('reportedByUserId', '==', profile.uid || profile.id)],
+          setIncidents
+        )
+      : firestoreService.subscribeToCollection<DisciplinaryIncident>('disciplinary_incidents', profile.tenantId, setIncidents);
+    return () => {
+      unsubStaff();
+      unsubIncidents();
+    };
+  }, [profile?.tenantId, profile?.uid, profile?.id, supervisorOnly]);
+
+  const supervisorStaff = supervisorOnly ? staff.filter(member => {
+    const selfIds = [profile?.id, profile?.uid].filter(Boolean);
+    if (selfIds.includes(member.id) || selfIds.includes(member.uid)) return false;
+    const allowedBranches = new Set([...(profile?.assigned_branches || []), profile?.branch_id, activeBranch?.id].filter(Boolean));
+    const memberBranches = [member.branch_id, ...(member.assigned_branches || [])].filter(Boolean);
+    if (!memberBranches.some(branchId => allowedBranches.has(branchId))) return false;
+    if (profile?.role?.toString().toLowerCase() !== 'branch manager' && profile?.department && member.department && profile.department !== member.department) return false;
+    return true;
+  }) : staff;
 
   const filteredIncidents = incidents.filter(inc => {
     const staffMember = staff.find(s => s.id === inc.staffId);
@@ -36,6 +53,7 @@ export const PerformanceDiscipline: React.FC = () => {
   });
 
   const handleDelete = async (id: string) => {
+    if (supervisorOnly) return;
     if (window.confirm('Are you sure you want to delete this incident record?')) {
       try {
         await firestoreService.deleteDocument('disciplinary_incidents', id);
@@ -167,21 +185,27 @@ export const PerformanceDiscipline: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <button 
-                          onClick={() => {
-                            setEditingIncident(inc);
-                            setIsModalOpen(true);
-                          }}
-                          className="p-2 text-slate-400 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-all"
-                        >
-                          <Edit2 size={16} />
-                        </button>
-                        <button 
-                          onClick={() => handleDelete(inc.id)}
-                          className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                        {!supervisorOnly ? (
+                          <>
+                            <button
+                              onClick={() => {
+                                setEditingIncident(inc);
+                                setIsModalOpen(true);
+                              }}
+                              className="p-2 text-slate-400 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-all"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(inc.id)}
+                              className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </>
+                        ) : (
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">HR follow-up</span>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -197,7 +221,8 @@ export const PerformanceDiscipline: React.FC = () => {
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
           incident={editingIncident}
-          staff={staff}
+          staff={supervisorStaff}
+          supervisorOnly={supervisorOnly}
         />
       )}
     </div>
@@ -214,7 +239,7 @@ const StatCard: React.FC<{ label: string; value: number; icon: any; color: strin
   </div>
 );
 
-const IncidentModal: React.FC<{ isOpen: boolean; onClose: () => void; incident: DisciplinaryIncident | null; staff: Staff[] }> = ({ isOpen, onClose, incident, staff }) => {
+const IncidentModal: React.FC<{ isOpen: boolean; onClose: () => void; incident: DisciplinaryIncident | null; staff: Staff[]; supervisorOnly?: boolean }> = ({ isOpen, onClose, incident, staff, supervisorOnly = false }) => {
   const { profile } = useAuth();
   const [formData, setFormData] = useState<Partial<DisciplinaryIncident>>(incident || {
     staffId: '',
@@ -231,12 +256,26 @@ const IncidentModal: React.FC<{ isOpen: boolean; onClose: () => void; incident: 
 
     try {
       if (incident?.id) {
+        if (supervisorOnly) {
+          toast.error('Submitted incidents are followed up by HR and cannot be edited by the reporting supervisor.');
+          return;
+        }
         await firestoreService.updateDocument('disciplinary_incidents', incident.id, formData);
         toast.success('Incident record updated');
       } else {
+        const now = new Date().toISOString();
         await firestoreService.addDocument('disciplinary_incidents', {
           ...formData,
-          tenantId: profile.tenantId
+          tenantId: profile.tenantId,
+          status: 'open',
+          action_taken: '',
+          reportedByUserId: profile.uid || profile.id,
+          reportedByName: profile.full_name || profile.displayName || profile.email || 'Supervisor',
+          reportedByRole: String(profile.role || 'Staff'),
+          reportedAt: now,
+          reportedFromBranchId: profile.branch_id || '',
+          reportedFromDepartment: profile.department || '',
+          followUpStatus: 'pending_hr_review'
         });
         toast.success('Incident logged successfully');
       }
@@ -286,20 +325,26 @@ const IncidentModal: React.FC<{ isOpen: boolean; onClose: () => void; incident: 
             <textarea required className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl resize-none" rows={3} value={formData.description || ''} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Action Taken</label>
-              <input type="text" placeholder="e.g. Verbal warning" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl" value={formData.action_taken || ''} onChange={(e) => setFormData({ ...formData, action_taken: e.target.value })} />
+          {!supervisorOnly ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Action Taken</label>
+                <input type="text" placeholder="e.g. Verbal warning" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl" value={formData.action_taken || ''} onChange={(e) => setFormData({ ...formData, action_taken: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Status</label>
+                <select className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl" value={formData.status || 'open'} onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}>
+                  <option value="open">Open</option>
+                  <option value="resolved">Resolved</option>
+                  <option value="appealed">Appealed</option>
+                </select>
+              </div>
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Status</label>
-              <select className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl" value={formData.status || 'open'} onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}>
-                <option value="open">Open</option>
-                <option value="resolved">Resolved</option>
-                <option value="appealed">Appealed</option>
-              </select>
+          ) : (
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-xs font-medium text-indigo-800">
+              This report will be submitted as an open incident. HR owns investigation, action, follow-up and closure after submission.
             </div>
-          </div>
+          )}
 
           <div className="flex justify-end gap-3 pt-4">
             <button type="button" onClick={onClose} className="px-6 py-2 border border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-50 transition-colors uppercase text-[10px] tracking-widest">Cancel</button>

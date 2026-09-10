@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
+import { isPeopleSupervisorRoleName, isSystemRoleName } from '../config/rbac';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -58,35 +59,35 @@ const HRAdmin: React.FC = () => {
   const isGeneralAdmin = hasAnyFixedRole(['admin']);
   const isHRHead = hasAnyFixedRole(['hr head']);
   const isHRSupport = hasAnyFixedRole(['hr support personnel']);
-  const isIT = hasAnyFixedRole(['it head', 'it support staff', 'it support personnel', 'it staff']);
-  const isBranchManager = hasAnyFixedRole(['branch manager']);
-  const hasOtherHRAuthority = isExecutive || isGeneralAdmin || isHRHead || isHRSupport;
-  const isRestrictedBranchManager = isBranchManager && !hasOtherHRAuthority;
+  const isITSupport = hasAnyFixedRole(['it support staff', 'it support personnel', 'it staff']);
+  const isPeopleSupervisor = normalizedRoles.some(role => isPeopleSupervisorRoleName(role));
 
   const canOperateHR = hasPermission('hr', 'operate');
   const canViewHR = hasPermission('hr', 'view');
-  const customOrGeneralOperator = canOperateHR && !isRestrictedBranchManager && !isIT;
+  const hasCustomRole = normalizedRoles.some(role => role && !isSystemRoleName(role));
+  const hasFullHRAuthority = isExecutive || isGeneralAdmin || isHRHead || isHRSupport || (hasCustomRole && canOperateHR && !isPeopleSupervisor);
+  const isSupervisorOnly = isPeopleSupervisor && !hasFullHRAuthority;
+  const isDiagnosticITSupport = isITSupport && !hasFullHRAuthority;
 
   const allowedTabs = useMemo<HRTab[]>(() => {
     const allowed = new Set<HRTab>();
 
-    if (customOrGeneralOperator || isExecutive || isGeneralAdmin || isHRHead || isHRSupport) {
+    if (hasFullHRAuthority) {
       ['staff', 'attendance', 'payroll', 'leave_advance', 'recruitment', 'trainees', 'performance', 'reports'].forEach(tab => allowed.add(tab as HRTab));
     }
 
-    if (isRestrictedBranchManager) {
-      // Branch Managers use HR only to raise and follow branch performance / disciplinary incidents.
+    if (isSupervisorOnly) {
+      // Supervisory HR access is deliberately limited to people-management inputs.
       allowed.add('performance');
+      allowed.add('recruitment');
+      allowed.add('trainees');
     }
 
-    if (isIT) {
-      // IT has diagnostic HR visibility, not routine HR administration.
+    if (isDiagnosticITSupport) {
       allowed.add('reports');
     }
 
-    if (canViewHR && !canOperateHR && !isIT && !isRestrictedBranchManager) {
-      // View-only custom roles are intentionally kept to the report console so they cannot
-      // reach transactional HR editors that pre-date capability-level UI guards.
+    if (canViewHR && !canOperateHR && !isDiagnosticITSupport && !isSupervisorOnly) {
       allowed.add('reports');
     }
 
@@ -96,7 +97,7 @@ const HRAdmin: React.FC = () => {
     }
 
     return Array.from(allowed);
-  }, [customOrGeneralOperator, isExecutive, isGeneralAdmin, isHRHead, isHRSupport, isRestrictedBranchManager, isIT, canViewHR, canOperateHR]);
+  }, [hasFullHRAuthority, isSupervisorOnly, isDiagnosticITSupport, canViewHR, canOperateHR, isExecutive, isGeneralAdmin]);
 
   useEffect(() => {
     if (allowedTabs.length > 0 && !allowedTabs.includes(activeTab)) {
@@ -146,9 +147,9 @@ const HRAdmin: React.FC = () => {
         {activeTab === 'attendance' && show('attendance') && <AttendanceTracker />}
         {activeTab === 'payroll' && show('payroll') && <PayrollManager />}
         {activeTab === 'branches' && show('branches') && <BranchManager />}
-        {activeTab === 'recruitment' && show('recruitment') && <RecruitmentManager />}
-        {activeTab === 'trainees' && show('trainees') && <TraineesManager />}
-        {activeTab === 'performance' && show('performance') && <PerformanceDiscipline />}
+        {activeTab === 'recruitment' && show('recruitment') && <RecruitmentManager supervisorOnly={isSupervisorOnly} />}
+        {activeTab === 'trainees' && show('trainees') && <TraineesManager supervisorOnly={isSupervisorOnly} />}
+        {activeTab === 'performance' && show('performance') && <PerformanceDiscipline supervisorOnly={isSupervisorOnly} />}
         {activeTab === 'leave_advance' && show('leave_advance') && <LeaveAdvanceManager />}
         {activeTab === 'reports' && show('reports') && <HRReportsConsole />}
         {activeTab === 'settings' && show('settings') && <SystemSettings />}
