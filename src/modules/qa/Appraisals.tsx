@@ -28,6 +28,7 @@ import { firestoreService } from '../../services/firestore';
 import { Appraisal, Staff, CMESession } from '../../types';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
+import { where } from 'firebase/firestore';
 
 const RATING_BANDS = [
   { min: 90, label: 'Outstanding', color: 'text-purple-600 bg-purple-50 border-purple-100', description: 'Exceptional performance far exceeding standards.' },
@@ -36,8 +37,8 @@ const RATING_BANDS = [
   { min: 0, label: 'Needs Improvement', color: 'text-red-600 bg-red-50 border-red-100', description: 'Below safety/professional expectations. Requires structured support.' }
 ];
 
-export const Appraisals = () => {
-  const { user, activeBranch, tenantId } = useAuth();
+export const Appraisals: React.FC<{ supervisorOnly?: boolean }> = ({ supervisorOnly = false }) => {
+  const { user, profile, activeBranch, tenantId } = useAuth();
   const [appraisals, setAppraisals] = useState<Appraisal[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [sessions, setSessions] = useState<CMESession[]>([]);
@@ -70,20 +71,25 @@ export const Appraisals = () => {
   useEffect(() => {
     if (!tenantId || !activeBranch) return;
 
-    const unsubscribeAppraisals = firestoreService.subscribeToCollection<Appraisal>(
+    const unsubscribeAppraisals = firestoreService.subscribeToCollectionByQuery<Appraisal>(
       'appraisals',
       tenantId,
-      (entries) => {
-        const branchEntries = entries.filter(e => e.branchId === activeBranch.id);
-        setAppraisals(branchEntries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-      }
+      [where('branchId', '==', activeBranch.id)],
+      (entries) => setAppraisals(entries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()))
     );
 
     const unsubscribeStaff = firestoreService.subscribeToCollection<Staff>(
       'staff',
       tenantId,
       (entries) => {
-        const branchStaff = entries.filter(s => s.branch_id === activeBranch.id);
+        const selfIds = [profile?.id, profile?.uid].filter(Boolean);
+        const branchStaff = entries.filter(s => {
+          const inBranch = s.branch_id === activeBranch.id || (s.assigned_branches || []).includes(activeBranch.id);
+          if (!inBranch) return false;
+          if (supervisorOnly && (selfIds.includes(s.id) || selfIds.includes(s.uid))) return false;
+          if (supervisorOnly && profile?.role?.toString().toLowerCase() !== 'branch manager' && profile?.department && s.department && profile.department !== s.department) return false;
+          return true;
+        });
         setStaff(branchStaff);
       }
     );
@@ -104,7 +110,11 @@ export const Appraisals = () => {
       unsubscribeStaff();
       unsubscribeSessions();
     };
-  }, [tenantId, activeBranch]);
+  }, [tenantId, activeBranch, supervisorOnly, profile?.id, profile?.uid, profile?.department, profile?.role]);
+
+  useEffect(() => {
+    if (supervisorOnly && activeTab === 'overview') setActiveTab('run');
+  }, [supervisorOnly, activeTab]);
 
   // Dynamic CME point retriever matching either fullName or full_name (case-insensitive)
   const getStaffCmePoints = (targetStaffId: string) => {
@@ -286,6 +296,11 @@ export const Appraisals = () => {
 
   // Trigger editing perspective
   const handleOpenEdit = (app: Appraisal) => {
+    const actorId = profile?.uid || profile?.id || user?.uid;
+    if (supervisorOnly && (!app.appraisedByUserId || app.appraisedByUserId !== actorId)) {
+      toast.error('Supervisors may modify only appraisal sheets they originally created.');
+      return;
+    }
     setEditingAppraisal(app);
     setStaffId(app.staffId);
     setAppraisalPeriod((app.period as any) || 'Q1');
@@ -311,6 +326,14 @@ export const Appraisals = () => {
 
     const staffMember = staff.find(s => s.id === staffId);
     if (!staffMember) return;
+    const actorId = profile?.uid || profile?.id || user.uid;
+    if (supervisorOnly && (staffMember.id === actorId || staffMember.uid === actorId)) {
+      toast.error('A supervisor cannot appraise their own staff record.');
+      return;
+    }
+    const actorName = profile?.full_name || profile?.displayName || user.displayName || user.email || 'Authorized Appraiser';
+    const actorRole = String(profile?.role || 'Staff');
+    const now = new Date().toISOString();
 
     const staffName = staffMember.full_name || staffMember.fullName || 'Unknown Staff';
 
@@ -345,8 +368,22 @@ export const Appraisals = () => {
         strengths: strengths.split('\n').filter(s => s.trim()),
         improvements: improvements.split('\n').filter(s => s.trim()),
         goals: goals.split('\n').filter(s => s.trim()),
-        appraiserName: user.fullName || user.displayName || 'Authorized QA/Manager',
       };
+
+      if (!editingAppraisal?.id) {
+        dataPayload.appraiserName = actorName;
+        dataPayload.appraisedByUserId = actorId;
+        dataPayload.appraisedByName = actorName;
+        dataPayload.appraisedByRole = actorRole;
+        dataPayload.appraisedByBranchId = activeBranch.id;
+        dataPayload.appraisedByDepartment = profile?.department || '';
+        dataPayload.appraisedAt = now;
+      } else {
+        dataPayload.lastUpdatedByUserId = actorId;
+        dataPayload.lastUpdatedByName = actorName;
+        dataPayload.lastUpdatedByRole = actorRole;
+        dataPayload.lastUpdatedAt = now;
+      }
 
       if (submitStatus === 'Completed') {
         dataPayload.overallScore = calculations.overallScore;
@@ -356,11 +393,11 @@ export const Appraisals = () => {
         
         // Audit roles loggers
         if (pScore !== undefined) {
-          dataPayload.managerLoggedBy = user.fullName;
+          dataPayload.managerLoggedBy = actorName;
           dataPayload.managerLoggedAt = new Date().toISOString();
         }
         if (tScore !== undefined) {
-          dataPayload.qaLoggedBy = user.fullName;
+          dataPayload.qaLoggedBy = actorName;
           dataPayload.qaLoggedAt = new Date().toISOString();
         }
       }
@@ -417,14 +454,14 @@ export const Appraisals = () => {
     <div id="pharmacy-appraisals-module" className="space-y-6">
       {/* Dynamic Professional Tab Navigation */}
       <div className="flex border-b border-gray-100 bg-white p-2 rounded-xl shadow-sm gap-2">
-        <button
+        {!supervisorOnly && <button
           id="btn-tab-overview"
           onClick={() => setActiveTab('overview')}
           className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${activeTab === 'overview' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
         >
           <PieChart className="w-4 h-4" />
           <span>Executive Dashboard</span>
-        </button>
+        </button>}
         <button
           id="btn-tab-runs"
           onClick={() => setActiveTab('run')}
@@ -625,7 +662,7 @@ export const Appraisals = () => {
                           </div>
                           <div>
                             <p className="font-bold text-slate-700">{app.staffName}</p>
-                            <p className="text-[10px] text-slate-400">Assigned Branch member</p>
+                            <p className="text-[10px] text-slate-400">Appraised by: {app.appraisedByName || app.appraiserName || 'Legacy record'}</p>
                           </div>
                         </div>
                       </td>
@@ -670,13 +707,15 @@ export const Appraisals = () => {
                       </td>
                       <td className="p-3 text-center">
                         <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => handleOpenEdit(app)}
-                            className="p-1 px-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg flex items-center gap-1 border border-slate-100 text-xs font-semibold transition-colors"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                            <span>Modify Score Sheet</span>
-                          </button>
+                          {(!supervisorOnly || app.appraisedByUserId === (profile?.uid || profile?.id || user?.uid)) && (
+                            <button
+                              onClick={() => handleOpenEdit(app)}
+                              className="p-1 px-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg flex items-center gap-1 border border-slate-100 text-xs font-semibold transition-colors"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>Modify Score Sheet</span>
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1126,7 +1165,7 @@ export const Appraisals = () => {
                     {viewingReport.period} Cycle Audit Report
                   </span>
                   <h3 className="text-xl font-black text-white">{viewingReport.staffName}</h3>
-                  <p className="text-xs text-slate-400 mt-1">Certified By Appraiser: {viewingReport.appraiserName}</p>
+                  <p className="text-xs text-slate-400 mt-1">Certified By Appraiser: {viewingReport.appraisedByName || viewingReport.appraiserName || 'Legacy record'}</p>
                 </div>
                 <div className="text-right">
                   <div className="text-3xl font-black text-white">{viewingReport.overallScore}%</div>

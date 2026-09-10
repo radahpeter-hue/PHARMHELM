@@ -9,8 +9,9 @@ import { firestoreService } from '../../services/firestore';
 import { HiringApplication } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
+import { where } from 'firebase/firestore';
 
-export const TraineesManager: React.FC = () => {
+export const TraineesManager: React.FC<{ supervisorOnly?: boolean }> = ({ supervisorOnly = false }) => {
   const { profile } = useAuth();
   const { tenant } = useTenant();
   const [traineeApps, setTraineeApps] = useState<HiringApplication[]>([]);
@@ -31,20 +32,21 @@ export const TraineesManager: React.FC = () => {
   const [w12Theory, setW12Theory] = useState('');
 
   useEffect(() => {
-    if (profile?.tenantId) {
-      return firestoreService.subscribeToCollection<HiringApplication>(
+    if (!profile?.tenantId) return;
+    if (supervisorOnly) {
+      return firestoreService.subscribeToCollectionByQuery<HiringApplication>(
         'hiring_applications',
         profile.tenantId,
-        (data) => {
-          // Trainees are either recommended for training or have accepted training
-          const trainees = data.filter(item => 
-            ['recommended_training', 'training_accepted'].includes(item.status)
-          );
-          setTraineeApps(trainees);
-        }
+        [where('status', '==', 'training_accepted')],
+        setTraineeApps
       );
     }
-  }, [profile?.tenantId]);
+    return firestoreService.subscribeToCollection<HiringApplication>(
+      'hiring_applications',
+      profile.tenantId,
+      (data) => setTraineeApps(data.filter(item => ['recommended_training', 'training_accepted'].includes(item.status)))
+    );
+  }, [profile?.tenantId, supervisorOnly]);
 
   // Split into Candidates awaiting admission & active trainees
   const recommendedMatches = traineeApps.filter(app => 
@@ -58,6 +60,7 @@ export const TraineesManager: React.FC = () => {
   );
 
   const handleAcceptTraining = async (appId: string) => {
+    if (supervisorOnly) return;
     try {
       await firestoreService.updateDocument('hiring_applications', appId, {
         status: 'training_accepted',
@@ -84,24 +87,62 @@ export const TraineesManager: React.FC = () => {
   };
 
   const handleSaveEvaluations = async () => {
-    if (!selectedTrainee) return;
+    if (!selectedTrainee || !profile) return;
+
+    const scoreInputs = [w4Appraisal, w4Theory, w8Appraisal, w8Theory, w12Appraisal, w12Theory].filter(Boolean);
+    if (scoreInputs.some(value => { const score = Number(value); return !Number.isFinite(score) || score < 0 || score > 100; })) {
+      toast.error('Assessment marks must be between 0 and 100.');
+      return;
+    }
 
     try {
-      const updates: Partial<HiringApplication> = {
-        week4_appraisal_score: w4Appraisal ? parseFloat(w4Appraisal) : null,
-        week4_theory_score: w4Theory ? parseFloat(w4Theory) : null,
-        
-        week8_appraisal_score: w8Appraisal ? parseFloat(w8Appraisal) : null,
-        week8_theory_score: w8Theory ? parseFloat(w8Theory) : null,
-        
-        week12_appraisal_score: w12Appraisal ? parseFloat(w12Appraisal) : null,
-        week12_theory_score: w12Theory ? parseFloat(w12Theory) : null,
-      };
+      const now = new Date().toISOString();
+      const actorId = profile.uid || profile.id;
+      const actorName = profile.full_name || profile.displayName || profile.email || 'Supervisor';
+      const actorRole = String(profile.role || 'Staff');
+      const updates: Partial<HiringApplication> = {};
 
-      // Set timestamp for entries logged
-      if (w4Appraisal || w4Theory) updates.week4_assessment_date = new Date().toISOString().split('T')[0];
-      if (w8Appraisal || w8Theory) updates.week8_assessment_date = new Date().toISOString().split('T')[0];
-      if (w12Appraisal || w12Theory) updates.week12_assessment_date = new Date().toISOString().split('T')[0];
+      const canWrite = (current: number | null | undefined) => !supervisorOnly || current === null || current === undefined;
+      if (w4Appraisal && canWrite(selectedTrainee.week4_appraisal_score)) updates.week4_appraisal_score = parseFloat(w4Appraisal);
+      if (w4Theory && canWrite(selectedTrainee.week4_theory_score)) updates.week4_theory_score = parseFloat(w4Theory);
+      if (w8Appraisal && canWrite(selectedTrainee.week8_appraisal_score)) updates.week8_appraisal_score = parseFloat(w8Appraisal);
+      if (w8Theory && canWrite(selectedTrainee.week8_theory_score)) updates.week8_theory_score = parseFloat(w8Theory);
+      if (w12Appraisal && canWrite(selectedTrainee.week12_appraisal_score)) updates.week12_appraisal_score = parseFloat(w12Appraisal);
+      if (w12Theory && canWrite(selectedTrainee.week12_theory_score)) updates.week12_theory_score = parseFloat(w12Theory);
+
+      const touchedWeek4 = ['week4_appraisal_score', 'week4_theory_score'].some(field => field in updates);
+      const touchedWeek8 = ['week8_appraisal_score', 'week8_theory_score'].some(field => field in updates);
+      const touchedWeek12 = ['week12_appraisal_score', 'week12_theory_score'].some(field => field in updates);
+      if (!touchedWeek4 && !touchedWeek8 && !touchedWeek12) {
+        toast.warning(supervisorOnly ? 'No new assessment marks are available to submit. Existing supervisor marks are locked.' : 'Enter at least one assessment mark.');
+        return;
+      }
+
+      if (touchedWeek4) {
+        updates.week4_assessment_date = now.split('T')[0];
+        updates.week4_assessed_by_user_id = actorId;
+        updates.week4_assessed_by_name = actorName;
+        updates.week4_assessed_by_role = actorRole;
+        updates.week4_assessed_at = now;
+      }
+      if (touchedWeek8) {
+        updates.week8_assessment_date = now.split('T')[0];
+        updates.week8_assessed_by_user_id = actorId;
+        updates.week8_assessed_by_name = actorName;
+        updates.week8_assessed_by_role = actorRole;
+        updates.week8_assessed_at = now;
+      }
+      if (touchedWeek12) {
+        updates.week12_assessment_date = now.split('T')[0];
+        updates.week12_assessed_by_user_id = actorId;
+        updates.week12_assessed_by_name = actorName;
+        updates.week12_assessed_by_role = actorRole;
+        updates.week12_assessed_at = now;
+      }
+      updates.training_assessment_last_by_user_id = actorId;
+      updates.training_assessment_last_by_name = actorName;
+      updates.training_assessment_last_by_role = actorRole;
+      updates.training_assessment_last_at = now;
 
       await firestoreService.updateDocument('hiring_applications', selectedTrainee.id, updates);
       toast.success(`Evaluations updated successfully for ${selectedTrainee.full_name}.`);
@@ -113,7 +154,7 @@ export const TraineesManager: React.FC = () => {
   };
 
   const handleHireGraduate = async (trainee: HiringApplication) => {
-    if (!profile?.tenantId) return;
+    if (!profile?.tenantId || supervisorOnly) return;
 
     // Strict validation check: Must have Week 4, Week 8, and Week 12 appraisals and theory scores added
     const scoresComplete = 
@@ -179,6 +220,7 @@ export const TraineesManager: React.FC = () => {
   };
 
   const handleRejectGraduate = async (appId: string) => {
+    if (supervisorOnly) return;
     if (!window.confirm('Are you sure you want to reject this trainee from graduating?')) return;
 
     try {
@@ -211,7 +253,7 @@ export const TraineesManager: React.FC = () => {
       </div>
 
       {/* Recommended for Training Queue */}
-      <div className="space-y-4">
+      {!supervisorOnly && <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">Awaiting Admissions Admission</h3>
@@ -261,7 +303,7 @@ export const TraineesManager: React.FC = () => {
             </table>
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Active Trainee Evaluations Block */}
       <div className="space-y-4">
@@ -354,10 +396,10 @@ export const TraineesManager: React.FC = () => {
                             onClick={() => handleOpenEvaluation(t)}
                             className="px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg border border-slate-200 hover:border-indigo-100 transition-all"
                           >
-                            Update Appraisal
+                            {supervisorOnly ? 'Record Assessment Marks' : 'Update Appraisal'}
                           </button>
 
-                          {scoresComplete ? (
+                          {!supervisorOnly && (scoresComplete ? (
                             <>
                               <button 
                                 onClick={() => handleHireGraduate(t)}
@@ -382,7 +424,7 @@ export const TraineesManager: React.FC = () => {
                             >
                               Terminate
                             </button>
-                          )}
+                          ))}
                         </div>
                       </td>
                     </tr>
@@ -430,6 +472,7 @@ export const TraineesManager: React.FC = () => {
                         min={0} max={100}
                         placeholder="Rating e.g. 80"
                         className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800"
+                        disabled={supervisorOnly && selectedTrainee.week4_appraisal_score !== null && selectedTrainee.week4_appraisal_score !== undefined}
                         value={w4Appraisal}
                         onChange={(e) => setW4Appraisal(e.target.value)}
                       />
@@ -441,6 +484,7 @@ export const TraineesManager: React.FC = () => {
                         min={0} max={100}
                         placeholder="Exam e.g. 78"
                         className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800"
+                        disabled={supervisorOnly && selectedTrainee.week4_theory_score !== null && selectedTrainee.week4_theory_score !== undefined}
                         value={w4Theory}
                         onChange={(e) => setW4Theory(e.target.value)}
                       />
@@ -459,6 +503,7 @@ export const TraineesManager: React.FC = () => {
                         min={0} max={100}
                         placeholder="Rating e.g. 85"
                         className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800"
+                        disabled={supervisorOnly && selectedTrainee.week8_appraisal_score !== null && selectedTrainee.week8_appraisal_score !== undefined}
                         value={w8Appraisal}
                         onChange={(e) => setW8Appraisal(e.target.value)}
                       />
@@ -470,6 +515,7 @@ export const TraineesManager: React.FC = () => {
                         min={0} max={100}
                         placeholder="Exam e.g. 81"
                         className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800"
+                        disabled={supervisorOnly && selectedTrainee.week8_theory_score !== null && selectedTrainee.week8_theory_score !== undefined}
                         value={w8Theory}
                         onChange={(e) => setW8Theory(e.target.value)}
                       />
@@ -488,6 +534,7 @@ export const TraineesManager: React.FC = () => {
                         min={0} max={100}
                         placeholder="Rating e.g. 90"
                         className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800"
+                        disabled={supervisorOnly && selectedTrainee.week12_appraisal_score !== null && selectedTrainee.week12_appraisal_score !== undefined}
                         value={w12Appraisal}
                         onChange={(e) => setW12Appraisal(e.target.value)}
                       />
@@ -499,6 +546,7 @@ export const TraineesManager: React.FC = () => {
                         min={0} max={100}
                         placeholder="Exam e.g. 88"
                         className="w-full px-4 py-2 bg-white border border-slate-100 rounded-xl text-xs font-bold text-slate-800"
+                        disabled={supervisorOnly && selectedTrainee.week12_theory_score !== null && selectedTrainee.week12_theory_score !== undefined}
                         value={w12Theory}
                         onChange={(e) => setW12Theory(e.target.value)}
                       />

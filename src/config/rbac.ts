@@ -120,7 +120,7 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
     label: 'QA Head',
     description: 'Full QA and compliance authority with cross-module report visibility for traceability and compliance oversight.',
     permissions: makePermissions({
-      sales: view(), inventory: view(), clients: view(), stock: view(), procurement: view(), qa: all(), hr: view(),
+      sales: view(), inventory: view(), clients: view(), stock: view(), procurement: view(), qa: all(), hr: operate(),
       predictive: operate(), analytics: view(), marketing: view(),
     }),
   },
@@ -136,7 +136,7 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
     description: 'Leads branch and management finance, financial approvals and cross-module financial oversight.',
     permissions: makePermissions({
       sales: view(), inventory: view(), clients: view(), stock: view(), procurement: operate(), logistics: view(), finance: all(),
-      predictive: operate(), analytics: view(), marketing: view(),
+      qa: operate(), hr: operate(), predictive: operate(), analytics: view(), marketing: view(),
     }),
   },
   {
@@ -149,7 +149,7 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
     name: 'Procurement Head',
     label: 'Procurement Head',
     description: 'Leads procurement, stock movement, inventory and supplier operations with logistics visibility and procurement analytics.',
-    permissions: makePermissions({ inventory: operate(), clients: operate(), stock: operate(), procurement: all(), logistics: view(), predictive: operate(), analytics: view() }),
+    permissions: makePermissions({ inventory: operate(), clients: operate(), stock: operate(), procurement: all(), logistics: view(), qa: operate(), hr: operate(), predictive: operate(), analytics: view() }),
   },
   {
     name: 'Procurement Officer',
@@ -161,7 +161,7 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
     name: 'Logistics Head',
     label: 'Logistics Head',
     description: 'Leads fleet and logistics operations with narrow CRM delivery-detail and procurement-dispatch visibility.',
-    permissions: makePermissions({ clients: view(), procurement: view(), logistics: all(), analytics: view() }),
+    permissions: makePermissions({ clients: view(), procurement: view(), logistics: all(), qa: operate(), hr: operate(), analytics: view() }),
   },
   {
     name: 'Transport & Logistics Personnel',
@@ -173,7 +173,7 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
     name: 'Marketing Head',
     label: 'Marketing Head',
     description: 'Leads marketing programmes, marketing-facing CRM functions and marketing analytics.',
-    permissions: makePermissions({ clients: operate(), analytics: view(), marketing: all() }),
+    permissions: makePermissions({ clients: operate(), qa: operate(), hr: operate(), analytics: view(), marketing: all() }),
   },
   {
     name: 'Marketing Personnel',
@@ -187,7 +187,7 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
     description: 'Full Settings and IT administration plus diagnostic visibility across business modules. No permanent business transaction authority is granted for testing.',
     permissions: makePermissions({
       sales: view(), inventory: view(), clients: view(), stock: view(), procurement: view(), logistics: view(), finance: view(),
-      qa: view(), hr: view(), predictive: view(), analytics: view(), marketing: view(), settings: all(),
+      qa: operate(), hr: operate(), predictive: view(), analytics: view(), marketing: view(), settings: all(),
     }),
   },
   {
@@ -259,6 +259,25 @@ export const isITRoleName = (roleName?: string | null): boolean => {
   if (!roleName) return false;
   const normalized = roleName.trim().toLowerCase();
   return ['it head', 'it support staff', 'it support personnel', 'it staff'].includes(normalized);
+};
+
+
+export const PEOPLE_SUPERVISOR_SYSTEM_ROLES = [
+  'Branch Manager',
+  'Finance Head',
+  'Procurement Head',
+  'Logistics Head',
+  'Transport & Logistics Head',
+  'Marketing Head',
+  'QA Head',
+  'HR Head',
+  'IT Head',
+] as const;
+
+export const isPeopleSupervisorRoleName = (roleName?: string | null): boolean => {
+  if (!roleName) return false;
+  const normalized = roleName.trim().toLowerCase();
+  return PEOPLE_SUPERVISOR_SYSTEM_ROLES.some(role => role.toLowerCase() === normalized);
 };
 
 export const roleRealmId = (tenantId: string, roleName: string): string =>
