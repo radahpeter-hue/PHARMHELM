@@ -62,8 +62,16 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const Finance: React.FC = () => {
-  const { profile } = useAuth();
-  const [activeTab, setActiveTab] = useState<'branch' | 'management'>('branch');
+  const { profile, hasPermission } = useAuth();
+
+  const namedManagementFinance = hasAnyRole(profile, ['owner', 'CEO', 'CEO / MD', 'Finance Head', 'Finance Officer', 'Accountant']);
+  const namedBranchFinance = hasAnyRole(profile, ['owner', 'CEO', 'CEO / MD', 'admin', 'Finance Head', 'Branch Manager', 'cashier', 'Cashier', 'Accountant']);
+  const hasNamedFinanceAssignment = namedManagementFinance || namedBranchFinance;
+  const fallbackConfiguredFinance = !hasNamedFinanceAssignment && hasPermission('finance', 'view');
+  const canUseManagementFinance = namedManagementFinance || fallbackConfiguredFinance;
+  const canUseBranchFinance = namedBranchFinance || fallbackConfiguredFinance;
+
+  const [activeTab, setActiveTab] = useState<'branch' | 'management'>(() => canUseBranchFinance ? 'branch' : 'management');
   const [settings, setSettings] = useState<SystemSettings | null>(null);
 
   useEffect(() => {
@@ -74,7 +82,13 @@ const Finance: React.FC = () => {
     }
   }, [profile?.tenantId]);
 
-  const isManagement = hasAnyRole(profile, ['owner', 'CEO', 'CEO / MD', 'Finance Head', 'Finance Officer']);
+  useEffect(() => {
+    if (activeTab === 'branch' && !canUseBranchFinance && canUseManagementFinance) {
+      setActiveTab('management');
+    } else if (activeTab === 'management' && !canUseManagementFinance && canUseBranchFinance) {
+      setActiveTab('branch');
+    }
+  }, [activeTab, canUseBranchFinance, canUseManagementFinance]);
 
   return (
     <div className="space-y-6">
@@ -83,7 +97,7 @@ const Finance: React.FC = () => {
           <h1 className="text-3xl font-bold text-zinc-900">Financial Operations</h1>
           <p className="text-zinc-500">Manage branch reconciliations, expenses, and management-level oversight.</p>
         </div>
-        {isManagement && (
+        {canUseBranchFinance && canUseManagementFinance && (
           <div className="flex bg-zinc-100 p-1 rounded-xl border border-zinc-200">
             <button 
               onClick={() => setActiveTab('branch')}
@@ -108,7 +122,11 @@ const Finance: React.FC = () => {
       </div>
 
       <div className="mt-6">
-        {activeTab === 'branch' ? <BranchFinance /> : <ManagementFinance settings={settings} />}
+        {activeTab === 'branch' && canUseBranchFinance
+          ? <BranchFinance />
+          : canUseManagementFinance
+            ? <ManagementFinance settings={settings} />
+            : null}
       </div>
     </div>
   );

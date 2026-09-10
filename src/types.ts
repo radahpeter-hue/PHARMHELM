@@ -106,10 +106,13 @@ export interface Staff {
   username: string;
   full_name: string;
   displayName?: string;
+  fullName?: string;
   email: string;
   phone_number: string;
   role: UserRole;
   branch_id: string;
+  branch_name?: string;
+  department?: string;
   assigned_branches: string[];
   default_branch_id: string | null;
   status: 'active' | 'inactive' | 'suspended' | 'pending_it';
@@ -1106,6 +1109,16 @@ export interface Appraisal {
   improvements?: string | string[];
   goals?: string | string[];
   appraiserName?: string;
+  appraisedByUserId?: string;
+  appraisedByName?: string;
+  appraisedByRole?: string;
+  appraisedByBranchId?: string;
+  appraisedByDepartment?: string;
+  appraisedAt?: string;
+  lastUpdatedByUserId?: string;
+  lastUpdatedByName?: string;
+  lastUpdatedByRole?: string;
+  lastUpdatedAt?: string;
   status?: string;
   period?: string; // 'Q1', 'Q2', 'Q3', 'Q4', 'Annual'
   year?: string; // e.g., '2026'
@@ -1205,9 +1218,22 @@ export interface AttendanceRecord {
 
 export interface DisciplinaryIncident {
   id: string;
+  tenantId?: string;
   staffId: string;
-  category: string;
+  category?: string;
   date: string;
+  incident_type?: string;
+  description?: string;
+  action_taken?: string;
+  status?: 'open' | 'resolved' | 'appealed' | string;
+  severity?: 'low' | 'medium' | 'high' | 'critical' | string;
+  reportedByUserId?: string;
+  reportedByName?: string;
+  reportedByRole?: string;
+  reportedAt?: string;
+  reportedFromBranchId?: string;
+  reportedFromDepartment?: string;
+  followUpStatus?: string;
 }
 
 export interface HiringApplication {
@@ -1231,19 +1257,40 @@ export interface HiringApplication {
   oral_date?: string | null;
   practical_score?: number | null;
   practical_date?: string | null;
+  practical_assessed_by_user_id?: string;
+  practical_assessed_by_name?: string;
+  practical_assessed_by_role?: string;
+  practical_assessed_at?: string;
+  practical_assessed_branch_id?: string;
 
   // Trainee appraisals & assessments
   week4_appraisal_score?: number | null;
   week4_theory_score?: number | null;
   week4_assessment_date?: string | null;
+  week4_assessed_by_user_id?: string;
+  week4_assessed_by_name?: string;
+  week4_assessed_by_role?: string;
+  week4_assessed_at?: string;
   
   week8_appraisal_score?: number | null;
   week8_theory_score?: number | null;
   week8_assessment_date?: string | null;
+  week8_assessed_by_user_id?: string;
+  week8_assessed_by_name?: string;
+  week8_assessed_by_role?: string;
+  week8_assessed_at?: string;
   
   week12_appraisal_score?: number | null;
   week12_theory_score?: number | null;
   week12_assessment_date?: string | null;
+  week12_assessed_by_user_id?: string;
+  week12_assessed_by_name?: string;
+  week12_assessed_by_role?: string;
+  week12_assessed_at?: string;
+  training_assessment_last_by_user_id?: string;
+  training_assessment_last_by_name?: string;
+  training_assessment_last_by_role?: string;
+  training_assessment_last_at?: string;
   
   training_recommended_date?: string | null;
   training_accepted_date?: string | null;

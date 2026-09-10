@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   ShieldCheck, 
   Thermometer, 
@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../../contexts/AuthContext';
+import { isPeopleSupervisorRoleName } from '../../config/rbac';
 import { TemperatureLogs } from './TemperatureLogs';
 import { ControlledDrugs } from './ControlledDrugs';
 import { ExpiryLogs } from './ExpiryLogs';
@@ -49,16 +50,15 @@ export const QAModule = () => {
     activeBranch?.name?.toLowerCase().includes('hq') ||
     profile?.branch_name?.toLowerCase().includes('hq');
 
-  const userRole = (profile?.role || '').toLowerCase();
-  const isAuthorizedRole = 
-    userRole === 'owner' || 
-    userRole === 'admin' || 
-    userRole === 'ceo' ||
-    userRole.includes('qa') ||
-    userRole.includes('manager') ||
-    userRole.includes('head');
-
-  const canAccessHQOps = isHQBranch || isAuthorizedRole;
+  const normalizedRoles = [profile?.role || '', ...(profile?.secondaryRoles || [])].map(role => role.trim().toLowerCase());
+  const hasRole = (role: string) => normalizedRoles.includes(role.toLowerCase());
+  const isExecutive = ['owner', 'ceo', 'ceo / md', 'admin'].some(hasRole);
+  const isCoreQA = normalizedRoles.some(role => role === 'qa head' || role === 'qa officer' || role === 'qa manager');
+  const isHRHead = hasRole('hr head');
+  const isBranchManager = hasRole('branch manager');
+  const isPeopleSupervisor = normalizedRoles.some(role => isPeopleSupervisorRoleName(role));
+  const crossFunctionalAppraisalOnly = isPeopleSupervisor && !isExecutive && !isCoreQA && !isHRHead && !isBranchManager;
+  const canAccessHQOps = isHQBranch || isExecutive || isCoreQA || isHRHead || isBranchManager || crossFunctionalAppraisalOnly;
 
   const allTabs = [
     { id: 'temperature', label: 'Temp Logs', icon: Thermometer, color: 'text-blue-600', bg: 'bg-blue-50', isHQOp: false },
@@ -71,10 +71,22 @@ export const QAModule = () => {
     { id: 'appraisals', label: 'Appraisals', icon: UserCheck, color: 'text-emerald-600', bg: 'bg-emerald-50', isHQOp: true },
   ];
 
-  // Filters out HQ operation tabs if the logged-in user is not HQ or in specific QA personnel/manager roles
-  const tabs = allTabs.filter(t => !t.isHQOp || canAccessHQOps);
+  const tabs = crossFunctionalAppraisalOnly
+    ? allTabs.filter(tab => tab.id === 'appraisals')
+    : isHRHead && !isExecutive && !isCoreQA
+      ? allTabs.filter(tab => ['licenses', 'cme', 'appraisals'].includes(tab.id))
+      : allTabs.filter(tab => !tab.isHQOp || canAccessHQOps);
+
+  useEffect(() => {
+    if (!tabs.some(tab => tab.id === activeTab) && tabs.length > 0) {
+      setActiveTab(tabs[0].id as QATab);
+    }
+  }, [activeTab, crossFunctionalAppraisalOnly, isHRHead, canAccessHQOps]);
 
   const renderContent = () => {
+    // Never render a sub-function that is outside the role-scoped tab set, even for one frame.
+    if (!tabs.some(tab => tab.id === activeTab)) return null;
+
     // If somehow a non-authorized user navigates to an HQ tab, block and show secure card
     if ((activeTab === 'licenses' || activeTab === 'cme' || activeTab === 'appraisals') && !canAccessHQOps) {
       return (
@@ -107,7 +119,7 @@ export const QAModule = () => {
       case 'recalls': return <Recalls />;
       case 'licenses': return <Licenses />;
       case 'cme': return <CME />;
-      case 'appraisals': return <Appraisals />;
+      case 'appraisals': return <Appraisals supervisorOnly={crossFunctionalAppraisalOnly || isBranchManager} />;
       default: return <TemperatureLogs />;
     }
   };
