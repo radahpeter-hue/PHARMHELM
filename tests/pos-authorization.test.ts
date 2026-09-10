@@ -2,11 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canOperatePos, formatPosCheckoutError } from '../src/utils/posAuthorization';
 
-test('functional sales permission authorizes checkout regardless of job-title spelling', () => {
+test('functional sales permission authorizes checkout for non-cashier operators', () => {
   assert.equal(canOperatePos({ role: 'Dispenser' }, true), true);
-  assert.equal(canOperatePos({ role: 'cashier' }, true), true);
+  assert.equal(canOperatePos({ role: 'Pharmacist' }, true), true);
+  assert.equal(canOperatePos({ role: 'Branch Manager' }, true), true);
   assert.equal(canOperatePos({ role: 'Custom POS Operator' }, true), true);
   assert.equal(canOperatePos({ role: 'staff', secondaryRoles: ['Branch Manager'] }, true), true);
+});
+
+test('cashier role is explicitly excluded from completing sales even if sales operate is present', () => {
+  assert.equal(canOperatePos({ role: 'cashier' }, true), false);
+  assert.equal(canOperatePos({ role: 'Cashier' }, true), false);
+  assert.equal(canOperatePos({ role: 'CASHIER', secondaryRoles: ['Branch Manager'] }, true), false);
 });
 
 test('view-only or no-access users cannot process a sale', () => {
