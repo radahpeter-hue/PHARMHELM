@@ -92,6 +92,81 @@ service cloud.firestore {
       );
     }
 
+
+    function isDepartmentHead() {
+      return isAuthenticated() && (
+        hasRole('Finance Head') ||
+        hasRole('Procurement Head') ||
+        hasRole('Logistics Head') || hasRole('Transport & Logistics Head') ||
+        hasRole('Marketing Head') ||
+        hasRole('QA Head') ||
+        hasRole('HR Head') ||
+        hasRole('IT Head')
+      );
+    }
+
+    function isPeopleSupervisor() {
+      return isAuthenticated() && (isBranchManager() || isDepartmentHead() || isAdmin());
+    }
+
+    function isAssignedToBranch(branchId) {
+      return isAuthenticated() && (
+        (("assigned_branches" in getUserData()) && getUserData().assigned_branches.hasAny([branchId])) ||
+        (("branch_id" in getUserData()) && getUserData().branch_id == branchId) ||
+        (("default_branch_id" in getUserData()) && getUserData().default_branch_id == branchId) ||
+        isAdmin()
+      );
+    }
+
+    function isSupervisorPracticalAssessmentUpdate() {
+      return isPeopleSupervisor()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && resource.data.status == 'practical_scheduled'
+        && request.resource.data.status == 'practical_completed'
+        && request.resource.data.practical_score is number
+        && request.resource.data.practical_score >= 0
+        && request.resource.data.practical_score <= 100
+        && request.resource.data.practical_assessed_by_user_id == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'practical_score', 'status',
+          'practical_assessed_by_user_id', 'practical_assessed_by_name', 'practical_assessed_by_role',
+          'practical_assessed_at', 'practical_assessed_branch_id', 'updatedAt'
+        ]);
+    }
+
+    function isSupervisorTraineeAssessmentUpdate() {
+      return isPeopleSupervisor()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && resource.data.status == 'training_accepted'
+        && request.resource.data.status == 'training_accepted'
+        && request.resource.data.training_assessment_last_by_user_id == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'week4_appraisal_score', 'week4_theory_score', 'week4_assessment_date',
+          'week4_assessed_by_user_id', 'week4_assessed_by_name', 'week4_assessed_by_role', 'week4_assessed_at',
+          'week8_appraisal_score', 'week8_theory_score', 'week8_assessment_date',
+          'week8_assessed_by_user_id', 'week8_assessed_by_name', 'week8_assessed_by_role', 'week8_assessed_at',
+          'week12_appraisal_score', 'week12_theory_score', 'week12_assessment_date',
+          'week12_assessed_by_user_id', 'week12_assessed_by_name', 'week12_assessed_by_role', 'week12_assessed_at',
+          'training_assessment_last_by_user_id', 'training_assessment_last_by_name',
+          'training_assessment_last_by_role', 'training_assessment_last_at', 'updatedAt'
+        ])
+        && request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'week4_appraisal_score', 'week4_theory_score',
+          'week8_appraisal_score', 'week8_theory_score',
+          'week12_appraisal_score', 'week12_theory_score'
+        ])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_appraisal_score']) || (request.resource.data.week4_appraisal_score is number && request.resource.data.week4_appraisal_score >= 0 && request.resource.data.week4_appraisal_score <= 100))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_theory_score']) || (request.resource.data.week4_theory_score is number && request.resource.data.week4_theory_score >= 0 && request.resource.data.week4_theory_score <= 100))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_appraisal_score']) || (request.resource.data.week8_appraisal_score is number && request.resource.data.week8_appraisal_score >= 0 && request.resource.data.week8_appraisal_score <= 100))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_theory_score']) || (request.resource.data.week8_theory_score is number && request.resource.data.week8_theory_score >= 0 && request.resource.data.week8_theory_score <= 100))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_appraisal_score']) || (request.resource.data.week12_appraisal_score is number && request.resource.data.week12_appraisal_score >= 0 && request.resource.data.week12_appraisal_score <= 100))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_theory_score']) || (request.resource.data.week12_theory_score is number && request.resource.data.week12_theory_score >= 0 && request.resource.data.week12_theory_score <= 100));
+    }
+
     function isQA() {
       return isAuthenticated() && (hasRole('QA Head') || hasRole('QA Officer') || hasRole('QA Manager') || hasRole('admin') || hasRole('Admin') || hasCustomModuleFunctional('qa') || isAdmin());
     }
@@ -280,7 +355,12 @@ service cloud.firestore {
     }
 
     match /hiring_applications/{applicationId} {
-      allow read, write: if isHR();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (
+        isHR() ||
+        (isPeopleSupervisor() && resource.data.status in ['practical_scheduled', 'practical_completed', 'training_accepted'])
+      );
+      allow create, delete: if isHR();
+      allow update: if isHR() || isSupervisorPracticalAssessmentUpdate() || isSupervisorTraineeAssessmentUpdate();
     }
 
     match /theory_tests/{testId} {
@@ -292,8 +372,10 @@ service cloud.firestore {
     }
 
     match /practical_assessments/{assessmentId} {
-      allow read: if isHR() || isOwner(resource.data.supervisorId);
-      allow write: if isHR() || isOwner(request.resource.data.supervisorId);
+      allow read: if isHR() || (isPeopleSupervisor() && isTenantMember(resource.data.tenantId));
+      allow create: if isHR() || (isPeopleSupervisor() && isTenantMember(request.resource.data.tenantId) && request.resource.data.supervisorId == request.auth.uid);
+      allow update: if isHR() || (isPeopleSupervisor() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && resource.data.supervisorId == request.auth.uid && request.resource.data.supervisorId == request.auth.uid);
+      allow delete: if isHR();
     }
 
     match /attendance_records/{recordId} {
@@ -302,9 +384,17 @@ service cloud.firestore {
     }
 
     match /disciplinary_incidents/{incidentId} {
-      allow read: if isAuthenticated() && (isHR() || isBranchManager() || isOwner(resource.data.staffId) || isTenantMember(resource.data.tenantId));
-      allow create: if isHR() || isBranchManager() || isQA() || isAdmin();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (
+        isHR() || isAdmin() || isOwner(resource.data.staffId) || resource.data.reportedByUserId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (
+        isHR() || isAdmin() ||
+        ((isPeopleSupervisor() || isQA())
+          && request.resource.data.reportedByUserId == request.auth.uid
+          && request.resource.data.status == 'open')
+      );
       allow update: if isHR() || isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /tenants/{tenantId} {
@@ -626,8 +716,31 @@ service cloud.firestore {
     }
 
     match /appraisals/{appraisalId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isQA() || isHR() || isTenantMember(resource.data.tenantId));
-      allow write: if isQA() || isHR() || isAdmin();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (
+        isOwner(resource.data.staffId) || isQA() || isHR() || isAdmin() ||
+        (isPeopleSupervisor() && isAssignedToBranch(resource.data.branchId))
+      );
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (
+        isQA() || isHR() || isAdmin() ||
+        (isPeopleSupervisor()
+          && isAssignedToBranch(request.resource.data.branchId)
+          && request.resource.data.staffId != request.auth.uid
+          && request.resource.data.appraisedByUserId == request.auth.uid)
+      );
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (
+        isQA() || isHR() || isAdmin() ||
+        (isPeopleSupervisor()
+          && resource.data.appraisedByUserId == request.auth.uid
+          && request.resource.data.appraisedByUserId == resource.data.appraisedByUserId
+          && request.resource.data.appraisedByName == resource.data.appraisedByName
+          && request.resource.data.appraisedByRole == resource.data.appraisedByRole
+          && request.resource.data.appraisedAt == resource.data.appraisedAt
+          && request.resource.data.staffId == resource.data.staffId
+          && request.resource.data.branchId == resource.data.branchId
+          && request.resource.data.staffId != request.auth.uid
+          && request.resource.data.lastUpdatedByUserId == request.auth.uid)
+      );
+      allow delete: if isQA() || isHR() || isAdmin();
     }
 
     match /products/{productId} {
@@ -841,10 +954,10 @@ service cloud.firestore {
 
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
-      allow read: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && isAdmin() && isTenantMember(resource.data.tenantId);
+      allow read: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAdmin() && isTenantMember(resource.data.tenantId);
     }
   }
 }
