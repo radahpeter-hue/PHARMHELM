@@ -1,0 +1,51 @@
+name: P0 Staff UID Authority Migration
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/migrate-staff-uid-authority.mjs'
+      - '.github/workflows/p0-staff-uid-authority-migration.yml'
+
+jobs:
+  migrate_staff_uid_authority:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Authenticate to Firebase
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Install migration runtime
+        run: npm install firebase-admin@^13 --no-save --ignore-scripts
+
+      - name: Dry-run UID authority migration
+        env:
+          FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+          FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+        run: node scripts/migrate-staff-uid-authority.mjs
+
+      - name: Apply UID authority migration
+        env:
+          FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+          FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+        run: node scripts/migrate-staff-uid-authority.mjs --apply
+
+      - name: Verify idempotency after migration
+        env:
+          FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+          FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+        run: node scripts/migrate-staff-uid-authority.mjs
