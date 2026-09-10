@@ -1,0 +1,55 @@
+name: Validate supervisor capability update
+
+on:
+  push:
+    branches:
+      - codex/supervisor-hr-appraisal-access-20260910
+    paths:
+      - .github/workflows/supervisor-capability-validate.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/supervisor-hr-appraisal-access-20260910
+          fetch-depth: 0
+
+      - name: Apply supervisor capability update
+        run: python scripts/apply-supervisor-capability-update.py
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript validation
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+
+      - name: Diff validation
+        run: git diff --check
+
+      - name: Commit validated changes
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No supervisor capability changes required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/config/rbac.ts src/types.ts src/pages/HRAdmin.tsx src/modules/hr/PerformanceDiscipline.tsx src/modules/hr/RecruitmentManager.tsx src/modules/hr/TraineesManager.tsx src/modules/qa/QAModule.tsx src/modules/qa/Appraisals.tsx firestore.rules
+          git commit -m "feat(rbac): add granular supervisor people-management capabilities"
+          git push origin HEAD:codex/supervisor-hr-appraisal-access-20260910
