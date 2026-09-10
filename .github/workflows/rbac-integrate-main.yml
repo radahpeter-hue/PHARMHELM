@@ -1,0 +1,106 @@
+name: Integrate latest main into RBAC branch
+
+on:
+  push:
+    branches:
+      - codex/supervisor-hr-appraisal-access-20260910
+    paths:
+      - .github/workflows/rbac-integrate-main.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout RBAC branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/supervisor-hr-appraisal-access-20260910
+          fetch-depth: 0
+
+      - name: Merge latest main and resolve Firestore overlap
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          set +e
+          git merge --no-commit --no-ff origin/main
+          merge_status=$?
+          set -e
+          if [ "$merge_status" -ne 0 ]; then
+            conflicts=$(git diff --name-only --diff-filter=U)
+            if [ "$conflicts" != "firestore.rules" ]; then
+              echo "Unexpected merge conflicts: $conflicts"
+              exit 2
+            fi
+            git checkout --ours firestore.rules
+          fi
+
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('firestore.rules')
+          text = path.read_text()
+
+          old_sales = """    match /sales/{saleId} {
+                allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+          """.replace('        ', '', 1)
+          new_sales = """    match /sales/{saleId} {
+                allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+                allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+          """.replace('        ', '', 1)
+          if old_sales in text:
+              text = text.replace(old_sales, new_sales, 1)
+          elif new_sales not in text:
+              raise SystemExit('Could not preserve latest main sales get/list rule')
+
+          old_generic = """      allow read: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);"""
+          new_generic = """      allow get: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+                allow list: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);""".replace('        ', '', 1)
+          if old_generic in text:
+              text = text.replace(old_generic, new_generic, 1)
+          elif new_generic not in text:
+              raise SystemExit('Could not preserve latest main generic get/list rule with RBAC exclusions')
+
+          path.write_text(text)
+          PY
+
+          git add firestore.rules
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: RBAC regression tests
+        run: npm test
+
+      - name: TypeScript validation
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+
+      - name: Diff validation
+        run: git diff --check
+
+      - name: Remove temporary validation tooling
+        run: |
+          git rm -f .github/workflows/rbac-boundary-validate.yml || true
+          git rm -f .github/workflows/supervisor-final-review.yml || true
+          git rm -f scripts/apply-rbac-boundary-hardening.py || true
+          git rm -f scripts/finalize-supervisor-qa-boundary.py || true
+          git rm -f .github/workflows/rbac-integrate-main.yml || true
+
+      - name: Commit integrated validated branch
+        shell: bash
+        run: |
+          git add -A
+          git commit -m "merge: integrate latest main with validated RBAC boundaries"
+          git push origin HEAD:codex/supervisor-hr-appraisal-access-20260910
