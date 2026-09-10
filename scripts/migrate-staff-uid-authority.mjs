@@ -1,20 +1,17 @@
-import admin from 'firebase-admin';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
+import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 const APPLY = process.argv.includes('--apply');
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0911422817';
 const DATABASE_ID = process.env.FIRESTORE_DATABASE_ID || 'ai-studio-f7d8654b-e089-425a-a506-38159afe1e75';
 
-if (!admin.apps.length) {
-  admin.initializeApp({ projectId: PROJECT_ID });
-}
-
-const auth = admin.auth();
-const db = admin.firestore();
-if (DATABASE_ID && DATABASE_ID !== '(default)') {
-  db.settings({ databaseId: DATABASE_ID, ignoreUndefinedProperties: true });
-} else {
-  db.settings({ ignoreUndefinedProperties: true });
-}
+const app = getApps()[0] || initializeApp({ projectId: PROJECT_ID });
+const auth = getAuth(app);
+const db = DATABASE_ID && DATABASE_ID !== '(default)'
+  ? getFirestore(app, DATABASE_ID)
+  : getFirestore(app);
+db.settings({ ignoreUndefinedProperties: true });
 
 const normalizeEmail = value => String(value || '').trim().toLowerCase();
 const stable = value => JSON.stringify(value ?? null);
@@ -133,7 +130,7 @@ for (const [uid, candidates] of candidatesByUid.entries()) {
     uid,
     authEmail: normalizeEmail(source.authUser.email || source.data.authEmail || source.data.email),
     legacyStaffId: source.id,
-    uidAuthorityMigratedAt: admin.firestore.FieldValue.serverTimestamp(),
+    uidAuthorityMigratedAt: FieldValue.serverTimestamp(),
     uidAuthorityMigrationVersion: 1
   };
 
@@ -149,7 +146,7 @@ for (const [uid, candidates] of candidatesByUid.entries()) {
     batch.set(candidate.ref, {
       legacyStaffId: candidate.id,
       uidMigratedTo: uid,
-      uidMigratedAt: admin.firestore.FieldValue.serverTimestamp(),
+      uidMigratedAt: FieldValue.serverTimestamp(),
       uidAuthorityMigrationVersion: 1
     }, { merge: true });
   }
