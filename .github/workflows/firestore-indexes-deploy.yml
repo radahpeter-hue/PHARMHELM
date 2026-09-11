@@ -18,7 +18,7 @@ jobs:
       id-token: write
     env:
       FIREBASE_PROJECT_ID: gen-lang-client-0911422817
-      FIRESTORE_DATABASE_ID: "(default)"
+      FIRESTORE_DATABASE_ID: "ai-studio-f7d8654b-e089-425a-a506-38159afe1e75"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
