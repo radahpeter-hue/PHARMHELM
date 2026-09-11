@@ -3,12 +3,14 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 const APPLY = process.argv.includes('--apply');
 const tenantArgIndex = process.argv.indexOf('--tenant');
-const TENANT_ID = tenantArgIndex >= 0 ? String(process.argv[tenantArgIndex + 1] || '').trim() : '';
+const selectorArgIndex = process.argv.indexOf('--tenant-selector');
+const TENANT_ID_ARG = tenantArgIndex >= 0 ? String(process.argv[tenantArgIndex + 1] || '').trim() : '';
+const TENANT_SELECTOR = selectorArgIndex >= 0 ? String(process.argv[selectorArgIndex + 1] || '').trim() : '';
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0911422817';
 const DATABASE_ID = process.env.FIRESTORE_DATABASE_ID || 'ai-studio-f7d8654b-e089-425a-a506-38159afe1e75';
 
-if (!TENANT_ID) {
-  console.error('Usage: node scripts/reconcile-product-stock-aggregates.mjs --tenant <tenantId> [--apply]');
+if (!TENANT_ID_ARG && !TENANT_SELECTOR) {
+  console.error('Usage: node scripts/reconcile-product-stock-aggregates.mjs (--tenant <tenantId> | --tenant-selector <name|slug|acronym>) [--apply]');
   process.exit(2);
 }
 
@@ -17,6 +19,48 @@ const db = DATABASE_ID && DATABASE_ID !== '(default)'
   ? getFirestore(app, DATABASE_ID)
   : getFirestore(app);
 db.settings({ ignoreUndefinedProperties: true });
+
+const normalize = value => String(value || '').trim().toLowerCase();
+
+async function resolveTenantId() {
+  if (TENANT_ID_ARG) {
+    const direct = await db.collection('tenants').doc(TENANT_ID_ARG).get();
+    if (!direct.exists) throw new Error(`Tenant document ${TENANT_ID_ARG} was not found.`);
+    return { id: direct.id, data: direct.data(), matchedBy: 'document-id' };
+  }
+
+  const needle = normalize(TENANT_SELECTOR);
+  const tenantsSnap = await db.collection('tenants').get();
+  const matches = tenantsSnap.docs.filter(doc => {
+    const data = doc.data();
+    const candidates = [
+      doc.id,
+      data.name,
+      data.pharmacyName,
+      data.slug,
+      data.subdomain,
+      data.subdomain_slug,
+      data.acronym,
+      data.tenantAcronym
+    ].map(normalize).filter(Boolean);
+    return candidates.includes(needle);
+  });
+
+  if (matches.length === 0) {
+    throw new Error(`No tenant matched selector "${TENANT_SELECTOR}". Use the visible tenant name, subdomain slug or acronym from TMC.`);
+  }
+  if (matches.length > 1) {
+    throw new Error(`Tenant selector "${TENANT_SELECTOR}" matched multiple tenant records: ${matches.map(doc => doc.id).join(', ')}.`);
+  }
+
+  const match = matches[0];
+  return { id: match.id, data: match.data(), matchedBy: 'visible-selector' };
+}
+
+const resolvedTenant = await resolveTenantId();
+const TENANT_ID = resolvedTenant.id;
+const tenantName = resolvedTenant.data?.name || resolvedTenant.data?.pharmacyName || '';
+const tenantSlug = resolvedTenant.data?.slug || resolvedTenant.data?.subdomain || resolvedTenant.data?.subdomain_slug || '';
 
 const stats = {
   products: 0,
@@ -28,7 +72,8 @@ const stats = {
   orphanBatchProducts: 0
 };
 
-console.log(`[stock-reconcile] mode=${APPLY ? 'APPLY' : 'DRY_RUN'} project=${PROJECT_ID} database=${DATABASE_ID} tenant=${TENANT_ID}`);
+console.log(`[stock-reconcile] mode=${APPLY ? 'APPLY' : 'DRY_RUN'} project=${PROJECT_ID} database=${DATABASE_ID}`);
+console.log(`[tenant-resolved] selector=${TENANT_SELECTOR || TENANT_ID_ARG} id=${TENANT_ID} name=${tenantName} slug=${tenantSlug} matchedBy=${resolvedTenant.matchedBy}`);
 
 const [productsSnap, batchesSnap] = await Promise.all([
   db.collection('products').where('tenantId', '==', TENANT_ID).get(),
@@ -78,6 +123,10 @@ for (const [productId, product] of products.entries()) {
 if (!APPLY) {
   stats.wouldRepair = repairs.length;
 } else {
+  if (stats.invalidBatchQuantities > 0 || stats.orphanBatchProducts > 0) {
+    throw new Error('Apply blocked because invalid/orphan batch anomalies exist. Resolve them before aggregate repair.');
+  }
+
   const chunkSize = 350;
   for (let i = 0; i < repairs.length; i += chunkSize) {
     const chunk = repairs.slice(i, i + chunkSize);
