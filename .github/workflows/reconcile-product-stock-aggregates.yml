@@ -31,8 +31,11 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
+      - name: Install app dependencies
         run: npm ci
+
+      - name: Install reconciliation runtime dependency
+        run: npm install --no-save firebase-admin
 
       - name: Authenticate Google service account
         uses: google-github-actions/auth@v2
