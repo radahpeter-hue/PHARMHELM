@@ -3,8 +3,8 @@ name: Reconcile Product Stock Aggregates
 on:
   workflow_dispatch:
     inputs:
-      tenant_id:
-        description: 'Tenant ID to audit/reconcile'
+      tenant_selector:
+        description: 'Tenant name, subdomain slug or acronym, e.g. mp, MP, or MARTIN PHARMA'
         required: true
         type: string
       apply:
@@ -43,7 +43,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          args=(--tenant '${{ inputs.tenant_id }}')
+          args=(--tenant-selector '${{ inputs.tenant_selector }}')
           if [ '${{ inputs.apply }}' = 'true' ]; then
             args+=(--apply)
           fi
