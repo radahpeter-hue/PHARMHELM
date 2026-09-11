@@ -21,16 +21,21 @@ export const canOperatePos = (
 export const formatPosCheckoutError = (error: unknown) => {
   const rawMessage = error instanceof Error ? error.message : String(error || '');
   let message = rawMessage;
+  let operationPath = '';
 
   try {
     const parsed = JSON.parse(rawMessage);
     message = typeof parsed?.error === 'string' ? parsed.error : rawMessage;
+    operationPath = typeof parsed?.path === 'string' ? parsed.path : '';
   } catch {
     // Non-JSON application errors are already safe to classify below.
   }
 
   if (/missing or insufficient permissions|permission-denied/i.test(message)) {
-    return 'The sale was blocked by a transaction permission check. Your POS functional access may be valid, but one of the sale or stock writes was rejected. No stock was deducted.';
+    if (operationPath === 'sales/product_batches/products') {
+      return 'Atomic checkout reached Firestore but the live rules rejected one of the sale, batch-stock, or product-stock writes. No stock was deducted. The app-side POS permission check already passed, so verify the active ruleset on the named production database and the authoritative staff UID record.';
+    }
+    return `The sale was blocked by a Firestore permission check${operationPath ? ` during ${operationPath}` : ''}. No stock was deducted.`;
   }
 
   if (/^(Stock record is missing|Batch .* no longer exists|Product .* no longer exists|Insufficient stock)/i.test(message)) {
