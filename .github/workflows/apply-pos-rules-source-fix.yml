@@ -21,46 +21,13 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Patch POS operator rule and remove one-off workflow
+      - name: Remove Cashier from backend POS operator rule
         shell: bash
         run: |
           set -euo pipefail
-          python3 <<'PY'
-          from pathlib import Path
-
-          rules_path = Path('firestore.rules')
-          text = rules_path.read_text()
-          old = """    function isPOSOperator() {
-      return isAuthenticated() && (
-        hasRole('Cashier') || hasRole('cashier') ||
-        hasRole('Pharmacist') || hasRole('pharmacist') ||
-        hasRole('Dispenser') || hasRole('dispenser') ||
-        hasRole('Branch Manager') || hasRole('branch manager') ||
-        hasCustomModuleFunctional('sales') ||
-        isAdmin()
-      );
-    }
-"""
-          new = """    function isPOSOperator() {
-      return isAuthenticated()
-        && getUserData().role != 'Cashier'
-        && getUserData().role != 'cashier'
-        && (
-          hasRole('Pharmacist') || hasRole('pharmacist') ||
-          hasRole('Dispenser') || hasRole('dispenser') ||
-          hasRole('Branch Manager') || hasRole('branch manager') ||
-          hasCustomModuleFunctional('sales') ||
-          isAdmin()
-        );
-    }
-"""
-          if old not in text:
-              raise SystemExit('Expected isPOSOperator block not found; refusing broad edit.')
-          if text.count(old) != 1:
-              raise SystemExit('Expected exactly one isPOSOperator block; refusing ambiguous edit.')
-          rules_path.write_text(text.replace(old, new, 1))
-          Path('.github/workflows/apply-pos-rules-source-fix.yml').unlink()
-          PY
+          grep -F "hasRole('Cashier') || hasRole('cashier') ||" firestore.rules
+          sed -i "/hasRole('Cashier') || hasRole('cashier') ||/d" firestore.rules
+          git diff --check
 
       - name: Commit POS rules correction
         shell: bash
@@ -68,6 +35,6 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add firestore.rules .github/workflows/apply-pos-rules-source-fix.yml
-          git commit -m 'fix(pos): align Firestore selling authority with cashier exclusion'
+          git add firestore.rules
+          git commit -m 'fix(pos): remove cashier from Firestore POS operator authority'
           git push origin HEAD:main
