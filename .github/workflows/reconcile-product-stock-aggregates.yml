@@ -1,0 +1,50 @@
+name: Reconcile Product Stock Aggregates
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant_id:
+        description: 'Tenant ID to audit/reconcile'
+        required: true
+        type: string
+      apply:
+        description: 'Apply repairs after reviewing a dry-run first'
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+      FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Authenticate Google service account
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Audit or reconcile product stock aggregates
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--tenant '${{ inputs.tenant_id }}')
+          if [ '${{ inputs.apply }}' = 'true' ]; then
+            args+=(--apply)
+          fi
+          node scripts/reconcile-product-stock-aggregates.mjs "${args[@]}"
