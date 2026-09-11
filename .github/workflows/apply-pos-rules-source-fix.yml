@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - '.github/workflows/apply-pos-rules-source-fix.yml'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -21,8 +22,10 @@ jobs:
           fetch-depth: 0
 
       - name: Patch POS operator rule and remove one-off workflow
-        shell: python
+        shell: bash
         run: |
+          set -euo pipefail
+          python3 <<'PY'
           from pathlib import Path
 
           rules_path = Path('firestore.rules')
@@ -57,6 +60,7 @@ jobs:
               raise SystemExit('Expected exactly one isPOSOperator block; refusing ambiguous edit.')
           rules_path.write_text(text.replace(old, new, 1))
           Path('.github/workflows/apply-pos-rules-source-fix.yml').unlink()
+          PY
 
       - name: Commit POS rules correction
         shell: bash
