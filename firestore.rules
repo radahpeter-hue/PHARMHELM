@@ -249,7 +249,6 @@ service cloud.firestore {
 
     function isPOSOperator() {
       return isAuthenticated() && (
-        hasRole('Cashier') || hasRole('cashier') ||
         hasRole('Pharmacist') || hasRole('pharmacist') ||
         hasRole('Dispenser') || hasRole('dispenser') ||
         hasRole('Branch Manager') || hasRole('branch manager') ||
