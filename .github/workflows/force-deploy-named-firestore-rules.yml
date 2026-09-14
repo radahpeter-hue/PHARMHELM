@@ -24,7 +24,7 @@ jobs:
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Deploy and verify named Firestore rules through REST
+      - name: Recover or deploy Batch 3 rules and verify named database
         shell: bash
         run: |
           set -euo pipefail
@@ -35,61 +35,119 @@ jobs:
           RELEASE_NAME="projects/${FIREBASE_PROJECT_ID}/releases/cloud.firestore/${FIRESTORE_DATABASE_ID}"
           ATTACHMENT_POINT="firestore.googleapis.com/projects/${PROJECT_NUMBER}/databases/${FIRESTORE_DATABASE_ID}"
           AUTH_HEADER="Authorization: Bearer ${ACCESS_TOKEN}"
+          LOCAL_SHA=$(sha256sum firestore.rules | awk '{print $1}')
 
-          echo "Firebase Rules direct REST deployment"
+          echo "Firebase Rules recovery/deployment"
           echo "project=${FIREBASE_PROJECT_ID}"
           echo "project_number=${PROJECT_NUMBER}"
           echo "database=${FIRESTORE_DATABASE_ID}"
           echo "release=${RELEASE_NAME}"
           echo "attachment_point=${ATTACHMENT_POINT}"
+          echo "local_rules_sha256=${LOCAL_SHA}"
 
-          FINGERPRINT=$(openssl dgst -sha256 -binary firestore.rules | base64 -w 0)
-          create_body=$(jq -n \
-            --rawfile rules firestore.rules \
-            --arg fingerprint "$FINGERPRINT" \
-            --arg attachmentPoint "$ATTACHMENT_POINT" \
-            '{source: {files: [{name: "firestore.rules", content: $rules, fingerprint: $fingerprint}]}, attachment_point: $attachmentPoint}')
+          ruleset_name=""
 
-          ruleset_file=$(mktemp)
-          create_code=""
-          create_curl_status=1
+          echo "Looking for an already-created ruleset whose firestore.rules content exactly matches this checkout."
+          list_file=$(mktemp)
+          list_code=""
+          list_curl_status=1
           for attempt in 1 2 3 4 5 6; do
             set +e
-            create_code=$(curl --silent --show-error \
-              --output "$ruleset_file" \
+            list_code=$(curl --silent --show-error \
+              --output "$list_file" \
               --write-out '%{http_code}' \
-              -X POST \
               -H "$AUTH_HEADER" \
-              -H "Content-Type: application/json" \
-              --data "$create_body" \
-              "${RULES_API}/projects/${FIREBASE_PROJECT_ID}/rulesets")
-            create_curl_status=$?
+              "${RULES_API}/projects/${FIREBASE_PROJECT_ID}/rulesets?pageSize=100")
+            list_curl_status=$?
             set -e
-            echo "ruleset_create_attempt=${attempt} curl_status=${create_curl_status} http_status=${create_code}"
-            if [ "$create_curl_status" -eq 0 ] && [ "$create_code" -ge 200 ] && [ "$create_code" -lt 300 ]; then
+            echo "ruleset_list_attempt=${attempt} curl_status=${list_curl_status} http_status=${list_code}"
+            if [ "$list_curl_status" -eq 0 ] && [ "$list_code" -ge 200 ] && [ "$list_code" -lt 300 ]; then
               break
             fi
-            if [ "$create_code" != "503" ]; then
+            if [ "$list_code" != "503" ]; then
               break
             fi
-            sleep $((attempt * 10))
+            sleep $((attempt * 5))
           done
 
-          if [ -s "$ruleset_file" ]; then
-            cat "$ruleset_file"
-          fi
-          if [ "$create_curl_status" -ne 0 ] || [ "$create_code" -lt 200 ] || [ "$create_code" -ge 300 ]; then
-            echo "::error::Ruleset creation failed."
-            exit 21
+          if [ "$list_curl_status" -eq 0 ] && [ "$list_code" -ge 200 ] && [ "$list_code" -lt 300 ]; then
+            mapfile -t candidate_names < <(jq -r '.rulesets[]?.name // empty' "$list_file")
+            echo "ruleset_candidates=${#candidate_names[@]}"
+            for candidate in "${candidate_names[@]}"; do
+              [ -n "$candidate" ] || continue
+              candidate_file=$(mktemp)
+              set +e
+              candidate_code=$(curl --silent --show-error \
+                --output "$candidate_file" \
+                --write-out '%{http_code}' \
+                -H "$AUTH_HEADER" \
+                "${RULES_API}/${candidate}")
+              candidate_status=$?
+              set -e
+              if [ "$candidate_status" -ne 0 ] || [ "$candidate_code" -lt 200 ] || [ "$candidate_code" -ge 300 ]; then
+                continue
+              fi
+              candidate_content=$(jq -r '.source.files[]? | select(.name == "firestore.rules") | .content' "$candidate_file" | head -n 1)
+              [ -n "$candidate_content" ] || continue
+              candidate_sha=$(printf '%s' "$candidate_content" | sha256sum | awk '{print $1}')
+              candidate_attachment=$(jq -r '.attachmentPoint // .attachment_point // empty' "$candidate_file")
+              candidate_created=$(jq -r '.createTime // empty' "$candidate_file")
+              echo "candidate=${candidate} created=${candidate_created} attachment=${candidate_attachment:-none} sha256=${candidate_sha}"
+              if [ "$candidate_sha" = "$LOCAL_SHA" ]; then
+                ruleset_name="$candidate"
+                echo "Recovered exact-content ruleset: ${ruleset_name}"
+                break
+              fi
+            done
+          else
+            echo "Ruleset listing is unavailable; will try creating a new ruleset."
+            if [ -s "$list_file" ]; then cat "$list_file"; fi
           fi
 
-          ruleset_name=$(jq -r '.name // empty' "$ruleset_file")
           if [ -z "$ruleset_name" ]; then
-            echo "::error::Rules API returned success but no ruleset name."
-            exit 22
-          fi
-          echo "ruleset_created=${ruleset_name}"
+            echo "No reusable exact-content ruleset found. Attempting creation."
+            FINGERPRINT=$(openssl dgst -sha256 -binary firestore.rules | base64 -w 0)
+            create_body=$(jq -n \
+              --rawfile rules firestore.rules \
+              --arg fingerprint "$FINGERPRINT" \
+              --arg attachmentPoint "$ATTACHMENT_POINT" \
+              '{source: {files: [{name: "firestore.rules", content: $rules, fingerprint: $fingerprint}]}, attachment_point: $attachmentPoint}')
 
+            ruleset_file=$(mktemp)
+            create_code=""
+            create_curl_status=1
+            for attempt in 1 2 3 4 5 6; do
+              set +e
+              create_code=$(curl --silent --show-error \
+                --output "$ruleset_file" \
+                --write-out '%{http_code}' \
+                -X POST \
+                -H "$AUTH_HEADER" \
+                -H "Content-Type: application/json" \
+                --data "$create_body" \
+                "${RULES_API}/projects/${FIREBASE_PROJECT_ID}/rulesets")
+              create_curl_status=$?
+              set -e
+              echo "ruleset_create_attempt=${attempt} curl_status=${create_curl_status} http_status=${create_code}"
+              if [ "$create_curl_status" -eq 0 ] && [ "$create_code" -ge 200 ] && [ "$create_code" -lt 300 ]; then
+                break
+              fi
+              if [ "$create_code" != "503" ]; then
+                break
+              fi
+              sleep $((attempt * 10))
+            done
+            if [ -s "$ruleset_file" ]; then cat "$ruleset_file"; fi
+            if [ "$create_curl_status" -ne 0 ] || [ "$create_code" -lt 200 ] || [ "$create_code" -ge 300 ]; then
+              echo "::error::No reusable Batch 3 ruleset was found and Firebase Rules ruleset creation remains unavailable."
+              exit 21
+            fi
+            ruleset_name=$(jq -r '.name // empty' "$ruleset_file")
+            [ -n "$ruleset_name" ] || { echo "::error::Rules API returned success but no ruleset name."; exit 22; }
+            echo "ruleset_created=${ruleset_name}"
+          fi
+
+          echo "Activating ruleset ${ruleset_name} on the named database release."
           patch_body=$(jq -n \
             --arg name "$RELEASE_NAME" \
             --arg rulesetName "$ruleset_name" \
@@ -121,6 +179,7 @@ jobs:
           done
 
           if [ "$patch_code" = "404" ]; then
+            echo "Named release does not exist; creating it."
             create_release_body=$(jq -n \
               --arg name "$RELEASE_NAME" \
               --arg rulesetName "$ruleset_name" \
@@ -139,20 +198,19 @@ jobs:
             echo "release_create curl_status=${patch_curl_status} http_status=${patch_code}"
           fi
 
-          if [ -s "$release_file" ]; then
-            cat "$release_file"
-          fi
+          if [ -s "$release_file" ]; then cat "$release_file"; fi
           if [ "$patch_curl_status" -ne 0 ] || [ "$patch_code" -lt 200 ] || [ "$patch_code" -ge 300 ]; then
-            echo "::error::Named release activation failed."
+            echo "::error::An exact Batch 3 ruleset exists, but Firebase Rules release activation is unavailable or rejected."
             exit 23
           fi
 
           active_ruleset=$(jq -r '.rulesetName // empty' "$release_file")
           if [ "$active_ruleset" != "$ruleset_name" ]; then
-            echo "::error::Release response does not reference the new ruleset."
+            echo "::error::Release response does not reference the exact selected Batch 3 ruleset."
             exit 24
           fi
 
+          echo "Verifying active release independently."
           verify_file=$(mktemp)
           set +e
           verify_code=$(curl --silent --show-error \
@@ -164,11 +222,9 @@ jobs:
           set -e
           echo "verify_curl_status=${verify_curl_status}"
           echo "verify_http_status=${verify_code}"
-          if [ -s "$verify_file" ]; then
-            cat "$verify_file"
-          fi
+          if [ -s "$verify_file" ]; then cat "$verify_file"; fi
           if [ "$verify_curl_status" -ne 0 ] || [ "$verify_code" -lt 200 ] || [ "$verify_code" -ge 300 ]; then
-            echo "::error::Independent release verification failed."
+            echo "::error::Release activation returned success but independent verification failed."
             exit 25
           fi
 
@@ -178,6 +234,6 @@ jobs:
             exit 26
           fi
 
-          echo "Named Firestore rules deployment verified successfully."
+          echo "Named Firestore Batch 3 rules deployment verified successfully."
           echo "database=${FIRESTORE_DATABASE_ID}"
           echo "ruleset=${ruleset_name}"
