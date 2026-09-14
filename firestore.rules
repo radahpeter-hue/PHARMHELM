@@ -247,8 +247,12 @@ service cloud.firestore {
       );
     }
 
+    function isPrimaryCashier() {
+      return isAuthenticated() && (getUserData().role == 'cashier' || getUserData().role == 'Cashier');
+    }
+
     function isPOSOperator() {
-      return isAuthenticated() && (
+      return isAuthenticated() && !isPrimaryCashier() && (
         hasRole('Pharmacist') || hasRole('pharmacist') ||
         hasRole('Dispenser') || hasRole('dispenser') ||
         hasRole('Branch Manager') || hasRole('branch manager') ||
@@ -795,9 +799,25 @@ service cloud.firestore {
         && (
           isInventoryOperator() ||
           (isPOSOperator()
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'updatedAt'])
-            && request.resource.data.stock is number
-            && request.resource.data.stock >= 0)
+            && (
+              (
+                request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'updatedAt'])
+                && request.resource.data.stock is number
+                && request.resource.data.stock >= 0
+              ) ||
+              (
+                request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'quantityInStock', 'stockAggregateSource', 'updatedAt'])
+                && resource.data.stock is number
+                && resource.data.quantityInStock is number
+                && resource.data.stock == resource.data.quantityInStock
+                && request.resource.data.stock is number
+                && request.resource.data.quantityInStock is number
+                && request.resource.data.stock >= 0
+                && request.resource.data.quantityInStock >= 0
+                && request.resource.data.stock == request.resource.data.quantityInStock
+                && request.resource.data.stockAggregateSource == 'product_batches'
+              )
+            ))
         );
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
@@ -830,7 +850,11 @@ service cloud.firestore {
         && (
           isInventoryOperator() ||
           (isPOSOperator()
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'updatedAt'])
+            && isAssignedToBranch(resource.data.branchId)
+            && (
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'updatedAt']) ||
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'lastUpdated'])
+            )
             && request.resource.data.quantity is number
             && request.resource.data.quantity >= 0)
         );
@@ -939,12 +963,35 @@ service cloud.firestore {
       allow create: if isPOSOperator()
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.branchId is string
+        && isAssignedToBranch(request.resource.data.branchId)
         && request.resource.data.status == 'completed';
       allow update: if isPOSOperator()
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
+
+    match /pos_checkout_attempts/{attemptDocumentId} {
+      allow get: if isPOSOperator() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if false;
+      allow create: if isPOSOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.operatorUid == request.auth.uid
+        && request.resource.data.branchId is string
+        && isAssignedToBranch(request.resource.data.branchId)
+        && request.resource.data.status == 'completed'
+        && request.resource.data.attemptId is string
+        && request.resource.data.fingerprint is string
+        && request.resource.data.saleId is string
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.engineVersion == 2
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.tenantId == request.resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.branchId == request.resource.data.branchId
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.operatorUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.checkoutAttemptId == request.resource.data.attemptId
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.checkoutIntentFingerprint == request.resource.data.fingerprint;
+      allow update, delete: if false;
+    }
+
     match /welfare_records/{recordId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
       allow create: if isHR() && isTenantMember(request.resource.data.tenantId);
@@ -999,11 +1046,11 @@ service cloud.firestore {
 
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
-      allow get: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAdmin() && isTenantMember(resource.data.tenantId);
+      allow get: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && collectionName != 'pos_checkout_attempts' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && collectionName != 'pos_checkout_attempts' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAdmin() && isTenantMember(resource.data.tenantId);
     }
   }
 }
