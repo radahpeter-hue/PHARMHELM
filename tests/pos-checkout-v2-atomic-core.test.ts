@@ -20,7 +20,7 @@ const product = (overrides: Partial<Product> = {}): Product => ({
 
 const item = (overrides: Partial<SaleItem> = {}): SaleItem => ({
   productId: 'p1', batchId: '', name: 'Panadol', productName: 'Panadol', quantity: 2,
-  unitPrice: 1000, costPrice: 0, subtotal: 2000, lineTotal: 2000, isService: false,
+  unitPrice: 1000, costPrice: 0, subtotal: 2000, total: 2000, lineTotal: 2000, isService: false,
   ...overrides
 });
 
