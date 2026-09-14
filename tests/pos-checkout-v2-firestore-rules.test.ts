@@ -10,7 +10,18 @@ test('POS authority excludes a primary Cashier at the Firestore boundary', () =>
 });
 
 test('sale creation requires an authorised active-branch POS operator boundary', () => {
-  assert.match(rules, /match \/sales\/\{saleId\}[\s\S]{0,900}allow create:[\s\S]*isPOSOperator\(\)[\s\S]*isAssignedToBranch\(request\.resource\.data\.branchId\)[\s\S]*status == 'completed'/);
+  assert.match(rules, /match \/sales\/\{saleId\}[\s\S]{0,2200}allow create:[\s\S]*isPOSOperator\(\)[\s\S]*isAssignedToBranch\(request\.resource\.data\.branchId\)[\s\S]*status == 'completed'/);
+});
+
+test('V2 sale creation is linked to the canonical payment and durable outbox in the same transaction', () => {
+  const saleStart = rules.indexOf('match /sales/{saleId}');
+  const paymentStart = rules.indexOf('match /pos_payments/{paymentId}', saleStart);
+  const saleRule = rules.slice(saleStart, paymentStart);
+  assert.match(saleRule, /canonicalPaymentId/);
+  assert.match(saleRule, /transactionOutboxEventId/);
+  assert.match(saleRule, /getAfter\(\/databases\/\$\(database\)\/documents\/pos_payments/);
+  assert.match(saleRule, /getAfter\(\/databases\/\$\(database\)\/documents\/pos_transaction_outbox/);
+  assert.match(saleRule, /\.data\.amount == request\.resource\.data\.totalAmount/);
 });
 
 test('V2 batch deduction is branch-scoped and cannot create negative stock', () => {
@@ -26,7 +37,35 @@ test('V2 product compatibility mirrors may move together without opening arbitra
   assert.match(rules, /request\.resource\.data\.stockAggregateSource == 'product_batches'/);
 });
 
-test('checkout attempts have an explicit immutable rule linked to the V2 sale in the same transaction', () => {
+test('canonical POS payments are immutable, tenant/branch scoped and linked to the V2 sale', () => {
+  const start = rules.indexOf('match /pos_payments/{paymentId}');
+  const end = rules.indexOf('match /pos_transaction_outbox/{eventId}', start);
+  assert.ok(start >= 0 && end > start);
+  const paymentRule = rules.slice(start, end);
+  assert.match(paymentRule, /isPOSOperator\(\)/);
+  assert.match(paymentRule, /isAssignedToBranch\(request\.resource\.data\.branchId\)/);
+  assert.match(paymentRule, /request\.resource\.data\.paymentId == paymentId/);
+  assert.match(paymentRule, /request\.resource\.data\.operatorUid == request\.auth\.uid/);
+  assert.match(paymentRule, /settledAmount \+ request\.resource\.data\.outstandingAmount == request\.resource\.data\.amount/);
+  assert.match(paymentRule, /\.data\.canonicalPaymentId == paymentId/);
+  assert.match(paymentRule, /allow update, delete: if false/);
+});
+
+test('transaction outbox is immutable client-side, starts PENDING and is linked to sale/payment', () => {
+  const start = rules.indexOf('match /pos_transaction_outbox/{eventId}');
+  const end = rules.indexOf('match /pos_checkout_attempts/{attemptDocumentId}', start);
+  assert.ok(start >= 0 && end > start);
+  const outboxRule = rules.slice(start, end);
+  assert.match(outboxRule, /request\.resource\.data\.eventId == eventId/);
+  assert.match(outboxRule, /request\.resource\.data\.eventType == 'POS_SALE_COMMITTED'/);
+  assert.match(outboxRule, /request\.resource\.data\.status == 'PENDING'/);
+  assert.match(outboxRule, /request\.resource\.data\.attemptCount == 0/);
+  assert.match(outboxRule, /documents\/sales/);
+  assert.match(outboxRule, /documents\/pos_payments/);
+  assert.match(outboxRule, /allow update, delete: if false/);
+});
+
+test('checkout attempts have an explicit immutable rule linked to sale, payment and outbox in the same transaction', () => {
   const attemptRuleStart = rules.indexOf('match /pos_checkout_attempts/{attemptDocumentId}');
   assert.ok(attemptRuleStart >= 0);
   const attemptRule = rules.slice(attemptRuleStart, rules.indexOf('match /welfare_records/', attemptRuleStart));
@@ -34,11 +73,17 @@ test('checkout attempts have an explicit immutable rule linked to the V2 sale in
   assert.match(attemptRule, /getAfter\(\/databases\/\$\(database\)\/documents\/sales\/\$\(request\.resource\.data\.saleId\)\)\.data\.engineVersion == 2/);
   assert.match(attemptRule, /checkoutAttemptId == request\.resource\.data\.attemptId/);
   assert.match(attemptRule, /checkoutIntentFingerprint == request\.resource\.data\.fingerprint/);
+  assert.match(attemptRule, /request\.resource\.data\.paymentId is string/);
+  assert.match(attemptRule, /request\.resource\.data\.outboxEventId is string/);
+  assert.match(attemptRule, /documents\/pos_payments/);
+  assert.match(attemptRule, /documents\/pos_transaction_outbox/);
 });
 
-test('generic tenant fallback cannot bypass the dedicated checkout-attempt rule', () => {
+test('generic tenant fallback cannot bypass dedicated POS V2 transaction records', () => {
   const generic = rules.slice(rules.indexOf('match /{collectionName}/{docId}'));
-  assert.ok(generic.includes("collectionName != 'pos_checkout_attempts'"));
-  const occurrences = generic.match(/collectionName != 'pos_checkout_attempts'/g) || [];
-  assert.equal(occurrences.length, 5, 'get, list, create, update and delete must all exclude POS V2 attempts');
+  for (const collectionName of ['pos_checkout_attempts', 'pos_payments', 'pos_transaction_outbox']) {
+    const pattern = new RegExp(`collectionName != '${collectionName}'`, 'g');
+    const occurrences = generic.match(pattern) || [];
+    assert.equal(occurrences.length, 5, `get, list, create, update and delete must all exclude ${collectionName}`);
+  }
 });

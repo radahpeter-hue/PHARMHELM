@@ -964,11 +964,99 @@ service cloud.firestore {
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.branchId is string
         && isAssignedToBranch(request.resource.data.branchId)
-        && request.resource.data.status == 'completed';
+        && request.resource.data.status == 'completed'
+        && (
+          !("engineVersion" in request.resource.data) ||
+          request.resource.data.engineVersion != 2 ||
+          (
+            request.resource.data.canonicalPaymentId is string
+            && request.resource.data.transactionOutboxEventId is string
+            && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.canonicalPaymentId)).data.saleId == saleId
+            && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.canonicalPaymentId)).data.tenantId == request.resource.data.tenantId
+            && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.canonicalPaymentId)).data.branchId == request.resource.data.branchId
+            && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.canonicalPaymentId)).data.amount == request.resource.data.totalAmount
+            && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.transactionOutboxEventId)).data.saleId == saleId
+            && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.transactionOutboxEventId)).data.paymentId == request.resource.data.canonicalPaymentId
+          )
+        );
       allow update: if isPOSOperator()
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /pos_payments/{paymentId} {
+      allow get: if isAuthenticated()
+        && (resource == null || isTenantMember(resource.data.tenantId))
+        && (isPOSOperator() || canViewFinance() || isIT());
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
+      allow create: if isPOSOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.paymentId == paymentId
+        && request.resource.data.operatorUid == request.auth.uid
+        && request.resource.data.branchId is string
+        && isAssignedToBranch(request.resource.data.branchId)
+        && request.resource.data.source == 'POS'
+        && request.resource.data.engineVersion == 2
+        && request.resource.data.currency == 'UGX'
+        && request.resource.data.saleId is string
+        && request.resource.data.checkoutAttemptId is string
+        && request.resource.data.receiptNumber is string
+        && request.resource.data.amount is number
+        && request.resource.data.amount >= 0
+        && request.resource.data.settledAmount is number
+        && request.resource.data.settledAmount >= 0
+        && request.resource.data.outstandingAmount is number
+        && request.resource.data.outstandingAmount >= 0
+        && request.resource.data.settledAmount + request.resource.data.outstandingAmount == request.resource.data.amount
+        && request.resource.data.status in ['completed', 'unpaid', 'partially_settled']
+        && request.resource.data.components is list
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.engineVersion == 2
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.tenantId == request.resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.branchId == request.resource.data.branchId
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.operatorUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.receiptNumber == request.resource.data.receiptNumber
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.checkoutAttemptId == request.resource.data.checkoutAttemptId
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.totalAmount == request.resource.data.amount
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.canonicalPaymentId == paymentId;
+      allow update, delete: if false;
+    }
+
+    match /pos_transaction_outbox/{eventId} {
+      allow get: if isAuthenticated()
+        && (resource == null || isTenantMember(resource.data.tenantId))
+        && (isPOSOperator() || canViewFinance() || isIT());
+      allow list: if isAuthenticated()
+        && isTenantMember(resource.data.tenantId)
+        && (canViewFinance() || isIT());
+      allow create: if isPOSOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.eventId == eventId
+        && request.resource.data.branchId is string
+        && isAssignedToBranch(request.resource.data.branchId)
+        && request.resource.data.source == 'POS'
+        && request.resource.data.engineVersion == 2
+        && request.resource.data.payloadVersion == 1
+        && request.resource.data.eventType == 'POS_SALE_COMMITTED'
+        && request.resource.data.aggregateType == 'POS_SALE'
+        && request.resource.data.aggregateId == request.resource.data.saleId
+        && request.resource.data.saleId is string
+        && request.resource.data.paymentId is string
+        && request.resource.data.receiptNumber is string
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.attemptCount == 0
+        && request.resource.data.payload.saleId == request.resource.data.saleId
+        && request.resource.data.payload.paymentId == request.resource.data.paymentId
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.engineVersion == 2
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.tenantId == request.resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.branchId == request.resource.data.branchId
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.receiptNumber == request.resource.data.receiptNumber
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.canonicalPaymentId == request.resource.data.paymentId
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.transactionOutboxEventId == eventId
+        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.saleId == request.resource.data.saleId
+        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.tenantId == request.resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.branchId == request.resource.data.branchId;
+      allow update, delete: if false;
     }
 
     match /pos_checkout_attempts/{attemptDocumentId} {
@@ -983,12 +1071,25 @@ service cloud.firestore {
         && request.resource.data.attemptId is string
         && request.resource.data.fingerprint is string
         && request.resource.data.saleId is string
+        && request.resource.data.paymentId is string
+        && request.resource.data.outboxEventId is string
         && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.engineVersion == 2
         && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.tenantId == request.resource.data.tenantId
         && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.branchId == request.resource.data.branchId
         && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.operatorUid == request.auth.uid
         && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.checkoutAttemptId == request.resource.data.attemptId
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.checkoutIntentFingerprint == request.resource.data.fingerprint;
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.checkoutIntentFingerprint == request.resource.data.fingerprint
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.canonicalPaymentId == request.resource.data.paymentId
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.transactionOutboxEventId == request.resource.data.outboxEventId
+        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.saleId == request.resource.data.saleId
+        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.checkoutAttemptId == request.resource.data.attemptId
+        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.tenantId == request.resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.branchId == request.resource.data.branchId
+        && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.outboxEventId)).data.saleId == request.resource.data.saleId
+        && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.outboxEventId)).data.paymentId == request.resource.data.paymentId
+        && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.outboxEventId)).data.tenantId == request.resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.outboxEventId)).data.branchId == request.resource.data.branchId
+        && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.outboxEventId)).data.status == 'PENDING';
       allow update, delete: if false;
     }
 
@@ -1046,11 +1147,11 @@ service cloud.firestore {
 
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
-      allow get: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && collectionName != 'pos_checkout_attempts' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && collectionName != 'pos_checkout_attempts' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAdmin() && isTenantMember(resource.data.tenantId);
+      allow get: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAdmin() && isTenantMember(resource.data.tenantId);
     }
   }
 }
