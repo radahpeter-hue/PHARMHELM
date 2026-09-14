@@ -71,9 +71,12 @@ jobs:
           done
 
           if [ "$list_curl_status" -eq 0 ] && [ "$list_code" -ge 200 ] && [ "$list_code" -lt 300 ]; then
-            mapfile -t candidate_names < <(jq -r '.rulesets[]?.name // empty' "$list_file")
-            echo "ruleset_candidates=${#candidate_names[@]}"
-            for candidate in "${candidate_names[@]}"; do
+            candidates_file=$(mktemp)
+            jq -r '.rulesets[]?.name // empty' "$list_file" > "$candidates_file"
+            candidate_count=$(wc -l < "$candidates_file" | tr -d ' ')
+            echo "ruleset_candidates=${candidate_count}"
+
+            while IFS= read -r candidate; do
               [ -n "$candidate" ] || continue
               candidate_file=$(mktemp)
               set +e
@@ -87,9 +90,14 @@ jobs:
               if [ "$candidate_status" -ne 0 ] || [ "$candidate_code" -lt 200 ] || [ "$candidate_code" -ge 300 ]; then
                 continue
               fi
-              candidate_content=$(jq -r '.source.files[]? | select(.name == "firestore.rules") | .content' "$candidate_file" | head -n 1)
-              [ -n "$candidate_content" ] || continue
-              candidate_sha=$(printf '%s' "$candidate_content" | sha256sum | awk '{print $1}')
+
+              candidate_rules_file=$(mktemp)
+              jq -j 'first(.source.files[]? | select(.name == "firestore.rules") | .content) // empty' "$candidate_file" > "$candidate_rules_file"
+              if [ ! -s "$candidate_rules_file" ]; then
+                continue
+              fi
+
+              candidate_sha=$(sha256sum "$candidate_rules_file" | awk '{print $1}')
               candidate_attachment=$(jq -r '.attachmentPoint // .attachment_point // empty' "$candidate_file")
               candidate_created=$(jq -r '.createTime // empty' "$candidate_file")
               echo "candidate=${candidate} created=${candidate_created} attachment=${candidate_attachment:-none} sha256=${candidate_sha}"
@@ -98,7 +106,7 @@ jobs:
                 echo "Recovered exact-content ruleset: ${ruleset_name}"
                 break
               fi
-            done
+            done < "$candidates_file"
           else
             echo "Ruleset listing is unavailable; will try creating a new ruleset."
             if [ -s "$list_file" ]; then cat "$list_file"; fi
