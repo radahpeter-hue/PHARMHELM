@@ -16,10 +16,17 @@ import type { Branch, Product, ProductBatch, Sale, SaleItem, Staff, SystemSettin
 import { SYSTEM_ROLE_PERMISSIONS, roleRealmId } from '../../config/rbac';
 import { calculateCheckoutV2 } from './posCheckoutV2Calculator';
 import { PosCheckoutV2Error } from './posCheckoutV2Errors';
+import {
+  buildPosCheckoutV2OutboxEvent,
+  buildPosCheckoutV2Payment,
+  posCheckoutV2OutboxEventDocumentId,
+  posCheckoutV2PaymentDocumentId
+} from './posCheckoutV2PaymentOutbox';
 import type {
   CheckoutV2Request,
   PosCheckoutV2AttemptRecord,
-  PosCheckoutV2CompletedResult
+  PosCheckoutV2CompletedResult,
+  PosCheckoutV2Payment
 } from './posCheckoutV2Types';
 
 const EPSILON = 0.0001;
@@ -53,8 +60,12 @@ export interface PosCheckoutV2RepositoryPreparation {
   batchRefsByProduct: Map<string, PosCheckoutV2BatchRef[]>;
   attemptRef: DocumentReference<DocumentData>;
   saleRef: DocumentReference<DocumentData>;
+  paymentRef: DocumentReference<DocumentData>;
+  outboxRef: DocumentReference<DocumentData>;
   fingerprint: string;
   saleId: string;
+  paymentId: string;
+  outboxEventId: string;
 }
 
 function canonicalize(value: unknown): unknown {
@@ -232,6 +243,8 @@ export async function prepareCheckoutV2Repository(uid: string, request: Checkout
   const fingerprint = buildCheckoutV2IntentFingerprint(request);
   const attemptId = checkoutV2AttemptDocumentId(authority.tenantId, request.attemptId);
   const saleId = checkoutV2SaleDocumentId(authority.tenantId, request.attemptId);
+  const paymentId = posCheckoutV2PaymentDocumentId(saleId);
+  const outboxEventId = posCheckoutV2OutboxEventDocumentId(saleId);
   return {
     authority,
     settings,
@@ -239,8 +252,12 @@ export async function prepareCheckoutV2Repository(uid: string, request: Checkout
     batchRefsByProduct,
     attemptRef: doc(db, 'pos_checkout_attempts', attemptId),
     saleRef: doc(db, 'sales', saleId),
+    paymentRef: doc(db, 'pos_payments', paymentId),
+    outboxRef: doc(db, 'pos_transaction_outbox', outboxEventId),
     fingerprint,
-    saleId
+    saleId,
+    paymentId,
+    outboxEventId
   };
 }
 
@@ -300,10 +317,27 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
         throw new PosCheckoutV2Error('IDEMPOTENCY_CONFLICT', 'This checkout attempt ID has already been used for different commercial intent.');
       }
       const existingSaleRef = doc(db, 'sales', attempt.saleId);
+      const existingPaymentRef = doc(db, 'pos_payments', attempt.paymentId || prepared.paymentId);
+      const existingOutboxRef = doc(db, 'pos_transaction_outbox', attempt.outboxEventId || prepared.outboxEventId);
       const existingSaleSnap = await transaction.get(existingSaleRef);
+      const existingPaymentSnap = await transaction.get(existingPaymentRef);
+      const existingOutboxSnap = await transaction.get(existingOutboxRef);
       if (!existingSaleSnap.exists()) throw new PosCheckoutV2Error('TRANSACTION_CONFLICT', 'The completed checkout attempt points to a missing sale.');
+      if (!existingPaymentSnap.exists() || !existingOutboxSnap.exists()) {
+        throw new PosCheckoutV2Error('TRANSACTION_CONFLICT', 'The completed checkout attempt predates or is missing the Batch 3 payment/outbox contract and requires reconciliation.');
+      }
       const sale = { ...(existingSaleSnap.data() as Sale), id: existingSaleSnap.id };
-      return { saleId: sale.id, receiptNumber: sale.receiptNumber, attemptId: request.attemptId, sale, replayed: true };
+      const payment = existingPaymentSnap.data() as PosCheckoutV2Payment;
+      return {
+        saleId: sale.id,
+        receiptNumber: sale.receiptNumber,
+        attemptId: request.attemptId,
+        paymentId: existingPaymentSnap.id,
+        outboxEventId: existingOutboxSnap.id,
+        sale,
+        payment,
+        replayed: true
+      };
     }
 
     const staffSnap = await transaction.get(doc(db, 'staff', prepared.authority.uid));
@@ -370,6 +404,28 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
       now: new Date()
     });
 
+    const tax = taxSnapshot(calculation.finalizedItems, liveProducts);
+    const branchCode = prepared.authority.branch.branch_code || 'KLA';
+    const receiptNumber = `${branchCode}-${new Date().getFullYear()}-${deterministicReceiptSuffix(prepared.saleId)}`;
+    const payment = buildPosCheckoutV2Payment({
+      request,
+      saleId: prepared.saleId,
+      receiptNumber,
+      tenantId: prepared.authority.tenantId,
+      branchId: prepared.authority.branch.id,
+      operatorUid: prepared.authority.uid,
+      authoritativeTotal: calculation.netTotal,
+      paymentId: prepared.paymentId
+    });
+    const outboxEvent = buildPosCheckoutV2OutboxEvent({
+      eventId: prepared.outboxEventId,
+      saleId: prepared.saleId,
+      paymentId: prepared.paymentId,
+      receiptNumber,
+      tenantId: prepared.authority.tenantId,
+      branchId: prepared.authority.branch.id
+    });
+
     for (const [productId, deductions] of calculation.batchDeductions.entries()) {
       const rows = rawBatchesByProduct.get(productId) || [];
       for (const [batchId, deduction] of deductions.entries()) {
@@ -395,9 +451,6 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
       });
     }
 
-    const tax = taxSnapshot(calculation.finalizedItems, liveProducts);
-    const branchCode = prepared.authority.branch.branch_code || 'KLA';
-    const receiptNumber = `${branchCode}-${new Date().getFullYear()}-${deterministicReceiptSuffix(prepared.saleId)}`;
     const sale: Sale = {
       id: prepared.saleId,
       tenantId: prepared.authority.tenantId,
@@ -440,9 +493,11 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
     transaction.set(prepared.saleRef, {
       ...sale,
       engineVersion: 2,
-      integrityVersion: 2,
+      integrityVersion: 3,
       checkoutAttemptId: request.attemptId,
       checkoutIntentFingerprint: prepared.fingerprint,
+      canonicalPaymentId: prepared.paymentId,
+      transactionOutboxEventId: prepared.outboxEventId,
       operatorUid: prepared.authority.uid,
       authoritativeTenantId: prepared.authority.tenantId,
       authoritativeBranchId: prepared.authority.branch.id,
@@ -452,12 +507,29 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
       v2CompletedAt: serverTimestamp()
     });
 
+    transaction.set(prepared.paymentRef, {
+      ...payment,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+
+    transaction.set(prepared.outboxRef, {
+      ...outboxEvent,
+      createdAt: serverTimestamp(),
+      availableAt: serverTimestamp(),
+      processedAt: null,
+      lastAttemptAt: null,
+      lastError: null
+    });
+
     const attempt: PosCheckoutV2AttemptRecord = {
       tenantId: prepared.authority.tenantId,
       attemptId: request.attemptId,
       fingerprint: prepared.fingerprint,
       status: 'completed',
       saleId: prepared.saleId,
+      paymentId: prepared.paymentId,
+      outboxEventId: prepared.outboxEventId,
       branchId: prepared.authority.branch.id,
       operatorUid: prepared.authority.uid,
       createdAt: serverTimestamp(),
@@ -465,6 +537,15 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
     };
     transaction.set(prepared.attemptRef, attempt);
 
-    return { saleId: prepared.saleId, receiptNumber, attemptId: request.attemptId, sale, replayed: false };
+    return {
+      saleId: prepared.saleId,
+      receiptNumber,
+      attemptId: request.attemptId,
+      paymentId: prepared.paymentId,
+      outboxEventId: prepared.outboxEventId,
+      sale,
+      payment,
+      replayed: false
+    };
   });
 }

@@ -96,17 +96,85 @@ export interface PosCheckoutV2AttemptRecord {
   fingerprint: string;
   status: 'completed';
   saleId: string;
+  paymentId?: string;
+  outboxEventId?: string;
   branchId: string;
   operatorUid: string;
   createdAt?: unknown;
   completedAt?: unknown;
 }
 
+export type PosCheckoutV2PaymentStatus = 'completed' | 'unpaid' | 'partially_settled';
+export type PosCheckoutV2PaymentComponentStatus = 'settled' | 'unpaid';
+
+export interface PosCheckoutV2PaymentComponent {
+  method: string;
+  amount: number;
+  settledAmount: number;
+  outstandingAmount: number;
+  status: PosCheckoutV2PaymentComponentStatus;
+}
+
+export interface PosCheckoutV2Payment {
+  paymentId: string;
+  saleId: string;
+  receiptNumber: string;
+  checkoutAttemptId: string;
+  tenantId: string;
+  branchId: string;
+  customerId?: string;
+  patientId?: string;
+  institutionId?: string;
+  paymentMethod: string;
+  currency: 'UGX';
+  amount: number;
+  settledAmount: number;
+  outstandingAmount: number;
+  status: PosCheckoutV2PaymentStatus;
+  components: PosCheckoutV2PaymentComponent[];
+  operatorUid: string;
+  source: 'POS';
+  engineVersion: 2;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export type PosCheckoutV2OutboxStatus = 'PENDING' | 'PROCESSING' | 'PROCESSED' | 'FAILED';
+
+export interface PosCheckoutV2OutboxEvent {
+  eventId: string;
+  eventType: 'POS_SALE_COMMITTED';
+  aggregateType: 'POS_SALE';
+  aggregateId: string;
+  saleId: string;
+  paymentId: string;
+  receiptNumber: string;
+  tenantId: string;
+  branchId: string;
+  engineVersion: 2;
+  payloadVersion: 1;
+  status: PosCheckoutV2OutboxStatus;
+  attemptCount: number;
+  source: 'POS';
+  payload: {
+    saleId: string;
+    paymentId: string;
+  };
+  createdAt?: unknown;
+  availableAt?: unknown;
+  processedAt?: unknown;
+  lastAttemptAt?: unknown;
+  lastError?: string | null;
+}
+
 export interface PosCheckoutV2CompletedResult {
   saleId: string;
   receiptNumber: string;
   attemptId: string;
+  paymentId?: string;
+  outboxEventId?: string;
   sale: Sale;
+  payment?: PosCheckoutV2Payment;
   replayed: boolean;
 }
 
