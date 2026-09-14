@@ -81,6 +81,6 @@ test('V2 rejects a product whose available stock exists only in another branch',
 test('V2 maps packaging changes to a typed error without mutating live checkout', () => {
   assert.throws(() => calculateCheckoutV2({
     tenantId: 't1', branchId: 'br1', items: [stripItem], liveProducts: new Map([['p1', { ...product, unitsPerStrip: 12 }]]), settings, now,
-    batchesByProduct: new Map([['p1', [batch()]])
+    batchesByProduct: new Map([['p1', [batch()]]])
   }), (error: unknown) => error instanceof PosCheckoutV2Error && error.code === 'PACKAGING_CHANGED');
 });
