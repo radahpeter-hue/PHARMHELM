@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Product, SaleItem } from '../src/types';
+import type { CheckoutBatchCandidate } from '../src/services/posCheckoutTierService';
 import { calculateCheckoutV2, isV2SellableBatch } from '../src/services/pos-v2/posCheckoutV2Calculator';
 import { PosCheckoutV2Error } from '../src/services/pos-v2/posCheckoutV2Errors';
 import { resolvePosCheckoutV2Mode } from '../src/services/pos-v2/posCheckoutV2FeatureService';
@@ -28,7 +29,7 @@ const stripItem: SaleItem = {
 const settings = { features: { multiTierSellingEnabled: true } };
 const now = new Date('2026-09-14T10:00:00+03:00');
 
-const batch = (overrides: Record<string, unknown> = {}) => ({
+const batch = (overrides: Partial<CheckoutBatchCandidate> = {}): CheckoutBatchCandidate => ({
   id: 'b1', tenantId: 't1', branchId: 'br1', productId: 'p1', batchNumber: 'A',
   expiryDate: '2027-01-01', batchStatus: 'active', quantity: 20, costPerBaseUnit: 100,
   ...overrides
