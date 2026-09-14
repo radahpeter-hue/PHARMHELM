@@ -27,7 +27,7 @@ test('a resolved permission still requires an authenticated staff profile', () =
   assert.equal(canOperatePos(undefined, true), false);
 });
 
-test('permission errors describe the failed transaction instead of falsely blaming the role', () => {
+test('permission errors describe the failed atomic checkout without falsely blaming the operator role', () => {
   const wrapped = new Error(JSON.stringify({
     error: 'Missing or insufficient permissions.',
     operationType: 'write',
@@ -35,13 +35,13 @@ test('permission errors describe the failed transaction instead of falsely blami
   }));
 
   const message = formatPosCheckoutError(wrapped);
-  assert.match(message, /transaction permission check/i);
+  assert.match(message, /Atomic checkout reached Firestore/i);
   assert.match(message, /No stock was deducted/i);
-  assert.doesNotMatch(message, /operationType|product_batches|not authorised/i);
+  assert.match(message, /app-side POS permission check already passed/i);
+  assert.doesNotMatch(message, /operationType|not authorised/i);
 });
 
-test('unexpected checkout errors do not expose raw technical details', () => {
+test('unexpected checkout errors preserve the underlying diagnostic message', () => {
   const message = formatPosCheckoutError(new Error('internal implementation detail'));
-  assert.match(message, /No stock was deducted/);
-  assert.doesNotMatch(message, /implementation detail/);
+  assert.equal(message, 'internal implementation detail');
 });

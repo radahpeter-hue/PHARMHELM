@@ -1,0 +1,44 @@
+name: POS V2 Foundation CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/services/pos-v2/**'
+      - 'tests/pos-checkout-v2-*.test.ts'
+      - 'src/services/posCheckoutTierService.ts'
+      - 'src/services/sellingTierService.ts'
+      - 'src/types.ts'
+      - 'src/types/sellingTier.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/pos-v2-foundation-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Type-check
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
