@@ -11,6 +11,7 @@ on:
       - 'src/services/sellingTierService.ts'
       - 'src/types.ts'
       - 'src/types/sellingTier.ts'
+      - 'firestore.rules'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/pos-v2-foundation-ci.yml'

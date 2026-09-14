@@ -1,4 +1,4 @@
-import type { Product, SaleItem, SystemSettings } from '../../types';
+import type { Product, Sale, SaleItem, Staff, SystemSettings } from '../../types';
 import type { SellingTierCode, SellingTierFeatureSettings } from '../../types/sellingTier';
 import type {
   CheckoutBatchAllocation,
@@ -39,11 +39,22 @@ export interface CheckoutV2Request {
   branchId: string;
   items: CheckoutV2RequestLine[];
   discountPercentage?: number;
+  paymentMethod?: string;
+  secondaryPaymentMethod?: string;
+  secondaryAmount?: number;
+  welfareAmount?: number;
+  welfareBeneficiaryIsStaff?: boolean;
+  context?: string;
   sourceQuotationId?: string;
   customerId?: string;
   patientId?: string;
+  patientName?: string;
   institutionId?: string;
+  institutionName?: string;
   prescriberId?: string;
+  prescriberName?: string;
+  isExceptionalConsumption?: boolean;
+  exceptionalConsumptionReason?: string | null;
 }
 
 export interface PosCheckoutV2CalculationInput {
@@ -68,6 +79,40 @@ export interface PosCheckoutV2CalculationResult {
   discountAmount: number;
   netTotal: number;
   actualCostTotal: number;
+}
+
+export interface PosCheckoutV2Authority {
+  uid: string;
+  tenantId: string;
+  staff: Staff;
+  branchId: string;
+  canOperateSales: boolean;
+  branchAuthorized: boolean;
+}
+
+export interface PosCheckoutV2AttemptRecord {
+  tenantId: string;
+  attemptId: string;
+  fingerprint: string;
+  status: 'completed';
+  saleId: string;
+  branchId: string;
+  operatorUid: string;
+  createdAt?: unknown;
+  completedAt?: unknown;
+}
+
+export interface PosCheckoutV2CompletedResult {
+  saleId: string;
+  receiptNumber: string;
+  attemptId: string;
+  sale: Sale;
+  replayed: boolean;
+}
+
+export interface PosCheckoutV2TaxResult {
+  items: SaleItem[];
+  taxAmount: number;
 }
 
 export type PosCheckoutV2BatchCandidate = CheckoutBatchCandidate;
