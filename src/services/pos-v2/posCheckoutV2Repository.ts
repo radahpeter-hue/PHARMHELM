@@ -107,6 +107,12 @@ function deterministicDocumentId(prefix: string, tenantId: string, attemptId: st
   return `${prefix}_${safe}_${(checksum >>> 0).toString(16)}`;
 }
 
+function deterministicReceiptSuffix(saleId: string): string {
+  let checksum = 0;
+  for (let i = 0; i < saleId.length; i += 1) checksum = ((checksum * 31) + saleId.charCodeAt(i)) >>> 0;
+  return String(100000 + (checksum % 900000));
+}
+
 export function checkoutV2AttemptDocumentId(tenantId: string, attemptId: string): string {
   return deterministicDocumentId('attempt', tenantId, attemptId);
 }
@@ -133,6 +139,27 @@ async function resolveSalesAccess(tenantId: string, roles: string[]): Promise<'n
     let access = systemAccess;
     if (!access) {
       const realmSnap = await getDoc(doc(db, 'role_realms_of_operation', roleRealmId(tenantId, role)));
+      if (realmSnap.exists() && realmSnap.data().tenantId === tenantId) {
+        const raw = realmSnap.data()?.permissions?.sales?.accessLevel;
+        access = raw === 'all' ? 'all' : raw === 'view_functional' ? 'operate' : raw === 'view_only' ? 'view' : 'none';
+      }
+    }
+    if (access && ACCESS_RANK[access] > ACCESS_RANK[resolved]) resolved = access;
+  }
+  return resolved;
+}
+
+async function resolveSalesAccessInTransaction(
+  transaction: Transaction,
+  tenantId: string,
+  roles: string[]
+): Promise<'none' | 'view' | 'operate' | 'all'> {
+  let resolved: 'none' | 'view' | 'operate' | 'all' = 'none';
+  for (const role of roles) {
+    const systemAccess = systemSalesAccess(role);
+    let access = systemAccess;
+    if (!access) {
+      const realmSnap = await transaction.get(doc(db, 'role_realms_of_operation', roleRealmId(tenantId, role)));
       if (realmSnap.exists() && realmSnap.data().tenantId === tenantId) {
         const raw = realmSnap.data()?.permissions?.sales?.accessLevel;
         access = raw === 'all' ? 'all' : raw === 'view_functional' ? 'operate' : raw === 'view_only' ? 'view' : 'none';
@@ -286,6 +313,11 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
     const liveStaff = { ...(staffSnap.data() as Staff), id: staffSnap.id };
     const liveBranch = { ...(branchSnap.data() as Branch), id: branchSnap.id };
     assertTransactionAuthority(liveStaff, prepared.authority, liveBranch);
+    const liveRoles = [String(liveStaff.role || ''), ...(liveStaff.secondaryRoles || [])].filter(Boolean);
+    const liveSalesAccess = await resolveSalesAccessInTransaction(transaction, prepared.authority.tenantId, liveRoles);
+    if (!(liveSalesAccess === 'operate' || liveSalesAccess === 'all')) {
+      throw new PosCheckoutV2Error('AUTHORIZATION_DENIED', 'The operator no longer has effective sales:operate permission.');
+    }
 
     const liveProducts = new Map<string, Product>();
     for (const [productId, productRef] of prepared.productRefs.entries()) {
@@ -365,7 +397,7 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
 
     const tax = taxSnapshot(calculation.finalizedItems, liveProducts);
     const branchCode = prepared.authority.branch.branch_code || 'KLA';
-    const receiptNumber = `${branchCode}-${new Date().getFullYear()}-${prepared.saleId.slice(-8).toUpperCase()}`;
+    const receiptNumber = `${branchCode}-${new Date().getFullYear()}-${deterministicReceiptSuffix(prepared.saleId)}`;
     const sale: Sale = {
       id: prepared.saleId,
       tenantId: prepared.authority.tenantId,
