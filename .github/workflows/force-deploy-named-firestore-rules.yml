@@ -16,11 +16,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
       - name: Authenticate Google service account
         uses: google-github-actions/auth@v2
         with:
@@ -29,52 +24,32 @@ jobs:
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Diagnose and deploy rules through named-database REST flow
+      - name: Deploy and verify named Firestore rules through REST
         shell: bash
         run: |
           set -euo pipefail
 
           ACCESS_TOKEN=$(gcloud auth application-default print-access-token)
+          PROJECT_NUMBER=$(gcloud projects describe "$FIREBASE_PROJECT_ID" --format='value(projectNumber)')
           RULES_API="https://firebaserules.googleapis.com/v1"
           RELEASE_NAME="projects/${FIREBASE_PROJECT_ID}/releases/cloud.firestore/${FIRESTORE_DATABASE_ID}"
-          ATTACHMENT_POINT="firestore.googleapis.com/databases/${FIRESTORE_DATABASE_ID}"
+          ATTACHMENT_POINT="firestore.googleapis.com/projects/${PROJECT_NUMBER}/databases/${FIRESTORE_DATABASE_ID}"
           AUTH_HEADER="Authorization: Bearer ${ACCESS_TOKEN}"
-          QUOTA_HEADER="X-Goog-User-Project: ${FIREBASE_PROJECT_ID}"
 
-          echo "Firebase Rules REST diagnostic/deployment"
+          echo "Firebase Rules direct REST deployment"
           echo "project=${FIREBASE_PROJECT_ID}"
+          echo "project_number=${PROJECT_NUMBER}"
           echo "database=${FIRESTORE_DATABASE_ID}"
           echo "release=${RELEASE_NAME}"
           echo "attachment_point=${ATTACHMENT_POINT}"
-
-          echo "Checking whether Firebase Rules API is enabled for the project."
-          gcloud services list --enabled --project "$FIREBASE_PROJECT_ID" --filter='NAME:firebaserules.googleapis.com' --format='value(NAME)' || true
-
-          echo "Checking current named Firestore release endpoint."
-          release_probe_file=$(mktemp)
-          set +e
-          release_probe_code=$(curl --silent --show-error \
-            --output "$release_probe_file" \
-            --write-out '%{http_code}' \
-            -H "$AUTH_HEADER" \
-            -H "$QUOTA_HEADER" \
-            "${RULES_API}/${RELEASE_NAME}")
-          release_probe_status=$?
-          set -e
-          echo "release_probe_curl_status=${release_probe_status}"
-          echo "release_probe_http_status=${release_probe_code}"
-          if [ -s "$release_probe_file" ]; then
-            cat "$release_probe_file"
-          fi
 
           FINGERPRINT=$(openssl dgst -sha256 -binary firestore.rules | base64 -w 0)
           create_body=$(jq -n \
             --rawfile rules firestore.rules \
             --arg fingerprint "$FINGERPRINT" \
             --arg attachmentPoint "$ATTACHMENT_POINT" \
-            '{source: {files: [{name: "firestore.rules", content: $rules, fingerprint: $fingerprint}], attachment_point: $attachmentPoint}}')
+            '{source: {files: [{name: "firestore.rules", content: $rules, fingerprint: $fingerprint}]}, attachment_point: $attachmentPoint}')
 
-          echo "Creating a ruleset directly through the Firebase Rules REST API."
           ruleset_file=$(mktemp)
           create_code=""
           create_curl_status=1
@@ -85,7 +60,6 @@ jobs:
               --write-out '%{http_code}' \
               -X POST \
               -H "$AUTH_HEADER" \
-              -H "$QUOTA_HEADER" \
               -H "Content-Type: application/json" \
               --data "$create_body" \
               "${RULES_API}/projects/${FIREBASE_PROJECT_ID}/rulesets")
@@ -104,9 +78,8 @@ jobs:
           if [ -s "$ruleset_file" ]; then
             cat "$ruleset_file"
           fi
-
           if [ "$create_curl_status" -ne 0 ] || [ "$create_code" -lt 200 ] || [ "$create_code" -ge 300 ]; then
-            echo "::error::Ruleset creation failed before release activation. See curl and HTTP status above."
+            echo "::error::Ruleset creation failed."
             exit 21
           fi
 
@@ -122,7 +95,6 @@ jobs:
             --arg rulesetName "$ruleset_name" \
             '{release: {name: $name, rulesetName: $rulesetName}, updateMask: "rulesetName"}')
 
-          echo "Activating the ruleset on the existing named Firestore release."
           release_file=$(mktemp)
           patch_code=""
           patch_curl_status=1
@@ -133,7 +105,6 @@ jobs:
               --write-out '%{http_code}' \
               -X PATCH \
               -H "$AUTH_HEADER" \
-              -H "$QUOTA_HEADER" \
               -H "Content-Type: application/json" \
               --data "$patch_body" \
               "${RULES_API}/${RELEASE_NAME}")
@@ -143,17 +114,13 @@ jobs:
             if [ "$patch_curl_status" -eq 0 ] && [ "$patch_code" -ge 200 ] && [ "$patch_code" -lt 300 ]; then
               break
             fi
-            if [ "$patch_code" = "404" ]; then
-              break
-            fi
-            if [ "$patch_code" != "503" ]; then
+            if [ "$patch_code" = "404" ] || [ "$patch_code" != "503" ]; then
               break
             fi
             sleep $((attempt * 10))
           done
 
           if [ "$patch_code" = "404" ]; then
-            echo "Named release was not found. Creating it explicitly."
             create_release_body=$(jq -n \
               --arg name "$RELEASE_NAME" \
               --arg rulesetName "$ruleset_name" \
@@ -164,7 +131,6 @@ jobs:
               --write-out '%{http_code}' \
               -X POST \
               -H "$AUTH_HEADER" \
-              -H "$QUOTA_HEADER" \
               -H "Content-Type: application/json" \
               --data "$create_release_body" \
               "${RULES_API}/projects/${FIREBASE_PROJECT_ID}/releases")
@@ -176,26 +142,23 @@ jobs:
           if [ -s "$release_file" ]; then
             cat "$release_file"
           fi
-
           if [ "$patch_curl_status" -ne 0 ] || [ "$patch_code" -lt 200 ] || [ "$patch_code" -ge 300 ]; then
-            echo "::error::Ruleset was created but named release activation failed. See exact HTTP status above."
+            echo "::error::Named release activation failed."
             exit 23
           fi
 
           active_ruleset=$(jq -r '.rulesetName // empty' "$release_file")
           if [ "$active_ruleset" != "$ruleset_name" ]; then
-            echo "::error::Release response does not reference the newly created ruleset."
+            echo "::error::Release response does not reference the new ruleset."
             exit 24
           fi
 
-          echo "Verifying the active release."
           verify_file=$(mktemp)
           set +e
           verify_code=$(curl --silent --show-error \
             --output "$verify_file" \
             --write-out '%{http_code}' \
             -H "$AUTH_HEADER" \
-            -H "$QUOTA_HEADER" \
             "${RULES_API}/${RELEASE_NAME}")
           verify_curl_status=$?
           set -e
@@ -204,9 +167,8 @@ jobs:
           if [ -s "$verify_file" ]; then
             cat "$verify_file"
           fi
-
           if [ "$verify_curl_status" -ne 0 ] || [ "$verify_code" -lt 200 ] || [ "$verify_code" -ge 300 ]; then
-            echo "::error::Release activation returned success but independent verification failed."
+            echo "::error::Independent release verification failed."
             exit 25
           fi
 
