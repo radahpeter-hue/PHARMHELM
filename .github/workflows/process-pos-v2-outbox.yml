@@ -1,0 +1,47 @@
+name: Process POS V2 Outbox
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pos-v2-outbox-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    env:
+      FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+      FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+      POS_OUTBOX_WORKER_ID: github-actions-${{ github.run_id }}-${{ github.run_attempt }}
+      POS_OUTBOX_LIMIT: '100'
+      POS_OUTBOX_LEASE_SECONDS: '300'
+      POS_OUTBOX_MAX_ATTEMPTS: '10'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Install worker runtime dependency
+        run: npm install --no-save firebase-admin
+
+      - name: Authenticate Google service account
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Process durable POS V2 outbox
+        run: node scripts/process-pos-v2-outbox.mjs
