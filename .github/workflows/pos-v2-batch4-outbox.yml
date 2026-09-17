@@ -1,0 +1,66 @@
+name: POS V2 Batch 4 Durable Posting
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run durable posting or reconciliation-only audit'
+        required: true
+        default: process
+        type: choice
+        options:
+          - process
+          - reconcile
+      max_events:
+        description: 'Maximum outbox events to inspect in this run'
+        required: true
+        default: '25'
+        type: string
+
+concurrency:
+  group: pos-v2-batch4-durable-posting
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  durable-posting:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+      FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+      POS_V2_MAX_EVENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_events || '25' }}
+      POS_V2_WORKER_ID: github-actions-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Install durable worker runtime dependency
+        run: npm install --no-save firebase-admin
+
+      - name: Authenticate Google service account
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Process committed POS V2 outbox events
+        if: ${{ github.event_name == 'schedule' || inputs.mode == 'process' }}
+        run: node scripts/process-pos-v2-outbox.mjs
+
+      - name: Audit POS V2 outbox reconciliation state
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'reconcile' }}
+        run: node scripts/process-pos-v2-outbox.mjs --reconcile
