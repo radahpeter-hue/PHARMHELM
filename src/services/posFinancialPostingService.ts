@@ -221,6 +221,8 @@ export async function reconcilePendingPosFinancials(params: {
   ));
   const pending = snapshot.docs
     .filter(snap => snap.data().paymentMethod === 'staff_welfare' && snap.data().welfarePostingStatus === 'pending')
+    // POS V2 welfare posting is owned by the durable Batch 4 outbox worker.
+    .filter(snap => Number(snap.data().engineVersion || 0) !== 2)
     .slice(0, 20);
 
   let repaired = 0;

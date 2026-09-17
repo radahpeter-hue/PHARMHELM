@@ -49,6 +49,14 @@ test('immediate cash payment is completed for the authoritative sale total', () 
   assert.deepEqual(payment.components.map(row => [row.method, row.amount, row.status]), [['cash', 1000, 'settled']]);
 });
 
+test('all immediate payment methods exposed by the POS map to settled canonical components', () => {
+  for (const method of ['cash', 'mtn_momo', 'airtel_money', 'card']) {
+    const payment = buildPayment(baseRequest({ paymentMethod: method }));
+    assert.deepEqual(payment.components.map(row => [row.method, row.amount, row.status]), [[method, 1000, 'settled']]);
+    assert.equal(payment.status, 'completed');
+  }
+});
+
 test('institutional credit is represented as unpaid and never as cash received', () => {
   const payment = buildPayment(baseRequest({ paymentMethod: 'institutional_credit' }));
   assert.equal(payment.amount, 1000);
@@ -141,10 +149,10 @@ test('idempotent replay resolves the same canonical payment and outbox rather th
   assert.match(repository, /IDEMPOTENCY_CONFLICT/);
 });
 
-test('Batch 3 still does not activate V2 from Sales.tsx or move printing into the V2 service', () => {
+test('Batch 5 activates V2 only from Sales while keeping printing outside the V2 service', () => {
   const sales = readFileSync('src/pages/Sales.tsx', 'utf8');
   const service = readFileSync('src/services/pos-v2/posCheckoutV2Service.ts', 'utf8');
-  assert.equal(sales.includes('executeCheckoutV2'), false);
+  assert.equal(sales.includes('executeCheckoutV2'), true);
   assert.equal(service.includes('printThermalReceipt'), false);
   assert.equal(service.includes('window.print'), false);
 });

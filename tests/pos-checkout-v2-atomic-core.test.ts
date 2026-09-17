@@ -82,10 +82,11 @@ test('Batch 2 service contains no receipt printing or durable downstream executi
   }
 });
 
-test('V1 Sales checkout remains present and is not wired to executeCheckoutV2 in Batch 2', () => {
+test('Batch 5 preserves V1 checkout and explicitly wires the controlled V2 entry point', () => {
   assert.match(salesSource, /checkoutAttemptRef/);
   assert.match(salesSource, /firestoreService\.runTransaction/);
-  assert.equal(salesSource.includes('executeCheckoutV2'), false);
+  assert.match(salesSource, /loadPosCheckoutV2Mode/);
+  assert.match(salesSource, /executeCheckoutV2/);
 });
 
 test('sellable batch filter rejects other tenant, other branch, inactive, expired and invalid-cost batches', () => {

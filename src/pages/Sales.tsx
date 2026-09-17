@@ -38,6 +38,9 @@ import { buildTierCartItem, getCartLineIdentity, getProductUsableBaseStock, getR
 import { allocateFefoCheckoutLines, assertCheckoutLineCostFloors, buildCheckoutLineDemands, finalizeCheckoutSaleItems, getCheckoutBatchDeductions, getCheckoutProductDeductions } from '../services/posCheckoutTierService';
 import { reviseSaleInventoryAtomically, voidSaleInventoryAtomically } from '../services/saleInventoryIntegrityService';
 import { convertQuotationToSale, reconcilePendingPosFinancials, reconcilePosWelfarePosting } from '../services/posFinancialPostingService';
+import { executeCheckoutV2 } from '../services/pos-v2/posCheckoutV2Service';
+import { loadPosCheckoutV2Mode } from '../services/pos-v2/posCheckoutV2FeatureService';
+import { pinCheckoutAttemptEngine, type PosCheckoutAttemptSelection } from '../services/pos-v2/posCheckoutV2ActivationService';
 import { db } from '../firebase';
 
 
@@ -131,7 +134,13 @@ const Sales: React.FC = () => {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodType>('cash');
   const [secondaryPaymentMethod, setSecondaryPaymentMethod] = useState<PaymentMethodType>('cash');
   const [isProcessing, setIsProcessing] = useState(false);
-  const checkoutAttemptRef = React.useRef<{ saleId: string; receiptNumber: string } | null>(null);
+  const checkoutAttemptRef = React.useRef<(PosCheckoutAttemptSelection & {
+    tenantId: string;
+    branchId: string;
+    legacySaleId: string;
+    legacyReceiptNumber: string;
+  }) | null>(null);
+  const checkoutSubmissionRef = React.useRef(false);
   const [isNewPatientModalOpen, setIsNewPatientModalOpen] = useState(false);
   const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState(false);
   const [patientSearchTerm, setPatientSearchTerm] = useState('');
@@ -622,6 +631,14 @@ const Sales: React.FC = () => {
       return;
     }
 
+    // React state disables the button visually; this synchronous guard also
+    // closes the same-tick double-click window before any engine can start.
+    if (checkoutSubmissionRef.current) {
+      receiptWindow?.close();
+      return;
+    }
+    checkoutSubmissionRef.current = true;
+
     setIsProcessing(true);
 
     try {
@@ -630,11 +647,36 @@ const Sales: React.FC = () => {
         ? sales.find(s => s.id === editingSaleId)?.receiptNumber || `${branchCode}-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`
         : `${branchCode}-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
       if (!editingSaleId && !checkoutAttemptRef.current) {
-        checkoutAttemptRef.current = { saleId: generateUUID(), receiptNumber: generatedReceiptNumber };
+        const attemptId = generateUUID();
+        checkoutAttemptRef.current = {
+          attemptId,
+          tenantId: profile.tenantId,
+          branchId: activeBranchId!,
+          legacySaleId: attemptId,
+          legacyReceiptNumber: generatedReceiptNumber
+        };
       }
-      const receiptNumber = editingSaleId
+      let checkoutEngine: 'legacy' | 'v2' = 'legacy';
+      if (!editingSaleId) {
+        const attempt = checkoutAttemptRef.current!;
+        if (attempt.tenantId !== profile.tenantId || attempt.branchId !== activeBranchId) {
+          throw new Error('The tenant or branch changed during this checkout attempt. Clear the basket before starting a new checkout.');
+        }
+        if (!attempt.engine) {
+          const resolution = await loadPosCheckoutV2Mode({
+            tenantId: profile.tenantId,
+            branchId: activeBranchId!
+          });
+          checkoutAttemptRef.current = {
+            ...attempt,
+            ...pinCheckoutAttemptEngine(attempt, resolution.effectiveMode)
+          };
+        }
+        checkoutEngine = checkoutAttemptRef.current!.engine!;
+      }
+      let receiptNumber = editingSaleId
         ? generatedReceiptNumber
-        : checkoutAttemptRef.current!.receiptNumber;
+        : checkoutAttemptRef.current!.legacyReceiptNumber;
       
       // Calculate VAT per item
       let totalVatAmount = 0;
@@ -723,8 +765,35 @@ const Sales: React.FC = () => {
         } catch (movementError) {
           console.warn('Receipt edit completed, but consumption analytics logging will need reconciliation:', movementError);
         }
+      } else if (checkoutEngine === 'v2') {
+        const result = await executeCheckoutV2({
+          attemptId: checkoutAttemptRef.current!.attemptId,
+          branchId: activeBranchId!,
+          items: itemsWithVat,
+          discountPercentage,
+          paymentMethod,
+          secondaryPaymentMethod: isWelfareSplit ? secondaryPaymentMethod : undefined,
+          secondaryAmount: isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
+          welfareAmount: paymentMethod === 'staff_welfare' ? (isWelfareSplit ? welfareBalance : totalAmount) : undefined,
+          welfareBeneficiaryIsStaff: paymentMethod === 'staff_welfare' ? Boolean(selectedPatient?.isStaff) : undefined,
+          context,
+          sourceQuotationId: resumedQuotationId || undefined,
+          customerId: selectedPatient?.id,
+          patientId: selectedPatient?.id,
+          patientName: selectedPatient?.full_name,
+          institutionId: selectedInstitution?.id,
+          institutionName: selectedInstitution?.supplier_name,
+          prescriberId: selectedPrescriber?.id,
+          prescriberName: selectedPrescriber?.full_name,
+          isExceptionalConsumption,
+          exceptionalConsumptionReason: isExceptionalConsumption ? exceptionalConsumptionReason : null
+        });
+        finalReceiptId = result.saleId;
+        receiptNumber = result.receiptNumber;
+        completedSale = result.sale;
+        stockPostedAtomically = true;
       } else {
-        const saleDocumentId = checkoutAttemptRef.current!.saleId;
+        const saleDocumentId = checkoutAttemptRef.current!.legacySaleId;
         const saleData: Sale = {
           id: saleDocumentId,
           tenantId: profile.tenantId,
@@ -898,7 +967,7 @@ const Sales: React.FC = () => {
         }
       }
       
-      if (finalReceiptId) {
+      if (finalReceiptId && checkoutEngine === 'legacy') {
         try {
           await reconcilePosWelfarePosting({
             tenantId: profile.tenantId, saleId: finalReceiptId, actorId: profile.uid,
@@ -931,15 +1000,15 @@ const Sales: React.FC = () => {
         }
       }
 
-      if (resumedQuotationId && finalReceiptId) {
+      if (resumedQuotationId && finalReceiptId && checkoutEngine === 'legacy') {
         try {
           await convertQuotationToSale({ tenantId: profile.tenantId, quotationId: resumedQuotationId, saleId: finalReceiptId, convertedValue: finalTotal });
         } catch (quotationError) {
           console.warn('Sale completed, but quotation conversion remains pending:', quotationError);
           toast.warning('Sale completed. The quotation link needs reconciliation, but no second sale was created.');
         }
-        setResumedQuotationId(null);
       }
+      if (resumedQuotationId && finalReceiptId) setResumedQuotationId(null);
 
       if (completedSale) {
         const printOpened = printThermalReceipt(completedSale, {
@@ -973,6 +1042,7 @@ const Sales: React.FC = () => {
       console.error(error);
       toast.error(`Failed to process sale: ${formatPosCheckoutError(error)}`);
     } finally {
+      checkoutSubmissionRef.current = false;
       setIsProcessing(false);
     }
   };
@@ -1072,6 +1142,10 @@ const Sales: React.FC = () => {
 
   const saveLedgerReceiptChanges = async () => {
     if (!profile || !ledgerEditingSale) return;
+    if (ledgerEditingSale.engineVersion === 2) {
+      toast.error('POS V2 receipts are immutable and cannot be edited through the legacy ledger path.');
+      return;
+    }
     if (editedItems.length === 0) {
       toast.error('Receipt must have at least 1 item');
       return;
@@ -1146,6 +1220,10 @@ const Sales: React.FC = () => {
   };
 
   const loadSaleIntoPOS = (sale: Sale) => {
+    if (sale.engineVersion === 2) {
+      toast.error('POS V2 receipts cannot be edited through the legacy checkout path.');
+      return;
+    }
     // Fill POS Cart
     setCart(sale.items.map(item => ({ ...item })));
     setEditingSaleId(sale.id);
@@ -1337,6 +1415,7 @@ const Sales: React.FC = () => {
                     onClick={() => {
                       if (cart.length > 0 || editingSaleId) {
                         setCart([]);
+                        checkoutAttemptRef.current = null;
                         if (editingSaleId) {
                           setEditingSaleId(null);
                           setSelectedPatient(null);
@@ -2263,6 +2342,10 @@ const Sales: React.FC = () => {
           onVoid={async (saleId, reason) => {
             const sale = sales.find(s => s.id === saleId);
             if (!sale) return;
+            if (sale.engineVersion === 2) {
+              toast.error('POS V2 receipts require a durable V2 reversal workflow and cannot be voided through the legacy path.');
+              return;
+            }
             
             try {
               if (!profile?.tenantId) throw new Error('A tenant profile is required to void this sale.');
@@ -2298,6 +2381,10 @@ const Sales: React.FC = () => {
             }
           }}
           onEdit={(sale) => {
+            if (sale.engineVersion === 2) {
+              toast.error('POS V2 receipts cannot be edited through the legacy ledger path.');
+              return;
+            }
             setLedgerEditingSale(sale);
             toast.info(`Editing Sale ${sale.receiptNumber} directly in Ledger`);
           }}
@@ -2849,6 +2936,7 @@ const Sales: React.FC = () => {
           grandTotal={totalAmount}
           onSuccess={() => {
             setCart([]);
+            checkoutAttemptRef.current = null;
             setSelectedPatient(null);
             setSelectedInstitution(null);
             setSelectedPrescriber(null);

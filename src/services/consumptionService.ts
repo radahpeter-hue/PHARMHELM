@@ -411,6 +411,8 @@ export async function reconcileSaleConsumptionMovements(params: {
 
   const candidateDocs = salesSnap.docs
     .filter(d => ['completed', 'voided'].includes(String(d.data().status || '').toLowerCase()))
+    // POS V2 consumption is owned by the durable Batch 4 outbox worker.
+    .filter(d => Number(d.data().engineVersion || 0) !== 2)
     .sort((a, b) => new Date(String(b.data().timestamp || 0)).getTime() - new Date(String(a.data().timestamp || 0)).getTime())
     .slice(0, maxSales);
 
