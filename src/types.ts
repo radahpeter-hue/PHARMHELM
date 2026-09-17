@@ -55,6 +55,11 @@ export interface Tenant {
     receiptFooter: string;
     logoUrl?: string;
   };
+  features?: {
+    posCheckoutV2Enabled?: boolean;
+    [key: string]: unknown;
+  };
+  posCheckoutEngine?: 'legacy' | 'shadow' | 'v2';
   deleted?: boolean;
   deleted_at?: string;
   deletedAt?: string;
@@ -81,6 +86,7 @@ export interface Branch {
   brandLogoUrl?: string;
   brandNdaRegNumber?: string;
   brandReceiptFooter?: string;
+  posCheckoutEngine?: 'legacy' | 'shadow' | 'v2';
   shifts?: BranchShifts;
   created_at: string;
   created_by: string;
@@ -573,6 +579,13 @@ export interface Sale {
   exceptionalConsumptionReason?: string | null;
   inventoryPosted?: boolean;
   inventoryPostedAt?: unknown;
+  engineVersion?: number;
+  integrityVersion?: number;
+  checkoutAttemptId?: string;
+  checkoutIntentFingerprint?: string;
+  canonicalPaymentId?: string;
+  transactionOutboxEventId?: string;
+  actualSaleCost?: number;
   voidedAt?: string;
   voidedBy?: string;
   voidReason?: string;
@@ -597,7 +610,17 @@ export interface SaleItem {
 
 export type SaleContext = string;
 
-export type PaymentMethodType = 'cash' | 'momo' | 'airtel' | 'card' | 'credit' | 'insurance';
+export type PaymentMethodType =
+  | 'cash'
+  | 'momo'
+  | 'mtn_momo'
+  | 'airtel'
+  | 'airtel_money'
+  | 'card'
+  | 'credit'
+  | 'institutional_credit'
+  | 'insurance'
+  | 'staff_welfare';
 
 export interface SaleRevision {
   id: string;
