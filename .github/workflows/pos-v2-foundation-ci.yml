@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'src/services/pos-v2/**'
+      - 'scripts/pos-v2-batch4-core.mjs'
+      - 'scripts/process-pos-v2-outbox.mjs'
       - 'tests/pos-checkout-v2-*.test.ts'
       - 'src/services/posCheckoutTierService.ts'
       - 'src/services/sellingTierService.ts'
@@ -15,6 +17,7 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/pos-v2-foundation-ci.yml'
+      - '.github/workflows/pos-v2-batch4-outbox.yml'
 
 permissions:
   contents: read
