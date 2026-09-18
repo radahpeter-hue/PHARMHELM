@@ -981,8 +981,15 @@ service cloud.firestore {
         );
       allow update: if isPOSOperator()
         && isTenantMember(resource.data.tenantId)
-        && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+        && isTenantMember(request.resource.data.tenantId)
+        && (!("engineVersion" in resource.data) || resource.data.engineVersion != 2)
+        && (!("engineVersion" in request.resource.data) || request.resource.data.engineVersion != 2);
+      // V2 sales are immutable to every client, including tenant administrators.
+      // The Batch 4 Admin SDK worker bypasses client rules for its controlled
+      // downstream-status fields. Reversal requires a separate durable event.
+      allow delete: if isAdmin()
+        && isTenantMember(resource.data.tenantId)
+        && (!("engineVersion" in resource.data) || resource.data.engineVersion != 2);
     }
 
     match /pos_payments/{paymentId} {
