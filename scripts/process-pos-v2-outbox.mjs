@@ -81,7 +81,7 @@ async function claimEvent(ref) {
       attemptCount: Number(event.attemptCount || 0) + 1,
       updatedAt: FieldValue.serverTimestamp()
     });
-    return event;
+    return { ...event, attemptCount: Number(event.attemptCount || 0) + 1 };
   });
 }
 
@@ -147,9 +147,12 @@ async function markConsumerResult(ref, name, error = null) {
     };
     const consumers = { ...(event.consumers || {}), [name]: nextState };
     const status = deriveGlobalStatus(consumers);
+    const requiresManualReview = Object.values(consumers).some(state => Boolean(state?.requiresManualReview));
     tx.update(ref, {
       [`consumers.${name}`]: nextState,
       status,
+      requiresManualReview,
+      manualReviewAt: requiresManualReview ? (event.manualReviewAt || FieldValue.serverTimestamp()) : null,
       lastError: failed ? structuredError(error).message : null,
       processedAt: status === 'PROCESSED' ? FieldValue.serverTimestamp() : null,
       updatedAt: FieldValue.serverTimestamp()
@@ -496,9 +499,12 @@ async function processEvent(ref) {
     canonical = await loadCanonical(claimed);
     await ensureConsumers(ref, canonical.sale, canonical.payment);
   } catch (error) {
+    const terminal = Number(claimed.attemptCount || 0) >= MAX_CONSUMER_ATTEMPTS;
     await db.collection('pos_transaction_outbox').doc(ref.id).set({
       status: 'FAILED',
       lastError: structuredError(error).message,
+      requiresManualReview: terminal,
+      manualReviewAt: terminal ? FieldValue.serverTimestamp() : null,
       leaseOwner: null,
       leaseExpiresAt: null,
       updatedAt: FieldValue.serverTimestamp()
@@ -530,6 +536,7 @@ async function candidateRefs() {
     .filter(doc => {
       const data = doc.data();
       if (data.eventType !== 'POS_SALE_COMMITTED' || data.engineVersion !== 2) return false;
+      if (data.requiresManualReview === true) return false;
       if (data.status === 'PROCESSING' && !isLeaseExpired(data.leaseExpiresAt)) return false;
       return true;
     })
@@ -540,26 +547,82 @@ async function candidateRefs() {
 async function reconciliationReport() {
   const snapshot = await db.collection('pos_transaction_outbox')
     .where('eventType', '==', 'POS_SALE_COMMITTED')
-    .limit(MAX_EVENTS * 4)
     .get();
-  const report = { checked: 0, healthy: 0, requiresProcessing: 0, inconsistent: 0 };
+  const report = {
+    checked: 0,
+    healthy: 0,
+    requiresProcessing: 0,
+    inconsistent: 0,
+    pending: 0,
+    processing: 0,
+    failed: 0,
+    manualReview: 0,
+    expiredLeases: 0,
+    consumers: Object.fromEntries(BATCH4_CONSUMERS.map(name => [name, {
+      pending: 0,
+      processing: 0,
+      completed: 0,
+      failed: 0,
+      notApplicable: 0,
+      manualReview: 0
+    }])),
+    problemEvents: []
+  };
   for (const snap of snapshot.docs) {
     const event = { id: snap.id, ...snap.data() };
     if (event.engineVersion !== 2) continue;
     report.checked += 1;
+    const globalStatus = String(event.status || 'PENDING').toUpperCase();
+    if (globalStatus === 'PENDING') report.pending += 1;
+    else if (globalStatus === 'PROCESSING') report.processing += 1;
+    else if (globalStatus === 'FAILED') report.failed += 1;
+    if (event.requiresManualReview === true) report.manualReview += 1;
+    if (globalStatus === 'PROCESSING' && isLeaseExpired(event.leaseExpiresAt)) report.expiredLeases += 1;
+    for (const name of BATCH4_CONSUMERS) {
+      const state = event.consumers?.[name];
+      const status = String(state?.status || 'PENDING').toUpperCase();
+      const bucket = status === 'NOT_APPLICABLE' ? 'notApplicable' : status.toLowerCase();
+      if (bucket in report.consumers[name]) report.consumers[name][bucket] += 1;
+      if (state?.requiresManualReview === true) report.consumers[name].manualReview += 1;
+    }
     try {
       const { sale, payment } = await loadCanonical(event);
       const expected = initializeConsumers({ sale, payment, existingConsumers: event.consumers || {}, nowIso: nowIso() });
       const status = deriveGlobalStatus(expected);
       if (status === 'PROCESSED') report.healthy += 1;
       else report.requiresProcessing += 1;
+      if (
+        (status !== 'PROCESSED' || event.requiresManualReview === true)
+        && report.problemEvents.length < 25
+      ) {
+        report.problemEvents.push({
+          eventId: event.id,
+          status: globalStatus,
+          derivedStatus: status,
+          requiresManualReview: event.requiresManualReview === true,
+          error: event.lastError || null
+        });
+      }
     } catch (error) {
       report.inconsistent += 1;
+      if (report.problemEvents.length < 25) {
+        report.problemEvents.push({
+          eventId: event.id,
+          status: globalStatus,
+          requiresManualReview: event.requiresManualReview === true,
+          error: structuredError(error).message
+        });
+      }
       console.error(`[Batch4 reconcile] ${event.id}:`, error);
     }
   }
   console.log(JSON.stringify({ mode: 'reconcile', ...report }, null, 2));
-  if (report.inconsistent > 0) process.exitCode = 2;
+  if (
+    report.inconsistent > 0
+    || report.requiresProcessing > 0
+    || report.manualReview > 0
+    || report.expiredLeases > 0
+  ) process.exitCode = 2;
 }
 
 async function main() {
