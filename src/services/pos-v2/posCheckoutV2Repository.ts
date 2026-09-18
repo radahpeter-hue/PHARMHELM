@@ -132,6 +132,80 @@ export function checkoutV2SaleDocumentId(tenantId: string, attemptId: string): s
   return deterministicDocumentId('v2sale', tenantId, attemptId);
 }
 
+export async function recoverCompletedCheckoutV2(params: {
+  uid: string;
+  tenantId: string;
+  branchId: string;
+  attemptId: string;
+}): Promise<PosCheckoutV2CompletedResult | null> {
+  const uid = String(params.uid || '').trim();
+  const tenantId = String(params.tenantId || '').trim();
+  const branchId = String(params.branchId || '').trim();
+  const attemptId = String(params.attemptId || '').trim();
+  if (!uid || !tenantId || !branchId || !attemptId) {
+    throw new PosCheckoutV2Error('IDEMPOTENCY_CONFLICT', 'Complete checkout recovery identifiers are required.');
+  }
+
+  const authority = await loadCheckoutV2Authority(uid, branchId);
+  if (authority.tenantId !== tenantId) {
+    throw new PosCheckoutV2Error('TENANT_MISMATCH', 'The pending checkout belongs to a different tenant.');
+  }
+
+  const attemptRef = doc(db, 'pos_checkout_attempts', checkoutV2AttemptDocumentId(tenantId, attemptId));
+  const attemptSnap = await getDoc(attemptRef);
+  if (!attemptSnap.exists()) return null;
+  const attempt = attemptSnap.data() as PosCheckoutV2AttemptRecord;
+  if (
+    attempt.tenantId !== tenantId
+    || attempt.branchId !== branchId
+    || attempt.operatorUid !== uid
+    || attempt.attemptId !== attemptId
+    || attempt.status !== 'completed'
+  ) {
+    throw new PosCheckoutV2Error('IDEMPOTENCY_CONFLICT', 'The pending checkout recovery record does not match the authenticated operator and branch.');
+  }
+  if (!attempt.paymentId || !attempt.outboxEventId) {
+    throw new PosCheckoutV2Error('TRANSACTION_CONFLICT', 'The completed checkout attempt is missing its payment or outbox identity.');
+  }
+
+  const [saleSnap, paymentSnap, outboxSnap] = await Promise.all([
+    getDoc(doc(db, 'sales', attempt.saleId)),
+    getDoc(doc(db, 'pos_payments', attempt.paymentId)),
+    getDoc(doc(db, 'pos_transaction_outbox', attempt.outboxEventId))
+  ]);
+  if (!saleSnap.exists() || !paymentSnap.exists() || !outboxSnap.exists()) {
+    throw new PosCheckoutV2Error('TRANSACTION_CONFLICT', 'The completed checkout attempt has an incomplete canonical record chain.');
+  }
+  const sale = { ...(saleSnap.data() as Sale), id: saleSnap.id };
+  const payment = paymentSnap.data() as PosCheckoutV2Payment;
+  const outbox = outboxSnap.data();
+  if (
+    sale.tenantId !== tenantId
+    || sale.branchId !== branchId
+    || sale.engineVersion !== 2
+    || payment.saleId !== sale.id
+    || payment.tenantId !== tenantId
+    || payment.branchId !== branchId
+    || outbox.saleId !== sale.id
+    || outbox.paymentId !== attempt.paymentId
+    || outbox.tenantId !== tenantId
+    || outbox.branchId !== branchId
+  ) {
+    throw new PosCheckoutV2Error('TRANSACTION_CONFLICT', 'The recovered checkout canonical records do not reconcile.');
+  }
+
+  return {
+    saleId: sale.id,
+    receiptNumber: sale.receiptNumber,
+    attemptId,
+    paymentId: attempt.paymentId,
+    outboxEventId: attempt.outboxEventId,
+    sale,
+    payment,
+    replayed: true
+  };
+}
+
 function normalizeRole(role: string): string {
   const normalized = String(role || '').trim().toLowerCase();
   return ROLE_ALIASES[normalized] || normalized;

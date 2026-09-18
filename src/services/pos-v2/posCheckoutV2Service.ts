@@ -1,6 +1,6 @@
 import { auth } from '../../firebase';
 import { PosCheckoutV2Error, mapCheckoutCalculationError } from './posCheckoutV2Errors';
-import { commitCheckoutV2, prepareCheckoutV2Repository } from './posCheckoutV2Repository';
+import { commitCheckoutV2, prepareCheckoutV2Repository, recoverCompletedCheckoutV2 } from './posCheckoutV2Repository';
 import type { CheckoutV2Request, PosCheckoutV2CompletedResult } from './posCheckoutV2Types';
 
 function validateCheckoutV2Request(request: CheckoutV2Request) {
@@ -50,6 +50,20 @@ export async function executeCheckoutV2(request: CheckoutV2Request): Promise<Pos
 
     const prepared = await prepareCheckoutV2Repository(user.uid, request);
     return await commitCheckoutV2(request, prepared);
+  } catch (error) {
+    throw mapRepositoryError(error);
+  }
+}
+
+export async function recoverCheckoutV2Attempt(params: {
+  tenantId: string;
+  branchId: string;
+  attemptId: string;
+}): Promise<PosCheckoutV2CompletedResult | null> {
+  try {
+    const user = auth.currentUser;
+    if (!user?.uid) throw new PosCheckoutV2Error('AUTHORIZATION_DENIED', 'An authenticated Firebase user is required.');
+    return await recoverCompletedCheckoutV2({ uid: user.uid, ...params });
   } catch (error) {
     throw mapRepositoryError(error);
   }

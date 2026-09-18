@@ -38,9 +38,15 @@ import { buildTierCartItem, getCartLineIdentity, getProductUsableBaseStock, getR
 import { allocateFefoCheckoutLines, assertCheckoutLineCostFloors, buildCheckoutLineDemands, finalizeCheckoutSaleItems, getCheckoutBatchDeductions, getCheckoutProductDeductions } from '../services/posCheckoutTierService';
 import { reviseSaleInventoryAtomically, voidSaleInventoryAtomically } from '../services/saleInventoryIntegrityService';
 import { convertQuotationToSale, reconcilePendingPosFinancials, reconcilePosWelfarePosting } from '../services/posFinancialPostingService';
-import { executeCheckoutV2 } from '../services/pos-v2/posCheckoutV2Service';
+import { executeCheckoutV2, recoverCheckoutV2Attempt } from '../services/pos-v2/posCheckoutV2Service';
 import { loadPosCheckoutV2Mode } from '../services/pos-v2/posCheckoutV2FeatureService';
-import { pinCheckoutAttemptEngine, type PosCheckoutAttemptSelection } from '../services/pos-v2/posCheckoutV2ActivationService';
+import {
+  clearPendingPosCheckoutV2Attempt,
+  loadPendingPosCheckoutV2Attempt,
+  pinCheckoutAttemptEngine,
+  savePendingPosCheckoutV2Attempt,
+  type PosCheckoutAttemptSelection
+} from '../services/pos-v2/posCheckoutV2ActivationService';
 import { db } from '../firebase';
 
 
@@ -141,6 +147,9 @@ const Sales: React.FC = () => {
     legacyReceiptNumber: string;
   }) | null>(null);
   const checkoutSubmissionRef = React.useRef(false);
+  const [isCheckingPendingV2Attempt, setIsCheckingPendingV2Attempt] = useState(true);
+  const [pendingV2RecoveryError, setPendingV2RecoveryError] = useState<string | null>(null);
+  const [recoveredV2Receipt, setRecoveredV2Receipt] = useState<string | null>(null);
   const [isNewPatientModalOpen, setIsNewPatientModalOpen] = useState(false);
   const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState(false);
   const [patientSearchTerm, setPatientSearchTerm] = useState('');
@@ -148,6 +157,47 @@ const Sales: React.FC = () => {
   const [institutionSearchTerm, setInstitutionSearchTerm] = useState('');
   const [isPrescriberDropdownOpen, setIsPrescriberDropdownOpen] = useState(false);
   const [prescriberSearchTerm, setPrescriberSearchTerm] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const recoverPendingAttempt = async () => {
+      if (!profile?.uid || !profile.tenantId) {
+        if (!cancelled) setIsCheckingPendingV2Attempt(false);
+        return;
+      }
+      setIsCheckingPendingV2Attempt(true);
+      setPendingV2RecoveryError(null);
+      try {
+        const pending = loadPendingPosCheckoutV2Attempt(window.localStorage, profile.uid);
+        if (!pending) return;
+        if (pending.tenantId !== profile.tenantId) {
+          throw new Error('A pending POS V2 attempt belongs to another tenant. Contact support before starting a new checkout.');
+        }
+        const recovered = await recoverCheckoutV2Attempt({
+          tenantId: pending.tenantId,
+          branchId: pending.branchId,
+          attemptId: pending.attemptId
+        });
+        if (cancelled) return;
+        clearPendingPosCheckoutV2Attempt(window.localStorage, profile.uid);
+        checkoutAttemptRef.current = null;
+        if (recovered) {
+          setCart([]);
+          setRecoveredV2Receipt(recovered.receiptNumber);
+          toast.success(`Recovered completed V2 sale ${recovered.receiptNumber}. No replacement sale is required.`);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        const message = formatPosCheckoutError(error);
+        setPendingV2RecoveryError(message);
+        toast.error(`A previous V2 checkout remains unresolved: ${message}`);
+      } finally {
+        if (!cancelled) setIsCheckingPendingV2Attempt(false);
+      }
+    };
+    void recoverPendingAttempt();
+    return () => { cancelled = true; };
+  }, [profile?.uid, profile?.tenantId]);
 
   // Fetch sales for ledger
   useEffect(() => {
@@ -555,6 +605,10 @@ const Sales: React.FC = () => {
   }, [selectedInstitution, selectedPatient]);
 
   const handleCheckout = async () => {
+    if (isCheckingPendingV2Attempt || pendingV2RecoveryError) {
+      toast.error(pendingV2RecoveryError || 'Checking a previous POS V2 attempt. Wait before starting another checkout.');
+      return;
+    }
     if (!canProcessSales) {
       toast.error('Your account can view Sales / POS but is not authorised to process sales.');
       return;
@@ -617,6 +671,12 @@ const Sales: React.FC = () => {
       return;
     }
 
+    if (isCheckingPendingV2Attempt || pendingV2RecoveryError) {
+      receiptWindow?.close();
+      toast.error(pendingV2RecoveryError || 'Checking a previous POS V2 attempt. Wait before starting another checkout.');
+      return;
+    }
+
     if (!editingSaleId && !activeBranchId) {
       receiptWindow?.close();
       toast.error('Select an active branch before processing a sale.');
@@ -673,6 +733,17 @@ const Sales: React.FC = () => {
           };
         }
         checkoutEngine = checkoutAttemptRef.current!.engine!;
+        if (checkoutEngine === 'v2') {
+          savePendingPosCheckoutV2Attempt(window.localStorage, {
+            version: 1,
+            attemptId: checkoutAttemptRef.current!.attemptId,
+            tenantId: profile.tenantId,
+            branchId: activeBranchId!,
+            operatorUid: profile.uid,
+            engine: 'v2',
+            createdAt: new Date().toISOString()
+          });
+        }
       }
       let receiptNumber = editingSaleId
         ? generatedReceiptNumber
@@ -792,6 +863,8 @@ const Sales: React.FC = () => {
         receiptNumber = result.receiptNumber;
         completedSale = result.sale;
         stockPostedAtomically = true;
+        clearPendingPosCheckoutV2Attempt(window.localStorage, profile.uid);
+        if (result.replayed) setRecoveredV2Receipt(result.receiptNumber);
       } else {
         const saleDocumentId = checkoutAttemptRef.current!.legacySaleId;
         const saleData: Sale = {
@@ -1321,6 +1394,19 @@ const Sales: React.FC = () => {
         </div>
       </div>
 
+      {(isCheckingPendingV2Attempt || pendingV2RecoveryError || recoveredV2Receipt) && (
+        <div className={cn(
+          'rounded-2xl border px-4 py-3 text-sm font-medium',
+          pendingV2RecoveryError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+        )}>
+          {pendingV2RecoveryError
+            ? `Checkout is blocked while a previous V2 attempt remains unresolved: ${pendingV2RecoveryError}`
+            : isCheckingPendingV2Attempt
+              ? 'Checking for an unresolved POS V2 checkout before allowing a new sale.'
+              : `Completed V2 sale ${recoveredV2Receipt} was recovered safely. Reprint it from the Receipt Ledger if required.`}
+        </div>
+      )}
+
       {view === 'pos' && !canProcessSales && (
         <div className="flex-1 rounded-3xl border border-amber-200 bg-amber-50 p-8 flex items-center justify-center text-center">
           <div className="max-w-xl space-y-2">
@@ -1414,6 +1500,10 @@ const Sales: React.FC = () => {
                   <button 
                     onClick={() => {
                       if (cart.length > 0 || editingSaleId) {
+                        if (!editingSaleId && checkoutAttemptRef.current?.engine === 'v2') {
+                          toast.error('This V2 attempt must be retried or recovered before the basket can be cleared.');
+                          return;
+                        }
                         setCart([]);
                         checkoutAttemptRef.current = null;
                         if (editingSaleId) {
@@ -2936,6 +3026,7 @@ const Sales: React.FC = () => {
           grandTotal={totalAmount}
           onSuccess={() => {
             setCart([]);
+            if (profile?.uid) clearPendingPosCheckoutV2Attempt(window.localStorage, profile.uid);
             checkoutAttemptRef.current = null;
             setSelectedPatient(null);
             setSelectedInstitution(null);
