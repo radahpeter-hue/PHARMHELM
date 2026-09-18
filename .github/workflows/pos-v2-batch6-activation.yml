@@ -1,0 +1,81 @@
+name: POS V2 Batch 6 Controlled Activation
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Inspect, activate one branch, or roll one branch back to legacy'
+        required: true
+        default: inspect
+        type: choice
+        options:
+          - inspect
+          - activate
+          - rollback
+      tenant_id:
+        description: 'Exact tenant document ID'
+        required: true
+        type: string
+      branch_id:
+        description: 'Exact branch document ID'
+        required: true
+        type: string
+      reason:
+        description: 'Change reason; required when apply is enabled'
+        required: false
+        type: string
+      apply:
+        description: 'Apply the planned change. Leave off for dry run.'
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: pos-v2-batch6-activation-${{ inputs.tenant_id }}-${{ inputs.branch_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  controlled-activation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+      FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+      POS_V2_OPERATION: ${{ inputs.operation }}
+      POS_V2_TENANT_ID: ${{ inputs.tenant_id }}
+      POS_V2_BRANCH_ID: ${{ inputs.branch_id }}
+      POS_V2_REASON: ${{ inputs.reason }}
+      POS_V2_APPLY: ${{ inputs.apply }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Install activation runtime dependency
+        run: npm install --no-save firebase-admin
+
+      - name: Authenticate Google service account
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Inspect or dry-run configuration
+        if: ${{ inputs.apply == false }}
+        run: node scripts/pos-v2-batch6-activation.mjs
+
+      - name: Apply approved configuration
+        if: ${{ inputs.apply == true }}
+        run: node scripts/pos-v2-batch6-activation.mjs --apply
