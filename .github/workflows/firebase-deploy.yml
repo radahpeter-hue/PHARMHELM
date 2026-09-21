@@ -11,6 +11,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+      FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -45,30 +48,20 @@ jobs:
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Detect Firestore rules changes
-        id: firestore_changes
+      - name: Check active Firestore rules fingerprint
+        id: firestore_rules_state
+        continue-on-error: true
         shell: bash
+        run: bash scripts/verify-active-firestore-rules.sh
+
+      - name: Report Firestore rules drift or unavailable verification
+        if: steps.firestore_rules_state.outcome == 'failure'
         run: |
-          set -e
-          if git rev-parse HEAD^ >/dev/null 2>&1; then
-            if git diff --quiet HEAD^ HEAD -- firestore.rules firebase.json; then
-              echo "changed=false" >> "$GITHUB_OUTPUT"
-              echo "Firestore rules configuration is unchanged. Skipping rules deployment."
-            else
-              echo "changed=true" >> "$GITHUB_OUTPUT"
-              echo "Firestore rules configuration changed. Rules deployment is required."
-            fi
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "No parent commit is available. Deploying Firestore rules defensively."
-          fi
+          echo "::warning title=Firestore rules deployment required::The active named-database rules do not match this commit, or Firebase could not verify them. Deployment will proceed and Hosting remains blocked until exact post-deployment verification succeeds."
 
       - name: Deploy Firestore rules
-        if: steps.firestore_changes.outputs.changed == 'true'
+        if: steps.firestore_rules_state.outcome == 'failure'
         shell: bash
-        env:
-          FIREBASE_PROJECT_ID: gen-lang-client-0911422817
-          FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
         run: |
           set -u
           deploy_status=1
@@ -125,7 +118,7 @@ jobs:
 
             if [ "$create_status" -ne 0 ]; then
               echo "$created_ruleset"
-              echo "::error title=Firestore ruleset creation failed::The Rules API remained unavailable after retries. Hosting was not blocked on commits where rules were unchanged, but this commit changed Firestore rules and therefore cannot be deployed safely without activating them."
+              echo "::error title=Firestore ruleset creation failed::The Rules API remained unavailable after retries. Hosting cannot proceed until the exact repository rules are active and verified."
               exit 2
             fi
 
@@ -203,6 +196,10 @@ jobs:
 
             echo "Firestore rules activated successfully through the Rules REST API fallback."
           fi
+
+      - name: Verify exact active Firestore rules fingerprint
+        shell: bash
+        run: bash scripts/verify-active-firestore-rules.sh
 
       - name: Deploy Firebase Storage rules
         id: deploy_storage
