@@ -8,7 +8,9 @@ on:
       - 'src/services/pos-v2/**'
       - 'scripts/pos-v2-batch4-core.mjs'
       - 'scripts/process-pos-v2-outbox.mjs'
+      - 'scripts/verify-active-firestore-rules.sh'
       - 'tests/pos-checkout-v2-*.test.ts'
+      - 'tests/firebase-deploy-rules-drift.test.ts'
       - 'src/services/posCheckoutTierService.ts'
       - 'src/services/sellingTierService.ts'
       - 'src/types.ts'
@@ -18,6 +20,7 @@ on:
       - 'package-lock.json'
       - '.github/workflows/pos-v2-foundation-ci.yml'
       - '.github/workflows/pos-v2-batch4-outbox.yml'
+      - '.github/workflows/firebase-deploy.yml'
 
 permissions:
   contents: read
