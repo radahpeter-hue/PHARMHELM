@@ -12,7 +12,12 @@ service cloud.firestore {
 
     // Check membership in primary or secondary roles
     function hasRole(roleName) {
-      return getUserData().role == roleName || (("secondaryRoles" in getUserData()) && getUserData().secondaryRoles.hasAny([roleName]));
+      return hasAnyRole([roleName]);
+    }
+
+    function hasAnyRole(roleNames) {
+      let user = getUserData();
+      return user.role in roleNames || (("secondaryRoles" in user) && user.secondaryRoles.hasAny(roleNames));
     }
 
     // The staff document is authoritative for operational roles, secondary roles
@@ -46,51 +51,43 @@ service cloud.firestore {
         request.auth.token.role == 'ceo' ||
         request.auth.token.role == 'CEO / MD' ||
         request.auth.token.role == 'ceo / md' ||
-        hasRole('owner') ||
-        hasRole('Owner') ||
-        hasRole('CEO') ||
-        hasRole('ceo') ||
-        hasRole('CEO / MD') ||
-        hasRole('ceo / md')
+        hasAnyRole(['owner', 'Owner', 'CEO', 'ceo', 'CEO / MD', 'ceo / md'])
       );
     }
 
     function isCEO() {
-      return isAuthenticated() && (isAdmin() || hasRole('CEO') || hasRole('CEO / MD') || hasRole('owner'));
+      return isAuthenticated() && (isAdmin() || hasAnyRole(['CEO', 'CEO / MD', 'owner']));
     }
 
     function isHR() {
-      return isAuthenticated() && (hasRole('HR Head') || hasRole('HR Support Personnel') || hasRole('HR Manager') || hasRole('admin') || hasRole('Admin') || hasCustomModuleFunctional('hr') || isAdmin());
+      return isAuthenticated() && (hasAnyRole(['HR Head', 'HR Support Personnel', 'HR Manager', 'admin', 'Admin']) || hasCustomModuleFunctional('hr') || isAdmin());
     }
 
     function isFinance() {
-      return isAuthenticated() && (hasRole('Finance Head') || hasRole('Finance Officer') || hasRole('Accountant') || hasRole('admin') || hasRole('Admin') || hasCustomModuleFunctional('finance') || isAdmin());
+      return isAuthenticated() && (hasAnyRole(['Finance Head', 'Finance Officer', 'Accountant', 'admin', 'Admin']) || hasCustomModuleFunctional('finance') || isAdmin());
     }
 
     function isLogisticsHead() {
-      return isAuthenticated() && (hasRole('Logistics Head') || hasRole('Transport & Logistics Personnel') || hasRole('Logistics Manager') || hasRole('admin') || hasRole('Admin') || hasCustomModuleFunctional('logistics') || isAdmin());
+      return isAuthenticated() && (hasAnyRole(['Logistics Head', 'Transport & Logistics Personnel', 'Logistics Manager', 'admin', 'Admin']) || hasCustomModuleFunctional('logistics') || isAdmin());
     }
 
     function isBranchManager() {
-      return isAuthenticated() && (hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin') || isAdmin());
+      return isAuthenticated() && (hasAnyRole(['Branch Manager', 'branch manager', 'admin']) || isAdmin());
     }
 
     function hasBranchManagerRole() {
       return isAuthenticated() && (
-        hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin')
+        hasAnyRole(['Branch Manager', 'branch manager', 'admin'])
       );
     }
 
 
     function isDepartmentHead() {
       return isAuthenticated() && (
-        hasRole('Finance Head') ||
-        hasRole('Procurement Head') ||
-        hasRole('Logistics Head') || hasRole('Transport & Logistics Head') ||
-        hasRole('Marketing Head') ||
-        hasRole('QA Head') ||
-        hasRole('HR Head') ||
-        hasRole('IT Head')
+        hasAnyRole([
+          'Finance Head', 'Procurement Head', 'Logistics Head', 'Transport & Logistics Head',
+          'Marketing Head', 'QA Head', 'HR Head', 'IT Head'
+        ])
       );
     }
 
@@ -108,12 +105,12 @@ service cloud.firestore {
     }
 
     function isQA() {
-      return isAuthenticated() && (hasRole('QA Head') || hasRole('QA Officer') || hasRole('QA Manager') || hasRole('admin') || hasRole('Admin') || hasCustomModuleFunctional('qa') || isAdmin());
+      return isAuthenticated() && (hasAnyRole(['QA Head', 'QA Officer', 'QA Manager', 'admin', 'Admin']) || hasCustomModuleFunctional('qa') || isAdmin());
     }
 
     function isITPersonnel() {
       return isAuthenticated() && (
-        hasRole('IT Head') || hasRole('IT Support Staff') || hasRole('IT Support Personnel') || hasRole('IT Staff')
+        hasAnyRole(['IT Head', 'IT Support Staff', 'IT Support Personnel', 'IT Staff'])
       );
     }
 
@@ -121,7 +118,7 @@ service cloud.firestore {
       return isAuthenticated() && (isITPersonnel() || isAdmin());
     }
 
-    function hasCustomModuleFunctional(moduleKey) {
+    function hasCustomModuleAccess(moduleKey, accessLevels) {
       return isAuthenticated()
         && ('roleRealmId' in getUserData())
         && getUserData().roleRealmId is string
@@ -131,7 +128,11 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleType == 'custom'
         && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleName == getUserData().role
         && moduleKey in get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions[moduleKey].accessLevel in ['view_functional', 'all'];
+        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions[moduleKey].accessLevel in accessLevels;
+    }
+
+    function hasCustomModuleFunctional(moduleKey) {
+      return hasCustomModuleAccess(moduleKey, ['view_functional', 'all']);
     }
 
     function isSettingsAdmin() {
@@ -140,9 +141,7 @@ service cloud.firestore {
 
     function isProcurement() {
       return isAuthenticated() && (
-        hasRole('Procurement Head') ||
-        hasRole('Procurement Officer') ||
-        hasRole('Procurement Manager') ||
+        hasAnyRole(['Procurement Head', 'Procurement Officer', 'Procurement Manager']) ||
         hasCustomModuleFunctional('procurement') ||
         isAdmin()
       );
@@ -150,17 +149,16 @@ service cloud.firestore {
 
     function hasProcurementRole() {
       return isAuthenticated() && (
-        hasRole('Procurement Head') ||
-        hasRole('Procurement Officer') ||
-        hasRole('Procurement Manager')
+        hasAnyRole(['Procurement Head', 'Procurement Officer', 'Procurement Manager'])
       );
     }
 
     function isInventoryOperator() {
       return isAuthenticated() && (
-        hasRole('Branch Manager') || hasRole('branch manager') ||
-        hasRole('Pharmacist') || hasRole('pharmacist') ||
-        hasRole('Procurement Head') || hasRole('Procurement Officer') ||
+        hasAnyRole([
+          'Branch Manager', 'branch manager', 'Pharmacist', 'pharmacist',
+          'Procurement Head', 'Procurement Officer'
+        ]) ||
         hasCustomModuleFunctional('inventory') ||
         isAdmin()
       );
@@ -168,10 +166,10 @@ service cloud.firestore {
 
     function isStockOperator() {
       return isAuthenticated() && (
-        hasRole('Branch Manager') || hasRole('branch manager') ||
-        hasRole('Pharmacist') || hasRole('pharmacist') ||
-        hasRole('Dispenser') || hasRole('dispenser') ||
-        hasRole('Procurement Head') || hasRole('Procurement Officer') || hasRole('Procurement Manager') ||
+        hasAnyRole([
+          'Branch Manager', 'branch manager', 'Pharmacist', 'pharmacist',
+          'Dispenser', 'dispenser', 'Procurement Head', 'Procurement Officer', 'Procurement Manager'
+        ]) ||
         hasCustomModuleFunctional('stock') ||
         isAdmin()
       );
@@ -182,9 +180,7 @@ service cloud.firestore {
         && getUserData().role != 'cashier'
         && getUserData().role != 'Cashier'
         && (
-        hasRole('Pharmacist') || hasRole('pharmacist') ||
-        hasRole('Dispenser') || hasRole('dispenser') ||
-        hasRole('Branch Manager') || hasRole('branch manager') ||
+        hasAnyRole(['Pharmacist', 'pharmacist', 'Dispenser', 'dispenser', 'Branch Manager', 'branch manager']) ||
         hasCustomModuleFunctional('sales') ||
         isAdmin()
       );
@@ -192,22 +188,13 @@ service cloud.firestore {
 
     function isMarketing() {
       return isAuthenticated() && (
-        hasRole('Marketing Head') || hasRole('Marketing Personnel') || hasRole('Marketing Manager') ||
-        hasRole('admin') || hasRole('Admin') || hasCustomModuleFunctional('marketing') || isAdmin()
+        hasAnyRole(['Marketing Head', 'Marketing Personnel', 'Marketing Manager', 'admin', 'Admin']) ||
+        hasCustomModuleFunctional('marketing') || isAdmin()
       );
     }
 
     function hasCustomModuleView(moduleKey) {
-      return isAuthenticated()
-        && ('roleRealmId' in getUserData())
-        && getUserData().roleRealmId is string
-        && getUserData().roleRealmId.size() > 0
-        && exists(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId))
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.tenantId == getUserData().tenantId
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleType == 'custom'
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleName == getUserData().role
-        && moduleKey in get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions[moduleKey].accessLevel in ['view_only', 'view_functional', 'all'];
+      return hasCustomModuleAccess(moduleKey, ['view_only', 'view_functional', 'all']);
     }
 
     function canViewFinance() {
@@ -216,16 +203,14 @@ service cloud.firestore {
 
     function hasBranchFinanceRole() {
       return isAuthenticated() && (
-        hasRole('Branch Manager') || hasRole('branch manager') ||
-        hasRole('Cashier') || hasRole('cashier')
+        hasAnyRole(['Branch Manager', 'branch manager', 'Cashier', 'cashier'])
       );
     }
 
     function canViewBranchFinance() {
       return isAuthenticated() && (
         hasBranchFinanceRole() ||
-        hasRole('Finance Head') || hasRole('Accountant') ||
-        hasRole('admin') || hasRole('Admin') ||
+        hasAnyRole(['Finance Head', 'Accountant', 'admin', 'Admin']) ||
         isITPersonnel() || hasCustomModuleView('finance') || isAdmin()
       );
     }
@@ -233,8 +218,7 @@ service cloud.firestore {
     function canOperateBranchFinance() {
       return isAuthenticated() && (
         hasBranchFinanceRole() ||
-        hasRole('Finance Head') || hasRole('Accountant') ||
-        hasRole('admin') || hasRole('Admin') ||
+        hasAnyRole(['Finance Head', 'Accountant', 'admin', 'Admin']) ||
         hasCustomModuleFunctional('finance') || isAdmin()
       );
     }
@@ -251,17 +235,14 @@ service cloud.firestore {
     function canViewProcurement() {
       return isProcurement()
         || isFinance()
-        || hasRole('QA Head') || hasRole('QA Officer')
-        || hasRole('Logistics Head')
-        || hasRole('Pharmacist') || hasRole('pharmacist')
+        || hasAnyRole(['QA Head', 'QA Officer', 'Logistics Head', 'Pharmacist', 'pharmacist'])
         || isITPersonnel()
         || hasCustomModuleView('procurement');
     }
 
     function canViewMarketing() {
       return isMarketing()
-        || hasRole('QA Head')
-        || hasRole('Finance Head')
+        || hasAnyRole(['QA Head', 'Finance Head'])
         || isITPersonnel()
         || hasCustomModuleView('marketing');
     }

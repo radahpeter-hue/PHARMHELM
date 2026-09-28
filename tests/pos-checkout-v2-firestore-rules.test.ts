@@ -23,6 +23,17 @@ test('collection-specific helpers stay local instead of inflating every match sc
   }
 });
 
+test('global role and custom-module checks share compact primitives', () => {
+  const firstMatch = rules.indexOf('match /vehicles/{vehicleId}');
+  const globalHelpers = rules.slice(0, firstMatch);
+  assert.match(globalHelpers, /function hasAnyRole\(roleNames\)/);
+  assert.match(globalHelpers, /function hasRole\(roleName\)\s*\{\s*return hasAnyRole\(\[roleName\]\);/);
+  assert.match(globalHelpers, /function hasCustomModuleAccess\(moduleKey, accessLevels\)/);
+  assert.match(globalHelpers, /function hasCustomModuleFunctional\(moduleKey\)\s*\{\s*return hasCustomModuleAccess\(moduleKey, \['view_functional', 'all'\]\);/);
+  assert.match(globalHelpers, /function hasCustomModuleView\(moduleKey\)\s*\{\s*return hasCustomModuleAccess\(moduleKey, \['view_only', 'view_functional', 'all'\]\);/);
+  assert.equal((globalHelpers.match(/documents\/role_realms_of_operation/g) || []).length, 6);
+});
+
 test('sale creation requires an authorised active-branch POS operator boundary', () => {
   assert.match(rules, /match \/sales\/\{saleId\}[\s\S]{0,2200}allow create:[\s\S]*isPOSOperator\(\)[\s\S]*isAssignedToBranch\(request\.resource\.data\.branchId\)[\s\S]*status == 'completed'/);
 });
