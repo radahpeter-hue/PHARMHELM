@@ -59,17 +59,6 @@ service cloud.firestore {
       return isAuthenticated() && (isAdmin() || hasRole('CEO') || hasRole('CEO / MD') || hasRole('owner'));
     }
 
-    function hasValidBranchShape() {
-      return request.resource.data.keys().hasAll([
-        'tenantId', 'name', 'branch_code', 'type', 'address', 'phone',
-        'status', 'created_at', 'created_by'
-      ])
-      && request.resource.data.tenantId is string
-      && request.resource.data.name is string
-      && request.resource.data.branch_code is string
-      && request.resource.data.status in ['Active', 'Inactive', 'Closed'];
-    }
-
     function isHR() {
       return isAuthenticated() && (hasRole('HR Head') || hasRole('HR Support Personnel') || hasRole('HR Manager') || hasRole('admin') || hasRole('Admin') || hasCustomModuleFunctional('hr') || isAdmin());
     }
@@ -116,55 +105,6 @@ service cloud.firestore {
         (("default_branch_id" in getUserData()) && getUserData().default_branch_id == branchId) ||
         isAdmin()
       );
-    }
-
-    function isSupervisorPracticalAssessmentUpdate() {
-      return isPeopleSupervisor()
-        && isTenantMember(resource.data.tenantId)
-        && isTenantMember(request.resource.data.tenantId)
-        && request.resource.data.tenantId == resource.data.tenantId
-        && resource.data.status == 'practical_scheduled'
-        && request.resource.data.status == 'practical_completed'
-        && request.resource.data.practical_score is number
-        && request.resource.data.practical_score >= 0
-        && request.resource.data.practical_score <= 100
-        && request.resource.data.practical_assessed_by_user_id == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'practical_score', 'status',
-          'practical_assessed_by_user_id', 'practical_assessed_by_name', 'practical_assessed_by_role',
-          'practical_assessed_at', 'practical_assessed_branch_id', 'updatedAt'
-        ]);
-    }
-
-    function isSupervisorTraineeAssessmentUpdate() {
-      return isPeopleSupervisor()
-        && isTenantMember(resource.data.tenantId)
-        && isTenantMember(request.resource.data.tenantId)
-        && request.resource.data.tenantId == resource.data.tenantId
-        && resource.data.status == 'training_accepted'
-        && request.resource.data.status == 'training_accepted'
-        && request.resource.data.training_assessment_last_by_user_id == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'week4_appraisal_score', 'week4_theory_score', 'week4_assessment_date',
-          'week4_assessed_by_user_id', 'week4_assessed_by_name', 'week4_assessed_by_role', 'week4_assessed_at',
-          'week8_appraisal_score', 'week8_theory_score', 'week8_assessment_date',
-          'week8_assessed_by_user_id', 'week8_assessed_by_name', 'week8_assessed_by_role', 'week8_assessed_at',
-          'week12_appraisal_score', 'week12_theory_score', 'week12_assessment_date',
-          'week12_assessed_by_user_id', 'week12_assessed_by_name', 'week12_assessed_by_role', 'week12_assessed_at',
-          'training_assessment_last_by_user_id', 'training_assessment_last_by_name',
-          'training_assessment_last_by_role', 'training_assessment_last_at', 'updatedAt'
-        ])
-        && request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'week4_appraisal_score', 'week4_theory_score',
-          'week8_appraisal_score', 'week8_theory_score',
-          'week12_appraisal_score', 'week12_theory_score'
-        ])
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_appraisal_score']) || (request.resource.data.week4_appraisal_score is number && request.resource.data.week4_appraisal_score >= 0 && request.resource.data.week4_appraisal_score <= 100))
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_theory_score']) || (request.resource.data.week4_theory_score is number && request.resource.data.week4_theory_score >= 0 && request.resource.data.week4_theory_score <= 100))
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_appraisal_score']) || (request.resource.data.week8_appraisal_score is number && request.resource.data.week8_appraisal_score >= 0 && request.resource.data.week8_appraisal_score <= 100))
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_theory_score']) || (request.resource.data.week8_theory_score is number && request.resource.data.week8_theory_score >= 0 && request.resource.data.week8_theory_score <= 100))
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_appraisal_score']) || (request.resource.data.week12_appraisal_score is number && request.resource.data.week12_appraisal_score >= 0 && request.resource.data.week12_appraisal_score <= 100))
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_theory_score']) || (request.resource.data.week12_theory_score is number && request.resource.data.week12_theory_score >= 0 && request.resource.data.week12_theory_score <= 100));
     }
 
     function isQA() {
@@ -216,16 +156,6 @@ service cloud.firestore {
       );
     }
 
-    function isAssignedBranchManager(branchId) {
-      return isAuthenticated()
-        && (hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin'))
-        && (
-          (("assigned_branches" in getUserData()) && getUserData().assigned_branches.hasAny([branchId])) ||
-          (("branch_id" in getUserData()) && getUserData().branch_id == branchId) ||
-          (("default_branch_id" in getUserData()) && getUserData().default_branch_id == branchId)
-        );
-    }
-
     function isInventoryOperator() {
       return isAuthenticated() && (
         hasRole('Branch Manager') || hasRole('branch manager') ||
@@ -247,12 +177,11 @@ service cloud.firestore {
       );
     }
 
-    function isPrimaryCashier() {
-      return isAuthenticated() && (getUserData().role == 'cashier' || getUserData().role == 'Cashier');
-    }
-
     function isPOSOperator() {
-      return isAuthenticated() && !isPrimaryCashier() && (
+      return isAuthenticated()
+        && getUserData().role != 'cashier'
+        && getUserData().role != 'Cashier'
+        && (
         hasRole('Pharmacist') || hasRole('pharmacist') ||
         hasRole('Dispenser') || hasRole('dispenser') ||
         hasRole('Branch Manager') || hasRole('branch manager') ||
@@ -392,6 +321,55 @@ service cloud.firestore {
     }
 
     match /hiring_applications/{applicationId} {
+      function isSupervisorPracticalAssessmentUpdate() {
+        return isPeopleSupervisor()
+          && isTenantMember(resource.data.tenantId)
+          && isTenantMember(request.resource.data.tenantId)
+          && request.resource.data.tenantId == resource.data.tenantId
+          && resource.data.status == 'practical_scheduled'
+          && request.resource.data.status == 'practical_completed'
+          && request.resource.data.practical_score is number
+          && request.resource.data.practical_score >= 0
+          && request.resource.data.practical_score <= 100
+          && request.resource.data.practical_assessed_by_user_id == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'practical_score', 'status',
+            'practical_assessed_by_user_id', 'practical_assessed_by_name', 'practical_assessed_by_role',
+            'practical_assessed_at', 'practical_assessed_branch_id', 'updatedAt'
+          ]);
+      }
+
+      function isSupervisorTraineeAssessmentUpdate() {
+        return isPeopleSupervisor()
+          && isTenantMember(resource.data.tenantId)
+          && isTenantMember(request.resource.data.tenantId)
+          && request.resource.data.tenantId == resource.data.tenantId
+          && resource.data.status == 'training_accepted'
+          && request.resource.data.status == 'training_accepted'
+          && request.resource.data.training_assessment_last_by_user_id == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'week4_appraisal_score', 'week4_theory_score', 'week4_assessment_date',
+            'week4_assessed_by_user_id', 'week4_assessed_by_name', 'week4_assessed_by_role', 'week4_assessed_at',
+            'week8_appraisal_score', 'week8_theory_score', 'week8_assessment_date',
+            'week8_assessed_by_user_id', 'week8_assessed_by_name', 'week8_assessed_by_role', 'week8_assessed_at',
+            'week12_appraisal_score', 'week12_theory_score', 'week12_assessment_date',
+            'week12_assessed_by_user_id', 'week12_assessed_by_name', 'week12_assessed_by_role', 'week12_assessed_at',
+            'training_assessment_last_by_user_id', 'training_assessment_last_by_name',
+            'training_assessment_last_by_role', 'training_assessment_last_at', 'updatedAt'
+          ])
+          && request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'week4_appraisal_score', 'week4_theory_score',
+            'week8_appraisal_score', 'week8_theory_score',
+            'week12_appraisal_score', 'week12_theory_score'
+          ])
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_appraisal_score']) || (request.resource.data.week4_appraisal_score is number && request.resource.data.week4_appraisal_score >= 0 && request.resource.data.week4_appraisal_score <= 100))
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_theory_score']) || (request.resource.data.week4_theory_score is number && request.resource.data.week4_theory_score >= 0 && request.resource.data.week4_theory_score <= 100))
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_appraisal_score']) || (request.resource.data.week8_appraisal_score is number && request.resource.data.week8_appraisal_score >= 0 && request.resource.data.week8_appraisal_score <= 100))
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_theory_score']) || (request.resource.data.week8_theory_score is number && request.resource.data.week8_theory_score >= 0 && request.resource.data.week8_theory_score <= 100))
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_appraisal_score']) || (request.resource.data.week12_appraisal_score is number && request.resource.data.week12_appraisal_score >= 0 && request.resource.data.week12_appraisal_score <= 100))
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_theory_score']) || (request.resource.data.week12_theory_score is number && request.resource.data.week12_theory_score >= 0 && request.resource.data.week12_theory_score <= 100));
+      }
+
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (
         isHR() ||
         (isPeopleSupervisor() && resource.data.status in ['practical_scheduled', 'practical_completed', 'training_accepted'])
@@ -444,6 +422,17 @@ service cloud.firestore {
     }
 
     match /branches/{branchId} {
+      function hasValidBranchShape() {
+        return request.resource.data.keys().hasAll([
+          'tenantId', 'name', 'branch_code', 'type', 'address', 'phone',
+          'status', 'created_at', 'created_by'
+        ])
+        && request.resource.data.tenantId is string
+        && request.resource.data.name is string
+        && request.resource.data.branch_code is string
+        && request.resource.data.status in ['Active', 'Inactive', 'Closed'];
+      }
+
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
       allow create: if isCEO() && isTenantMember(request.resource.data.tenantId) && hasValidBranchShape();
       allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
@@ -862,6 +851,16 @@ service cloud.firestore {
     }
 
     match /opening_stock_sessions/{sessionId} {
+      function isAssignedBranchManager(branchId) {
+        return isAuthenticated()
+          && (hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin'))
+          && (
+            (("assigned_branches" in getUserData()) && getUserData().assigned_branches.hasAny([branchId])) ||
+            (("branch_id" in getUserData()) && getUserData().branch_id == branchId) ||
+            (("default_branch_id" in getUserData()) && getUserData().default_branch_id == branchId)
+          );
+      }
+
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
 
       allow create: if isTenantMember(request.resource.data.tenantId)

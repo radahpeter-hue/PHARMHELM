@@ -5,8 +5,22 @@ import { readFileSync } from 'node:fs';
 const rules = readFileSync('firestore.rules', 'utf8');
 
 test('POS authority excludes a primary Cashier at the Firestore boundary', () => {
-  assert.match(rules, /function isPrimaryCashier\(\)/);
-  assert.match(rules, /function isPOSOperator\(\)[\s\S]{0,180}!isPrimaryCashier\(\)/);
+  assert.match(rules, /function isPOSOperator\(\)[\s\S]{0,180}getUserData\(\)\.role != 'cashier'/);
+  assert.match(rules, /function isPOSOperator\(\)[\s\S]{0,240}getUserData\(\)\.role != 'Cashier'/);
+});
+
+test('collection-specific helpers stay local instead of inflating every match scope', () => {
+  const firstMatch = rules.indexOf('match /vehicles/{vehicleId}');
+  const globalHelpers = rules.slice(0, firstMatch);
+  for (const helper of [
+    'hasValidBranchShape',
+    'isAssignedBranchManager',
+    'isSupervisorPracticalAssessmentUpdate',
+    'isSupervisorTraineeAssessmentUpdate'
+  ]) {
+    assert.doesNotMatch(globalHelpers, new RegExp(`function ${helper}\\(`));
+    assert.match(rules.slice(firstMatch), new RegExp(`function ${helper}\\(`));
+  }
 });
 
 test('sale creation requires an authorised active-branch POS operator boundary', () => {
