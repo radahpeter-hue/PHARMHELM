@@ -1,0 +1,46 @@
+name: Activate POS V2 for Martin Pharma Masaka
+
+on:
+  push:
+    branches:
+      - ops/pos-v2-martin-pharma-discovery
+
+permissions:
+  contents: read
+
+jobs:
+  activate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+      FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+      POS_V2_OPERATION: activate
+      POS_V2_TENANT_ID: zehqTDcKyrDAOHKK3stJ
+      POS_V2_BRANCH_ID: 1agW2eYBOGGqKR9w2V31
+      POS_V2_REASON: Batch 6 first controlled production activation for Martin Pharma Masaka
+      POS_V2_APPLY: true
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Install activation runtime dependency
+        run: npm install --no-save firebase-admin
+
+      - name: Authenticate Google service account
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Apply and verify Masaka activation
+        run: node scripts/pos-v2-batch6-activation.mjs --apply
