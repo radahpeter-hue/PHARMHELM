@@ -19,9 +19,19 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-      - name: Align live outbox anchor
+      - name: Align live patch anchors
         run: |
-          sed -i 's/errorMessage: null/lastError: null/g' scripts/apply_masaka_live_hotfix.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/apply_masaka_live_hotfix.py')
+          text = p.read_text()
+          text = text.replace('errorMessage: null', 'lastError: null')
+          old = '"                          </div>\\n                        </td>\\n                      </tr>",\n    "                            </div>\\n                          )}\\n                        </td>\\n                      </tr>",'
+          new = '"                              <Trash2 size={16} />\\n                            </button>\\n                          </div>\\n                        </td>\\n                      </tr>",\n    "                              <Trash2 size={16} />\\n                            </button>\\n                            </div>\\n                          )}\\n                        </td>\\n                      </tr>",'
+          if old not in text:
+              raise SystemExit('Inventory action patch anchor definition not found')
+          p.write_text(text.replace(old, new, 1))
+          PY
       - run: python3 scripts/apply_masaka_live_hotfix.py
       - run: npm ci
       - run: npm test
