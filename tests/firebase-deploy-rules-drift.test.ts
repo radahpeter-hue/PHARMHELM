@@ -42,6 +42,8 @@ test('pull request CI validates rules with the hosted Firebase compiler', () => 
   assert.match(ci, /google-github-actions\/auth@v2/);
   assert.match(ci, /firebaserules\.googleapis\.com\/v1\/projects\/\$\{FIREBASE_PROJECT_ID\}:test/);
   assert.match(ci, /select\(\.severity == "ERROR"\)/);
+  assert.match(ci, /Minimal deny-all control/);
+  assert.match(ci, /this failure cannot be attributed to PharmHelm rule complexity alone/);
 });
 
 function runVerifier(activeRules: string) {
