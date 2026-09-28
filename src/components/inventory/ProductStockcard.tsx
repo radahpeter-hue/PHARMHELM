@@ -3,7 +3,8 @@ import { X, Package, TrendingUp, History, Activity, Edit3, AlertCircle, CheckCir
 import { Product, ProductBatch, InventoryMovement, SystemSettings } from '../../types';
 import { firestoreService } from '../../services/firestore';
 import { useAuth } from '../../contexts/AuthContext';
-import { format, subMonths } from 'date-fns';
+import { subMonths } from 'date-fns';
+import { formatDateValue } from '../../utils/dateValue';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
@@ -18,7 +19,8 @@ interface ProductStockcardProps {
 }
 
 const ProductStockcard: React.FC<ProductStockcardProps> = ({ product, onClose }) => {
-  const { profile, activeBranchId } = useAuth();
+  const { profile, activeBranchId, hasPermission } = useAuth();
+  const canOperateInventory = hasPermission('inventory', 'operate');
   const [activeTab, setActiveTab] = useState<'batches' | 'movement' | 'intel'>('batches');
   const [batches, setBatches] = useState<ProductBatch[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
@@ -245,15 +247,17 @@ const ProductStockcard: React.FC<ProductStockcardProps> = ({ product, onClose })
                             )}>
                               {batch.batch_status}
                             </span>
-                            <button 
-                              onClick={() => {
-                                setAdjustingBatch(batch);
-                                setAdjustmentQty(batch.quantity);
-                              }}
-                              className="p-2 bg-white border border-zinc-200 rounded-xl text-zinc-400 hover:text-emerald-600 hover:border-emerald-200 transition-all shadow-sm opacity-0 group-hover:opacity-100"
-                            >
-                              <Edit3 size={14} />
-                            </button>
+                            {canOperateInventory && (
+                              <button
+                                onClick={() => {
+                                  setAdjustingBatch(batch);
+                                  setAdjustmentQty(batch.quantity);
+                                }}
+                                className="p-2 bg-white border border-zinc-200 rounded-xl text-zinc-400 hover:text-emerald-600 hover:border-emerald-200 transition-all shadow-sm opacity-0 group-hover:opacity-100"
+                              >
+                                <Edit3 size={14} />
+                              </button>
+                            )}
                           </div>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
@@ -263,7 +267,7 @@ const ProductStockcard: React.FC<ProductStockcardProps> = ({ product, onClose })
                           </div>
                           <div>
                             <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Expiry</p>
-                            <p className="text-sm font-bold text-red-600">{format(new Date(batch.expiryDate), 'MMM dd, yyyy')}</p>
+                            <p className="text-sm font-bold text-red-600">{formatDateValue(batch.expiryDate, 'MMM dd, yyyy')}</p>
                           </div>
                         </div>
                         <div className="grid grid-cols-2 gap-4 pt-3 border-t border-zinc-200/50">
@@ -305,7 +309,7 @@ const ProductStockcard: React.FC<ProductStockcardProps> = ({ product, onClose })
                       {movements.map(m => (
                         <tr key={m.id} className="hover:bg-zinc-50/50 transition-colors">
                           <td className="px-6 py-4 text-xs font-medium text-zinc-600">
-                            {format(new Date(m.timestamp), 'MMM dd, HH:mm')}
+                            {formatDateValue(m.timestamp, 'MMM dd, HH:mm')}
                           </td>
                           <td className="px-6 py-4 text-xs font-bold text-zinc-900">{m.reference}</td>
                           <td className="px-6 py-4">
@@ -392,7 +396,7 @@ const ProductStockcard: React.FC<ProductStockcardProps> = ({ product, onClose })
                         <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Last Sale</p>
                         <p className="text-xs font-bold text-white">
                           {movements.find(m => m.movementClass === 'sale' || m.class === 'sale') 
-                            ? format(new Date(movements.find(m => m.movementClass === 'sale' || m.class === 'sale')!.timestamp), 'MMM dd, yyyy')
+                            ? formatDateValue(movements.find(m => m.movementClass === 'sale' || m.class === 'sale')!.timestamp, 'MMM dd, yyyy')
                             : 'Never'}
                         </p>
                       </div>
@@ -411,7 +415,7 @@ const ProductStockcard: React.FC<ProductStockcardProps> = ({ product, onClose })
         </div>
 
         {/* Adjustment Modal */}
-        {adjustingBatch && (
+        {canOperateInventory && adjustingBatch && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-zinc-950/60 backdrop-blur-md">
             <div className="bg-white w-full max-w-md rounded-[32px] shadow-2xl overflow-hidden p-8 space-y-6">
               <div className="flex items-center gap-4">

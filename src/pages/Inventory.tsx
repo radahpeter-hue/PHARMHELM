@@ -20,7 +20,8 @@ function cn(...inputs: ClassValue[]) {
 type TabType = 'master' | 'stock' | 'operational' | 'reports';
 
 const Inventory: React.FC = () => {
-  const { profile, activeBranchId, activeBranch } = useAuth();
+  const { profile, activeBranchId, activeBranch, hasPermission } = useAuth();
+  const canOperateInventory = hasPermission('inventory', 'operate');
   const [activeTab, setActiveTab] = useState<TabType>('master');
   const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -173,7 +174,7 @@ const Inventory: React.FC = () => {
           </div>
         </div>
 
-        {isCEO && (
+        {isCEO && canOperateInventory && (
           <div className="flex items-center gap-3 px-4 py-2 bg-zinc-100 rounded-2xl border border-zinc-200">
             <Settings size={16} className="text-zinc-400" />
             <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Operational Inventory</span>
@@ -201,13 +202,15 @@ const Inventory: React.FC = () => {
           label="Inventory Master" 
           icon={<Package size={16} />} 
         />
-        <TabButton 
-          active={activeTab === 'stock'} 
-          onClick={() => setActiveTab('stock')} 
-          label="Stock Adjustments" 
-          icon={<Activity size={16} />} 
-        />
-        {showOperational && (
+        {canOperateInventory && (
+          <TabButton
+            active={activeTab === 'stock'}
+            onClick={() => setActiveTab('stock')}
+            label="Stock Adjustments"
+            icon={<Activity size={16} />}
+          />
+        )}
+        {showOperational && canOperateInventory && (
           <TabButton 
             active={activeTab === 'operational'} 
             onClick={() => setActiveTab('operational')} 
@@ -251,16 +254,18 @@ const Inventory: React.FC = () => {
                   <option value="device">Devices</option>
                   <option value="cosmetic therapeutics">Therapeutics</option>
                 </select>
-                <button 
-                  onClick={() => {
-                    setEditingProduct(null);
-                    setIsProductModalOpen(true);
-                  }}
-                  className="px-6 py-3 bg-zinc-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-900/20 active:scale-95"
-                >
-                  <Plus size={18} />
-                  Add Product
-                </button>
+                {canOperateInventory && (
+                  <button
+                    onClick={() => {
+                      setEditingProduct(null);
+                      setIsProductModalOpen(true);
+                    }}
+                    className="px-6 py-3 bg-zinc-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-900/20 active:scale-95"
+                  >
+                    <Plus size={18} />
+                    Add Product
+                  </button>
+                )}
               </div>
             </div>
 
@@ -344,7 +349,8 @@ const Inventory: React.FC = () => {
                           </div>
                         </td>
                         <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {canOperateInventory && (
+                            <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button 
                               onClick={() => {
                                 setEditingProduct(product);
@@ -360,7 +366,8 @@ const Inventory: React.FC = () => {
                             >
                               <Trash2 size={16} />
                             </button>
-                          </div>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );
@@ -388,13 +395,13 @@ const Inventory: React.FC = () => {
           </div>
         )}
 
-        {activeTab === 'stock' && <StockManagementTab />}
-        {activeTab === 'operational' && <OperationalInventoryTab />}
+        {canOperateInventory && activeTab === 'stock' && <StockManagementTab />}
+        {canOperateInventory && activeTab === 'operational' && <OperationalInventoryTab />}
         {activeTab === 'reports' && <ReportHubTab />}
       </div>
 
       {/* Modals */}
-      {isProductModalOpen && (
+      {canOperateInventory && isProductModalOpen && (
         <ProductModal 
           isOpen={isProductModalOpen} 
           onClose={() => {

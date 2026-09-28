@@ -12,6 +12,8 @@ import {
   type Transaction
 } from 'firebase/firestore';
 import { db } from '../../firebase';
+import { omitUndefinedDeep } from '../../utils/firestoreData';
+import { normalizeDateValue } from '../../utils/dateValue';
 import type { Branch, Product, ProductBatch, Sale, SaleItem, Staff, SystemSettings } from '../../types';
 import { SYSTEM_ROLE_PERMISSIONS, roleRealmId } from '../../config/rbac';
 import { calculateCheckoutV2 } from './posCheckoutV2Calculator';
@@ -456,7 +458,7 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
         branchId: batch.branchId,
         productId: batch.productId,
         batchNumber: batch.batchNumber || 'UNSPECIFIED',
-        expiryDate: batch.expiryDate,
+        expiryDate: normalizeDateValue(batch.expiryDate)?.toISOString() ?? null,
         batchStatus: batch.batch_status,
         quantity: Number(batch.quantity || 0),
         costPerBaseUnit: Number(batch.purchasePrice)
@@ -564,7 +566,7 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
       inventoryPostedAt: serverTimestamp()
     };
 
-    transaction.set(prepared.saleRef, {
+    transaction.set(prepared.saleRef, omitUndefinedDeep({
       ...sale,
       engineVersion: 2,
       integrityVersion: 3,
@@ -579,22 +581,22 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       v2CompletedAt: serverTimestamp()
-    });
+    }));
 
-    transaction.set(prepared.paymentRef, {
+    transaction.set(prepared.paymentRef, omitUndefinedDeep({
       ...payment,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
-    });
+    }));
 
-    transaction.set(prepared.outboxRef, {
+    transaction.set(prepared.outboxRef, omitUndefinedDeep({
       ...outboxEvent,
       createdAt: serverTimestamp(),
       availableAt: serverTimestamp(),
       processedAt: null,
       lastAttemptAt: null,
       lastError: null
-    });
+    }));
 
     const attempt: PosCheckoutV2AttemptRecord = {
       tenantId: prepared.authority.tenantId,
@@ -609,7 +611,7 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
       createdAt: serverTimestamp(),
       completedAt: serverTimestamp()
     };
-    transaction.set(prepared.attemptRef, attempt);
+    transaction.set(prepared.attemptRef, omitUndefinedDeep(attempt));
 
     return {
       saleId: prepared.saleId,
