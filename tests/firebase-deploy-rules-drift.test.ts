@@ -37,6 +37,15 @@ test('Rules API uncertainty remains fail closed for Hosting', () => {
   assert.doesNotMatch(workflow, /Hosting was not blocked on commits where rules were unchanged/);
 });
 
+test('pull request CI validates rules with the hosted Firebase compiler', () => {
+  const ci = readFileSync('.github/workflows/pos-v2-foundation-ci.yml', 'utf8');
+  assert.match(ci, /google-github-actions\/auth@v2/);
+  assert.match(ci, /firebaserules\.googleapis\.com\/v1\/projects\/\$\{FIREBASE_PROJECT_ID\}:test/);
+  assert.match(ci, /select\(\.severity == "ERROR"\)/);
+  assert.match(ci, /Minimal deny-all control/);
+  assert.match(ci, /this failure cannot be attributed to PharmHelm rule complexity alone/);
+});
+
 function runVerifier(activeRules: string) {
   const directory = mkdtempSync(join(tmpdir(), 'pharmhelm-rules-verifier-'));
   const binDirectory = join(directory, 'bin');

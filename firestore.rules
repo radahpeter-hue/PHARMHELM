@@ -12,7 +12,12 @@ service cloud.firestore {
 
     // Check membership in primary or secondary roles
     function hasRole(roleName) {
-      return getUserData().role == roleName || (("secondaryRoles" in getUserData()) && getUserData().secondaryRoles.hasAny([roleName]));
+      return hasAnyRole([roleName]);
+    }
+
+    function hasAnyRole(roleNames) {
+      let user = getUserData();
+      return user.role in roleNames || (("secondaryRoles" in user) && user.secondaryRoles.hasAny(roleNames));
     }
 
     // The staff document is authoritative for operational roles, secondary roles
@@ -46,62 +51,43 @@ service cloud.firestore {
         request.auth.token.role == 'ceo' ||
         request.auth.token.role == 'CEO / MD' ||
         request.auth.token.role == 'ceo / md' ||
-        hasRole('owner') ||
-        hasRole('Owner') ||
-        hasRole('CEO') ||
-        hasRole('ceo') ||
-        hasRole('CEO / MD') ||
-        hasRole('ceo / md')
+        hasAnyRole(['owner', 'Owner', 'CEO', 'ceo', 'CEO / MD', 'ceo / md'])
       );
     }
 
     function isCEO() {
-      return isAuthenticated() && (isAdmin() || hasRole('CEO') || hasRole('CEO / MD') || hasRole('owner'));
-    }
-
-    function hasValidBranchShape() {
-      return request.resource.data.keys().hasAll([
-        'tenantId', 'name', 'branch_code', 'type', 'address', 'phone',
-        'status', 'created_at', 'created_by'
-      ])
-      && request.resource.data.tenantId is string
-      && request.resource.data.name is string
-      && request.resource.data.branch_code is string
-      && request.resource.data.status in ['Active', 'Inactive', 'Closed'];
+      return isAuthenticated() && (isAdmin() || hasAnyRole(['CEO', 'CEO / MD', 'owner']));
     }
 
     function isHR() {
-      return isAuthenticated() && (hasRole('HR Head') || hasRole('HR Support Personnel') || hasRole('HR Manager') || hasRole('admin') || hasRole('Admin') || hasCustomModuleFunctional('hr') || isAdmin());
+      return isAuthenticated() && (hasAnyRole(['HR Head', 'HR Support Personnel', 'HR Manager', 'admin', 'Admin']) || hasCustomModuleFunctional('hr') || isAdmin());
     }
 
     function isFinance() {
-      return isAuthenticated() && (hasRole('Finance Head') || hasRole('Finance Officer') || hasRole('Accountant') || hasRole('admin') || hasRole('Admin') || hasCustomModuleFunctional('finance') || isAdmin());
+      return isAuthenticated() && (hasAnyRole(['Finance Head', 'Finance Officer', 'Accountant', 'admin', 'Admin']) || hasCustomModuleFunctional('finance') || isAdmin());
     }
 
     function isLogisticsHead() {
-      return isAuthenticated() && (hasRole('Logistics Head') || hasRole('Transport & Logistics Personnel') || hasRole('Logistics Manager') || hasRole('admin') || hasRole('Admin') || hasCustomModuleFunctional('logistics') || isAdmin());
+      return isAuthenticated() && (hasAnyRole(['Logistics Head', 'Transport & Logistics Personnel', 'Logistics Manager', 'admin', 'Admin']) || hasCustomModuleFunctional('logistics') || isAdmin());
     }
 
     function isBranchManager() {
-      return isAuthenticated() && (hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin') || isAdmin());
+      return isAuthenticated() && (hasAnyRole(['Branch Manager', 'branch manager', 'admin']) || isAdmin());
     }
 
     function hasBranchManagerRole() {
       return isAuthenticated() && (
-        hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin')
+        hasAnyRole(['Branch Manager', 'branch manager', 'admin'])
       );
     }
 
 
     function isDepartmentHead() {
       return isAuthenticated() && (
-        hasRole('Finance Head') ||
-        hasRole('Procurement Head') ||
-        hasRole('Logistics Head') || hasRole('Transport & Logistics Head') ||
-        hasRole('Marketing Head') ||
-        hasRole('QA Head') ||
-        hasRole('HR Head') ||
-        hasRole('IT Head')
+        hasAnyRole([
+          'Finance Head', 'Procurement Head', 'Logistics Head', 'Transport & Logistics Head',
+          'Marketing Head', 'QA Head', 'HR Head', 'IT Head'
+        ])
       );
     }
 
@@ -118,62 +104,13 @@ service cloud.firestore {
       );
     }
 
-    function isSupervisorPracticalAssessmentUpdate() {
-      return isPeopleSupervisor()
-        && isTenantMember(resource.data.tenantId)
-        && isTenantMember(request.resource.data.tenantId)
-        && request.resource.data.tenantId == resource.data.tenantId
-        && resource.data.status == 'practical_scheduled'
-        && request.resource.data.status == 'practical_completed'
-        && request.resource.data.practical_score is number
-        && request.resource.data.practical_score >= 0
-        && request.resource.data.practical_score <= 100
-        && request.resource.data.practical_assessed_by_user_id == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'practical_score', 'status',
-          'practical_assessed_by_user_id', 'practical_assessed_by_name', 'practical_assessed_by_role',
-          'practical_assessed_at', 'practical_assessed_branch_id', 'updatedAt'
-        ]);
-    }
-
-    function isSupervisorTraineeAssessmentUpdate() {
-      return isPeopleSupervisor()
-        && isTenantMember(resource.data.tenantId)
-        && isTenantMember(request.resource.data.tenantId)
-        && request.resource.data.tenantId == resource.data.tenantId
-        && resource.data.status == 'training_accepted'
-        && request.resource.data.status == 'training_accepted'
-        && request.resource.data.training_assessment_last_by_user_id == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'week4_appraisal_score', 'week4_theory_score', 'week4_assessment_date',
-          'week4_assessed_by_user_id', 'week4_assessed_by_name', 'week4_assessed_by_role', 'week4_assessed_at',
-          'week8_appraisal_score', 'week8_theory_score', 'week8_assessment_date',
-          'week8_assessed_by_user_id', 'week8_assessed_by_name', 'week8_assessed_by_role', 'week8_assessed_at',
-          'week12_appraisal_score', 'week12_theory_score', 'week12_assessment_date',
-          'week12_assessed_by_user_id', 'week12_assessed_by_name', 'week12_assessed_by_role', 'week12_assessed_at',
-          'training_assessment_last_by_user_id', 'training_assessment_last_by_name',
-          'training_assessment_last_by_role', 'training_assessment_last_at', 'updatedAt'
-        ])
-        && request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'week4_appraisal_score', 'week4_theory_score',
-          'week8_appraisal_score', 'week8_theory_score',
-          'week12_appraisal_score', 'week12_theory_score'
-        ])
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_appraisal_score']) || (request.resource.data.week4_appraisal_score is number && request.resource.data.week4_appraisal_score >= 0 && request.resource.data.week4_appraisal_score <= 100))
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_theory_score']) || (request.resource.data.week4_theory_score is number && request.resource.data.week4_theory_score >= 0 && request.resource.data.week4_theory_score <= 100))
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_appraisal_score']) || (request.resource.data.week8_appraisal_score is number && request.resource.data.week8_appraisal_score >= 0 && request.resource.data.week8_appraisal_score <= 100))
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_theory_score']) || (request.resource.data.week8_theory_score is number && request.resource.data.week8_theory_score >= 0 && request.resource.data.week8_theory_score <= 100))
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_appraisal_score']) || (request.resource.data.week12_appraisal_score is number && request.resource.data.week12_appraisal_score >= 0 && request.resource.data.week12_appraisal_score <= 100))
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_theory_score']) || (request.resource.data.week12_theory_score is number && request.resource.data.week12_theory_score >= 0 && request.resource.data.week12_theory_score <= 100));
-    }
-
     function isQA() {
-      return isAuthenticated() && (hasRole('QA Head') || hasRole('QA Officer') || hasRole('QA Manager') || hasRole('admin') || hasRole('Admin') || hasCustomModuleFunctional('qa') || isAdmin());
+      return isAuthenticated() && (hasAnyRole(['QA Head', 'QA Officer', 'QA Manager', 'admin', 'Admin']) || hasCustomModuleFunctional('qa') || isAdmin());
     }
 
     function isITPersonnel() {
       return isAuthenticated() && (
-        hasRole('IT Head') || hasRole('IT Support Staff') || hasRole('IT Support Personnel') || hasRole('IT Staff')
+        hasAnyRole(['IT Head', 'IT Support Staff', 'IT Support Personnel', 'IT Staff'])
       );
     }
 
@@ -181,7 +118,7 @@ service cloud.firestore {
       return isAuthenticated() && (isITPersonnel() || isAdmin());
     }
 
-    function hasCustomModuleFunctional(moduleKey) {
+    function hasCustomModuleAccess(moduleKey, accessLevels) {
       return isAuthenticated()
         && ('roleRealmId' in getUserData())
         && getUserData().roleRealmId is string
@@ -191,7 +128,11 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleType == 'custom'
         && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleName == getUserData().role
         && moduleKey in get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions[moduleKey].accessLevel in ['view_functional', 'all'];
+        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions[moduleKey].accessLevel in accessLevels;
+    }
+
+    function hasCustomModuleFunctional(moduleKey) {
+      return hasCustomModuleAccess(moduleKey, ['view_functional', 'all']);
     }
 
     function isSettingsAdmin() {
@@ -200,9 +141,7 @@ service cloud.firestore {
 
     function isProcurement() {
       return isAuthenticated() && (
-        hasRole('Procurement Head') ||
-        hasRole('Procurement Officer') ||
-        hasRole('Procurement Manager') ||
+        hasAnyRole(['Procurement Head', 'Procurement Officer', 'Procurement Manager']) ||
         hasCustomModuleFunctional('procurement') ||
         isAdmin()
       );
@@ -210,27 +149,16 @@ service cloud.firestore {
 
     function hasProcurementRole() {
       return isAuthenticated() && (
-        hasRole('Procurement Head') ||
-        hasRole('Procurement Officer') ||
-        hasRole('Procurement Manager')
+        hasAnyRole(['Procurement Head', 'Procurement Officer', 'Procurement Manager'])
       );
-    }
-
-    function isAssignedBranchManager(branchId) {
-      return isAuthenticated()
-        && (hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin'))
-        && (
-          (("assigned_branches" in getUserData()) && getUserData().assigned_branches.hasAny([branchId])) ||
-          (("branch_id" in getUserData()) && getUserData().branch_id == branchId) ||
-          (("default_branch_id" in getUserData()) && getUserData().default_branch_id == branchId)
-        );
     }
 
     function isInventoryOperator() {
       return isAuthenticated() && (
-        hasRole('Branch Manager') || hasRole('branch manager') ||
-        hasRole('Pharmacist') || hasRole('pharmacist') ||
-        hasRole('Procurement Head') || hasRole('Procurement Officer') ||
+        hasAnyRole([
+          'Branch Manager', 'branch manager', 'Pharmacist', 'pharmacist',
+          'Procurement Head', 'Procurement Officer'
+        ]) ||
         hasCustomModuleFunctional('inventory') ||
         isAdmin()
       );
@@ -238,24 +166,21 @@ service cloud.firestore {
 
     function isStockOperator() {
       return isAuthenticated() && (
-        hasRole('Branch Manager') || hasRole('branch manager') ||
-        hasRole('Pharmacist') || hasRole('pharmacist') ||
-        hasRole('Dispenser') || hasRole('dispenser') ||
-        hasRole('Procurement Head') || hasRole('Procurement Officer') || hasRole('Procurement Manager') ||
+        hasAnyRole([
+          'Branch Manager', 'branch manager', 'Pharmacist', 'pharmacist',
+          'Dispenser', 'dispenser', 'Procurement Head', 'Procurement Officer', 'Procurement Manager'
+        ]) ||
         hasCustomModuleFunctional('stock') ||
         isAdmin()
       );
     }
 
-    function isPrimaryCashier() {
-      return isAuthenticated() && (getUserData().role == 'cashier' || getUserData().role == 'Cashier');
-    }
-
     function isPOSOperator() {
-      return isAuthenticated() && !isPrimaryCashier() && (
-        hasRole('Pharmacist') || hasRole('pharmacist') ||
-        hasRole('Dispenser') || hasRole('dispenser') ||
-        hasRole('Branch Manager') || hasRole('branch manager') ||
+      return isAuthenticated()
+        && getUserData().role != 'cashier'
+        && getUserData().role != 'Cashier'
+        && (
+        hasAnyRole(['Pharmacist', 'pharmacist', 'Dispenser', 'dispenser', 'Branch Manager', 'branch manager']) ||
         hasCustomModuleFunctional('sales') ||
         isAdmin()
       );
@@ -263,22 +188,13 @@ service cloud.firestore {
 
     function isMarketing() {
       return isAuthenticated() && (
-        hasRole('Marketing Head') || hasRole('Marketing Personnel') || hasRole('Marketing Manager') ||
-        hasRole('admin') || hasRole('Admin') || hasCustomModuleFunctional('marketing') || isAdmin()
+        hasAnyRole(['Marketing Head', 'Marketing Personnel', 'Marketing Manager', 'admin', 'Admin']) ||
+        hasCustomModuleFunctional('marketing') || isAdmin()
       );
     }
 
     function hasCustomModuleView(moduleKey) {
-      return isAuthenticated()
-        && ('roleRealmId' in getUserData())
-        && getUserData().roleRealmId is string
-        && getUserData().roleRealmId.size() > 0
-        && exists(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId))
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.tenantId == getUserData().tenantId
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleType == 'custom'
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleName == getUserData().role
-        && moduleKey in get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions[moduleKey].accessLevel in ['view_only', 'view_functional', 'all'];
+      return hasCustomModuleAccess(moduleKey, ['view_only', 'view_functional', 'all']);
     }
 
     function canViewFinance() {
@@ -287,16 +203,14 @@ service cloud.firestore {
 
     function hasBranchFinanceRole() {
       return isAuthenticated() && (
-        hasRole('Branch Manager') || hasRole('branch manager') ||
-        hasRole('Cashier') || hasRole('cashier')
+        hasAnyRole(['Branch Manager', 'branch manager', 'Cashier', 'cashier'])
       );
     }
 
     function canViewBranchFinance() {
       return isAuthenticated() && (
         hasBranchFinanceRole() ||
-        hasRole('Finance Head') || hasRole('Accountant') ||
-        hasRole('admin') || hasRole('Admin') ||
+        hasAnyRole(['Finance Head', 'Accountant', 'admin', 'Admin']) ||
         isITPersonnel() || hasCustomModuleView('finance') || isAdmin()
       );
     }
@@ -304,8 +218,7 @@ service cloud.firestore {
     function canOperateBranchFinance() {
       return isAuthenticated() && (
         hasBranchFinanceRole() ||
-        hasRole('Finance Head') || hasRole('Accountant') ||
-        hasRole('admin') || hasRole('Admin') ||
+        hasAnyRole(['Finance Head', 'Accountant', 'admin', 'Admin']) ||
         hasCustomModuleFunctional('finance') || isAdmin()
       );
     }
@@ -322,17 +235,14 @@ service cloud.firestore {
     function canViewProcurement() {
       return isProcurement()
         || isFinance()
-        || hasRole('QA Head') || hasRole('QA Officer')
-        || hasRole('Logistics Head')
-        || hasRole('Pharmacist') || hasRole('pharmacist')
+        || hasAnyRole(['QA Head', 'QA Officer', 'Logistics Head', 'Pharmacist', 'pharmacist'])
         || isITPersonnel()
         || hasCustomModuleView('procurement');
     }
 
     function canViewMarketing() {
       return isMarketing()
-        || hasRole('QA Head')
-        || hasRole('Finance Head')
+        || hasAnyRole(['QA Head', 'Finance Head'])
         || isITPersonnel()
         || hasCustomModuleView('marketing');
     }
@@ -392,6 +302,55 @@ service cloud.firestore {
     }
 
     match /hiring_applications/{applicationId} {
+      function isSupervisorPracticalAssessmentUpdate() {
+        return isPeopleSupervisor()
+          && isTenantMember(resource.data.tenantId)
+          && isTenantMember(request.resource.data.tenantId)
+          && request.resource.data.tenantId == resource.data.tenantId
+          && resource.data.status == 'practical_scheduled'
+          && request.resource.data.status == 'practical_completed'
+          && request.resource.data.practical_score is number
+          && request.resource.data.practical_score >= 0
+          && request.resource.data.practical_score <= 100
+          && request.resource.data.practical_assessed_by_user_id == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'practical_score', 'status',
+            'practical_assessed_by_user_id', 'practical_assessed_by_name', 'practical_assessed_by_role',
+            'practical_assessed_at', 'practical_assessed_branch_id', 'updatedAt'
+          ]);
+      }
+
+      function isSupervisorTraineeAssessmentUpdate() {
+        return isPeopleSupervisor()
+          && isTenantMember(resource.data.tenantId)
+          && isTenantMember(request.resource.data.tenantId)
+          && request.resource.data.tenantId == resource.data.tenantId
+          && resource.data.status == 'training_accepted'
+          && request.resource.data.status == 'training_accepted'
+          && request.resource.data.training_assessment_last_by_user_id == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'week4_appraisal_score', 'week4_theory_score', 'week4_assessment_date',
+            'week4_assessed_by_user_id', 'week4_assessed_by_name', 'week4_assessed_by_role', 'week4_assessed_at',
+            'week8_appraisal_score', 'week8_theory_score', 'week8_assessment_date',
+            'week8_assessed_by_user_id', 'week8_assessed_by_name', 'week8_assessed_by_role', 'week8_assessed_at',
+            'week12_appraisal_score', 'week12_theory_score', 'week12_assessment_date',
+            'week12_assessed_by_user_id', 'week12_assessed_by_name', 'week12_assessed_by_role', 'week12_assessed_at',
+            'training_assessment_last_by_user_id', 'training_assessment_last_by_name',
+            'training_assessment_last_by_role', 'training_assessment_last_at', 'updatedAt'
+          ])
+          && request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'week4_appraisal_score', 'week4_theory_score',
+            'week8_appraisal_score', 'week8_theory_score',
+            'week12_appraisal_score', 'week12_theory_score'
+          ])
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_appraisal_score']) || (request.resource.data.week4_appraisal_score is number && request.resource.data.week4_appraisal_score >= 0 && request.resource.data.week4_appraisal_score <= 100))
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_theory_score']) || (request.resource.data.week4_theory_score is number && request.resource.data.week4_theory_score >= 0 && request.resource.data.week4_theory_score <= 100))
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_appraisal_score']) || (request.resource.data.week8_appraisal_score is number && request.resource.data.week8_appraisal_score >= 0 && request.resource.data.week8_appraisal_score <= 100))
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_theory_score']) || (request.resource.data.week8_theory_score is number && request.resource.data.week8_theory_score >= 0 && request.resource.data.week8_theory_score <= 100))
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_appraisal_score']) || (request.resource.data.week12_appraisal_score is number && request.resource.data.week12_appraisal_score >= 0 && request.resource.data.week12_appraisal_score <= 100))
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_theory_score']) || (request.resource.data.week12_theory_score is number && request.resource.data.week12_theory_score >= 0 && request.resource.data.week12_theory_score <= 100));
+      }
+
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (
         isHR() ||
         (isPeopleSupervisor() && resource.data.status in ['practical_scheduled', 'practical_completed', 'training_accepted'])
@@ -444,6 +403,17 @@ service cloud.firestore {
     }
 
     match /branches/{branchId} {
+      function hasValidBranchShape() {
+        return request.resource.data.keys().hasAll([
+          'tenantId', 'name', 'branch_code', 'type', 'address', 'phone',
+          'status', 'created_at', 'created_by'
+        ])
+        && request.resource.data.tenantId is string
+        && request.resource.data.name is string
+        && request.resource.data.branch_code is string
+        && request.resource.data.status in ['Active', 'Inactive', 'Closed'];
+      }
+
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
       allow create: if isCEO() && isTenantMember(request.resource.data.tenantId) && hasValidBranchShape();
       allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
@@ -862,6 +832,16 @@ service cloud.firestore {
     }
 
     match /opening_stock_sessions/{sessionId} {
+      function isAssignedBranchManager(branchId) {
+        return isAuthenticated()
+          && (hasRole('Branch Manager') || hasRole('branch manager') || hasRole('admin'))
+          && (
+            (("assigned_branches" in getUserData()) && getUserData().assigned_branches.hasAny([branchId])) ||
+            (("branch_id" in getUserData()) && getUserData().branch_id == branchId) ||
+            (("default_branch_id" in getUserData()) && getUserData().default_branch_id == branchId)
+          );
+      }
+
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
 
       allow create: if isTenantMember(request.resource.data.tenantId)
@@ -958,6 +938,24 @@ service cloud.firestore {
     }
 
     match /sales/{saleId} {
+      function isLegacySale(sale) {
+        return !("engineVersion" in sale) || sale.engineVersion != 2;
+      }
+
+      function hasValidV2SaleLinks(saleId) {
+        let sale = request.resource.data;
+        let payment = getAfter(/databases/$(database)/documents/pos_payments/$(sale.canonicalPaymentId)).data;
+        let outbox = getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(sale.transactionOutboxEventId)).data;
+        return sale.canonicalPaymentId is string
+          && sale.transactionOutboxEventId is string
+          && payment.saleId == saleId
+          && payment.tenantId == sale.tenantId
+          && payment.branchId == sale.branchId
+          && payment.amount == sale.totalAmount
+          && outbox.saleId == saleId
+          && outbox.paymentId == sale.canonicalPaymentId;
+      }
+
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
       allow create: if isPOSOperator()
@@ -966,70 +964,114 @@ service cloud.firestore {
         && isAssignedToBranch(request.resource.data.branchId)
         && request.resource.data.status == 'completed'
         && (
-          !("engineVersion" in request.resource.data) ||
-          request.resource.data.engineVersion != 2 ||
-          (
-            request.resource.data.canonicalPaymentId is string
-            && request.resource.data.transactionOutboxEventId is string
-            && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.canonicalPaymentId)).data.saleId == saleId
-            && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.canonicalPaymentId)).data.tenantId == request.resource.data.tenantId
-            && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.canonicalPaymentId)).data.branchId == request.resource.data.branchId
-            && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.canonicalPaymentId)).data.amount == request.resource.data.totalAmount
-            && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.transactionOutboxEventId)).data.saleId == saleId
-            && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.transactionOutboxEventId)).data.paymentId == request.resource.data.canonicalPaymentId
-          )
+          isLegacySale(request.resource.data) ||
+          hasValidV2SaleLinks(saleId)
         );
       allow update: if isPOSOperator()
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
-        && (!("engineVersion" in resource.data) || resource.data.engineVersion != 2)
-        && (!("engineVersion" in request.resource.data) || request.resource.data.engineVersion != 2);
+        && isLegacySale(resource.data)
+        && isLegacySale(request.resource.data);
       // V2 sales are immutable to every client, including tenant administrators.
       // The Batch 4 Admin SDK worker bypasses client rules for its controlled
       // downstream-status fields. Reversal requires a separate durable event.
       allow delete: if isAdmin()
         && isTenantMember(resource.data.tenantId)
-        && (!("engineVersion" in resource.data) || resource.data.engineVersion != 2);
+        && isLegacySale(resource.data);
     }
 
     match /pos_payments/{paymentId} {
+      function hasValidPaymentIdentity(paymentId) {
+        let payment = request.resource.data;
+        return payment.paymentId == paymentId
+          && payment.operatorUid == request.auth.uid
+          && payment.branchId is string
+          && payment.source == 'POS'
+          && payment.engineVersion == 2
+          && payment.currency == 'UGX'
+          && payment.saleId is string
+          && payment.checkoutAttemptId is string
+          && payment.receiptNumber is string;
+      }
+
+      function hasValidPaymentSettlement() {
+        let payment = request.resource.data;
+        return payment.amount is number
+          && payment.amount >= 0
+          && payment.settledAmount is number
+          && payment.settledAmount >= 0
+          && payment.outstandingAmount is number
+          && payment.outstandingAmount >= 0
+          && payment.settledAmount + payment.outstandingAmount == payment.amount
+          && payment.status in ['completed', 'unpaid', 'partially_settled']
+          && payment.components is list;
+      }
+
+      function paymentMatchesSale(paymentId) {
+        let payment = request.resource.data;
+        let sale = getAfter(/databases/$(database)/documents/sales/$(payment.saleId)).data;
+        return sale.engineVersion == 2
+          && sale.tenantId == payment.tenantId
+          && sale.branchId == payment.branchId
+          && sale.operatorUid == request.auth.uid
+          && sale.receiptNumber == payment.receiptNumber
+          && sale.checkoutAttemptId == payment.checkoutAttemptId
+          && sale.totalAmount == payment.amount
+          && sale.canonicalPaymentId == paymentId;
+      }
+
       allow get: if isAuthenticated()
         && (resource == null || isTenantMember(resource.data.tenantId))
         && (isPOSOperator() || canViewFinance() || isIT());
       allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
       allow create: if isPOSOperator()
         && isTenantMember(request.resource.data.tenantId)
-        && request.resource.data.paymentId == paymentId
-        && request.resource.data.operatorUid == request.auth.uid
-        && request.resource.data.branchId is string
         && isAssignedToBranch(request.resource.data.branchId)
-        && request.resource.data.source == 'POS'
-        && request.resource.data.engineVersion == 2
-        && request.resource.data.currency == 'UGX'
-        && request.resource.data.saleId is string
-        && request.resource.data.checkoutAttemptId is string
-        && request.resource.data.receiptNumber is string
-        && request.resource.data.amount is number
-        && request.resource.data.amount >= 0
-        && request.resource.data.settledAmount is number
-        && request.resource.data.settledAmount >= 0
-        && request.resource.data.outstandingAmount is number
-        && request.resource.data.outstandingAmount >= 0
-        && request.resource.data.settledAmount + request.resource.data.outstandingAmount == request.resource.data.amount
-        && request.resource.data.status in ['completed', 'unpaid', 'partially_settled']
-        && request.resource.data.components is list
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.engineVersion == 2
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.tenantId == request.resource.data.tenantId
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.branchId == request.resource.data.branchId
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.operatorUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.receiptNumber == request.resource.data.receiptNumber
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.checkoutAttemptId == request.resource.data.checkoutAttemptId
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.totalAmount == request.resource.data.amount
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.canonicalPaymentId == paymentId;
+        && hasValidPaymentIdentity(paymentId)
+        && hasValidPaymentSettlement()
+        && paymentMatchesSale(paymentId);
       allow update, delete: if false;
     }
 
     match /pos_transaction_outbox/{eventId} {
+      function hasValidOutboxEnvelope(eventId) {
+        let outbox = request.resource.data;
+        return outbox.eventId == eventId
+          && outbox.branchId is string
+          && outbox.source == 'POS'
+          && outbox.engineVersion == 2
+          && outbox.payloadVersion == 1
+          && outbox.eventType == 'POS_SALE_COMMITTED'
+          && outbox.aggregateType == 'POS_SALE'
+          && outbox.aggregateId == outbox.saleId
+          && outbox.saleId is string
+          && outbox.paymentId is string
+          && outbox.receiptNumber is string
+          && outbox.status == 'PENDING'
+          && outbox.attemptCount == 0
+          && outbox.payload.saleId == outbox.saleId
+          && outbox.payload.paymentId == outbox.paymentId;
+      }
+
+      function outboxMatchesSale(eventId) {
+        let outbox = request.resource.data;
+        let sale = getAfter(/databases/$(database)/documents/sales/$(outbox.saleId)).data;
+        return sale.engineVersion == 2
+          && sale.tenantId == outbox.tenantId
+          && sale.branchId == outbox.branchId
+          && sale.receiptNumber == outbox.receiptNumber
+          && sale.canonicalPaymentId == outbox.paymentId
+          && sale.transactionOutboxEventId == eventId;
+      }
+
+      function outboxMatchesPayment() {
+        let outbox = request.resource.data;
+        let payment = getAfter(/databases/$(database)/documents/pos_payments/$(outbox.paymentId)).data;
+        return payment.saleId == outbox.saleId
+          && payment.tenantId == outbox.tenantId
+          && payment.branchId == outbox.branchId;
+      }
+
       allow get: if isAuthenticated()
         && (resource == null || isTenantMember(resource.data.tenantId))
         && (isPOSOperator() || canViewFinance() || isIT());
@@ -1038,65 +1080,67 @@ service cloud.firestore {
         && (canViewFinance() || isIT());
       allow create: if isPOSOperator()
         && isTenantMember(request.resource.data.tenantId)
-        && request.resource.data.eventId == eventId
-        && request.resource.data.branchId is string
         && isAssignedToBranch(request.resource.data.branchId)
-        && request.resource.data.source == 'POS'
-        && request.resource.data.engineVersion == 2
-        && request.resource.data.payloadVersion == 1
-        && request.resource.data.eventType == 'POS_SALE_COMMITTED'
-        && request.resource.data.aggregateType == 'POS_SALE'
-        && request.resource.data.aggregateId == request.resource.data.saleId
-        && request.resource.data.saleId is string
-        && request.resource.data.paymentId is string
-        && request.resource.data.receiptNumber is string
-        && request.resource.data.status == 'PENDING'
-        && request.resource.data.attemptCount == 0
-        && request.resource.data.payload.saleId == request.resource.data.saleId
-        && request.resource.data.payload.paymentId == request.resource.data.paymentId
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.engineVersion == 2
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.tenantId == request.resource.data.tenantId
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.branchId == request.resource.data.branchId
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.receiptNumber == request.resource.data.receiptNumber
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.canonicalPaymentId == request.resource.data.paymentId
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.transactionOutboxEventId == eventId
-        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.saleId == request.resource.data.saleId
-        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.tenantId == request.resource.data.tenantId
-        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.branchId == request.resource.data.branchId;
+        && hasValidOutboxEnvelope(eventId)
+        && outboxMatchesSale(eventId)
+        && outboxMatchesPayment();
       allow update, delete: if false;
     }
 
     match /pos_checkout_attempts/{attemptDocumentId} {
+      function hasValidAttemptEnvelope() {
+        let attempt = request.resource.data;
+        return attempt.operatorUid == request.auth.uid
+          && attempt.branchId is string
+          && attempt.status == 'completed'
+          && attempt.attemptId is string
+          && attempt.fingerprint is string
+          && attempt.saleId is string
+          && attempt.paymentId is string
+          && attempt.outboxEventId is string;
+      }
+
+      function attemptMatchesSale() {
+        let attempt = request.resource.data;
+        let sale = getAfter(/databases/$(database)/documents/sales/$(attempt.saleId)).data;
+        return sale.engineVersion == 2
+          && sale.tenantId == attempt.tenantId
+          && sale.branchId == attempt.branchId
+          && sale.operatorUid == request.auth.uid
+          && sale.checkoutAttemptId == attempt.attemptId
+          && sale.checkoutIntentFingerprint == attempt.fingerprint
+          && sale.canonicalPaymentId == attempt.paymentId
+          && sale.transactionOutboxEventId == attempt.outboxEventId;
+      }
+
+      function attemptMatchesPayment() {
+        let attempt = request.resource.data;
+        let payment = getAfter(/databases/$(database)/documents/pos_payments/$(attempt.paymentId)).data;
+        return payment.saleId == attempt.saleId
+          && payment.checkoutAttemptId == attempt.attemptId
+          && payment.tenantId == attempt.tenantId
+          && payment.branchId == attempt.branchId;
+      }
+
+      function attemptMatchesOutbox() {
+        let attempt = request.resource.data;
+        let outbox = getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(attempt.outboxEventId)).data;
+        return outbox.saleId == attempt.saleId
+          && outbox.paymentId == attempt.paymentId
+          && outbox.tenantId == attempt.tenantId
+          && outbox.branchId == attempt.branchId
+          && outbox.status == 'PENDING';
+      }
+
       allow get: if isPOSOperator() && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if false;
       allow create: if isPOSOperator()
         && isTenantMember(request.resource.data.tenantId)
-        && request.resource.data.operatorUid == request.auth.uid
-        && request.resource.data.branchId is string
         && isAssignedToBranch(request.resource.data.branchId)
-        && request.resource.data.status == 'completed'
-        && request.resource.data.attemptId is string
-        && request.resource.data.fingerprint is string
-        && request.resource.data.saleId is string
-        && request.resource.data.paymentId is string
-        && request.resource.data.outboxEventId is string
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.engineVersion == 2
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.tenantId == request.resource.data.tenantId
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.branchId == request.resource.data.branchId
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.operatorUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.checkoutAttemptId == request.resource.data.attemptId
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.checkoutIntentFingerprint == request.resource.data.fingerprint
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.canonicalPaymentId == request.resource.data.paymentId
-        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.saleId)).data.transactionOutboxEventId == request.resource.data.outboxEventId
-        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.saleId == request.resource.data.saleId
-        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.checkoutAttemptId == request.resource.data.attemptId
-        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.tenantId == request.resource.data.tenantId
-        && getAfter(/databases/$(database)/documents/pos_payments/$(request.resource.data.paymentId)).data.branchId == request.resource.data.branchId
-        && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.outboxEventId)).data.saleId == request.resource.data.saleId
-        && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.outboxEventId)).data.paymentId == request.resource.data.paymentId
-        && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.outboxEventId)).data.tenantId == request.resource.data.tenantId
-        && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.outboxEventId)).data.branchId == request.resource.data.branchId
-        && getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(request.resource.data.outboxEventId)).data.status == 'PENDING';
+        && hasValidAttemptEnvelope()
+        && attemptMatchesSale()
+        && attemptMatchesPayment()
+        && attemptMatchesOutbox();
       allow update, delete: if false;
     }
 

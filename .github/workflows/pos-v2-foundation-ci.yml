@@ -24,6 +24,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   validate:
@@ -49,3 +50,73 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Authenticate for hosted Firestore rules compilation
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Validate rules with the hosted Firebase compiler
+        shell: bash
+        env:
+          FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+        run: |
+          set -euo pipefail
+
+          access_token=$(gcloud auth application-default print-access-token)
+
+          test_rules_file() {
+            local label="$1"
+            local file="$2"
+            local body response_file http_status errors
+            response_file=$(mktemp)
+            body=$(jq -n --rawfile rules "$file" \
+              '{source: {files: [{name: "firestore.rules", content: $rules}]}}')
+
+            http_status=$(curl --silent --show-error \
+              -o "$response_file" \
+              -w '%{http_code}' \
+              -X POST \
+              -H "Authorization: Bearer ${access_token}" \
+              -H "Content-Type: application/json" \
+              --data "$body" \
+              "https://firebaserules.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}:test")
+
+            echo "${label} compiler response: HTTP ${http_status}"
+            if [ "$http_status" != "200" ]; then
+              jq . "$response_file" 2>/dev/null || cat "$response_file"
+              return 1
+            fi
+
+            errors=$(jq '[.issues[]? | select(.severity == "ERROR")] | length' "$response_file")
+            if [ "$errors" -ne 0 ]; then
+              jq . "$response_file"
+              return 1
+            fi
+          }
+
+          cat > /tmp/minimal-firestore.rules <<'RULES'
+          rules_version = '2';
+          service cloud.firestore {
+            match /databases/{database}/documents {
+              match /{document=**} {
+                allow read, write: if false;
+              }
+            }
+          }
+          RULES
+
+          if ! test_rules_file "Minimal deny-all control" /tmp/minimal-firestore.rules; then
+            echo "::error title=Firebase Rules API control failure::The hosted compiler rejected a minimal deny-all ruleset, so this failure cannot be attributed to PharmHelm rule complexity alone."
+            exit 2
+          fi
+
+          if ! test_rules_file "PharmHelm candidate" firestore.rules; then
+            echo "::error title=PharmHelm rules compilation failed::The minimal control passed but Firebase rejected the proposed PharmHelm rules."
+            exit 3
+          fi
+
+          echo "Hosted Firebase compiler accepted the minimal control and firestore.rules."
