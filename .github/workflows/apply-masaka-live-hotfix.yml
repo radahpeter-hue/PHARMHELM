@@ -33,6 +33,18 @@ jobs:
           p.write_text(text.replace(old, new, 1))
           PY
       - run: python3 scripts/apply_masaka_live_hotfix.py
+      - name: Cover stockcard last-sale date
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/components/inventory/ProductStockcard.tsx')
+          text = p.read_text()
+          old = "format(new Date(movements.find(m => m.movementClass === 'sale' || m.class === 'sale')!.timestamp), 'MMM dd, yyyy')"
+          new = "formatDateValue(movements.find(m => m.movementClass === 'sale' || m.class === 'sale')!.timestamp, 'MMM dd, yyyy')"
+          if old not in text:
+              raise SystemExit('Stockcard Last Sale date anchor not found')
+          p.write_text(text.replace(old, new, 1))
+          PY
       - name: Use repository test harness
         run: |
           cat > tests/live-pos-inventory-regressions.test.ts <<'EOF'
@@ -58,14 +70,7 @@ jobs:
             class Sentinel { constructor(public value: number) {} }
             const date = new Date('2026-09-29T00:00:00.000Z');
             const sentinel = new Sentinel(7);
-            const result = omitUndefinedDeep({
-              keep: null,
-              remove: undefined,
-              nested: { remove: undefined, keep: 1 },
-              array: [1, undefined, { remove: undefined, keep: 2 }],
-              date,
-              sentinel
-            });
+            const result = omitUndefinedDeep({ keep: null, remove: undefined, nested: { remove: undefined, keep: 1 }, array: [1, undefined, { remove: undefined, keep: 2 }], date, sentinel });
             assert.deepEqual(result, { keep: null, nested: { keep: 1 }, array: [1, { keep: 2 }], date, sentinel });
             assert.equal(result.date, date);
             assert.equal(result.sentinel, sentinel);
@@ -84,6 +89,7 @@ jobs:
             assert.ok(inventory.includes('{canOperateInventory && ('));
             assert.ok(stockcard.includes("const canOperateInventory = hasPermission('inventory', 'operate')"));
             assert.ok(stockcard.includes('canOperateInventory && adjustingBatch'));
+            assert.ok(!stockcard.includes('format(new Date('));
           });
 
           test('sanitizes POS V2 writes and normalizes batch expiry values', () => {
