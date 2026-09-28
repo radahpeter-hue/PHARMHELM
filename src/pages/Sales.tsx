@@ -1342,7 +1342,7 @@ const Sales: React.FC = () => {
         <div className="flex items-center gap-4">
           <div className="flex flex-col">
             <span className="text-xs font-mono text-zinc-400 uppercase tracking-wider">Branch</span>
-            <span className="font-medium text-zinc-900">{profile?.branch || 'Main Branch'}</span>
+            <span className="font-medium text-zinc-900">{activeBranch?.name || 'No branch selected'}</span>
           </div>
           <div className="h-8 w-px bg-zinc-200" />
           <div className="flex flex-col">
