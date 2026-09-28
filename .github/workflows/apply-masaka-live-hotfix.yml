@@ -19,6 +19,8 @@ jobs:
         with:
           node-version: '20'
           cache: npm
+      - name: Align live outbox anchor
+        run: sed -i 's/errorMessage: null/lastError: null/g' scripts/apply_masaka_live_hotfix.py
       - run: python3 scripts/apply_masaka_live_hotfix.py
       - run: npm ci
       - run: npm test
