@@ -1,4 +1,4 @@
-name: Apply Masaka live hotfix
+name: Masaka Hotfix Verifier
 
 on:
   push:
@@ -9,49 +9,29 @@ permissions:
   contents: write
 
 jobs:
-  apply-and-verify:
-    if: github.event.head_commit.message != 'fix: harden Masaka POS and inventory live flows'
+  verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20'
           cache: npm
-
-      - name: Apply deterministic hotfix
-        run: python3 scripts/apply_masaka_live_hotfix.py
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run tests
-        run: npm test
-
-      - name: TypeScript validation
-        run: npm run lint
-
-      - name: Production build
-        run: npm run build
-
-      - name: Diff validation
-        run: git diff --check
-
-      - name: Commit verified hotfix
+      - run: python3 scripts/apply_masaka_live_hotfix.py
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm run build
+      - run: git diff --check
+      - name: Commit verified source changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/pages/Sales.tsx \
-                  src/services/pos-v2/posCheckoutV2Repository.ts \
-                  src/utils/firestoreData.ts \
-                  src/utils/dateValue.ts \
-                  src/components/inventory/ProductStockcard.tsx \
-                  src/pages/Inventory.tsx \
-                  tests/live-pos-inventory-regressions.test.ts
+          rm -f scripts/apply_masaka_live_hotfix.py
+          rm -f .github/workflows/apply-masaka-live-hotfix.yml
+          rm -f .github/workflows/apply-masaka-live-hotfix-v2.yml
+          git add -A
           git commit -m "fix: harden Masaka POS and inventory live flows"
           git push origin HEAD:fix/masaka-pos-v2-live-failures
