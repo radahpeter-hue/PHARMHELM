@@ -45,6 +45,32 @@ jobs:
               raise SystemExit('Stockcard Last Sale date anchor not found')
           p.write_text(text.replace(old, new, 1))
           PY
+      - name: Remove trailing whitespace introduced by hotfix blocks
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          replacements = {
+              'src/components/inventory/ProductStockcard.tsx': [
+                  ('                              <button \n', '                              <button\n'),
+              ],
+              'src/pages/Inventory.tsx': [
+                  ('          <TabButton \n', '          <TabButton\n'),
+                  ("            active={activeTab === 'stock'} \n", "            active={activeTab === 'stock'}\n"),
+                  ("            onClick={() => setActiveTab('stock')} \n", "            onClick={() => setActiveTab('stock')}\n"),
+                  ('            label="Stock Adjustments" \n', '            label="Stock Adjustments"\n'),
+                  ('            icon={<Activity size={16} />} \n', '            icon={<Activity size={16} />}\n'),
+                  ('                  <button \n', '                  <button\n'),
+              ],
+          }
+          for filename, pairs in replacements.items():
+              p = Path(filename)
+              text = p.read_text()
+              for old, new in pairs:
+                  if old not in text:
+                      raise SystemExit(f'Whitespace cleanup anchor not found in {filename}: {old!r}')
+                  text = text.replace(old, new, 1)
+              p.write_text(text)
+          PY
       - name: Use repository test harness
         run: |
           cat > tests/live-pos-inventory-regressions.test.ts <<'EOF'
