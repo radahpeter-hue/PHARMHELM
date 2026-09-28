@@ -110,8 +110,9 @@ test('V2 sales are immutable in client rules and Batch 4 exposes terminal state'
   const worker = readFileSync('scripts/process-pos-v2-outbox.mjs', 'utf8');
   const sales = readFileSync('src/pages/Sales.tsx', 'utf8');
   const repository = readFileSync('src/services/pos-v2/posCheckoutV2Repository.ts', 'utf8');
-  assert.match(rules, /allow update:[\s\S]{0,500}!\("engineVersion" in resource\.data\)[\s\S]{0,180}resource\.data\.engineVersion != 2/);
-  assert.match(rules, /allow delete:[\s\S]{0,240}resource\.data\.engineVersion != 2/);
+  assert.match(rules, /function isLegacySale\(sale\)[\s\S]{0,180}!\("engineVersion" in sale\)[\s\S]{0,100}sale\.engineVersion != 2/);
+  assert.match(rules, /allow update:[\s\S]{0,300}isLegacySale\(resource\.data\)[\s\S]{0,100}isLegacySale\(request\.resource\.data\)/);
+  assert.match(rules, /allow delete:[\s\S]{0,240}isLegacySale\(resource\.data\)/);
   assert.match(worker, /requiresManualReview/);
   assert.match(worker, /manualReviewAt/);
   assert.match(worker, /expiredLeases/);

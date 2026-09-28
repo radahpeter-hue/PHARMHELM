@@ -24,6 +24,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   validate:
@@ -49,3 +50,39 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Authenticate for hosted Firestore rules compilation
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Validate rules with the hosted Firebase compiler
+        shell: bash
+        env:
+          FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+        run: |
+          set -euo pipefail
+
+          access_token=$(gcloud auth application-default print-access-token)
+          test_body=$(jq -n --rawfile rules firestore.rules \
+            '{source: {files: [{name: "firestore.rules", content: $rules}]}}')
+
+          response=$(curl --retry 2 --retry-all-errors --retry-delay 10 \
+            --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer ${access_token}" \
+            -H "Content-Type: application/json" \
+            --data "$test_body" \
+            "https://firebaserules.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}:test")
+
+          errors=$(printf '%s' "$response" | jq '[.issues[]? | select(.severity == "ERROR")] | length')
+          if [ "$errors" -ne 0 ]; then
+            printf '%s\n' "$response" | jq .
+            echo "::error title=Hosted Firestore rules compilation failed::Firebase rejected the proposed rules."
+            exit 1
+          fi
+
+          echo "Hosted Firebase compiler accepted firestore.rules."
