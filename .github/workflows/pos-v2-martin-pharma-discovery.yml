@@ -1,0 +1,64 @@
+name: Resolve Martin Pharma POS V2 target
+
+on:
+  push:
+    branches:
+      - ops/pos-v2-martin-pharma-discovery
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-target:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+      FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+      TENANT_SLUG: mp
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install read-only discovery dependency
+        run: npm install --no-save firebase-admin
+
+      - name: Authenticate Google service account
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Resolve tenant and active branches without writing
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { applicationDefault, initializeApp } from 'firebase-admin/app';
+          import { getFirestore } from 'firebase-admin/firestore';
+
+          const app = initializeApp({ credential: applicationDefault(), projectId: process.env.FIREBASE_PROJECT_ID });
+          const db = getFirestore(app, process.env.FIRESTORE_DATABASE_ID);
+          const tenants = await db.collection('tenants').where('slug', '==', process.env.TENANT_SLUG).get();
+          if (tenants.size !== 1) throw new Error(`Expected exactly one tenant for slug ${process.env.TENANT_SLUG}; found ${tenants.size}.`);
+
+          const tenant = tenants.docs[0];
+          const branches = await db.collection('branches').where('tenantId', '==', tenant.id).get();
+          const targets = branches.docs
+            .map(doc => ({
+              id: doc.id,
+              name: String(doc.get('name') || ''),
+              code: String(doc.get('branch_code') || ''),
+              status: String(doc.get('status') || ''),
+              posCheckoutEngine: doc.get('posCheckoutEngine') || null
+            }))
+            .filter(branch => branch.status.trim().toLowerCase() === 'active')
+            .sort((a, b) => a.code.localeCompare(b.code));
+
+          console.log(JSON.stringify({
+            readOnly: true,
+            tenant: { id: tenant.id, slug: tenant.get('slug'), name: tenant.get('name') },
+            activeBranches: targets
+          }, null, 2));
+          NODE
