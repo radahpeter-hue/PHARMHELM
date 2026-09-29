@@ -1,0 +1,325 @@
+name: Apply POS V2 Final Eligibility Correction
+
+on:
+  push:
+    branches:
+      - fix/pos-v2-eligibility-final
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: ${{ !contains(github.event.head_commit.message, '[final-eligibility-applied]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Apply deterministic architecture correction
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one patch anchor, found {count}')
+              p.write_text(text.replace(old, new, 1))
+
+          # 1. Central POS batch eligibility + quantity capping.
+          path = 'src/services/posTierCartService.ts'
+          replace_once(path,
+          "import { createSaleLineId } from './saleTierHistoryService';\n",
+          "import { createSaleLineId } from './saleTierHistoryService';\nimport { normalizeDateValue } from '../utils/dateValue';\n")
+          replace_once(path,
+          "const normaliseExpiry = (expiryDate?: string, now: Date = new Date()): boolean => {\n  if (!expiryDate) return true;\n  const raw = String(expiryDate).trim();\n  if (!raw) return true;\n\n  let expiry: Date;\n  if (/^\\d{4}-\\d{2}$/.test(raw)) {\n    const [year, month] = raw.split('-').map(Number);\n    expiry = new Date(year, month, 0, 23, 59, 59, 999);\n  } else if (/^\\d{4}-\\d{2}-\\d{2}$/.test(raw)) {\n    const [year, month, day] = raw.split('-').map(Number);\n    expiry = new Date(year, month - 1, day, 23, 59, 59, 999);\n  } else {\n    expiry = new Date(raw);\n    if (Number.isNaN(expiry.getTime())) return false;\n  }\n  return expiry.getTime() >= now.getTime();\n};\n",
+          "const normaliseExpiry = (expiryDate?: unknown, now: Date = new Date()): boolean => {\n  if (expiryDate === null || expiryDate === undefined) return false;\n  if (typeof expiryDate === 'string') {\n    const raw = expiryDate.trim();\n    if (!raw) return false;\n    let expiry: Date;\n    if (/^\\d{4}-\\d{2}$/.test(raw)) {\n      const [year, month] = raw.split('-').map(Number);\n      expiry = new Date(year, month, 0, 23, 59, 59, 999);\n    } else if (/^\\d{4}-\\d{2}-\\d{2}$/.test(raw)) {\n      const [year, month, day] = raw.split('-').map(Number);\n      expiry = new Date(year, month - 1, day, 23, 59, 59, 999);\n    } else {\n      const normalized = normalizeDateValue(raw);\n      if (!normalized) return false;\n      expiry = normalized;\n    }\n    return expiry.getTime() >= now.getTime();\n  }\n  const expiry = normalizeDateValue(expiryDate);\n  return Boolean(expiry && expiry.getTime() >= now.getTime());\n};\n\nexport function isProductBatchEligibleForPos(batch: ProductBatch, now: Date = new Date()): boolean {\n  const status = String(batch.batch_status || '').trim().toLowerCase();\n  const quantity = Number(batch.quantity);\n  const cost = Number(batch.purchasePrice);\n  return status === 'active'\n    && Number.isFinite(quantity)\n    && quantity > 0\n    && Number.isFinite(cost)\n    && cost >= 0\n    && normaliseExpiry(batch.expiryDate, now);\n}\n\nexport function getProductEligibleBatches(\n  batches: ProductBatch[],\n  productId: string,\n  now: Date = new Date()\n): ProductBatch[] {\n  return batches\n    .filter(batch => batch.productId === productId)\n    .filter(batch => isProductBatchEligibleForPos(batch, now))\n    .sort((left, right) => {\n      const leftExpiry = normalizeDateValue(left.expiryDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;\n      const rightExpiry = normalizeDateValue(right.expiryDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;\n      return leftExpiry - rightExpiry;\n    });\n}\n\nexport function capRequestedCommercialQuantity(params: {\n  requestedCommercialQuantity: number;\n  tierMultiplier: number;\n  usableBaseStock: number;\n  otherReservedBaseStock?: number;\n}): number {\n  const requested = Math.max(0, Math.floor(Number(params.requestedCommercialQuantity) || 0));\n  const multiplier = Number(params.tierMultiplier);\n  if (!Number.isFinite(multiplier) || multiplier <= 0) return 0;\n  const remainingBase = Math.max(0, Number(params.usableBaseStock || 0) - Number(params.otherReservedBaseStock || 0));\n  return Math.min(requested, Math.floor(remainingBase / multiplier));\n}\n")
+          replace_once(path,
+          "  return batches\n    .filter(batch => batch.productId === productId)\n    .filter(batch => String(batch.batch_status || '').toLowerCase() === 'active')\n    .filter(batch => normaliseExpiry(batch.expiryDate, now))\n    .reduce((sum, batch) => sum + Math.max(0, Number(batch.quantity || 0)), 0);",
+          "  return getProductEligibleBatches(batches, productId, now)\n    .reduce((sum, batch) => sum + Math.max(0, Number(batch.quantity || 0)), 0);")
+          replace_once(path,
+          "  const candidates = batches\n    .filter(batch => batch.productId === productId)\n    .filter(batch => String(batch.batch_status || '').toLowerCase() === 'active')\n    .filter(batch => normaliseExpiry(batch.expiryDate, now))\n    .filter(batch => Number(batch.quantity || 0) > 0)\n    .sort((a, b) => new Date(a.expiryDate || '9999-12-31').getTime() - new Date(b.expiryDate || '9999-12-31').getTime());",
+          "  const candidates = getProductEligibleBatches(batches, productId, now);")
+
+          # 2. Basket construction/editing uses the same eligibility authority.
+          path = 'src/pages/Sales.tsx'
+          replace_once(path,
+          "import { buildTierCartItem, getCartLineIdentity, getProductUsableBaseStock, getReservedBaseQuantityForProduct, mergeTierCartItem, replaceTierCartPrice, replaceTierCartQuantity } from '../services/posTierCartService';",
+          "import { buildTierCartItem, capRequestedCommercialQuantity, getCartLineIdentity, getProductEligibleBatches, getProductUsableBaseStock, getReservedBaseQuantityForProduct, isProductBatchEligibleForPos, mergeTierCartItem, replaceTierCartPrice, replaceTierCartQuantity } from '../services/posTierCartService';")
+          replace_once(path,
+          "        const hasStock = batches.some(b => b.productId === p.id && b.quantity > 0);",
+          "        const hasStock = getProductUsableBaseStock(batches, p.id) > 0;")
+          replace_once(path,
+          "      const productBatches = batches\n        .filter(b => b.productId === product.id && b.quantity >= multiplier && b.batch_status === 'active')\n        .filter(b => isInventoryBatchUnexpired(b.expiryDate))\n        .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());",
+          "      const productBatches = getProductEligibleBatches(batches, product.id)\n        .filter(batch => Number(batch.quantity || 0) >= multiplier);")
+          replace_once(path,
+          "    const newBatch = batches.find(b => b.productId === productId && b.batchNumber === newBatchNumber);\n    if (!newBatch) return;",
+          "    const newBatch = batches.find(b => b.productId === productId && b.batchNumber === newBatchNumber);\n    if (!newBatch) return;\n    if (!isProductBatchEligibleForPos(newBatch)) {\n      toast.error(`Batch ${newBatchNumber} is not eligible for POS sale.`);\n      return;\n    }")
+          replace_once(path,
+          "      const currentQuantity = Number(currentCartItem.commercialQuantity ?? currentCartItem.quantity ?? 0);\n      const newQuantity = Math.max(0, currentQuantity + delta);\n      try {\n        setCart(current => replaceTierCartQuantity({ cart: current, targetIdentity: lineIdentity, product, batches, commercialQuantity: newQuantity }));\n      } catch (error) {",
+          "      const currentQuantity = Number(currentCartItem.commercialQuantity ?? currentCartItem.quantity ?? 0);\n      const requestedQuantity = Math.max(0, currentQuantity + delta);\n      const multiplier = Number(currentCartItem.tierMultiplier || 0);\n      const usableBaseStock = getProductUsableBaseStock(batches, product.id);\n      const totalReservedBaseStock = getReservedBaseQuantityForProduct(cart, product.id);\n      const currentLineBaseStock = currentQuantity * multiplier;\n      const otherReservedBaseStock = Math.max(0, totalReservedBaseStock - currentLineBaseStock);\n      const newQuantity = capRequestedCommercialQuantity({\n        requestedCommercialQuantity: requestedQuantity,\n        tierMultiplier: multiplier,\n        usableBaseStock,\n        otherReservedBaseStock\n      });\n      if (requestedQuantity > newQuantity) {\n        toast.warning(`Insufficient eligible stock. Quantity capped at ${newQuantity} ${newQuantity === 1 ? 'unit' : 'units'} for this selling tier.`);\n      }\n      try {\n        setCart(current => replaceTierCartQuantity({ cart: current, targetIdentity: lineIdentity, product, batches, commercialQuantity: newQuantity }));\n      } catch (error) {")
+          replace_once(path,
+          "    const currentBatch = batches.find(b => b.productId === productId && b.batchNumber === batchNumber);\n    if (!currentBatch) return;\n    const currentBatchMaxQty = Math.floor(currentBatch.quantity / multiplier);",
+          "    const currentBatch = batches.find(b => b.productId === productId && b.batchNumber === batchNumber);\n    if (!currentBatch) return;\n    const currentBatchMaxQty = isProductBatchEligibleForPos(currentBatch)\n      ? Math.floor(Number(currentBatch.quantity || 0) / multiplier)\n      : 0;")
+          replace_once(path,
+          "      const otherBatches = batches\n        .filter(b => b.productId === productId && b.batchNumber !== batchNumber && b.quantity >= multiplier && b.batch_status === 'active')\n        .filter(b => isInventoryBatchUnexpired(b.expiryDate))\n        .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());",
+          "      const otherBatches = getProductEligibleBatches(batches, productId)\n        .filter(batch => batch.batchNumber !== batchNumber && Number(batch.quantity || 0) >= multiplier);")
+
+          # 3. Batch ledger is canonical; stale product aggregates reconcile only on successful commit.
+          path = 'src/services/pos-v2/posCheckoutV2Repository.ts'
+          replace_once(path,
+          "function assertAggregateMatches(product: Product, batchTotal: number) {\n  const stock = Number(product.stock);\n  const quantityInStock = Number(product.quantityInStock);\n  if (!Number.isFinite(stock) || !Number.isFinite(quantityInStock) || Math.abs(stock - batchTotal) > EPSILON || Math.abs(quantityInStock - batchTotal) > EPSILON) {\n    throw new PosCheckoutV2Error('STOCK_AGGREGATE_MISMATCH', `Inventory aggregate mismatch for ${product.name}. Reconcile product stock before retrying.`, {\n      productId: product.id,\n      batchTotal,\n      stock: product.stock,\n      quantityInStock: product.quantityInStock\n    });\n  }\n}\n\n",
+          "")
+          replace_once(path,
+          "    for (const [productId, product] of liveProducts.entries()) {\n      assertAggregateMatches(product, aggregateBatchQuantity(rawBatchesByProduct.get(productId) || []));\n    }\n\n    const calculation = calculateCheckoutV2({",
+          "    const authoritativeBatchTotals = new Map<string, number>();\n    for (const productId of liveProducts.keys()) {\n      authoritativeBatchTotals.set(productId, aggregateBatchQuantity(rawBatchesByProduct.get(productId) || []));\n    }\n\n    const calculation = calculateCheckoutV2({")
+          replace_once(path,
+          "    for (const [productId, deduction] of calculation.productDeductions.entries()) {\n      const product = liveProducts.get(productId)!;\n      const nextStock = Number(product.stock) - deduction;\n      if (nextStock < -EPSILON) throw new PosCheckoutV2Error('STOCK_AGGREGATE_MISMATCH', `Product aggregate for ${product.name} cannot satisfy the base-unit deduction.`);\n      transaction.update(doc(db, 'products', productId), {\n        stock: Math.max(0, nextStock),\n        quantityInStock: Math.max(0, nextStock),\n        stockAggregateSource: 'product_batches',\n        updatedAt: serverTimestamp()\n      });\n    }",
+          "    for (const [productId, deduction] of calculation.productDeductions.entries()) {\n      const product = liveProducts.get(productId)!;\n      const authoritativeCurrentStock = authoritativeBatchTotals.get(productId) ?? 0;\n      const nextStock = authoritativeCurrentStock - deduction;\n      if (nextStock < -EPSILON) throw new PosCheckoutV2Error('TRANSACTION_CONFLICT', `Batch inventory for ${product.name} cannot satisfy the base-unit deduction.`);\n      transaction.update(doc(db, 'products', productId), {\n        stock: Math.max(0, nextStock),\n        quantityInStock: Math.max(0, nextStock),\n        stockAggregateSource: 'product_batches',\n        updatedAt: serverTimestamp()\n      });\n    }")
+
+          # 4. Compliance status writes into Inventory batch authority.
+          Path('src/services/batchComplianceService.ts').write_text("""import { collection, doc, getDoc, getDocs, query, where, writeBatch } from 'firebase/firestore';
+import { db } from '../firebase';
+import type { Product, ProductBatch } from '../types';
+
+export interface QuarantinedInventoryBatch {
+  id: string;
+  productId: string;
+  branchId: string;
+  batchNumber: string;
+  quantity: number;
+}
+
+function snapshotBatch(id: string, data: ProductBatch): QuarantinedInventoryBatch {
+  return {
+    id,
+    productId: data.productId,
+    branchId: data.branchId,
+    batchNumber: data.batchNumber,
+    quantity: Math.max(0, Number(data.quantity || 0))
+  };
+}
+
+export async function quarantineInventoryBatch(params: {
+  tenantId: string;
+  branchId: string;
+  productId: string;
+  batchNumber: string;
+  batchId?: string | null;
+}): Promise<QuarantinedInventoryBatch> {
+  let match: { id: string; data: ProductBatch } | null = null;
+  if (params.batchId) {
+    const snap = await getDoc(doc(db, 'product_batches', params.batchId));
+    if (snap.exists()) match = { id: snap.id, data: snap.data() as ProductBatch };
+  }
+  if (!match) {
+    const snap = await getDocs(query(collection(db, 'product_batches'), where('productId', '==', params.productId)));
+    const row = snap.docs.find(candidate => {
+      const data = candidate.data() as ProductBatch;
+      return data.tenantId === params.tenantId
+        && data.branchId === params.branchId
+        && String(data.batchNumber || '') === params.batchNumber;
+    });
+    if (row) match = { id: row.id, data: row.data() as ProductBatch };
+  }
+  if (!match
+    || match.data.tenantId !== params.tenantId
+    || match.data.branchId !== params.branchId
+    || match.data.productId !== params.productId
+    || String(match.data.batchNumber || '') !== params.batchNumber) {
+    throw new Error('The selected quarantine line no longer matches an Inventory batch in this branch.');
+  }
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'product_batches', match.id), {
+    batch_status: 'quarantined',
+    lastUpdated: new Date().toISOString()
+  });
+  await batch.commit();
+  return snapshotBatch(match.id, match.data);
+}
+
+async function resolveRecallProductId(tenantId: string, productId: string | undefined, productName: string): Promise<string> {
+  if (productId && productId !== 'manual-entry' && productId !== 'N/A') return productId;
+  const productsSnap = await getDocs(query(collection(db, 'products'), where('tenantId', '==', tenantId)));
+  const normalizedName = productName.trim().toLowerCase();
+  const matches = productsSnap.docs.filter(row => String((row.data() as Product).name || '').trim().toLowerCase() === normalizedName);
+  if (matches.length !== 1) {
+    throw new Error('Recall must resolve to exactly one Inventory product before its batch can be quarantined.');
+  }
+  return matches[0].id;
+}
+
+export async function quarantineRecallBatches(params: {
+  tenantId: string;
+  productId?: string;
+  productName: string;
+  batchNumber: string;
+}): Promise<{ productId: string; batches: QuarantinedInventoryBatch[]; totalQuantity: number }> {
+  const productId = await resolveRecallProductId(params.tenantId, params.productId, params.productName);
+  const snap = await getDocs(query(collection(db, 'product_batches'), where('productId', '==', productId)));
+  const matches = snap.docs
+    .map(row => ({ id: row.id, data: row.data() as ProductBatch }))
+    .filter(row => row.data.tenantId === params.tenantId && String(row.data.batchNumber || '') === params.batchNumber);
+  if (matches.length === 0) throw new Error('No Inventory batch matches this recall.');
+
+  const writer = writeBatch(db);
+  for (const row of matches) {
+    writer.update(doc(db, 'product_batches', row.id), {
+      batch_status: 'quarantined',
+      lastUpdated: new Date().toISOString()
+    });
+  }
+  await writer.commit();
+  const batches = matches.map(row => snapshotBatch(row.id, row.data));
+  return {
+    productId,
+    batches,
+    totalQuantity: batches.reduce((sum, row) => sum + row.quantity, 0)
+  };
+}
+""")
+
+          path = 'src/modules/qa/ExpiryLogs.tsx'
+          replace_once(path,
+          "import { format, differenceInDays } from 'date-fns';",
+          "import { format, differenceInDays } from 'date-fns';\nimport { quarantineInventoryBatch } from '../../services/batchComplianceService';")
+          replace_once(path,
+          "      await firestoreService.addDocument('quarantine_logs', quarantineEntry);\n      await firestoreService.updateDocument('expiry_logs', log.id, { status: 'Quarantined' });",
+          "      await quarantineInventoryBatch({\n        tenantId,\n        branchId: activeBranch.id,\n        productId: log.productId,\n        batchNumber: log.batchNumber,\n        batchId: log.batchId\n      });\n      await firestoreService.addDocument('quarantine_logs', quarantineEntry);\n      await firestoreService.updateDocument('expiry_logs', log.id, { status: 'Quarantined' });")
+
+          path = 'src/modules/qa/Recalls.tsx'
+          replace_once(path,
+          "import { format } from 'date-fns';",
+          "import { format } from 'date-fns';\nimport { quarantineRecallBatches } from '../../services/batchComplianceService';")
+          old = """      const quarantineEntry: Omit<QuarantineLogEntry, 'id'> = {
+        tenantId,
+        branchId: activeBranch.id,
+        quarantineId: `QR-RECALL-${Date.now()}`,
+        dateQuarantined: format(new Date(), 'yyyy-MM-dd'),
+        productId: 'N/A', 
+        productName: recall.productName,
+        batchNumber: recall.batchNumber,
+        quantity: recall.quantityAffected || 0,
+        reason: 'Recall',
+        notes: `Recall ID: ${recall.recallId}`,
+        quarantinedBy: profile?.name || user?.email || 'System',
+        currentLocation: 'Quarantine Area (Recall Bin)',
+        status: 'Active (In Quarantine)'
+      };
+
+      await firestoreService.addDocument('quarantine_logs', quarantineEntry);
+      
+"""
+          new = """      const quarantineResult = await quarantineRecallBatches({
+        tenantId,
+        productId: recall.productId,
+        productName: recall.productName || '',
+        batchNumber: recall.batchNumber || ''
+      });
+      for (const affectedBatch of quarantineResult.batches) {
+        const quarantineEntry: Omit<QuarantineLogEntry, 'id'> = {
+          tenantId,
+          branchId: affectedBatch.branchId,
+          quarantineId: `QR-RECALL-${Date.now()}-${affectedBatch.id}`,
+          dateQuarantined: format(new Date(), 'yyyy-MM-dd'),
+          productId: quarantineResult.productId,
+          productName: recall.productName,
+          batchNumber: recall.batchNumber,
+          quantity: affectedBatch.quantity,
+          reason: 'Recall',
+          notes: `Recall ID: ${recall.recallId}`,
+          quarantinedBy: profile?.name || user?.email || 'System',
+          currentLocation: 'Quarantine Area (Recall Bin)',
+          status: 'Active (In Quarantine)'
+        };
+        await firestoreService.addDocument('quarantine_logs', quarantineEntry);
+      }
+      
+"""
+          replace_once(path, old, new)
+          replace_once(path,
+          "      await firestoreService.updateDocument('recalls', recall.id, { status: 'Quarantined' });\n      toast.success(`${recall.productName} moved to quarantine and cost logged to finance`);",
+          "      await firestoreService.updateDocument('recalls', recall.id, {\n        status: 'Quarantined',\n        productId: quarantineResult.productId,\n        quantityAffected: quarantineResult.totalQuantity\n      });\n      toast.success(`${recall.productName} batch quarantined across ${quarantineResult.batches.length} inventory location(s)`);")
+
+          # 5. Rules: allow narrow QA quarantine status update and allow POS to heal stale aggregate fields.
+          path = 'firestore.rules'
+          replace_once(path,
+          "                && resource.data.stock is number\n                && resource.data.quantityInStock is number\n                && resource.data.stock == resource.data.quantityInStock\n                && request.resource.data.stock is number",
+          "                && request.resource.data.stock is number")
+          replace_once(path,
+          "          isInventoryOperator() ||\n          (isPOSOperator()",
+          "          isInventoryOperator() ||\n          (isQA()\n            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['batch_status', 'lastUpdated'])\n            && request.resource.data.batch_status == 'quarantined') ||\n          (isPOSOperator()")
+
+          # 6. Regression tests for the final architecture.
+          Path('tests/pos-final-eligibility-regression.test.ts').write_text("""import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import type { ProductBatch } from '../src/types';
+import { capRequestedCommercialQuantity, getProductEligibleBatches, getProductUsableBaseStock } from '../src/services/posTierCartService';
+
+const batch = (overrides: Partial<ProductBatch> = {}): ProductBatch => ({
+  id: 'b1', tenantId: 't1', branchId: 'br1', productId: 'p1', batchNumber: 'B1',
+  expiryDate: '2027-12-31', quantity: 10, purchasePrice: 100, sellingPrice: 200,
+  batch_status: 'active', ...overrides
+} as ProductBatch);
+
+test('POS eligibility excludes expired, invalid-date, quarantined and invalid-cost batches', () => {
+  const rows = [
+    batch({ id: 'ok', quantity: 17, expiryDate: '2027-03-31' }),
+    batch({ id: 'expired', quantity: 90, expiryDate: '2025-01-01' }),
+    batch({ id: 'invalid-date', quantity: 30, expiryDate: 'not-a-date' }),
+    batch({ id: 'quarantine', quantity: 80, batch_status: 'quarantined' }),
+    batch({ id: 'bad-cost', quantity: 50, purchasePrice: Number.NaN })
+  ];
+  assert.equal(getProductUsableBaseStock(rows, 'p1', new Date('2026-09-29T07:00:00Z')), 17);
+  assert.deepEqual(getProductEligibleBatches(rows, 'p1', new Date('2026-09-29T07:00:00Z')).map(row => row.id), ['ok']);
+});
+
+test('requested quantity is capped to eligible stock rather than overfilling basket', () => {
+  assert.equal(capRequestedCommercialQuantity({ requestedCommercialQuantity: 45, tierMultiplier: 1, usableBaseStock: 40 }), 40);
+  assert.equal(capRequestedCommercialQuantity({ requestedCommercialQuantity: 5, tierMultiplier: 10, usableBaseStock: 45 }), 4);
+  assert.equal(capRequestedCommercialQuantity({ requestedCommercialQuantity: 10, tierMultiplier: 1, usableBaseStock: 40, otherReservedBaseStock: 35 }), 5);
+});
+
+test('V2 uses batch totals as canonical aggregate and Compliance writes quarantine into batch authority', () => {
+  const repository = readFileSync('src/services/pos-v2/posCheckoutV2Repository.ts', 'utf8');
+  const expiry = readFileSync('src/modules/qa/ExpiryLogs.tsx', 'utf8');
+  const recalls = readFileSync('src/modules/qa/Recalls.tsx', 'utf8');
+  const rules = readFileSync('firestore.rules', 'utf8');
+  assert.match(repository, /authoritativeBatchTotals/);
+  assert.doesNotMatch(repository, /assertAggregateMatches\(/);
+  assert.match(expiry, /quarantineInventoryBatch/);
+  assert.match(recalls, /quarantineRecallBatches/);
+  assert.match(rules, /request\.resource\.data\.batch_status == 'quarantined'/);
+});
+""")
+          PY
+      - name: Test
+        run: npm test
+      - name: TypeScript validation
+        run: npm run lint
+      - name: Production build
+        run: npm run build
+      - name: Diff validation
+        run: git diff --check
+      - name: Commit verified correction
+        shell: bash
+        run: |
+          rm .github/workflows/apply-pos-v2-final-eligibility.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix: align POS eligibility with batch authority [final-eligibility-applied]'
+          git push origin HEAD:fix/pos-v2-eligibility-final
