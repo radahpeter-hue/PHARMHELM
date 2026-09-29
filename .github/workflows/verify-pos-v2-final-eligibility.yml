@@ -49,6 +49,16 @@ jobs:
           python /tmp/apply-final-eligibility.py
           python <<'PY'
           from pathlib import Path
+          path = Path('src/modules/qa/ExpiryLogs.tsx')
+          text = path.read_text()
+          old = "        batchNumber: log.batchNumber,\n        batchId: log.batchId\n"
+          new = "        batchNumber: log.batchNumber\n"
+          if text.count(old) != 1:
+              raise SystemExit('Expected exactly one ExpiryLogs batchId resolver line.')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          python <<'PY'
+          from pathlib import Path
           path = Path('firestore.rules')
           text = path.read_text()
           guard = '          // TEMP_FINAL_ELIGIBILITY_PATCH_GUARD\n'
