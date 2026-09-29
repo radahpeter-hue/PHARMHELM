@@ -361,19 +361,6 @@ function aggregateBatchQuantity(rows: ProductBatch[]): number {
   return rows.reduce((sum, batch) => sum + Number(batch.quantity || 0), 0);
 }
 
-function assertAggregateMatches(product: Product, batchTotal: number) {
-  const stock = Number(product.stock);
-  const quantityInStock = Number(product.quantityInStock);
-  if (!Number.isFinite(stock) || !Number.isFinite(quantityInStock) || Math.abs(stock - batchTotal) > EPSILON || Math.abs(quantityInStock - batchTotal) > EPSILON) {
-    throw new PosCheckoutV2Error('STOCK_AGGREGATE_MISMATCH', `Inventory aggregate mismatch for ${product.name}. Reconcile product stock before retrying.`, {
-      productId: product.id,
-      batchTotal,
-      stock: product.stock,
-      quantityInStock: product.quantityInStock
-    });
-  }
-}
-
 function assertTransactionAuthority(staff: Staff, expected: PosCheckoutV2PreparedAuthority, branch: Branch) {
   if (staff.tenantId !== expected.tenantId || branch.tenantId !== expected.tenantId) throw new PosCheckoutV2Error('TENANT_MISMATCH', 'Tenant authority changed during checkout.');
   if (!(staff.status === 'active' || staff.active === true)) throw new PosCheckoutV2Error('AUTHORIZATION_DENIED', 'Operator authority changed during checkout.');
@@ -465,8 +452,9 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
       })));
     }
 
-    for (const [productId, product] of liveProducts.entries()) {
-      assertAggregateMatches(product, aggregateBatchQuantity(rawBatchesByProduct.get(productId) || []));
+    const authoritativeBatchTotals = new Map<string, number>();
+    for (const productId of liveProducts.keys()) {
+      authoritativeBatchTotals.set(productId, aggregateBatchQuantity(rawBatchesByProduct.get(productId) || []));
     }
 
     const calculation = calculateCheckoutV2({
@@ -517,8 +505,9 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
 
     for (const [productId, deduction] of calculation.productDeductions.entries()) {
       const product = liveProducts.get(productId)!;
-      const nextStock = Number(product.stock) - deduction;
-      if (nextStock < -EPSILON) throw new PosCheckoutV2Error('STOCK_AGGREGATE_MISMATCH', `Product aggregate for ${product.name} cannot satisfy the base-unit deduction.`);
+      const authoritativeCurrentStock = authoritativeBatchTotals.get(productId) ?? 0;
+      const nextStock = authoritativeCurrentStock - deduction;
+      if (nextStock < -EPSILON) throw new PosCheckoutV2Error('TRANSACTION_CONFLICT', `Batch inventory for ${product.name} cannot satisfy the base-unit deduction.`);
       transaction.update(doc(db, 'products', productId), {
         stock: Math.max(0, nextStock),
         quantityInStock: Math.max(0, nextStock),

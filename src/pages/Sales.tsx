@@ -34,7 +34,7 @@ import { openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPri
 import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';
 import type { SellingTierCode } from '../types/sellingTier';
 import { resolveSellingTiers } from '../services/sellingTierService';
-import { buildTierCartItem, getCartLineIdentity, getProductUsableBaseStock, getReservedBaseQuantityForProduct, mergeTierCartItem, replaceTierCartPrice, replaceTierCartQuantity } from '../services/posTierCartService';
+import { buildTierCartItem, capRequestedCommercialQuantity, getCartLineIdentity, getProductEligibleBatches, getProductUsableBaseStock, getReservedBaseQuantityForProduct, isProductBatchEligibleForPos, mergeTierCartItem, replaceTierCartPrice, replaceTierCartQuantity } from '../services/posTierCartService';
 import { allocateFefoCheckoutLines, assertCheckoutLineCostFloors, buildCheckoutLineDemands, finalizeCheckoutSaleItems, getCheckoutBatchDeductions, getCheckoutProductDeductions } from '../services/posCheckoutTierService';
 import { reviseSaleInventoryAtomically, voidSaleInventoryAtomically } from '../services/saleInventoryIntegrityService';
 import { convertQuotationToSale, reconcilePendingPosFinancials, reconcilePosWelfarePosting } from '../services/posFinancialPostingService';
@@ -310,7 +310,7 @@ const Sales: React.FC = () => {
 
   const filteredItems = activeTab === 'products' 
     ? products.filter(p => {
-        const hasStock = batches.some(b => b.productId === p.id && b.quantity > 0);
+        const hasStock = getProductUsableBaseStock(batches, p.id) > 0;
         const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
           p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
           p.genericName?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -384,10 +384,8 @@ const Sales: React.FC = () => {
 
       const multiplier = product.unitOfSell === 'pack' ? (product.unitsPerPack || 1) :
                         product.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
-      const productBatches = batches
-        .filter(b => b.productId === product.id && b.quantity >= multiplier && b.batch_status === 'active')
-        .filter(b => isInventoryBatchUnexpired(b.expiryDate))
-        .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
+      const productBatches = getProductEligibleBatches(batches, product.id)
+        .filter(batch => Number(batch.quantity || 0) >= multiplier);
       if (productBatches.length === 0) {
         toast.error('No active/unexpired stock available for this product');
         return;
@@ -440,6 +438,10 @@ const Sales: React.FC = () => {
   const changeBatch = (productId: string, oldBatchNumber: string, newBatchNumber: string) => {
     const newBatch = batches.find(b => b.productId === productId && b.batchNumber === newBatchNumber);
     if (!newBatch) return;
+    if (!isProductBatchEligibleForPos(newBatch)) {
+      toast.error(`Batch ${newBatchNumber} is not eligible for POS sale.`);
+      return;
+    }
 
     const product = products.find(p => p.id === productId);
     const multiplier = product?.unitOfSell === 'pack' ? (product.unitsPerPack || 1) : 
@@ -473,7 +475,21 @@ const Sales: React.FC = () => {
       const product = products.find(p => p.id === productId);
       if (!product) return;
       const currentQuantity = Number(currentCartItem.commercialQuantity ?? currentCartItem.quantity ?? 0);
-      const newQuantity = Math.max(0, currentQuantity + delta);
+      const requestedQuantity = Math.max(0, currentQuantity + delta);
+      const multiplier = Number(currentCartItem.tierMultiplier || 0);
+      const usableBaseStock = getProductUsableBaseStock(batches, product.id);
+      const totalReservedBaseStock = getReservedBaseQuantityForProduct(cart, product.id);
+      const currentLineBaseStock = currentQuantity * multiplier;
+      const otherReservedBaseStock = Math.max(0, totalReservedBaseStock - currentLineBaseStock);
+      const newQuantity = capRequestedCommercialQuantity({
+        requestedCommercialQuantity: requestedQuantity,
+        tierMultiplier: multiplier,
+        usableBaseStock,
+        otherReservedBaseStock
+      });
+      if (requestedQuantity > newQuantity) {
+        toast.warning(`Insufficient eligible stock. Quantity capped at ${newQuantity} ${newQuantity === 1 ? 'unit' : 'units'} for this selling tier.`);
+      }
       try {
         setCart(current => replaceTierCartQuantity({ cart: current, targetIdentity: lineIdentity, product, batches, commercialQuantity: newQuantity }));
       } catch (error) {
@@ -501,7 +517,9 @@ const Sales: React.FC = () => {
     const newQty = Math.max(0, currentCartItem.quantity + delta);
     const currentBatch = batches.find(b => b.productId === productId && b.batchNumber === batchNumber);
     if (!currentBatch) return;
-    const currentBatchMaxQty = Math.floor(currentBatch.quantity / multiplier);
+    const currentBatchMaxQty = isProductBatchEligibleForPos(currentBatch)
+      ? Math.floor(Number(currentBatch.quantity || 0) / multiplier)
+      : 0;
 
     if (newQty <= currentBatchMaxQty) {
       setCart(cart.map(item => getCartLineIdentity(item) === lineIdentity
@@ -511,10 +529,8 @@ const Sales: React.FC = () => {
     } else {
       const currentBatchQtyToSet = currentBatchMaxQty;
       const balanceQty = newQty - currentBatchQtyToSet;
-      const otherBatches = batches
-        .filter(b => b.productId === productId && b.batchNumber !== batchNumber && b.quantity >= multiplier && b.batch_status === 'active')
-        .filter(b => isInventoryBatchUnexpired(b.expiryDate))
-        .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
+      const otherBatches = getProductEligibleBatches(batches, productId)
+        .filter(batch => batch.batchNumber !== batchNumber && Number(batch.quantity || 0) >= multiplier);
 
       if (otherBatches.length === 0) {
         toast.error(`Insufficient stock! Only ${currentBatchMaxQty} available in this batch.`);

@@ -2,25 +2,70 @@ import type { Product, ProductBatch, SaleItem } from '../types';
 import type { ResolvedSellingTier, SellingTierCode } from '../types/sellingTier';
 import { buildSaleTierSnapshot } from './sellingTierService';
 import { createSaleLineId } from './saleTierHistoryService';
+import { normalizeDateValue } from '../utils/dateValue';
 
-const normaliseExpiry = (expiryDate?: string, now: Date = new Date()): boolean => {
-  if (!expiryDate) return true;
-  const raw = String(expiryDate).trim();
-  if (!raw) return true;
-
-  let expiry: Date;
-  if (/^\d{4}-\d{2}$/.test(raw)) {
-    const [year, month] = raw.split('-').map(Number);
-    expiry = new Date(year, month, 0, 23, 59, 59, 999);
-  } else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    const [year, month, day] = raw.split('-').map(Number);
-    expiry = new Date(year, month - 1, day, 23, 59, 59, 999);
-  } else {
-    expiry = new Date(raw);
-    if (Number.isNaN(expiry.getTime())) return false;
+const normaliseExpiry = (expiryDate?: unknown, now: Date = new Date()): boolean => {
+  if (expiryDate === null || expiryDate === undefined) return false;
+  if (typeof expiryDate === 'string') {
+    const raw = expiryDate.trim();
+    if (!raw) return false;
+    let expiry: Date;
+    if (/^\d{4}-\d{2}$/.test(raw)) {
+      const [year, month] = raw.split('-').map(Number);
+      expiry = new Date(year, month, 0, 23, 59, 59, 999);
+    } else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      const [year, month, day] = raw.split('-').map(Number);
+      expiry = new Date(year, month - 1, day, 23, 59, 59, 999);
+    } else {
+      const normalized = normalizeDateValue(raw);
+      if (!normalized) return false;
+      expiry = normalized;
+    }
+    return expiry.getTime() >= now.getTime();
   }
-  return expiry.getTime() >= now.getTime();
+  const expiry = normalizeDateValue(expiryDate);
+  return Boolean(expiry && expiry.getTime() >= now.getTime());
 };
+
+export function isProductBatchEligibleForPos(batch: ProductBatch, now: Date = new Date()): boolean {
+  const status = String(batch.batch_status || '').trim().toLowerCase();
+  const quantity = Number(batch.quantity);
+  const cost = Number(batch.purchasePrice);
+  return status === 'active'
+    && Number.isFinite(quantity)
+    && quantity > 0
+    && Number.isFinite(cost)
+    && cost >= 0
+    && normaliseExpiry(batch.expiryDate, now);
+}
+
+export function getProductEligibleBatches(
+  batches: ProductBatch[],
+  productId: string,
+  now: Date = new Date()
+): ProductBatch[] {
+  return batches
+    .filter(batch => batch.productId === productId)
+    .filter(batch => isProductBatchEligibleForPos(batch, now))
+    .sort((left, right) => {
+      const leftExpiry = normalizeDateValue(left.expiryDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const rightExpiry = normalizeDateValue(right.expiryDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      return leftExpiry - rightExpiry;
+    });
+}
+
+export function capRequestedCommercialQuantity(params: {
+  requestedCommercialQuantity: number;
+  tierMultiplier: number;
+  usableBaseStock: number;
+  otherReservedBaseStock?: number;
+}): number {
+  const requested = Math.max(0, Math.floor(Number(params.requestedCommercialQuantity) || 0));
+  const multiplier = Number(params.tierMultiplier);
+  if (!Number.isFinite(multiplier) || multiplier <= 0) return 0;
+  const remainingBase = Math.max(0, Number(params.usableBaseStock || 0) - Number(params.otherReservedBaseStock || 0));
+  return Math.min(requested, Math.floor(remainingBase / multiplier));
+}
 
 export function getCartLineIdentity(item: SaleItem): string {
   if (item.isService) return `service:${item.productId}`;
@@ -45,10 +90,7 @@ export function getProductUsableBaseStock(
   productId: string,
   now: Date = new Date()
 ): number {
-  return batches
-    .filter(batch => batch.productId === productId)
-    .filter(batch => String(batch.batch_status || '').toLowerCase() === 'active')
-    .filter(batch => normaliseExpiry(batch.expiryDate, now))
+  return getProductEligibleBatches(batches, productId, now)
     .reduce((sum, batch) => sum + Math.max(0, Number(batch.quantity || 0)), 0);
 }
 
@@ -76,12 +118,7 @@ export function estimateFefoLineCost(
   requestedBaseQuantity: number,
   now: Date = new Date()
 ): { available: boolean; actualLineCost: number; coveredBaseQuantity: number } {
-  const candidates = batches
-    .filter(batch => batch.productId === productId)
-    .filter(batch => String(batch.batch_status || '').toLowerCase() === 'active')
-    .filter(batch => normaliseExpiry(batch.expiryDate, now))
-    .filter(batch => Number(batch.quantity || 0) > 0)
-    .sort((a, b) => new Date(a.expiryDate || '9999-12-31').getTime() - new Date(b.expiryDate || '9999-12-31').getTime());
+  const candidates = getProductEligibleBatches(batches, productId, now);
 
   let remaining = Math.max(0, requestedBaseQuantity);
   let actualLineCost = 0;
