@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   verify:
-    if: ${{ !contains(github.event.head_commit.message, '[zero-stock-selection-applied]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
