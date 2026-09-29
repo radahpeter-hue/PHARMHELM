@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Read-only verifier. Public logs intentionally emit only generic PASS/FAIL status.
 import { initializeApp, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
