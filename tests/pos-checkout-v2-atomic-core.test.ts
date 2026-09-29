@@ -62,10 +62,13 @@ test('same transaction writes sale, attempt, batch deductions and product aggreg
   assert.match(repositorySource, /transaction\.set\(prepared\.attemptRef/);
 });
 
-test('product compatibility mirrors are updated together and aggregate mismatch is blocking', () => {
+test('product compatibility mirrors are healed from authoritative batch totals in the same transaction', () => {
+  assert.match(repositorySource, /authoritativeBatchTotals/);
+  assert.match(repositorySource, /authoritativeCurrentStock/);
   assert.match(repositorySource, /quantityInStock: Math\.max\(0, nextStock\)/);
   assert.match(repositorySource, /stock: Math\.max\(0, nextStock\)/);
-  assert.match(repositorySource, /STOCK_AGGREGATE_MISMATCH/);
+  assert.match(repositorySource, /stockAggregateSource: 'product_batches'/);
+  assert.doesNotMatch(repositorySource, /function assertAggregateMatches/);
 });
 
 test('V2 sale stays in sales and carries V2 integrity metadata', () => {
