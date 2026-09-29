@@ -1,0 +1,39 @@
+name: Verify POS V2 Zero Stock Selection
+
+on:
+  push:
+    branches:
+      - fix/pos-v2-eligibility-final
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: python .github/scripts/patch-zero-stock-selection.py
+      - run: npm test
+      - run: npm run lint
+      - run: npm run build
+      - run: git diff --check
+      - name: Commit verified correction
+        shell: bash
+        run: |
+          rm .github/workflows/verify-pos-v2-zero-stock-selection.yml
+          rm .github/scripts/patch-zero-stock-selection.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix: keep unavailable products selectable for POS feedback'
+          git push origin HEAD:fix/pos-v2-eligibility-final
