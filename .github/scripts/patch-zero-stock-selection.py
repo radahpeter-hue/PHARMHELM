@@ -41,9 +41,15 @@ test('product search keeps zero-eligible-stock products selectable so basket val
 
 test('QA quarantine rule preserves branch scope for non-head QA users', () => {
   const rules = readFileSync('firestore.rules', 'utf8');
-  assert.match(rules, /isQA\(\)[\s\S]{0,220}isAssignedToBranch\(resource\.data\.branchId\)/);
-  assert.match(rules, /QA Head/);
-  assert.match(rules, /request\.resource\.data\.batch_status == 'quarantined'/);
+  const start = rules.indexOf('match /product_batches/{batchId}');
+  const end = rules.indexOf('match /opening_stock_sessions/{sessionId}', start);
+  assert.ok(start >= 0 && end > start);
+  const batchRules = rules.slice(start, end);
+  assert.match(batchRules, /isQA\(\)/);
+  assert.match(batchRules, /hasAnyRole\(\['QA Head', 'QA Manager', 'admin', 'Admin'\]\)/);
+  assert.match(batchRules, /isAssignedToBranch\(resource\.data\.branchId\)/);
+  assert.match(batchRules, /affectedKeys\(\)\.hasOnly\(\['batch_status', 'lastUpdated'\]\)/);
+  assert.match(batchRules, /request\.resource\.data\.batch_status == 'quarantined'/);
 });
 '''
 if 'zero-eligible-stock products selectable' in tests:
