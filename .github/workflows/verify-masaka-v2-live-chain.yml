@@ -1,0 +1,48 @@
+name: Verify Masaka POS V2 Live Chain
+
+on:
+  push:
+    branches:
+      - ops/verify-masaka-v2-live-chain
+    paths:
+      - 'scripts/verify-masaka-v2-live-chain.mjs'
+      - '.github/workflows/verify-masaka-v2-live-chain.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+      FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+      EXPECTED_TENANT_ID: zehqTDcKyrDAOHKK3stJ
+      EXPECTED_BRANCH_ID: 1agW2eYBOGGqKR9w2V31
+      MAX_AGE_MINUTES: '120'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Install read-only verifier dependency
+        run: npm install --no-save firebase-admin
+
+      - name: Authenticate Google service account
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Verify latest Masaka V2 canonical chain
+        run: node scripts/verify-masaka-v2-live-chain.mjs
