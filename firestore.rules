@@ -2,96 +2,85 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
-
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // Check membership in primary or secondary roles
+    function getUserData() {
+      return get(/databases/$(database)/documents/staff/$(request.auth.uid)).data;
+    }
+
+    function isTenantMember(tenantId) {
+      return isAuthenticated() && getUserData().tenantId == tenantId;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasAnyRole(roleNames) {
+      return isAuthenticated() && (
+        getUserData().role in roleNames ||
+        (("secondaryRoles" in getUserData()) && getUserData().secondaryRoles.hasAny(roleNames))
+      );
+    }
+
     function hasRole(roleName) {
       return hasAnyRole([roleName]);
     }
 
-    function hasAnyRole(roleNames) {
-      let user = getUserData();
-      return user.role in roleNames || (("secondaryRoles" in user) && user.secondaryRoles.hasAny(roleNames));
-    }
-
-    // The staff document is authoritative for operational roles, secondary roles
-    // and branch assignments. Token claims are used only during initial linking.
-    function getUserData() {
-      return request.auth != null && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/staff/$(request.auth.uid)).data
-        : request.auth != null && (request.auth.token.role != null || request.auth.token.tenantId != null)
-          ? {"role": request.auth.token.role, "tenantId": request.auth.token.tenantId, "secondaryRoles": (("roles" in request.auth.token) && request.auth.token.roles is list ? request.auth.token.roles : (("secondaryRoles" in request.auth.token) && request.auth.token.secondaryRoles is list ? request.auth.token.secondaryRoles : [])), "assigned_branches": []}
-          : {"role": "", "tenantId": "", "secondaryRoles": [], "assigned_branches": []};
-    }
-
-    function isTenantMember(tenantId) {
-      return isAuthenticated() && (
-        (request.auth.token.tenantId != null && request.auth.token.tenantId == tenantId) ||
-        getUserData().tenantId == tenantId ||
-        request.auth.token.email == "peterssentongo61@gmail.com" ||
-        request.auth.token.email == "peter.sentongo@pharmhelm" ||
-        request.auth.token.email == "peter.sentongo@pharmhelm.com"
-      );
-    }
-
     function isAdmin() {
-      return isAuthenticated() && (
-        request.auth.token.email == "peterssentongo61@gmail.com" ||
-        request.auth.token.email == "peter.sentongo@pharmhelm" ||
-        request.auth.token.email == "peter.sentongo@pharmhelm.com" ||
-        request.auth.token.role == 'owner' ||
-        request.auth.token.role == 'Owner' ||
-        request.auth.token.role == 'CEO' ||
-        request.auth.token.role == 'ceo' ||
-        request.auth.token.role == 'CEO / MD' ||
-        request.auth.token.role == 'ceo / md' ||
-        hasAnyRole(['owner', 'Owner', 'CEO', 'ceo', 'CEO / MD', 'ceo / md'])
-      );
-    }
-
-    function isCEO() {
-      return isAuthenticated() && (isAdmin() || hasAnyRole(['CEO', 'CEO / MD', 'owner']));
-    }
-
-    function isHR() {
-      return isAuthenticated() && (hasAnyRole(['HR Head', 'HR Support Personnel', 'HR Manager', 'admin', 'Admin']) || hasCustomModuleFunctional('hr') || isAdmin());
+      return hasAnyRole(['admin', 'Admin', 'CEO', 'CEO / MD', 'Owner']);
     }
 
     function isFinance() {
-      return isAuthenticated() && (hasAnyRole(['Finance Head', 'Finance Officer', 'Accountant', 'admin', 'Admin']) || hasCustomModuleFunctional('finance') || isAdmin());
+      return isAuthenticated() && (
+        hasAnyRole(['Finance Head', 'Finance Officer', 'Finance Manager', 'Accountant']) ||
+        hasCustomModuleFunctional('finance') ||
+        isAdmin()
+      );
     }
 
-    function isLogisticsHead() {
-      return isAuthenticated() && (hasAnyRole(['Logistics Head', 'Transport & Logistics Personnel', 'Logistics Manager', 'admin', 'Admin']) || hasCustomModuleFunctional('logistics') || isAdmin());
+    function isHR() {
+      return isAuthenticated() && (
+        hasAnyRole(['HR Head', 'HR Officer', 'HR Manager']) ||
+        hasCustomModuleFunctional('hr') ||
+        isAdmin()
+      );
+    }
+
+    function isQA() {
+      return isAuthenticated() && (hasAnyRole(['QA Head', 'QA Officer', 'QA Manager', 'admin', 'Admin']) || hasCustomModuleFunctional('qa') || isAdmin());
+    }
+
+    function isMarketing() {
+      return isAuthenticated() && (
+        hasAnyRole(['Marketing Head', 'Marketing Officer', 'Marketing Manager']) ||
+        hasCustomModuleFunctional('marketing') ||
+        isAdmin()
+      );
     }
 
     function isBranchManager() {
-      return isAuthenticated() && (hasAnyRole(['Branch Manager', 'branch manager', 'admin']) || isAdmin());
+      return isAuthenticated() && hasAnyRole(['Branch Manager', 'branch manager']);
     }
 
     function hasBranchManagerRole() {
-      return isAuthenticated() && (
-        hasAnyRole(['Branch Manager', 'branch manager', 'admin'])
-      );
+      return isAuthenticated() && hasAnyRole(['Branch Manager', 'branch manager']);
     }
 
+    function isPharmacist() {
+      return isAuthenticated() && hasAnyRole(['Pharmacist', 'pharmacist', 'Dispenser', 'dispenser']);
+    }
 
     function isDepartmentHead() {
-      return isAuthenticated() && (
-        hasAnyRole([
-          'Finance Head', 'Procurement Head', 'Logistics Head', 'Transport & Logistics Head',
-          'Marketing Head', 'QA Head', 'HR Head', 'IT Head'
-        ])
-      );
+      return isAuthenticated() && hasAnyRole([
+        'Finance Head', 'HR Head', 'QA Head', 'Marketing Head', 'Procurement Head',
+        'Logistics Head', 'IT Head'
+      ]);
     }
 
-    function isPeopleSupervisor() {
+    function isSupervisor() {
       return isAuthenticated() && (isBranchManager() || isDepartmentHead() || isAdmin());
     }
 
@@ -104,8 +93,8 @@ service cloud.firestore {
       );
     }
 
-    function isQA() {
-      return isAuthenticated() && (hasAnyRole(['QA Head', 'QA Officer', 'QA Manager', 'admin', 'Admin']) || hasCustomModuleFunctional('qa') || isAdmin());
+    function isPeopleSupervisor() {
+      return isAuthenticated() && (isBranchManager() || isDepartmentHead() || isAdmin());
     }
 
     function isITPersonnel() {
@@ -168,11 +157,29 @@ service cloud.firestore {
       return isAuthenticated() && (
         hasAnyRole([
           'Branch Manager', 'branch manager', 'Pharmacist', 'pharmacist',
-          'Dispenser', 'dispenser', 'Procurement Head', 'Procurement Officer', 'Procurement Manager'
+          'Procurement Head', 'Procurement Officer', 'Logistics Head', 'Logistics Officer'
         ]) ||
-        hasCustomModuleFunctional('stock') ||
+        hasCustomModuleFunctional('inventory') ||
+        hasCustomModuleFunctional('stock_in') ||
+        hasCustomModuleFunctional('stock_out') ||
         isAdmin()
       );
+    }
+
+    function isFinanceHead() {
+      return isAuthenticated() && hasAnyRole(['Finance Head', 'Finance Manager']);
+    }
+
+    function isFinanceOfficer() {
+      return isAuthenticated() && hasAnyRole(['Finance Officer', 'Accountant']);
+    }
+
+    function isBranchFinanceUser() {
+      return isAuthenticated() && hasAnyRole(['Branch Manager', 'branch manager', 'Cashier', 'cashier']);
+    }
+
+    function isManagementFinanceUser() {
+      return isAuthenticated() && (isAdmin() || isFinanceHead() || isFinanceOfficer() || hasCustomModuleFunctional('finance'));
     }
 
     function isPOSOperator() {
@@ -180,557 +187,362 @@ service cloud.firestore {
         && getUserData().role != 'cashier'
         && getUserData().role != 'Cashier'
         && (
-        hasAnyRole(['Pharmacist', 'pharmacist', 'Dispenser', 'dispenser', 'Branch Manager', 'branch manager']) ||
-        hasCustomModuleFunctional('sales') ||
+          hasAnyRole(['Dispenser', 'dispenser', 'Pharmacist', 'pharmacist', 'Branch Manager', 'branch manager']) ||
+          hasCustomModuleFunctional('sales') ||
+          isAdmin()
+        );
+    }
+
+    function isLogistics() {
+      return isAuthenticated() && (
+        hasAnyRole(['Logistics Head', 'Logistics Officer', 'Logistics Manager']) ||
+        hasCustomModuleFunctional('logistics') ||
         isAdmin()
       );
     }
 
-    function isMarketing() {
+    function isAnalyticsUser() {
       return isAuthenticated() && (
-        hasAnyRole(['Marketing Head', 'Marketing Personnel', 'Marketing Manager', 'admin', 'Admin']) ||
-        hasCustomModuleFunctional('marketing') || isAdmin()
+        isAdmin() || isDepartmentHead() || isBranchManager() ||
+        hasCustomModuleFunctional('analytics')
       );
     }
 
-    function hasCustomModuleView(moduleKey) {
-      return hasCustomModuleAccess(moduleKey, ['view_only', 'view_functional', 'all']);
+    function isPlatformAdmin() {
+      return isAuthenticated() && hasAnyRole(['superadmin', 'Superadmin', 'Platform Admin']);
     }
 
-    function canViewFinance() {
-      return isFinance() || isITPersonnel() || hasCustomModuleView('finance');
+    function isPlatformTenantActor(tenantId) {
+      return isPlatformAdmin() || (isAuthenticated() && getUserData().tenantId == tenantId);
     }
 
-    function hasBranchFinanceRole() {
-      return isAuthenticated() && (
-        hasAnyRole(['Branch Manager', 'branch manager', 'Cashier', 'cashier'])
-      );
+    function isWriteActorForTenant(tenantId) {
+      return isAuthenticated() && getUserData().tenantId == tenantId;
     }
-
-    function canViewBranchFinance() {
-      return isAuthenticated() && (
-        hasBranchFinanceRole() ||
-        hasAnyRole(['Finance Head', 'Accountant', 'admin', 'Admin']) ||
-        isITPersonnel() || hasCustomModuleView('finance') || isAdmin()
-      );
-    }
-
-    function canOperateBranchFinance() {
-      return isAuthenticated() && (
-        hasBranchFinanceRole() ||
-        hasAnyRole(['Finance Head', 'Accountant', 'admin', 'Admin']) ||
-        hasCustomModuleFunctional('finance') || isAdmin()
-      );
-    }
-
-    function isProtectedFinanceCollection(collectionName) {
-      return collectionName in [
-        'finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
-        'credit_receivables', 'supplier_payables', 'banking_records',
-        'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
-        'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses'
-      ];
-    }
-
-    function canViewProcurement() {
-      return isProcurement()
-        || isFinance()
-        || hasAnyRole(['QA Head', 'QA Officer', 'Logistics Head', 'Pharmacist', 'pharmacist'])
-        || isITPersonnel()
-        || hasCustomModuleView('procurement');
-    }
-
-    function canViewMarketing() {
-      return isMarketing()
-        || hasAnyRole(['QA Head', 'Finance Head'])
-        || isITPersonnel()
-        || hasCustomModuleView('marketing');
-    }
-
-
-    function isOwner(userId) {
-      return isAuthenticated() && (
-        request.auth.uid == userId ||
-        (("legacyStaffId" in getUserData()) && getUserData().legacyStaffId == userId)
-      );
-    }
-
-    // ===============================================================
-    // Rules
-    // ===============================================================
 
     match /vehicles/{vehicleId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isLogisticsHead() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
+      allow create: if isLogistics() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isLogistics() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /trips/{tripId} {
-      allow read: if isAuthenticated() && (isLogisticsHead() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
-      allow create: if isLogisticsHead() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
-    }
-
-    match /trip_legs/{legId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isLogisticsHead() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
+      allow create: if isLogistics() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isLogistics() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /fuel_logs/{logId} {
-      allow read: if isAuthenticated() && (isLogisticsHead() || isFinance() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isLogisticsHead() || isOwner(request.resource.data.personnelId));
-      allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
+    match /vehicle_maintenance/{maintenanceId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isLogistics() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isLogistics() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /maintenance_logs/{logId} {
-      allow read: if isAuthenticated() && (isLogisticsHead() || isFinance() || isTenantMember(resource.data.tenantId));
-      allow create: if isLogisticsHead() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
+    match /driver_permits/{permitId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isLogistics() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isLogistics() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /traffic_fine_logs/{logId} {
-      allow read: if isAuthenticated() && (isLogisticsHead() || isHR() || isFinance() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
-      allow create: if (isLogisticsHead() || isHR()) && isTenantMember(request.resource.data.tenantId);
-      allow update: if (isLogisticsHead() || isHR()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if (isLogisticsHead() || isHR()) && isTenantMember(resource.data.tenantId);
+    match /driver_assessments/{assessmentId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isLogistics() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isLogistics() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /hiring_applications/{applicationId} {
+    match /safety_incidents/{incidentId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if (isLogistics() || isQA()) && isTenantMember(request.resource.data.tenantId);
+      allow update: if (isLogistics() || isQA()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /client_feedback/{feedbackId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update, delete: if false;
+    }
+
+    match /settings_audit_logs/{logId} {
+      allow read: if isSettingsAdmin() && isTenantMember(resource.data.tenantId);
+      allow create: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
+      allow update, delete: if false;
+    }
+
+    match /branches/{branchId} {
+      function hasValidBranchShape(data, expectedTenantId) {
+        return data.tenantId == expectedTenantId
+          && data.branch_id == branchId
+          && data.name is string
+          && data.name.size() > 0
+          && data.branch_code is string
+          && data.branch_code.size() > 0
+          && data.branch_type in ['headquarters', 'branch', 'warehouse', 'Outlet']
+          && data.status in ['active', 'inactive']
+          && data.createdBy is string
+          && data.createdBy.size() > 0;
+      }
+
+      allow get: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow list: if isAuthenticated();
+      allow create: if isAuthenticated()
+        && request.resource.data.tenantId is string
+        && request.resource.data.tenantId.size() > 0
+        && isTenantMember(request.resource.data.tenantId)
+        && isAdmin()
+        && hasValidBranchShape(request.resource.data, request.resource.data.tenantId);
+      allow update: if isAuthenticated()
+        && isTenantMember(resource.data.tenantId)
+        && isAdmin()
+        && request.resource.data.tenantId == resource.data.tenantId
+        && request.resource.data.branch_id == resource.data.branch_id
+        && request.resource.data.createdBy == resource.data.createdBy
+        && hasValidBranchShape(request.resource.data, resource.data.tenantId);
+      allow delete: if false;
+    }
+
+    match /staff/{staffId} {
       function isSupervisorPracticalAssessmentUpdate() {
         return isPeopleSupervisor()
-          && isTenantMember(resource.data.tenantId)
-          && isTenantMember(request.resource.data.tenantId)
+          && isAssignedToBranch(resource.data.branch_id)
           && request.resource.data.tenantId == resource.data.tenantId
-          && resource.data.status == 'practical_scheduled'
-          && request.resource.data.status == 'practical_completed'
-          && request.resource.data.practical_score is number
-          && request.resource.data.practical_score >= 0
-          && request.resource.data.practical_score <= 100
-          && request.resource.data.practical_assessed_by_user_id == request.auth.uid
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.branch_id == resource.data.branch_id
+          && request.resource.data.assigned_branches == resource.data.assigned_branches
+          && request.resource.data.email == resource.data.email
+          && request.resource.data.uid == resource.data.uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'practical_score', 'status',
-            'practical_assessed_by_user_id', 'practical_assessed_by_name', 'practical_assessed_by_role',
-            'practical_assessed_at', 'practical_assessed_branch_id', 'updatedAt'
+            'latestSupervisorPracticalAssessmentId',
+            'latestSupervisorPracticalAssessmentAt',
+            'updatedAt'
           ]);
       }
 
       function isSupervisorTraineeAssessmentUpdate() {
         return isPeopleSupervisor()
-          && isTenantMember(resource.data.tenantId)
-          && isTenantMember(request.resource.data.tenantId)
+          && isAssignedToBranch(resource.data.branch_id)
           && request.resource.data.tenantId == resource.data.tenantId
-          && resource.data.status == 'training_accepted'
-          && request.resource.data.status == 'training_accepted'
-          && request.resource.data.training_assessment_last_by_user_id == request.auth.uid
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.branch_id == resource.data.branch_id
+          && request.resource.data.assigned_branches == resource.data.assigned_branches
+          && request.resource.data.email == resource.data.email
+          && request.resource.data.uid == resource.data.uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'week4_appraisal_score', 'week4_theory_score', 'week4_assessment_date',
-            'week4_assessed_by_user_id', 'week4_assessed_by_name', 'week4_assessed_by_role', 'week4_assessed_at',
-            'week8_appraisal_score', 'week8_theory_score', 'week8_assessment_date',
-            'week8_assessed_by_user_id', 'week8_assessed_by_name', 'week8_assessed_by_role', 'week8_assessed_at',
-            'week12_appraisal_score', 'week12_theory_score', 'week12_assessment_date',
-            'week12_assessed_by_user_id', 'week12_assessed_by_name', 'week12_assessed_by_role', 'week12_assessed_at',
-            'training_assessment_last_by_user_id', 'training_assessment_last_by_name',
-            'training_assessment_last_by_role', 'training_assessment_last_at', 'updatedAt'
-          ])
-          && request.resource.data.diff(resource.data).affectedKeys().hasAny([
-            'week4_appraisal_score', 'week4_theory_score',
-            'week8_appraisal_score', 'week8_theory_score',
-            'week12_appraisal_score', 'week12_theory_score'
-          ])
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_appraisal_score']) || (request.resource.data.week4_appraisal_score is number && request.resource.data.week4_appraisal_score >= 0 && request.resource.data.week4_appraisal_score <= 100))
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_theory_score']) || (request.resource.data.week4_theory_score is number && request.resource.data.week4_theory_score >= 0 && request.resource.data.week4_theory_score <= 100))
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_appraisal_score']) || (request.resource.data.week8_appraisal_score is number && request.resource.data.week8_appraisal_score >= 0 && request.resource.data.week8_appraisal_score <= 100))
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_theory_score']) || (request.resource.data.week8_theory_score is number && request.resource.data.week8_theory_score >= 0 && request.resource.data.week8_theory_score <= 100))
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_appraisal_score']) || (request.resource.data.week12_appraisal_score is number && request.resource.data.week12_appraisal_score >= 0 && request.resource.data.week12_appraisal_score <= 100))
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_theory_score']) || (request.resource.data.week12_theory_score is number && request.resource.data.week12_theory_score >= 0 && request.resource.data.week12_theory_score <= 100));
+            'latestTraineeAssessmentId',
+            'latestTraineeAssessmentAt',
+            'updatedAt'
+          ]);
       }
 
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (
+      allow get: if isAuthenticated() && (
+        isOwner(staffId) ||
+        isAdmin() ||
         isHR() ||
-        (isPeopleSupervisor() && resource.data.status in ['practical_scheduled', 'practical_completed', 'training_accepted'])
+        isPeopleSupervisor()
       );
-      allow create, delete: if isHR();
-      allow update: if isHR() || isSupervisorPracticalAssessmentUpdate() || isSupervisorTraineeAssessmentUpdate();
-    }
-
-    match /theory_tests/{testId} {
-      allow read, write: if isHR();
-    }
-
-    match /oral_interviews/{interviewId} {
-      allow read, write: if isHR();
-    }
-
-    match /practical_assessments/{assessmentId} {
-      allow read: if isHR() || (isPeopleSupervisor() && isTenantMember(resource.data.tenantId));
-      allow create: if isHR() || (isPeopleSupervisor() && isTenantMember(request.resource.data.tenantId) && request.resource.data.supervisorId == request.auth.uid);
-      allow update: if isHR() || (isPeopleSupervisor() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && resource.data.supervisorId == request.auth.uid && request.resource.data.supervisorId == request.auth.uid);
-      allow delete: if isHR();
-    }
-
-    match /attendance_records/{recordId} {
-      allow read: if isAuthenticated() && (isHR() || isBranchManager() || isOwner(resource.data.staffId) || isTenantMember(resource.data.tenantId));
-      allow write: if isHR() || isBranchManager();
-    }
-
-    match /disciplinary_incidents/{incidentId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (
-        isHR() || isAdmin() || isOwner(resource.data.staffId) || resource.data.reportedByUserId == request.auth.uid
+      allow list: if isAuthenticated() && (
+        isAdmin() || isHR() || isPeopleSupervisor()
       );
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (
-        isHR() || isAdmin() ||
-        ((isPeopleSupervisor() || isQA())
-          && request.resource.data.reportedByUserId == request.auth.uid
-          && request.resource.data.status == 'open')
-      );
-      allow update: if isHR() || isAdmin();
+      allow create: if isAdmin() || isHR();
+      allow update: if isOwner(staffId) || isAdmin() || isHR() || isSupervisorPracticalAssessmentUpdate() || isSupervisorTraineeAssessmentUpdate();
       allow delete: if isAdmin();
-    }
-
-    match /tenants/{tenantId} {
-      allow read: if true; // Allow public read for tenant detection
-      allow write: if isAdmin();
-
-      match /usernameRegistry/{handle} {
-        allow read, write: if isAuthenticated() && (isAdmin() || isIT()) && isTenantMember(tenantId);
-      }
-    }
-
-    match /branches/{branchId} {
-      function hasValidBranchShape() {
-        return request.resource.data.keys().hasAll([
-          'tenantId', 'name', 'branch_code', 'type', 'address', 'phone',
-          'status', 'created_at', 'created_by'
-        ])
-        && request.resource.data.tenantId is string
-        && request.resource.data.name is string
-        && request.resource.data.branch_code is string
-        && request.resource.data.status in ['Active', 'Inactive', 'Closed'];
-      }
-
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isCEO() && isTenantMember(request.resource.data.tenantId) && hasValidBranchShape();
-      allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
-    }
-
-    match /staff/{staffId} {
-      allow read: if isAuthenticated() && (
-        request.auth.uid == staffId ||
-        resource.data.email == request.auth.token.email ||
-        resource.data.authEmail == request.auth.token.email ||
-        isTenantMember(resource.data.tenantId)
-      );
-      allow create: if isAuthenticated() && (isAdmin() || isIT() || isHR()) && isTenantMember(request.resource.data.tenantId);
-      // HR assigns organisational roles and branch placement. IT may perform account
-      // activation/support updates but cannot silently change the HR-assigned role realm.
-      allow update: if isAuthenticated() && (
-        isAdmin() || isHR() ||
-        (isITPersonnel() &&
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-            'tenantId', 'role', 'secondaryRoles', 'roleRealmId',
-            'assigned_branches', 'branch_id', 'default_branch_id'
-          ])) ||
-        (request.auth.uid == staffId &&
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-            'tenantId', 'role', 'secondaryRoles', 'assigned_branches',
-            'branch_id', 'default_branch_id', 'status', 'active',
-            'authEmail', 'loginHandle', 'username', 'uid', 'password_set',
-            'legacyStaffId', 'roleRealmId'
-          ]))
-      );
-      allow delete: if isAdmin() || isIT();
-    }
-
-    match /leave_requests/{requestId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
-      allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && (isHR() || (isOwner(resource.data.staffId) && resource.data.status == 'pending'));
-      allow delete: if isAdmin() || isHR();
-    }
-
-    match /advance_requests/{requestId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isHR() || isFinance() || isAdmin());
-      allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && (isHR() || isFinance() || isAdmin());
-      allow delete: if isAdmin();
-    }
-
-    match /payslips/{payslipId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isFinance() || isAdmin());
-      allow write: if isFinance() || isAdmin();
-    }
-
-    match /cme_records/{recordId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isAdmin() || isTenantMember(resource.data.tenantId));
-      allow write: if isHR() || isAdmin();
-    }
-
-    match /appraisal_scores/{scoreId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isAdmin() || isTenantMember(resource.data.tenantId));
-      allow write: if isHR() || isAdmin();
-    }
-
-    match /system_settings/{settingsId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
-    }
-
-    match /master_registries/{registryId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
     }
 
     match /role_realms_of_operation/{realmId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isITPersonnel() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isITPersonnel() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isITPersonnel() && isTenantMember(resource.data.tenantId);
+      allow create: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isSettingsAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /hr_roles/{roleId} {
+    match /tenant_access_sets/{accessSetId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isITPersonnel() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isITPersonnel() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isITPersonnel() && isTenantMember(resource.data.tenantId);
+      allow create: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isSettingsAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /global_audit_logs/{logId} {
-      allow read: if (isAdmin() || isIT() || hasRole('QA Head')) && isTenantMember(resource.data.tenantId);
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update, delete: if false; // Immutable
-    }
-    match /platform_users/{userId} {
-      allow read, write: if isAdmin();
-    }
-
-    match /platform_revenue/{revenueId} {
-      allow read, write: if isAdmin();
-    }
-
-    match /platform_audit_logs/{logId} {
-      allow read, write: if isAdmin();
-    }
-
-    match /predictive_settings/{settingId} {
-      allow read, write: if isAdmin();
-    }
-    match /pending_activations/{activationId} {
-      allow read: if isAuthenticated() && (isAdmin() || isIT() || isHR()) && isTenantMember(resource.data.tenantId);
-      allow create: if isAuthenticated() && (isAdmin() || isIT() || isHR()) && isTenantMember(request.resource.data.tenantId);
-      allow update, delete: if isAuthenticated() && (isAdmin() || isIT()) && isTenantMember(resource.data.tenantId);
-    }
-
-    match /finance_ledger/{entryId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance() && isTenantMember(request.resource.data.tenantId);
-    }
-
-    // Deterministic procurement posting IDs require an existence check before
-    // creation. A missing document exposes no tenant data; existing documents
-    // remain tenant-scoped by the second clause and by the collection rules.
-    match /grn_records/{recordId} {
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-    }
-    match /invoices/{invoiceId} {
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-    }
-    match /procurement_invoices/{invoiceId} {
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-    }
-    match /creditLedger/{entryId} {
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-    }
-    match /petty_cash_ledger/{entryId} {
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-    }
-
-    match /eod_reconciliations/{reconciliationId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewBranchFinance();
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
+    match /system_settings/{settingsId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /branch_expenses/{expenseId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewBranchFinance();
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    match /tenants/{tenantId} {
+      allow read: if isAuthenticated() && isTenantMember(tenantId);
+      allow create: if isPlatformAdmin();
+      allow update: if isPlatformAdmin();
+      allow delete: if isPlatformAdmin();
     }
 
-    match /cash_requisitions/{requisitionId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewBranchFinance();
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    match /tenant_subscriptions/{subscriptionId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create, update, delete: if isPlatformAdmin();
     }
 
-    match /credit_receivables/{receivableId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
-    }
+    match /sales/{saleId} {
+      function isLegacySale(data) {
+        return !("engineVersion" in data) || data.engineVersion != 2;
+      }
 
-    match /supplier_payables/{payableId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
-    }
+      function hasValidV2SaleLinks(saleId) {
+        let sale = request.resource.data;
+        let payment = getAfter(/databases/$(database)/documents/pos_payments/$(sale.canonicalPaymentId)).data;
+        let outbox = getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(sale.transactionOutboxEventId)).data;
+        return sale.engineVersion == 2
+          && sale.id == saleId
+          && sale.checkoutAttemptId is string
+          && sale.checkoutAttemptId.size() > 0
+          && sale.canonicalPaymentId is string
+          && sale.transactionOutboxEventId is string
+          && payment.saleId == saleId
+          && payment.paymentId == sale.canonicalPaymentId
+          && payment.tenantId == sale.tenantId
+          && payment.branchId == sale.branchId
+          && payment.receiptNumber == sale.receiptNumber
+          && payment.amount == sale.totalAmount
+          && payment.operatorUid == request.auth.uid
+          && outbox.saleId == saleId
+          && outbox.paymentId == sale.canonicalPaymentId
+          && outbox.eventId == sale.transactionOutboxEventId
+          && outbox.tenantId == sale.tenantId
+          && outbox.branchId == sale.branchId
+          && outbox.receiptNumber == sale.receiptNumber;
+      }
 
-    match /banking_records/{recordId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && isFinance();
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && isFinance();
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
-    }
-
-    match /client_credit_ledger/{entryId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
-    }
-
-    match /institution_credit_ledger/{entryId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
-    }
-
-    match /supplier_credit_ledger/{entryId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
-    }
-
-    match /creditPayments/{paymentId} {
-      allow get: if isAuthenticated() && isFinance() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow create: if isAuthenticated() && isFinance() && isTenantMember(request.resource.data.tenantId);
-      allow update, delete: if false;
-    }
-
-    match /financial_posting_audit/{auditId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isFinance() || isProcurement() || isAdmin());
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isFinance() || isProcurement() || isAdmin());
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (isFinance() || isAdmin());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isTenantMember(request.resource.data.tenantId)
+        && isPOSOperator()
+        && isAssignedToBranch(request.resource.data.branchId)
+        && request.resource.data.status == 'completed'
+        && (isLegacySale(request.resource.data) || hasValidV2SaleLinks(saleId));
+      allow update: if isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && isLegacySale(resource.data)
+        && isPOSOperator()
+        && isAssignedToBranch(resource.data.branchId);
       allow delete: if false;
     }
 
-    match /financial_metrics/{metricId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isFinance() || isAdmin());
-      allow write: if isFinance() || isAdmin();
+    match /sale_revisions/{revisionId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update, delete: if false;
     }
 
-    match /management_expenses/{expenseId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (canViewFinance() || isHR());
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isFinance() || isHR());
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && isFinance();
+    match /inventory_movement_events/{eventId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isStockOperator() && isTenantMember(request.resource.data.tenantId);
+      allow update, delete: if false;
+    }
+
+    match /branch_consumption_daily/{summaryId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create, update: if isStockOperator() && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /campaigns/{campaignId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewMarketing();
-      allow create: if isMarketing() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isMarketing() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isAdmin();
+    match /finance_ledger/{ledgerId} {
+      allow read: if isManagementFinanceUser() && isTenantMember(resource.data.tenantId);
+      allow create, update: if isManagementFinanceUser() && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /health_messages/{messageId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewMarketing();
-      allow create: if isMarketing() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isMarketing() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isAdmin();
+    match /finance_invoices/{invoiceId} {
+      allow read: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isFinance() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /marketing_expenses/{expenseId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewMarketing();
-      allow create: if isMarketing() && isTenantMember(request.resource.data.tenantId);
-      allow update: if (isMarketing() || isFinance()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isAdmin();
+    match /credit_ledger/{entryId} {
+      allow read: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isFinance() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /outreach_events/{eventId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewMarketing();
-      allow create: if isMarketing() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isMarketing() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isAdmin();
+    match /eod_reconciliations/{reconId} {
+      allow read: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isFinance() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /prescriber_disbursements/{disbursementId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewMarketing();
-      allow create: if isMarketing() && isTenantMember(request.resource.data.tenantId);
-      allow update: if (isMarketing() || isFinance()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isAdmin();
+    match /petty_cash/{entryId} {
+      allow read: if (isFinance() || isBranchFinanceUser()) && isTenantMember(resource.data.tenantId);
+      allow create: if (isFinance() || isBranchFinanceUser()) && isTenantMember(request.resource.data.tenantId);
+      allow update: if (isFinance() || isBranchFinanceUser()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /pharmpoints_settings/{settingsId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewMarketing();
-      allow create: if isMarketing() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isMarketing() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isAdmin();
+    match /supplier_payments/{paymentId} {
+      allow read: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isFinance() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /controlled_drug_register/{entryId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isQA() || isBranchManager());
-      allow create: if isAuthenticated() && (isQA() || isBranchManager() || isAdmin());
-      allow update, delete: if isAdmin(); // Highly sensitive
+    match /payroll_runs/{runId} {
+      allow read: if (isHR() || isFinance()) && isTenantMember(resource.data.tenantId);
+      allow create: if isHR() && isTenantMember(request.resource.data.tenantId);
+      allow update: if (isHR() || isFinance()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /expiry_logs/{logId} {
+    match /leave_requests/{requestId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isSupervisor());
+      allow create: if isAuthenticated() && request.resource.data.staffId == request.auth.uid && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isSupervisor());
+      allow delete: if isAdmin() || (isOwner(resource.data.staffId) && resource.data.status == 'pending');
+    }
+
+    match /qa_logs/{logId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isQA() || isBranchManager();
+      allow create: if isQA() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isQA() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /quarantine_logs/{logId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isQA() || isBranchManager();
+      allow create: if isQA() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isQA() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /room_temp_logs/{logId} {
+    match /expiry_logs/{logId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isQA() || isBranchManager() || isAuthenticated(); // Staff can log
-    }
-
-    match /fridge_temp_logs/{logId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isQA() || isBranchManager() || isAuthenticated(); // Staff can log
-    }
-
-    match /cleaning_tasks/{taskId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isQA() || isBranchManager();
-    }
-
-    match /cleaning_logs/{logId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isAuthenticated(); // Staff can log completion
+      allow create: if isQA() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isQA() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /recalls/{recallId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isQA() || isAdmin();
-    }
-
-    match /premises_licenses/{licenseId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isQA() || isAdmin();
+      allow create: if isQA() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isQA() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /cme_sessions/{sessionId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isQA() || isHR() || isAdmin();
-    }
-
-    match /cme_attendance/{attendanceId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isQA() || isHR() || isTenantMember(resource.data.tenantId));
-      allow write: if isQA() || isHR() || isAdmin();
-    }
-
-    match /appraisal_cycles/{cycleId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isQA() || isHR() || isAdmin();
+      allow create: if isQA() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isQA() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /appraisals/{appraisalId} {
@@ -817,6 +629,7 @@ service cloud.firestore {
         && (
           isInventoryOperator() ||
           (isQA()
+            && (hasAnyRole(['QA Head', 'QA Manager', 'admin', 'Admin']) || isAdmin() || isAssignedToBranch(resource.data.branchId))
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['batch_status', 'lastUpdated'])
             && request.resource.data.batch_status == 'quarantined') ||
           (isPOSOperator()
@@ -859,139 +672,141 @@ service cloud.firestore {
         && request.resource.data.createdBy == resource.data.createdBy
         && (
           (
-            resource.data.status in ['draft', 'returned']
+            (hasBranchManagerRole() || hasProcurementRole())
+            && resource.data.status in ['draft', 'submitted']
             && request.resource.data.status in ['draft', 'submitted']
-            && (hasBranchManagerRole() || hasProcurementRole())
-            && request.resource.data.lines is list
-            && request.resource.data.lines.size() > 0
-            && request.resource.data.lines.size() <= 300
           ) ||
           (
-            resource.data.status == 'submitted'
-            && request.resource.data.status in ['ceo_approved', 'returned', 'rejected']
-            && isCEO()
-            && request.resource.data.lines == resource.data.lines
+            isAdmin()
+            && resource.data.status == 'submitted'
+            && request.resource.data.status in ['approved', 'rejected']
+            && request.resource.data.approvedBy == request.auth.uid
           ) ||
           (
-            resource.data.status == 'ceo_approved'
-            && request.resource.data.status == 'awaiting_receipt'
-            && hasProcurementRole()
-            && request.resource.data.lines == resource.data.lines
-          ) ||
-          (
-            resource.data.status == 'awaiting_receipt'
-            && request.resource.data.status in ['fully_accepted', 'closed_with_queries']
-            && isAssignedBranchManager(resource.data.branchId)
+            isAssignedBranchManager(resource.data.branchId)
+            && resource.data.status == 'approved'
+            && request.resource.data.status in ['approved', 'partially_accepted', 'fully_accepted', 'closed_with_queries']
             && request.resource.data.receivedBy == request.auth.uid
-            && request.resource.data.lines == resource.data.lines
-            && request.resource.data.receiptResults is list
-            && request.resource.data.receiptResults.size() == resource.data.lines.size()
-            && request.resource.data.lines.size() == resource.data.lines.size()
+          ) ||
+          (
+            hasBranchManagerRole()
+            && isAssignedToBranch(resource.data.branchId)
+            && resource.data.status in ['partially_accepted', 'fully_accepted', 'closed_with_queries']
+            && request.resource.data.status in ['partially_accepted', 'fully_accepted', 'closed_with_queries']
           )
         );
 
-      allow delete: if false;
-    }
-
-    match /system_crashes/{crashId} {
-      allow create: if isAuthenticated();
-      allow read, update, delete: if isAdmin();
-    }
-
-    // Procurement, transfers, billing, and welfare collections
-    match /stock_orders/{orderId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (canViewProcurement() || isBranchManager());
-      allow create: if isAuthenticated() && (isProcurement() || isBranchManager()) && isTenantMember(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && (isProcurement() || isBranchManager()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isAdmin();
-    }
-    match /stock_order_lines/{lineId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (canViewProcurement() || isBranchManager());
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
-    match /transfer_invoices/{invoiceId} {
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isStockOperator() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isStockOperator() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+
+    match /opening_stock_audit_logs/{auditId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update, delete: if false;
+    }
+
+    match /inventory_adjustments/{adjustmentId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isInventoryOperator() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isInventoryOperator() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
-    match /transfer_invoice_lines/{lineId} {
+
+    match /stock_dispatches/{dispatchId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
       allow create: if isStockOperator() && isTenantMember(request.resource.data.tenantId);
       allow update: if isStockOperator() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
-    match /hq_order_drafts/{draftId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewProcurement();
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && isProcurement();
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && isProcurement();
-      allow delete: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isProcurement();
+
+    match /stock_receipts/{receiptId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isStockOperator() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isStockOperator() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
+
+    match /purchase_orders/{poId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isProcurement() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isProcurement() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /goods_received_notes/{grnId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isProcurement() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isProcurement() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /suppliers/{supplierId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isProcurement() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isProcurement() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /supplier_products/{linkId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isProcurement() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isProcurement() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /clients/{clientId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /prescribers/{prescriberId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /institutions/{institutionId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
     match /billable_services/{serviceId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow create: if isAdmin() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /sales/{saleId} {
-      function isLegacySale(sale) {
-        return !("engineVersion" in sale) || sale.engineVersion != 2;
-      }
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && (
+        isTenantMember(resource.data.tenantId) || resource.data.userId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAuthenticated() && (
+        isTenantMember(resource.data.tenantId) || resource.data.userId == request.auth.uid
+      );
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
 
-      function hasValidV2SaleLinks(saleId) {
-        let sale = request.resource.data;
-        let payment = getAfter(/databases/$(database)/documents/pos_payments/$(sale.canonicalPaymentId)).data;
-        let outbox = getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(sale.transactionOutboxEventId)).data;
-        return sale.canonicalPaymentId is string
-          && sale.transactionOutboxEventId is string
-          && payment.saleId == saleId
-          && payment.tenantId == sale.tenantId
-          && payment.branchId == sale.branchId
-          && payment.amount == sale.totalAmount
-          && outbox.saleId == saleId
-          && outbox.paymentId == sale.canonicalPaymentId;
-      }
-
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isPOSOperator()
-        && isTenantMember(request.resource.data.tenantId)
-        && request.resource.data.branchId is string
-        && isAssignedToBranch(request.resource.data.branchId)
-        && request.resource.data.status == 'completed'
-        && (
-          isLegacySale(request.resource.data) ||
-          hasValidV2SaleLinks(saleId)
-        );
-      allow update: if isPOSOperator()
-        && isTenantMember(resource.data.tenantId)
-        && isTenantMember(request.resource.data.tenantId)
-        && isLegacySale(resource.data)
-        && isLegacySale(request.resource.data);
-      // V2 sales are immutable to every client, including tenant administrators.
-      // The Batch 4 Admin SDK worker bypasses client rules for its controlled
-      // downstream-status fields. Reversal requires a separate durable event.
-      allow delete: if isAdmin()
-        && isTenantMember(resource.data.tenantId)
-        && isLegacySale(resource.data);
+    match /welfare_records/{recordId} {
+      allow read: if isAuthenticated() && (
+        isOwner(resource.data.staffId) || isHR() || isFinance() || isSupervisor()
+      );
+      allow create: if isHR() || isFinance();
+      allow update: if isHR() || isFinance();
+      allow delete: if isAdmin();
     }
 
     match /pos_payments/{paymentId} {
       function hasValidPaymentIdentity(paymentId) {
         let payment = request.resource.data;
         return payment.paymentId == paymentId
-          && payment.operatorUid == request.auth.uid
-          && payment.branchId is string
-          && payment.source == 'POS'
-          && payment.engineVersion == 2
-          && payment.currency == 'UGX'
-          && payment.saleId is string
-          && payment.checkoutAttemptId is string
-          && payment.receiptNumber is string;
+          && payment.operatorUid == request.auth.uid;
       }
 
       function hasValidPaymentSettlement() {
@@ -1002,30 +817,26 @@ service cloud.firestore {
           && payment.settledAmount >= 0
           && payment.outstandingAmount is number
           && payment.outstandingAmount >= 0
-          && payment.settledAmount + payment.outstandingAmount == payment.amount
-          && payment.status in ['completed', 'unpaid', 'partially_settled']
-          && payment.components is list;
+          && payment.settledAmount + payment.outstandingAmount == payment.amount;
       }
 
       function paymentMatchesSale(paymentId) {
         let payment = request.resource.data;
         let sale = getAfter(/databases/$(database)/documents/sales/$(payment.saleId)).data;
         return sale.engineVersion == 2
+          && sale.id == payment.saleId
+          && sale.canonicalPaymentId == paymentId
           && sale.tenantId == payment.tenantId
           && sale.branchId == payment.branchId
-          && sale.operatorUid == request.auth.uid
           && sale.receiptNumber == payment.receiptNumber
-          && sale.checkoutAttemptId == payment.checkoutAttemptId
           && sale.totalAmount == payment.amount
-          && sale.canonicalPaymentId == paymentId;
+          && sale.checkoutAttemptId is string
+          && sale.checkoutAttemptId.size() > 0;
       }
 
-      allow get: if isAuthenticated()
-        && (resource == null || isTenantMember(resource.data.tenantId))
-        && (isPOSOperator() || canViewFinance() || isIT());
-      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow create: if isPOSOperator()
-        && isTenantMember(request.resource.data.tenantId)
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isTenantMember(request.resource.data.tenantId)
+        && isPOSOperator()
         && isAssignedToBranch(request.resource.data.branchId)
         && hasValidPaymentIdentity(paymentId)
         && hasValidPaymentSettlement()
@@ -1037,31 +848,21 @@ service cloud.firestore {
       function hasValidOutboxEnvelope(eventId) {
         let outbox = request.resource.data;
         return outbox.eventId == eventId
-          && outbox.branchId is string
-          && outbox.source == 'POS'
-          && outbox.engineVersion == 2
-          && outbox.payloadVersion == 1
           && outbox.eventType == 'POS_SALE_COMMITTED'
-          && outbox.aggregateType == 'POS_SALE'
-          && outbox.aggregateId == outbox.saleId
-          && outbox.saleId is string
-          && outbox.paymentId is string
-          && outbox.receiptNumber is string
           && outbox.status == 'PENDING'
-          && outbox.attemptCount == 0
-          && outbox.payload.saleId == outbox.saleId
-          && outbox.payload.paymentId == outbox.paymentId;
+          && outbox.attemptCount == 0;
       }
 
       function outboxMatchesSale(eventId) {
         let outbox = request.resource.data;
         let sale = getAfter(/databases/$(database)/documents/sales/$(outbox.saleId)).data;
         return sale.engineVersion == 2
+          && sale.id == outbox.saleId
+          && sale.transactionOutboxEventId == eventId
+          && sale.canonicalPaymentId == outbox.paymentId
           && sale.tenantId == outbox.tenantId
           && sale.branchId == outbox.branchId
-          && sale.receiptNumber == outbox.receiptNumber
-          && sale.canonicalPaymentId == outbox.paymentId
-          && sale.transactionOutboxEventId == eventId;
+          && sale.receiptNumber == outbox.receiptNumber;
       }
 
       function outboxMatchesPayment() {
@@ -1069,17 +870,13 @@ service cloud.firestore {
         let payment = getAfter(/databases/$(database)/documents/pos_payments/$(outbox.paymentId)).data;
         return payment.saleId == outbox.saleId
           && payment.tenantId == outbox.tenantId
-          && payment.branchId == outbox.branchId;
+          && payment.branchId == outbox.branchId
+          && payment.receiptNumber == outbox.receiptNumber;
       }
 
-      allow get: if isAuthenticated()
-        && (resource == null || isTenantMember(resource.data.tenantId))
-        && (isPOSOperator() || canViewFinance() || isIT());
-      allow list: if isAuthenticated()
-        && isTenantMember(resource.data.tenantId)
-        && (canViewFinance() || isIT());
-      allow create: if isPOSOperator()
-        && isTenantMember(request.resource.data.tenantId)
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isTenantMember(request.resource.data.tenantId)
+        && isPOSOperator()
         && isAssignedToBranch(request.resource.data.branchId)
         && hasValidOutboxEnvelope(eventId)
         && outboxMatchesSale(eventId)
@@ -1088,36 +885,18 @@ service cloud.firestore {
     }
 
     match /pos_checkout_attempts/{attemptDocumentId} {
-      function hasValidAttemptEnvelope() {
-        let attempt = request.resource.data;
-        return attempt.operatorUid == request.auth.uid
-          && attempt.branchId is string
-          && attempt.status == 'completed'
-          && attempt.attemptId is string
-          && attempt.fingerprint is string
-          && attempt.saleId is string
-          && attempt.paymentId is string
-          && attempt.outboxEventId is string;
-      }
-
       function attemptMatchesSale() {
         let attempt = request.resource.data;
         let sale = getAfter(/databases/$(database)/documents/sales/$(attempt.saleId)).data;
         return sale.engineVersion == 2
-          && sale.tenantId == attempt.tenantId
-          && sale.branchId == attempt.branchId
-          && sale.operatorUid == request.auth.uid
           && sale.checkoutAttemptId == attempt.attemptId
-          && sale.checkoutIntentFingerprint == attempt.fingerprint
-          && sale.canonicalPaymentId == attempt.paymentId
-          && sale.transactionOutboxEventId == attempt.outboxEventId;
+          && sale.checkoutIntentFingerprint == attempt.fingerprint;
       }
 
       function attemptMatchesPayment() {
         let attempt = request.resource.data;
         let payment = getAfter(/databases/$(database)/documents/pos_payments/$(attempt.paymentId)).data;
         return payment.saleId == attempt.saleId
-          && payment.checkoutAttemptId == attempt.attemptId
           && payment.tenantId == attempt.tenantId
           && payment.branchId == attempt.branchId;
       }
@@ -1128,81 +907,122 @@ service cloud.firestore {
         return outbox.saleId == attempt.saleId
           && outbox.paymentId == attempt.paymentId
           && outbox.tenantId == attempt.tenantId
-          && outbox.branchId == attempt.branchId
-          && outbox.status == 'PENDING';
+          && outbox.branchId == attempt.branchId;
       }
 
-      allow get: if isPOSOperator() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if false;
-      allow create: if isPOSOperator()
-        && isTenantMember(request.resource.data.tenantId)
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isTenantMember(request.resource.data.tenantId)
+        && isPOSOperator()
         && isAssignedToBranch(request.resource.data.branchId)
-        && hasValidAttemptEnvelope()
+        && request.resource.data.operatorUid == request.auth.uid
+        && request.resource.data.status == 'completed'
+        && request.resource.data.paymentId is string
+        && request.resource.data.outboxEventId is string
         && attemptMatchesSale()
         && attemptMatchesPayment()
         && attemptMatchesOutbox();
       allow update, delete: if false;
     }
 
-    match /welfare_records/{recordId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isHR() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isHR() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isHR() && isTenantMember(resource.data.tenantId);
+    match /grn_finance_postings/{postingId} {
+      allow read: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isFinance() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /inventoryMovementEvents/{eventId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update, delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    match /finance_payables/{payableId} {
+      allow read: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isFinance() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /branchConsumptionDaily/{summaryId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+    match /supplier_payment_allocations/{allocationId} {
+      allow read: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isFinance() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /replenishmentEngineSettings/{settingsId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+    match /petty_cash_transactions/{txId} {
+      allow read: if (isFinance() || isBranchFinanceUser()) && isTenantMember(resource.data.tenantId);
+      allow create: if (isFinance() || isBranchFinanceUser()) && isTenantMember(request.resource.data.tenantId);
+      allow update: if (isFinance() || isBranchFinanceUser()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
-    match /branchReplenishmentSnapshots/{snapId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-    }
-
-    match /inventoryTransferReservations/{resId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-    }
-
-    match /autoGenerateOrderRuns/{runId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-    }
-
-    match /autoGenerateOrderLines/{lineId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-    }
-
-    match /pos_quotations/{quotationId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId) || isAdmin());
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && request.resource.data.status == 'Draft';
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (request.resource.data.status in ['Converted', 'Expired']);
-      allow delete: if false; // quotations are never hard-deleted
-    }
-
-
-
-    // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
-      allow get: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAdmin() && isTenantMember(resource.data.tenantId);
+      allow get: if isAuthenticated()
+        && collectionName != 'finance_ledger'
+        && collectionName != 'finance_invoices'
+        && collectionName != 'credit_ledger'
+        && collectionName != 'eod_reconciliations'
+        && collectionName != 'petty_cash'
+        && collectionName != 'grn_finance_postings'
+        && collectionName != 'finance_payables'
+        && collectionName != 'supplier_payment_allocations'
+        && collectionName != 'petty_cash_transactions'
+        && collectionName != 'pos_checkout_attempts'
+        && collectionName != 'pos_payments'
+        && collectionName != 'pos_transaction_outbox'
+        && isTenantMember(resource.data.tenantId);
+      allow list: if isAuthenticated()
+        && collectionName != 'finance_ledger'
+        && collectionName != 'finance_invoices'
+        && collectionName != 'credit_ledger'
+        && collectionName != 'eod_reconciliations'
+        && collectionName != 'petty_cash'
+        && collectionName != 'grn_finance_postings'
+        && collectionName != 'finance_payables'
+        && collectionName != 'supplier_payment_allocations'
+        && collectionName != 'petty_cash_transactions'
+        && collectionName != 'pos_checkout_attempts'
+        && collectionName != 'pos_payments'
+        && collectionName != 'pos_transaction_outbox';
+      allow create: if isAuthenticated()
+        && collectionName != 'finance_ledger'
+        && collectionName != 'finance_invoices'
+        && collectionName != 'credit_ledger'
+        && collectionName != 'eod_reconciliations'
+        && collectionName != 'petty_cash'
+        && collectionName != 'grn_finance_postings'
+        && collectionName != 'finance_payables'
+        && collectionName != 'supplier_payment_allocations'
+        && collectionName != 'petty_cash_transactions'
+        && collectionName != 'pos_checkout_attempts'
+        && collectionName != 'pos_payments'
+        && collectionName != 'pos_transaction_outbox'
+        && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAuthenticated()
+        && collectionName != 'finance_ledger'
+        && collectionName != 'finance_invoices'
+        && collectionName != 'credit_ledger'
+        && collectionName != 'eod_reconciliations'
+        && collectionName != 'petty_cash'
+        && collectionName != 'grn_finance_postings'
+        && collectionName != 'finance_payables'
+        && collectionName != 'supplier_payment_allocations'
+        && collectionName != 'petty_cash_transactions'
+        && collectionName != 'pos_checkout_attempts'
+        && collectionName != 'pos_payments'
+        && collectionName != 'pos_transaction_outbox'
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAuthenticated()
+        && collectionName != 'finance_ledger'
+        && collectionName != 'finance_invoices'
+        && collectionName != 'credit_ledger'
+        && collectionName != 'eod_reconciliations'
+        && collectionName != 'petty_cash'
+        && collectionName != 'grn_finance_postings'
+        && collectionName != 'finance_payables'
+        && collectionName != 'supplier_payment_allocations'
+        && collectionName != 'petty_cash_transactions'
+        && collectionName != 'pos_checkout_attempts'
+        && collectionName != 'pos_payments'
+        && collectionName != 'pos_transaction_outbox'
+        && isTenantMember(resource.data.tenantId);
     }
   }
 }
