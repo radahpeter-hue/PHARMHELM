@@ -28,7 +28,34 @@ jobs:
             | sed -n "/python <<'PY'/,/^          PY$/p" \
             | sed '1d;$d;s/^          //' > /tmp/apply-final-eligibility.py
           test -s /tmp/apply-final-eligibility.py
+          python <<'PY'
+          from pathlib import Path
+          path = Path('firestore.rules')
+          text = path.read_text()
+          products_marker = '    match /products/{productId} {'
+          batches_marker = '    match /product_batches/{batchId} {'
+          before_products, remainder = text.split(products_marker, 1)
+          products_block, after_products = remainder.split(batches_marker, 1)
+          anchor = "          isInventoryOperator() ||\n          (isPOSOperator()"
+          if products_block.count(anchor) != 1:
+              raise SystemExit('Expected one POS aggregate rule anchor in products block.')
+          products_block = products_block.replace(
+              anchor,
+              "          isInventoryOperator() ||\n          // TEMP_FINAL_ELIGIBILITY_PATCH_GUARD\n          (isPOSOperator()",
+              1
+          )
+          path.write_text(before_products + products_marker + products_block + batches_marker + after_products)
+          PY
           python /tmp/apply-final-eligibility.py
+          python <<'PY'
+          from pathlib import Path
+          path = Path('firestore.rules')
+          text = path.read_text()
+          guard = '          // TEMP_FINAL_ELIGIBILITY_PATCH_GUARD\n'
+          if text.count(guard) != 1:
+              raise SystemExit('Temporary rules patch guard was not preserved exactly once.')
+          path.write_text(text.replace(guard, '', 1))
+          PY
       - name: Test
         run: npm test
       - name: TypeScript validation
