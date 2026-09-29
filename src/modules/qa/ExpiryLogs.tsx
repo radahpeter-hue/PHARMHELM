@@ -18,6 +18,7 @@ import { firestoreService } from '../../services/firestore';
 import { ExpiryLogEntry, QuarantineLogEntry } from '../../types';
 import { toast } from 'sonner';
 import { format, differenceInDays } from 'date-fns';
+import { quarantineInventoryBatch } from '../../services/batchComplianceService';
 
 export const ExpiryLogs = () => {
   const { user, activeBranch, tenantId } = useAuth();
@@ -79,6 +80,12 @@ export const ExpiryLogs = () => {
         status: 'Active (In Quarantine)'
       };
 
+      await quarantineInventoryBatch({
+        tenantId,
+        branchId: activeBranch.id,
+        productId: log.productId,
+        batchNumber: log.batchNumber
+      });
       await firestoreService.addDocument('quarantine_logs', quarantineEntry);
       await firestoreService.updateDocument('expiry_logs', log.id, { status: 'Quarantined' });
       toast.success(`${log.productName} moved to quarantine`);

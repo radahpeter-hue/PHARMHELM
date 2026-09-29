@@ -56,11 +56,19 @@ test('V2 batch deduction is branch-scoped and cannot create negative stock', () 
   assert.match(rules, /request\.resource\.data\.quantity >= 0/);
 });
 
-test('V2 product compatibility mirrors may move together without opening arbitrary product edits', () => {
-  assert.match(rules, /affectedKeys\(\)\.hasOnly\(\['stock', 'quantityInStock', 'stockAggregateSource', 'updatedAt'\]\)/);
-  assert.match(rules, /resource\.data\.stock == resource\.data\.quantityInStock/);
-  assert.match(rules, /request\.resource\.data\.stock == request\.resource\.data\.quantityInStock/);
-  assert.match(rules, /request\.resource\.data\.stockAggregateSource == 'product_batches'/);
+test('V2 product compatibility mirrors may heal from batch authority without opening arbitrary product edits', () => {
+  const productStart = rules.indexOf('match /products/{productId}');
+  const batchStart = rules.indexOf('match /product_batches/{batchId}', productStart);
+  assert.ok(productStart >= 0 && batchStart > productStart);
+  const productRule = rules.slice(productStart, batchStart);
+  assert.match(productRule, /affectedKeys\(\)\.hasOnly\(\['stock', 'quantityInStock', 'stockAggregateSource', 'updatedAt'\]\)/);
+  assert.doesNotMatch(productRule, /resource\.data\.stock == resource\.data\.quantityInStock/);
+  assert.match(productRule, /request\.resource\.data\.stock is number/);
+  assert.match(productRule, /request\.resource\.data\.quantityInStock is number/);
+  assert.match(productRule, /request\.resource\.data\.stock >= 0/);
+  assert.match(productRule, /request\.resource\.data\.quantityInStock >= 0/);
+  assert.match(productRule, /request\.resource\.data\.stock == request\.resource\.data\.quantityInStock/);
+  assert.match(productRule, /request\.resource\.data\.stockAggregateSource == 'product_batches'/);
 });
 
 test('canonical POS payments are immutable, tenant/branch scoped and linked to the V2 sale', () => {
@@ -143,4 +151,16 @@ test('generic tenant fallback cannot bypass dedicated POS V2 transaction records
     const occurrences = generic.match(pattern) || [];
     assert.equal(occurrences.length, 5, `get, list, create, update and delete must all exclude ${collectionName}`);
   }
+});
+
+test('QA quarantine rule preserves branch scope and narrow quarantine-only fields', () => {
+  const start = rules.indexOf('match /product_batches/{batchId}');
+  const end = rules.indexOf('match /opening_stock_sessions/{sessionId}', start);
+  assert.ok(start >= 0 && end > start);
+  const batchRules = rules.slice(start, end);
+  assert.match(batchRules, /isQA\(\)/);
+  assert.match(batchRules, /hasAnyRole\(\['QA Head', 'QA Manager', 'admin', 'Admin'\]\)/);
+  assert.match(batchRules, /isAssignedToBranch\(resource\.data\.branchId\)/);
+  assert.match(batchRules, /affectedKeys\(\)\.hasOnly\(\['batch_status', 'lastUpdated'\]\)/);
+  assert.match(batchRules, /request\.resource\.data\.batch_status == 'quarantined'/);
 });

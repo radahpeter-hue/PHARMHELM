@@ -21,6 +21,7 @@ import { firestoreService } from '../../services/firestore';
 import { Recall, QuarantineLogEntry } from '../../types';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
+import { quarantineRecallBatches } from '../../services/batchComplianceService';
 
 export const Recalls = () => {
   const { user, profile, activeBranch, tenantId } = useAuth();
@@ -116,23 +117,30 @@ export const Recalls = () => {
     if (!tenantId || !activeBranch || !user) return;
 
     try {
-      const quarantineEntry: Omit<QuarantineLogEntry, 'id'> = {
+      const quarantineResult = await quarantineRecallBatches({
         tenantId,
-        branchId: activeBranch.id,
-        quarantineId: `QR-RECALL-${Date.now()}`,
-        dateQuarantined: format(new Date(), 'yyyy-MM-dd'),
-        productId: 'N/A', 
-        productName: recall.productName,
-        batchNumber: recall.batchNumber,
-        quantity: recall.quantityAffected || 0,
-        reason: 'Recall',
-        notes: `Recall ID: ${recall.recallId}`,
-        quarantinedBy: profile?.name || user?.email || 'System',
-        currentLocation: 'Quarantine Area (Recall Bin)',
-        status: 'Active (In Quarantine)'
-      };
-
-      await firestoreService.addDocument('quarantine_logs', quarantineEntry);
+        productId: recall.productId,
+        productName: recall.productName || '',
+        batchNumber: recall.batchNumber || ''
+      });
+      for (const affectedBatch of quarantineResult.batches) {
+        const quarantineEntry: Omit<QuarantineLogEntry, 'id'> = {
+          tenantId,
+          branchId: affectedBatch.branchId,
+          quarantineId: `QR-RECALL-${Date.now()}-${affectedBatch.id}`,
+          dateQuarantined: format(new Date(), 'yyyy-MM-dd'),
+          productId: quarantineResult.productId,
+          productName: recall.productName,
+          batchNumber: recall.batchNumber,
+          quantity: affectedBatch.quantity,
+          reason: 'Recall',
+          notes: `Recall ID: ${recall.recallId}`,
+          quarantinedBy: profile?.name || user?.email || 'System',
+          currentLocation: 'Quarantine Area (Recall Bin)',
+          status: 'Active (In Quarantine)'
+        };
+        await firestoreService.addDocument('quarantine_logs', quarantineEntry);
+      }
       
       // Feed to finance as an expense (wastage/recall loss)
       if (recall.totalCost && recall.totalCost > 0) {
@@ -150,8 +158,12 @@ export const Recalls = () => {
         });
       }
 
-      await firestoreService.updateDocument('recalls', recall.id, { status: 'Quarantined' });
-      toast.success(`${recall.productName} moved to quarantine and cost logged to finance`);
+      await firestoreService.updateDocument('recalls', recall.id, {
+        status: 'Quarantined',
+        productId: quarantineResult.productId,
+        quantityAffected: quarantineResult.totalQuantity
+      });
+      toast.success(`${recall.productName} batch quarantined across ${quarantineResult.batches.length} inventory location(s)`);
     } catch (error) {
       toast.error('Failed to quarantine item');
     }
