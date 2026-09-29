@@ -1,0 +1,45 @@
+name: Process POS V2 Outbox Once
+
+on:
+  push:
+    branches:
+      - ops/verify-masaka-v2-live-chain
+    paths:
+      - '.github/workflows/process-pos-v2-outbox-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+      FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+      POS_V2_MAX_EVENTS: '25'
+      POS_V2_WORKER_ID: live-validation-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Install durable worker runtime dependency
+        run: npm install --no-save firebase-admin
+
+      - name: Authenticate Google service account
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Process committed POS V2 outbox events
+        run: node scripts/process-pos-v2-outbox.mjs
