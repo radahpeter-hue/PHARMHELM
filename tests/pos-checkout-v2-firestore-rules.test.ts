@@ -56,11 +56,19 @@ test('V2 batch deduction is branch-scoped and cannot create negative stock', () 
   assert.match(rules, /request\.resource\.data\.quantity >= 0/);
 });
 
-test('V2 product compatibility mirrors may move together without opening arbitrary product edits', () => {
-  assert.match(rules, /affectedKeys\(\)\.hasOnly\(\['stock', 'quantityInStock', 'stockAggregateSource', 'updatedAt'\]\)/);
-  assert.match(rules, /resource\.data\.stock == resource\.data\.quantityInStock/);
-  assert.match(rules, /request\.resource\.data\.stock == request\.resource\.data\.quantityInStock/);
-  assert.match(rules, /request\.resource\.data\.stockAggregateSource == 'product_batches'/);
+test('V2 product compatibility mirrors may heal from batch authority without opening arbitrary product edits', () => {
+  const productStart = rules.indexOf('match /products/{productId}');
+  const batchStart = rules.indexOf('match /product_batches/{batchId}', productStart);
+  assert.ok(productStart >= 0 && batchStart > productStart);
+  const productRule = rules.slice(productStart, batchStart);
+  assert.match(productRule, /affectedKeys\(\)\.hasOnly\(\['stock', 'quantityInStock', 'stockAggregateSource', 'updatedAt'\]\)/);
+  assert.doesNotMatch(productRule, /resource\.data\.stock == resource\.data\.quantityInStock/);
+  assert.match(productRule, /request\.resource\.data\.stock is number/);
+  assert.match(productRule, /request\.resource\.data\.quantityInStock is number/);
+  assert.match(productRule, /request\.resource\.data\.stock >= 0/);
+  assert.match(productRule, /request\.resource\.data\.quantityInStock >= 0/);
+  assert.match(productRule, /request\.resource\.data\.stock == request\.resource\.data\.quantityInStock/);
+  assert.match(productRule, /request\.resource\.data\.stockAggregateSource == 'product_batches'/);
 });
 
 test('canonical POS payments are immutable, tenant/branch scoped and linked to the V2 sale', () => {
