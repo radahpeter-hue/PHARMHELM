@@ -1,0 +1,49 @@
+name: Verify POS V2 Final Eligibility
+
+on:
+  push:
+    branches:
+      - fix/pos-v2-eligibility-final
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Apply deterministic correction
+        shell: bash
+        run: |
+          git show 2b1594633d8bba4a3dda243f8e82f74448ce75a8:.github/workflows/apply-pos-v2-final-eligibility.yml \
+            | sed -n "/python <<'PY'/,/^          PY$/p" \
+            | sed '1d;$d;s/^          //' > /tmp/apply-final-eligibility.py
+          test -s /tmp/apply-final-eligibility.py
+          python /tmp/apply-final-eligibility.py
+      - name: Test
+        run: npm test
+      - name: TypeScript validation
+        run: npm run lint
+      - name: Production build
+        run: npm run build
+      - name: Diff validation
+        run: git diff --check
+      - name: Commit verified correction
+        shell: bash
+        run: |
+          rm .github/workflows/verify-pos-v2-final-eligibility.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix: align POS eligibility with batch authority [final-eligibility-applied]'
+          git push origin HEAD:fix/pos-v2-eligibility-final
