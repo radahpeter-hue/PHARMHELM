@@ -1,5 +1,6 @@
 import type { Sale } from '../../types';
 
+// Pure policy helpers only: no Firestore writes or checkout mutation side effects.
 export const POS_V2_REVISION_WINDOW_HOURS = 72;
 export const POS_V2_REVISION_WINDOW_MS = POS_V2_REVISION_WINDOW_HOURS * 60 * 60 * 1000;
 
