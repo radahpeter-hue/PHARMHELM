@@ -38,7 +38,7 @@ jobs:
 
       - name: Verify protected POS V2 engine unchanged
         run: |
-          git diff --exit-code main -- \
+          git diff --exit-code origin/main -- \
             src/services/pos-v2/posCheckoutV2Repository.ts \
             src/services/pos-v2/posCheckoutV2Calculator.ts \
             src/services/pos-v2/posCheckoutV2Service.ts
