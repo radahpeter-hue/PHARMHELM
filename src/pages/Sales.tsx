@@ -3571,7 +3571,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                     </div>
                     <div className="flex justify-between">
                       <span>Cashier:</span>
-                      <span>{staff.find(s => s.uid === selectedSale.servedBy)?.displayName || staff.find(s => s.id === selectedSale.servedBy)?.displayName || selectedSale.servedBy || 'Operator'}</span>
+                      <span>{resolveSaleOperatorName(selectedSale, staff)}</span>
                     </div>
                   </div>
 
@@ -3674,7 +3674,7 @@ NDA Reg: ${brandNdaReg}
 ---------------------------------
 Receipt: ${selectedSale.receiptNumber || selectedSale.id.substring(0, 8).toUpperCase()}
 Date: ${format(new Date(selectedSale.timestamp), 'dd/MM/yyyy HH:mm')}
-Cashier: ${staff.find(s => s.uid === selectedSale.servedBy)?.displayName || staff.find(s => s.id === selectedSale.servedBy)?.displayName || selectedSale.servedBy || 'Operator'}
+Cashier: ${resolveSaleOperatorName(selectedSale, staff)}
 ---------------------------------
 ${selectedSale.items.map(item => `${item.productName}\n  ${item.quantity} x UGX ${item.unitPrice.toLocaleString()} = UGX ${item.subtotal.toLocaleString()}`).join('\n')}
 ---------------------------------
