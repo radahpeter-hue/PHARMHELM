@@ -5,6 +5,7 @@ import { getReceiptLedgerReference, getSaleIdentityLabel, matchesReceiptLedgerSe
 
 const salesSource = readFileSync(new URL('../src/pages/Sales.tsx', import.meta.url), 'utf8');
 const invoiceSource = readFileSync(new URL('../src/components/sales/A4InvoiceTemplate.tsx', import.meta.url), 'utf8');
+const invoicePdfSource = readFileSync(new URL('../src/services/invoicePdfExportService.ts', import.meta.url), 'utf8');
 
 const sale = (overrides: Record<string, unknown> = {}) => ({
   id: 'V2SALE_Z_internal_12345678',
@@ -66,11 +67,15 @@ test('A4 invoice resolves correct branch and never uses false Main Store fallbac
   assert.ok(invoiceSource.includes('{resolvedBranchName}'));
 });
 
-test('A4 PDF export has asset wait, image-free retry, blob download and print fallback', () => {
-  assert.ok(invoiceSource.includes('waitForInvoiceAssets(element)'));
-  assert.ok(invoiceSource.includes('renderInvoiceCanvas(element, true)'));
-  assert.ok(invoiceSource.includes("pdf.output('blob')"));
+test('A4 PDF export uses deterministic jsPDF blob download and retains print fallback', () => {
+  assert.ok(invoiceSource.includes("import { exportInvoicePdf } from '../../services/invoicePdfExportService'"));
+  assert.ok(invoiceSource.includes('exportInvoicePdf({'));
+  assert.ok(invoicePdfSource.includes("new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4'"));
+  assert.ok(invoicePdfSource.includes("pdf.output('blob')"));
+  assert.ok(invoicePdfSource.includes('URL.createObjectURL(blob)'));
+  assert.ok(invoicePdfSource.includes("anchor.download = filename"));
   assert.ok(invoiceSource.includes('You can still use Print A4'));
+  assert.equal(invoicePdfSource.includes('html2canvas'), false);
 });
 
 test('Institutional desktop layout retains an independently scrollable product region', () => {
