@@ -62,13 +62,24 @@ No additional phone, address, demographic, prescriber, or institution requiremen
 Focused unit tests cover the validation matrix, exact user-facing messages, identified generic credit, validation ordering before the checkout submission lock and V2 invocation, and the pure helper's lack of inventory/transaction/outbox side effects.
 
 ## 13. Test results
-Required gates are `npm ci`, targeted Phase 2 tests, the complete `npm test` suite, lint, typecheck, build, and `git diff --check`. Final results are recorded in the PR/implementation summary after CI completion.
+Dedicated Phase 2 CI results:
+- `npm ci`: PASS.
+- targeted Phase 2 context validation tests: PASS.
+- `npm run lint`: PASS.
+- `npm run typecheck`: PASS.
+- `npm run build`: PASS.
+- `git diff --check`: PASS.
+- protected-core diff guard: PASS.
+
+The complete `npm test` command was also run. It reported 203 tests, with 202 passing and one failing test in `tests/pos-phase1-ui-docs.test.ts`. The failing assertion expects the old `waitForInvoiceAssets(element)` browser-rasterisation PDF path. That assertion is already stale on `main` because Phase 1 PR #26 intentionally replaced the A4 PDF path with deterministic jsPDF generation. The Phase 2 CI separately verified that the assertion exists on `main` while the current `main` A4 invoice implementation no longer contains the expected old path. No Phase 1 code or Phase 1 test was modified in this PR.
 
 ## 14. Build result
-Must be green before merge recommendation.
+Production build: PASS.
+
+Strict merge readiness remains blocked only by the pre-existing stale Phase 1 test described above if the requirement is that `npm test` must have zero failures. Phase 2-specific tests and all compile/build/diff safety gates are green.
 
 ## 15. Proof POS V2 core was untouched
-The final diff must not change:
+The final PR diff does not change:
 - `src/services/pos-v2/posCheckoutV2Repository.ts`
 - `src/services/pos-v2/posCheckoutV2Calculator.ts`
 - `src/services/pos-v2/posCheckoutV2Service.ts`
@@ -76,20 +87,25 @@ The final diff must not change:
 - `src/services/posTierCartService.ts`
 - `firestore.rules`
 
+The CI protected-core guard passed.
+
 ## 16. Risks
-Primary regression risk is blocking a previously tolerated anonymous `credit` payment. This is intentional under the Phase 2 no-anonymous-credit rule. Existing identified credit and institutional credit remain eligible for downstream credit checks.
+Primary intentional behaviour change is blocking a previously tolerated anonymous `credit` payment. Existing identified credit and institutional credit remain eligible for downstream credit checks.
+
+The validator is called in both the initial checkout boundary and `completeSale`. This protects against payment-method changes made inside the checkout modal before final submission.
 
 ## 17. Rollback plan
-Revert the Phase 2 commits. No data migration, schema migration, Firestore rule change, stock rewrite, payment rewrite, or activation change is involved.
+Revert the Phase 2 changes. No data migration, schema migration, Firestore rule change, stock rewrite, payment rewrite, or activation change is involved.
 
 ## 18. Recommended live validation
 - Walk-in anonymous: checkout remains eligible.
 - Telepharmacy without client: block; add client; retry.
 - Institutional without institution: block; add institution; retry.
 - Institutional credit without institution: block; add institution; retry subject to existing credit eligibility.
+- Anonymous generic credit, if reachable through any existing workflow: block until an identifiable client or institution is attached.
 - Confirm basket and quantities remain intact after every invalid-path block.
 
-Invalid-path tests should stop before any production transaction is created.
+Invalid-path tests should stop before any production transaction is created. No production test sale was executed during Phase 2 implementation.
 
 ## 19. Remaining Phase 3/4/5 work
 Not included. Dispenser authorization, FEFO multi-batch live validation, receipt revision, and transaction backdating remain explicitly out of scope.
