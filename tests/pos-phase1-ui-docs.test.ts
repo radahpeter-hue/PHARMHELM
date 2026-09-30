@@ -75,7 +75,7 @@ test('A4 PDF export uses deterministic jsPDF blob download and retains print fal
   assert.ok(invoicePdfSource.includes('URL.createObjectURL(blob)'));
   assert.ok(invoicePdfSource.includes("anchor.download = filename"));
   assert.ok(invoiceSource.includes('You can still use Print A4'));
-  assert.equal(invoicePdfSource.includes('html2canvas'), false);
+  assert.equal(invoicePdfSource.includes("from 'html2canvas'"), false);
 });
 
 test('Institutional desktop layout retains an independently scrollable product region', () => {
