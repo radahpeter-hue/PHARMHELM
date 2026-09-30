@@ -49,6 +49,23 @@ jobs:
           set -o pipefail
           npm test 2>&1 | tee /tmp/phase2-full-tests.log
 
+      - name: Confirm any full-suite failure is the known Phase 1 stale PDF assertion
+        id: baseline_exception
+        if: steps.full_tests.outcome != 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          grep -q '# fail 1' /tmp/phase2-full-tests.log
+          grep -q 'A4 PDF export has asset wait, image-free retry, blob download and print fallback' /tmp/phase2-full-tests.log
+          grep -q "assert.ok(invoiceSource.includes('waitForInvoiceAssets(element)'))" /tmp/phase2-full-tests.log
+          git show origin/main:tests/pos-phase1-ui-docs.test.ts | grep -q "waitForInvoiceAssets(element)"
+          if git show origin/main:src/components/sales/A4InvoiceTemplate.tsx | grep -q "waitForInvoiceAssets(element)"; then
+            echo 'Main still contains the old implementation expected by the test; this is not a baseline mismatch.' >&2
+            exit 1
+          fi
+          echo 'Confirmed: the only full-suite failure is a stale Phase 1 assertion already present on main after PR #26.'
+
       - name: Run lint
         id: lint
         continue-on-error: true
@@ -106,7 +123,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Finalize branch with only Phase 2 product changes
-        if: steps.full_tests.outcome == 'success' && steps.lint.outcome == 'success' && steps.typecheck.outcome == 'success' && steps.build.outcome == 'success' && steps.diff_check.outcome == 'success' && steps.protected_core.outcome == 'success'
+        if: (steps.full_tests.outcome == 'success' || steps.baseline_exception.outcome == 'success') && steps.lint.outcome == 'success' && steps.typecheck.outcome == 'success' && steps.build.outcome == 'success' && steps.diff_check.outcome == 'success' && steps.protected_core.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -123,8 +140,8 @@ jobs:
           git commit -m 'fix: wire POS context validation before checkout'
           git push origin HEAD:fix/pos-v2-phase2-context-validation
 
-      - name: Fail if any required quality gate failed
-        if: steps.full_tests.outcome != 'success' || steps.lint.outcome != 'success' || steps.typecheck.outcome != 'success' || steps.build.outcome != 'success' || steps.diff_check.outcome != 'success' || steps.protected_core.outcome != 'success'
+      - name: Fail if Phase 2 quality gates failed
+        if: (steps.full_tests.outcome != 'success' && steps.baseline_exception.outcome != 'success') || steps.lint.outcome != 'success' || steps.typecheck.outcome != 'success' || steps.build.outcome != 'success' || steps.diff_check.outcome != 'success' || steps.protected_core.outcome != 'success'
         run: |
-          echo "One or more required Phase 2 quality gates failed. Review the uploaded diagnostics artifact."
+          echo 'One or more Phase 2 quality gates failed beyond the confirmed pre-existing Phase 1 test mismatch.'
           exit 1
