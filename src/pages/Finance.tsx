@@ -899,6 +899,7 @@ const BranchExpenseLog: React.FC = () => {
 const BranchCreditView: React.FC = () => {
   const { profile, activeBranchId } = useAuth();
   const [sales, setSales] = useState<any[]>([]);
+  const [receivables, setReceivables] = useState<any[]>([]);
   const [dateRange, setDateRange] = useState({ 
     start: new Date().toISOString().split('T')[0], 
     end: new Date().toISOString().split('T')[0] 
@@ -906,7 +907,7 @@ const BranchCreditView: React.FC = () => {
 
   useEffect(() => {
     if (profile?.tenantId && activeBranchId) {
-      const unsubscribe = firestoreService.subscribeToCollection('sales', profile.tenantId, (data: any[]) => {
+      const unsubscribeSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data: any[]) => {
         const filtered = data.filter(s => {
           const primaryMethod = s.paymentMethod;
           const secondaryMethod = s.secondaryPaymentMethod;
@@ -922,7 +923,16 @@ const BranchCreditView: React.FC = () => {
         });
         setSales(filtered);
       });
-      return () => unsubscribe();
+
+      // Settlement status is authoritative in credit_receivables, not the immutable POS sale.
+      const unsubscribeReceivables = firestoreService.subscribeToCollection('credit_receivables', profile.tenantId, (data: any[]) => {
+        setReceivables(data.filter(r => (r.branch_id || r.branchId) === activeBranchId));
+      });
+
+      return () => {
+        unsubscribeSales();
+        unsubscribeReceivables();
+      };
     }
   }, [profile?.tenantId, activeBranchId]);
 
@@ -980,7 +990,22 @@ const BranchCreditView: React.FC = () => {
               const dateVal = credit.timestamp || credit.created_at || credit.date || '';
               const displayDate = dateVal ? new Date(dateVal).toLocaleDateString() : 'N/A';
               const amount = credit.total || credit.totalAmount || 0;
-              const status = credit.creditStatus || 'Unpaid';
+              const receivable = receivables.find((r: any) =>
+                r.id === credit.id ||
+                r.receipt_id === credit.id ||
+                r.invoice_number === invNum ||
+                r.receipt_id === invNum
+              );
+              const receivableStatus = String(receivable?.status || '').toLowerCase();
+              const receivableOutstanding = Number(receivable?.outstanding_ugx);
+              const receivableOriginal = Number(receivable?.amount_ugx);
+              const status = receivable
+                ? (receivableStatus === 'paid' || receivableOutstanding === 0
+                    ? 'Paid'
+                    : (Number.isFinite(receivableOriginal) && Number.isFinite(receivableOutstanding) && receivableOutstanding < receivableOriginal
+                        ? 'Partial'
+                        : 'Outstanding'))
+                : (credit.creditStatus || 'Unpaid');
               
               return (
                 <tr key={credit.id} className="hover:bg-zinc-50/50 transition-colors">
@@ -991,7 +1016,11 @@ const BranchCreditView: React.FC = () => {
                   <td className="px-6 py-4">
                     <span className={cn(
                       "px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider",
-                      status === 'Paid' ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+                      status === 'Paid'
+                        ? "bg-emerald-50 text-emerald-600"
+                        : status === 'Partial'
+                          ? "bg-blue-50 text-blue-600"
+                          : "bg-amber-50 text-amber-600"
                     )}>
                       {status}
                     </span>
