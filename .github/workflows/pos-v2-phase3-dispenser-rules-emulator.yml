@@ -1,0 +1,29 @@
+name: POS V2 Phase 3 Dispenser Rules Emulator
+
+on:
+  push:
+    branches:
+      - fix/pos-v2-phase3-branch-user-authorization
+    paths:
+      - '.github/workflows/pos-v2-phase3-dispenser-rules-emulator.yml'
+      - 'scripts/phase3-dispenser-rules-emulator.mjs'
+      - 'firestore.rules'
+  workflow_dispatch:
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install emulator runtime
+        run: npm install --no-save --ignore-scripts firebase-tools@latest @firebase/rules-unit-testing@latest
+
+      - name: Reproduce Kalebu authority against Firestore rules
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-phase3-rules-test "node scripts/phase3-dispenser-rules-emulator.mjs"
