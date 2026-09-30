@@ -25,6 +25,7 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
 }) => {
   const [receipt, setReceipt] = useState<Sale | null>(null);
   const [loading, setLoading] = useState(false);
+  const [resolvedBranchName, setResolvedBranchName] = useState('Branch not available');
 
   useEffect(() => {
     if (isOpen && receiptId) {
@@ -34,7 +35,26 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
           const docRef = doc(db, 'sales', receiptId);
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
-            setReceipt({ id: docSnap.id, ...docSnap.data() } as Sale);
+            const sale = { id: docSnap.id, ...docSnap.data() } as Sale;
+            setReceipt(sale);
+
+            let branchName = String((sale as Sale & { branchName?: string }).branchName || '').trim();
+            if (!branchName && sale.branchId) {
+              try {
+                const branchSnap = await getDoc(doc(db, 'branches', sale.branchId));
+                if (branchSnap.exists()) {
+                  const branchData = branchSnap.data();
+                  const sameTenant = !sale.tenantId || branchData.tenantId === sale.tenantId;
+                  if (sameTenant) branchName = String(branchData.name || '').trim();
+                }
+              } catch (branchError) {
+                console.warn('Invoice branch lookup failed:', branchError);
+              }
+            }
+            if (!branchName && sale.branchId && activeBranch?.id === sale.branchId) {
+              branchName = String(activeBranch?.name || '').trim();
+            }
+            setResolvedBranchName(branchName || 'Branch not available');
           } else {
             toast.error('Receipt not found');
             onClose();
@@ -49,7 +69,7 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
       };
       fetchReceipt();
     }
-  }, [isOpen, receiptId, onClose]);
+  }, [isOpen, receiptId, onClose, activeBranch?.id, activeBranch?.name]);
 
   if (!isOpen) return null;
   if (loading) {
@@ -118,33 +138,85 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
     }
   };
 
+  const waitForInvoiceAssets = async (element: HTMLElement) => {
+    const fontSet = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts;
+    if (fontSet?.ready) await fontSet.ready;
+
+    const images = Array.from(element.querySelectorAll('img'));
+    await Promise.all(images.map(image => new Promise<void>(resolve => {
+      if (image.complete) {
+        resolve();
+        return;
+      }
+      const finish = () => resolve();
+      image.addEventListener('load', finish, { once: true });
+      image.addEventListener('error', finish, { once: true });
+      window.setTimeout(finish, 3000);
+    })));
+  };
+
+  const renderInvoiceCanvas = (element: HTMLElement, ignoreImages = false) => html2canvas(element, {
+    scale: Math.min(2, Math.max(1, window.devicePixelRatio || 1)),
+    useCORS: true,
+    allowTaint: false,
+    backgroundColor: '#ffffff',
+    logging: false,
+    imageTimeout: 4000,
+    scrollX: 0,
+    scrollY: -window.scrollY,
+    windowWidth: Math.max(element.scrollWidth, 790),
+    windowHeight: Math.max(element.scrollHeight, element.clientHeight),
+    ignoreElements: ignoreImages ? node => node.tagName === 'IMG' : undefined
+  });
+
   const handleDownloadPDF = async () => {
     const element = document.getElementById('a4-invoice-container');
     if (!element) return;
+
     try {
-      const canvas = await html2canvas(element, { scale: 2, useCORS: true });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgWidth = 210;
-      const pageHeight = 295;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
+      await waitForInvoiceAssets(element);
 
-      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-
-      while (heightLeft >= 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
+      let canvas: HTMLCanvasElement;
+      try {
+        canvas = await renderInvoiceCanvas(element);
+      } catch (firstRenderError) {
+        console.warn('Invoice PDF render with images failed; retrying without external images.', firstRenderError);
+        canvas = await renderInvoiceCanvas(element, true);
       }
-      pdf.save(`Invoice_${receipt.receiptNumber}.pdf`);
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4', compress: true });
+      const pageWidth = 210;
+      const pageHeight = 297;
+      const margin = 10;
+      const printableWidth = pageWidth - (margin * 2);
+      const printableHeight = pageHeight - (margin * 2);
+      const imgHeight = (canvas.height * printableWidth) / canvas.width;
+
+      let renderedHeight = 0;
+      let pageIndex = 0;
+      do {
+        if (pageIndex > 0) pdf.addPage();
+        const y = margin - renderedHeight;
+        pdf.addImage(imgData, 'JPEG', margin, y, printableWidth, imgHeight, undefined, 'FAST');
+        renderedHeight += printableHeight;
+        pageIndex += 1;
+      } while (renderedHeight < imgHeight);
+
+      const pdfBlob = pdf.output('blob');
+      const objectUrl = URL.createObjectURL(pdfBlob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = `Invoice_${receipt.receiptNumber || 'receipt'}.pdf`;
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
       toast.success('Invoice PDF downloaded.');
     } catch (e) {
-      console.error(e);
-      toast.error('Failed to generate PDF.');
+      console.error('Invoice PDF export failed:', e);
+      toast.error('Failed to generate PDF. You can still use Print A4.');
     }
   };
 
@@ -187,7 +259,7 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
                 <div className="text-[10px] space-y-0.5">
                   <p className="text-zinc-500">Invoice No: <span className="font-bold text-zinc-900">{receipt.receiptNumber}</span></p>
                   <p className="text-zinc-500">Date: <span className="font-bold text-zinc-900">{new Date(receipt.timestamp).toLocaleDateString()}</span></p>
-                  <p className="text-zinc-500">Branch: <span className="font-bold text-zinc-900">{receipt.branchName || 'Main Store'}</span></p>
+                  <p className="text-zinc-500">Branch: <span className="font-bold text-zinc-900">{resolvedBranchName}</span></p>
                 </div>
               </div>
             </div>
