@@ -26,7 +26,7 @@ const newHandleValidation = `    const contextValidation = validateSaleCheckoutC
       hasPatient: Boolean(selectedPatient),
       hasInstitution: Boolean(selectedInstitution)
     });
-    if (!contextValidation.valid) {
+    if ('message' in contextValidation) {
       toast.error(contextValidation.message);
       return;
     }
@@ -55,7 +55,7 @@ const completeReplacement = `    if (!editingSaleId && !activeBranchId) {
       hasPatient: Boolean(selectedPatient),
       hasInstitution: Boolean(selectedInstitution)
     });
-    if (!contextValidation.valid) {
+    if ('message' in contextValidation) {
       receiptWindow?.close();
       toast.error(contextValidation.message);
       return;
