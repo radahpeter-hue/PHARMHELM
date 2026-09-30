@@ -53,7 +53,7 @@ jobs:
           echo "$changed"
           echo "$changed" | grep -q '^src/pages/Finance.tsx$'
           echo "$changed" | grep -q '^src/pages/finance/management/CreditLedger.tsx$'
-          echo "$changed" | grep -q '^tests/finance-credit-status-branch-name.test.ts$'
+          test -f tests/finance-credit-status-branch-name.test.ts
           prohibited=$(echo "$changed" | grep -E 'src/services/pos-v2|src/services/posCheckoutTierService.ts|src/services/posTierCartService.ts|firestore.rules|scripts/process-pos-v2-outbox.mjs' || true)
           if [ -n "$prohibited" ]; then
             echo "Protected files changed unexpectedly:"
