@@ -33,6 +33,7 @@ jobs:
         run: npm test
 
       - name: Confirm protected POS V2 engine unchanged from main
+        if: always()
         run: |
           git fetch origin main --depth=1
           if ! git diff --quiet origin/main -- \
