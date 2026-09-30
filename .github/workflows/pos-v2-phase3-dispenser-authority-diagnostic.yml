@@ -2,6 +2,12 @@ name: POS V2 Phase 3 Dispenser Authority Diagnostic
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - fix/pos-v2-phase3-branch-user-authorization
+    paths:
+      - '.github/workflows/pos-v2-phase3-dispenser-authority-diagnostic.yml'
+      - 'scripts/diagnose-pos-v2-dispenser-authority.mjs'
 
 jobs:
   diagnose:
