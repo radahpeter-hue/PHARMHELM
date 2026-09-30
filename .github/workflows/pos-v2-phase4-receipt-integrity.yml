@@ -28,9 +28,13 @@ jobs:
           code=$?
           cat phase4-patch.log
           if [ "$code" -ne 0 ]; then
+            mkdir -p docs
+            cp phase4-patch.log /tmp/PHASE4_PATCH_ERROR.txt
+            git reset --hard HEAD
+            cp /tmp/PHASE4_PATCH_ERROR.txt docs/PHASE4_PATCH_ERROR.txt
             git config user.name "PharmHelm CI"
             git config user.email "actions@users.noreply.github.com"
-            git add phase4-patch.log
+            git add docs/PHASE4_PATCH_ERROR.txt
             git commit -m "ci: capture Phase 4 patch failure" || true
             git push origin HEAD:fix/pos-v2-phase4-receipt-integrity || true
             exit "$code"
