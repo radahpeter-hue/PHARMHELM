@@ -10,6 +10,7 @@ on:
       - 'firestore.rules'
   workflow_dispatch:
 
+# Re-run marker: validate short-circuited POS rule order.
 jobs:
   reproduce:
     runs-on: ubuntu-latest
