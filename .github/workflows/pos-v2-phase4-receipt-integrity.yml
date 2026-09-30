@@ -5,7 +5,7 @@ on:
     branches:
       - fix/pos-v2-phase4-receipt-integrity
     paths:
-      - 'scripts/apply-phase4-receipt-integrity.mjs'
+      - 'scripts/apply-phase4-receipt-integrity-v2.mjs'
       - '.github/workflows/pos-v2-phase4-receipt-integrity.yml'
 
 permissions:
@@ -22,28 +22,13 @@ jobs:
           ref: fix/pos-v2-phase4-receipt-integrity
 
       - name: Apply narrow receipt-integrity patch
-        run: |
-          set +e
-          node scripts/apply-phase4-receipt-integrity.mjs > phase4-patch.log 2>&1
-          code=$?
-          cat phase4-patch.log
-          if [ "$code" -ne 0 ]; then
-            mkdir -p docs
-            cp phase4-patch.log /tmp/PHASE4_PATCH_ERROR.txt
-            git reset --hard HEAD
-            cp /tmp/PHASE4_PATCH_ERROR.txt docs/PHASE4_PATCH_ERROR.txt
-            git config user.name "PharmHelm CI"
-            git config user.email "actions@users.noreply.github.com"
-            git add docs/PHASE4_PATCH_ERROR.txt
-            git commit -m "ci: capture Phase 4 patch failure" || true
-            git push origin HEAD:fix/pos-v2-phase4-receipt-integrity || true
-            exit "$code"
-          fi
-          rm -f phase4-patch.log
+        run: node scripts/apply-phase4-receipt-integrity-v2.mjs
 
-      - name: Remove temporary patch machinery
+      - name: Remove temporary patch machinery and diagnostics
         run: |
           rm -f scripts/apply-phase4-receipt-integrity.mjs
+          rm -f scripts/apply-phase4-receipt-integrity-v2.mjs
+          rm -f docs/PHASE4_PATCH_ERROR.txt
           rm -f .github/workflows/pos-v2-phase4-receipt-integrity.yml
 
       - name: Install dependencies
@@ -70,9 +55,5 @@ jobs:
           git config user.name "PharmHelm CI"
           git config user.email "actions@users.noreply.github.com"
           git add -A
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
           git commit -m "fix: restore POS V2 receipt identity and seller attribution"
           git push origin HEAD:fix/pos-v2-phase4-receipt-integrity
