@@ -3,355 +3,43 @@ name: POS V2 Phase 1 UI Docs Patch
 on:
   push:
     branches:
-      - fix/pos-v2-phase1-ui-docs
+      - 'fix/pos-v2-phase1-ui-docs'
 
 permissions:
   contents: write
 
 jobs:
-  patch-test-commit:
-    if: github.actor != 'github-actions[bot]'
+  phase1:
     runs-on: ubuntu-latest
     steps:
       - name: Check out Phase 1 branch
         uses: actions/checkout@v4
         with:
-          ref: fix/pos-v2-phase1-ui-docs
           fetch-depth: 0
 
+      - name: Skip bot finalization commit
+        id: guard
+        shell: bash
+        run: |
+          if [ "${GITHUB_ACTOR}" = "github-actions[bot]" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Node.js
+        if: steps.guard.outputs.skip != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
       - name: Apply presentation-only Phase 1 patch
-        shell: bash
-        run: |
-          python3 <<'PY'
-          from pathlib import Path
+        if: steps.guard.outputs.skip != 'true'
+        run: python3 scripts/apply-phase1-ui-docs.py
 
-          BASE = '944c571e4f547904697e781c135c4fdd1f2e3c36'
-
-          def replace_once(text: str, old: str, new: str, label: str) -> str:
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'{label}: expected exactly one match, found {count}')
-              return text.replace(old, new, 1)
-
-          def replace_between(text: str, start: str, end: str, replacement: str, label: str) -> str:
-              i = text.find(start)
-              if i < 0:
-                  raise SystemExit(f'{label}: start marker not found')
-              j = text.find(end, i)
-              if j < 0:
-                  raise SystemExit(f'{label}: end marker not found')
-              return text[:i] + replacement + text[j:]
-
-          # Pure presentation helpers make ledger behaviour independently testable.
-          helper = '''import type { Sale } from '../types';
-
-export const getReceiptLedgerReference = (sale: Sale): string => {
-  const receiptNumber = String(sale.receiptNumber || '').trim();
-  if (receiptNumber) return receiptNumber;
-  const suffix = String(sale.id || '').slice(-8).toUpperCase();
-  return suffix ? `REF-${suffix}` : 'Reference unavailable';
-};
-
-export const getSaleIdentityLabel = (sale: Sale): string => {
-  const institutionName = String(sale.institutionName || '').trim();
-  if (institutionName) return institutionName;
-
-  const patientName = String(sale.patientName || '').trim();
-  if (patientName) return patientName;
-
-  return sale.context === 'walk-in' ? 'Anonymous' : 'Identity not recorded';
-};
-
-export const matchesReceiptLedgerSearch = (sale: Sale, searchTerm: string): boolean => {
-  const query = searchTerm.trim().toLowerCase();
-  if (!query) return true;
-
-  return [sale.receiptNumber, sale.patientName, sale.institutionName]
-    .some(value => String(value || '').toLowerCase().includes(query));
-};
-'''
-          Path('src/utils/salePresentation.ts').write_text(helper)
-
-          # Sales.tsx: display/search fixes and desktop flex containment only.
-          sales_path = Path('src/pages/Sales.tsx')
-          sales = sales_path.read_text()
-          sales = replace_once(
-              sales,
-              "import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';\n",
-              "import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';\nimport { getReceiptLedgerReference, getSaleIdentityLabel, matchesReceiptLedgerSearch } from '../utils/salePresentation';\n",
-              'Sales helper import'
-          )
-          sales = replace_once(
-              sales,
-              "  const filteredSales = sales.filter(sale => {\n    const matchesSearch = sale.id.toLowerCase().includes(searchTerm.toLowerCase()) ||\n                         (sale.receiptNumber || '').toLowerCase().includes(searchTerm.toLowerCase());\n",
-              "  const filteredSales = sales.filter(sale => {\n    const matchesSearch = matchesReceiptLedgerSearch(sale, searchTerm);\n",
-              'ledger search'
-          )
-          sales = replace_once(
-              sales,
-              'placeholder="Search by receipt ID or patient..."',
-              'placeholder="Search by receipt number, patient or institution..."',
-              'ledger search placeholder'
-          )
-          sales = replace_once(
-              sales,
-              '<span className="font-mono text-xs font-bold text-zinc-900">{sale.id.slice(0, 8).toUpperCase()}</span>',
-              '<span className="font-mono text-xs font-bold text-zinc-900">{getReceiptLedgerReference(sale)}</span>',
-              'ledger receipt cell'
-          )
-          sales = replace_once(
-              sales,
-              '<span className="text-sm font-medium text-zinc-900">{sale.receiptNumber}</span>\n                        <span className="text-xs text-zinc-400 uppercase tracking-tighter">{sale.context}</span>',
-              '<span className="text-sm font-medium text-zinc-900">{getSaleIdentityLabel(sale)}</span>\n                        <span className="text-xs text-zinc-400 uppercase tracking-tighter">{sale.context}</span>',
-              'ledger identity cell'
-          )
-          sales = replace_once(
-              sales,
-              '<div className="lg:col-span-4 flex flex-col gap-6 overflow-hidden min-h-0">',
-              '<div className="lg:col-span-4 flex flex-col gap-6 overflow-visible lg:overflow-hidden min-h-0">',
-              'right column containment'
-          )
-          sales = replace_once(
-              sales,
-              '<div className="bg-white p-5 rounded-3xl border border-zinc-200/90 shadow-lg shadow-zinc-100/10 space-y-4 relative">',
-              '<div className="bg-white p-5 rounded-3xl border border-zinc-200/90 shadow-lg shadow-zinc-100/10 space-y-4 relative shrink-0 lg:max-h-[48%] lg:overflow-y-auto custom-scrollbar">',
-              'context card desktop bound'
-          )
-          sales = replace_once(
-              sales,
-              '<div className="flex-1 bg-white rounded-3xl border border-zinc-200/95 shadow-xl shadow-zinc-100/10 flex flex-col overflow-hidden">',
-              '<div className="flex-1 min-h-0 bg-white rounded-3xl border border-zinc-200/95 shadow-xl shadow-zinc-100/10 flex flex-col overflow-hidden">',
-              'catalog min height'
-          )
-          sales = replace_once(
-              sales,
-              '<div className="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar min-h-[250px]">',
-              '<div className="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar min-h-[250px] lg:min-h-0">',
-              'catalog independent scroll'
-          )
-          sales_path.write_text(sales)
-
-          # A4InvoiceTemplate.tsx: branch resolution and resilient client-side PDF export.
-          invoice_path = Path('src/components/sales/A4InvoiceTemplate.tsx')
-          invoice = invoice_path.read_text()
-          invoice = replace_once(
-              invoice,
-              "  const [receipt, setReceipt] = useState<Sale | null>(null);\n  const [loading, setLoading] = useState(false);\n",
-              "  const [receipt, setReceipt] = useState<Sale | null>(null);\n  const [loading, setLoading] = useState(false);\n  const [resolvedBranchName, setResolvedBranchName] = useState('Branch not available');\n",
-              'invoice branch state'
-          )
-          invoice = replace_once(
-              invoice,
-              "          if (docSnap.exists()) {\n            setReceipt({ id: docSnap.id, ...docSnap.data() } as Sale);\n          } else {",
-              "          if (docSnap.exists()) {\n            const sale = { id: docSnap.id, ...docSnap.data() } as Sale;\n            setReceipt(sale);\n\n            let branchName = String(sale.branchName || '').trim();\n            if (!branchName && sale.branchId) {\n              try {\n                const branchSnap = await getDoc(doc(db, 'branches', sale.branchId));\n                if (branchSnap.exists()) {\n                  const branchData = branchSnap.data();\n                  const sameTenant = !sale.tenantId || branchData.tenantId === sale.tenantId;\n                  if (sameTenant) branchName = String(branchData.name || '').trim();\n                }\n              } catch (branchError) {\n                console.warn('Invoice branch lookup failed:', branchError);\n              }\n            }\n            if (!branchName && sale.branchId && activeBranch?.id === sale.branchId) {\n              branchName = String(activeBranch?.name || '').trim();\n            }\n            setResolvedBranchName(branchName || 'Branch not available');\n          } else {",
-              'invoice receipt/branch fetch'
-          )
-          invoice = replace_once(
-              invoice,
-              "  }, [isOpen, receiptId, onClose]);",
-              "  }, [isOpen, receiptId, onClose, activeBranch?.id, activeBranch?.name]);",
-              'invoice effect deps'
-          )
-
-          pdf_block = '''  const waitForInvoiceAssets = async (element: HTMLElement) => {
-    const fontSet = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts;
-    if (fontSet?.ready) await fontSet.ready;
-
-    const images = Array.from(element.querySelectorAll('img'));
-    await Promise.all(images.map(image => new Promise<void>(resolve => {
-      if (image.complete) {
-        resolve();
-        return;
-      }
-      const finish = () => resolve();
-      image.addEventListener('load', finish, { once: true });
-      image.addEventListener('error', finish, { once: true });
-      window.setTimeout(finish, 3000);
-    })));
-  };
-
-  const renderInvoiceCanvas = (element: HTMLElement, ignoreImages = false) => html2canvas(element, {
-    scale: Math.min(2, Math.max(1, window.devicePixelRatio || 1)),
-    useCORS: true,
-    allowTaint: false,
-    backgroundColor: '#ffffff',
-    logging: false,
-    imageTimeout: 4000,
-    scrollX: 0,
-    scrollY: -window.scrollY,
-    windowWidth: Math.max(element.scrollWidth, 790),
-    windowHeight: Math.max(element.scrollHeight, element.clientHeight),
-    ignoreElements: ignoreImages ? node => node.tagName === 'IMG' : undefined
-  });
-
-  const handleDownloadPDF = async () => {
-    const element = document.getElementById('a4-invoice-container');
-    if (!element) return;
-
-    try {
-      await waitForInvoiceAssets(element);
-
-      let canvas: HTMLCanvasElement;
-      try {
-        canvas = await renderInvoiceCanvas(element);
-      } catch (firstRenderError) {
-        console.warn('Invoice PDF render with images failed; retrying without external images.', firstRenderError);
-        canvas = await renderInvoiceCanvas(element, true);
-      }
-
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-      const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4', compress: true });
-      const pageWidth = 210;
-      const pageHeight = 297;
-      const margin = 10;
-      const printableWidth = pageWidth - (margin * 2);
-      const printableHeight = pageHeight - (margin * 2);
-      const imgHeight = (canvas.height * printableWidth) / canvas.width;
-
-      let renderedHeight = 0;
-      let pageIndex = 0;
-      do {
-        if (pageIndex > 0) pdf.addPage();
-        const y = margin - renderedHeight;
-        pdf.addImage(imgData, 'JPEG', margin, y, printableWidth, imgHeight, undefined, 'FAST');
-        renderedHeight += printableHeight;
-        pageIndex += 1;
-      } while (renderedHeight < imgHeight);
-
-      const pdfBlob = pdf.output('blob');
-      const objectUrl = URL.createObjectURL(pdfBlob);
-      const anchor = document.createElement('a');
-      anchor.href = objectUrl;
-      anchor.download = `Invoice_${receipt.receiptNumber || 'receipt'}.pdf`;
-      anchor.rel = 'noopener';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
-      toast.success('Invoice PDF downloaded.');
-    } catch (e) {
-      console.error('Invoice PDF export failed:', e);
-      toast.error('Failed to generate PDF. You can still use Print A4.');
-    }
-  };
-
-'''
-          invoice = replace_between(
-              invoice,
-              '  const handleDownloadPDF = async () => {',
-              '  return (',
-              pdf_block,
-              'PDF export block'
-          )
-          invoice = replace_once(
-              invoice,
-              "{receipt.branchName || 'Main Store'}",
-              '{resolvedBranchName}',
-              'invoice branch display'
-          )
-          invoice_path.write_text(invoice)
-
-          # Add literal npm run typecheck gate without changing runtime code.
-          package_path = Path('package.json')
-          package = package_path.read_text()
-          package = replace_once(
-              package,
-              '    "lint": "tsc --noEmit",\n    "test":',
-              '    "lint": "tsc --noEmit",\n    "typecheck": "tsc --noEmit",\n    "test":',
-              'typecheck script'
-          )
-          package_path.write_text(package)
-
-          tests = '''import test from 'node:test';
-import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { getReceiptLedgerReference, getSaleIdentityLabel, matchesReceiptLedgerSearch } from '../src/utils/salePresentation';
-
-const salesSource = readFileSync(new URL('../src/pages/Sales.tsx', import.meta.url), 'utf8');
-const invoiceSource = readFileSync(new URL('../src/components/sales/A4InvoiceTemplate.tsx', import.meta.url), 'utf8');
-
-const sale = (overrides: Record<string, unknown> = {}) => ({
-  id: 'V2SALE_Z_internal_12345678',
-  receiptNumber: 'BR-3QLNF-2026-000123',
-  context: 'walk-in',
-  items: [],
-  subtotal: 0,
-  total: 0,
-  totalAmount: 0,
-  discountAmount: 0,
-  paymentMethod: 'cash',
-  timestamp: new Date().toISOString(),
-  status: 'completed',
-  ...overrides
-}) as any;
-
-test('Receipt Ledger displays receiptNumber as the receipt reference', () => {
-  assert.equal(getReceiptLedgerReference(sale()), 'BR-3QLNF-2026-000123');
-  assert.ok(salesSource.includes('{getReceiptLedgerReference(sale)}'));
-});
-
-test('Receipt Ledger fallback is readable and does not expose the V2 prefix', () => {
-  assert.equal(getReceiptLedgerReference(sale({ receiptNumber: '' })), 'REF-12345678');
-});
-
-test('Institutional sale displays institutionName first', () => {
-  assert.equal(getSaleIdentityLabel(sale({ context: 'institutional', institutionName: 'Mulago Hospital', patientName: 'Patient A' })), 'Mulago Hospital');
-});
-
-test('Named patient sale displays patientName', () => {
-  assert.equal(getSaleIdentityLabel(sale({ patientName: 'Jane Doe' })), 'Jane Doe');
-});
-
-test('Anonymous walk-in displays Anonymous', () => {
-  assert.equal(getSaleIdentityLabel(sale({ patientName: null, institutionName: null })), 'Anonymous');
-});
-
-test('Non-walk-in without an identity shows the missing identity warning', () => {
-  assert.equal(getSaleIdentityLabel(sale({ context: 'telepharmacy', patientName: null, institutionName: null })), 'Identity not recorded');
-});
-
-test('Receipt Ledger search matches receiptNumber', () => {
-  assert.equal(matchesReceiptLedgerSearch(sale(), '000123'), true);
-});
-
-test('Receipt Ledger search matches institutionName', () => {
-  assert.equal(matchesReceiptLedgerSearch(sale({ institutionName: 'Mengo Hospital' }), 'mengo'), true);
-});
-
-test('Receipt Ledger search matches patientName', () => {
-  assert.equal(matchesReceiptLedgerSearch(sale({ patientName: 'Peter Kato' }), 'kato'), true);
-});
-
-test('A4 invoice resolves receipt branch by branchId and never uses false Main Store fallback', () => {
-  assert.ok(invoiceSource.includes("getDoc(doc(db, 'branches', sale.branchId))"));
-  assert.ok(invoiceSource.includes("setResolvedBranchName(branchName || 'Branch not available')"));
-  assert.equal(invoiceSource.includes("receipt.branchName || 'Main Store'"), false);
-  assert.ok(invoiceSource.includes('{resolvedBranchName}'));
-});
-
-test('A4 PDF export has asset wait, image-free retry, blob download and print fallback', () => {
-  assert.ok(invoiceSource.includes('waitForInvoiceAssets(element)'));
-  assert.ok(invoiceSource.includes('renderInvoiceCanvas(element, true)'));
-  assert.ok(invoiceSource.includes("pdf.output('blob')"));
-  assert.ok(invoiceSource.includes('You can still use Print A4'));
-});
-
-test('Institutional desktop layout retains an independently scrollable product region', () => {
-  assert.ok(salesSource.includes('lg:max-h-[48%] lg:overflow-y-auto custom-scrollbar'));
-  assert.ok(salesSource.includes('flex-1 min-h-0 bg-white rounded-3xl'));
-  assert.ok(salesSource.includes('min-h-[250px] lg:min-h-0'));
-});
-'''
-          Path('tests/pos-phase1-ui-docs.test.ts').write_text(tests)
-          PY
-
-      - name: Confirm protected POS V2 core is untouched before gates
+      - name: Confirm protected POS V2 core is untouched
+        if: steps.guard.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -362,132 +50,120 @@ test('Institutional desktop layout retains an independently scrollable product r
           fi
 
       - name: Install dependencies
+        if: steps.guard.outputs.skip != 'true'
         run: npm ci
 
       - name: Run full regression suite
+        if: steps.guard.outputs.skip != 'true'
         run: npm test
 
-      - name: Lint / compile check
+      - name: Lint
+        if: steps.guard.outputs.skip != 'true'
         run: npm run lint
 
-      - name: Explicit typecheck gate
+      - name: Typecheck
+        if: steps.guard.outputs.skip != 'true'
         run: npm run typecheck
 
-      - name: Production build
+      - name: Build
+        if: steps.guard.outputs.skip != 'true'
         run: npm run build
 
       - name: Diff whitespace gate
+        if: steps.guard.outputs.skip != 'true'
         run: git diff --check
 
       - name: Write Phase 1 report
+        if: steps.guard.outputs.skip != 'true'
         shell: bash
         run: |
           mkdir -p docs
           cat > docs/POS_V2_PHASE1_UI_DOCUMENT_FIX_REPORT.md <<'EOF'
           # POS V2 Phase 1 UI and Document Fix Report
 
-          ## 1. Objective
-          Correct the Receipt Ledger display/search defects, A4 invoice branch/PDF defects, and institutional desktop clipping without modifying the working POS V2 transaction engine, Firestore rules, inventory deductions, payments, outbox processing, activation, or FEFO behaviour.
+          ## Objective
+          Correct Receipt Ledger display/search, A4 invoice branch/PDF behaviour, and institutional desktop clipping without modifying the working POS V2 transaction engine.
 
-          ## 2. Baseline and branch
-          - Baseline `main`: `944c571e4f547904697e781c135c4fdd1f2e3c36`
-          - Working branch: `fix/pos-v2-phase1-ui-docs`
-          - Baseline commit is the merged PR #24 production fix.
+          ## Baseline
+          - `main`: `944c571e4f547904697e781c135c4fdd1f2e3c36`
+          - Branch: `fix/pos-v2-phase1-ui-docs`
+          - Baseline is merged PR #24, the successful production POS V2 fix.
 
-          ## 3. Files inspected
+          ## Files inspected
           - `src/pages/Sales.tsx`
           - `src/components/sales/A4InvoiceTemplate.tsx`
           - `package.json`
-          - existing tests and GitHub workflows relevant to build/deploy safety
+          - existing tests and deployment workflows
 
-          ## 4. Root causes
+          ## Root causes
           ### Receipt Ledger
-          - Receipt ID rendered `sale.id.slice(0, 8)` instead of the canonical `sale.receiptNumber`.
-          - Patient/Client rendered `sale.receiptNumber` instead of sale identity.
-          - Search matched internal sale ID and receipt number only, not patient or institution names.
+          - Receipt ID rendered an internal sale document prefix rather than `receiptNumber`.
+          - Patient/Client rendered `receiptNumber` rather than the customer identity.
+          - Search did not cover patient or institution names.
 
-          ### A4 branch display
-          - The template used `receipt.branchName || 'Main Store'`, creating a false HQ/Main Store label whenever `branchName` was not persisted on the sale.
+          ### A4 branch
+          - The template used `receipt.branchName || 'Main Store'`, falsely labelling branch receipts as Main Store when `branchName` was absent.
 
-          ### A4 PDF export
-          - The export depended on a single high-resolution `html2canvas` pass over a fixed-width invoice and had no recovery path when external images/assets or browser canvas/download behaviour failed.
-          - The implementation now waits for render assets, constrains raster scale, uses CORS-safe canvas settings, retries without external images if the first render fails, generates a compressed blob, and retains Print A4 as the independent fallback.
+          ### A4 PDF
+          - The browser-side export had one high-resolution canvas path and no asset wait or recovery path for external-image/canvas failures.
+          - The fix waits for fonts/images, constrains raster scale, keeps CORS-safe capture, retries without external images, uses compressed JPEG/blob download, and leaves Print A4 independent.
 
           ### Institutional desktop layout
-          - The right column was height-constrained with `overflow-hidden` while the institutional context card could grow. The catalogue also retained a desktop minimum height, allowing the product selector to be clipped below the viewport.
+          - A growing institutional context card competed with the catalogue inside a height-constrained right column, while the product list retained a desktop minimum height.
 
-          ## 5. Files changed
+          ## Files changed
           - `src/pages/Sales.tsx`
           - `src/components/sales/A4InvoiceTemplate.tsx`
           - `src/utils/salePresentation.ts`
           - `tests/pos-phase1-ui-docs.test.ts`
-          - `package.json` only to add the requested `npm run typecheck` gate
+          - `package.json` only to expose the requested `npm run typecheck` gate
           - `docs/POS_V2_PHASE1_UI_DOCUMENT_FIX_REPORT.md`
 
-          ## 6. Before / after behaviour
-          - Receipt Ledger now displays `receiptNumber` and resolves client identity as institution, patient, Anonymous walk-in, or `Identity not recorded`.
-          - Ledger search now matches receipt number, institution name, and patient name.
-          - A4 branch display prefers stored `branchName`, otherwise resolves `branchId` from the branches collection, otherwise uses active branch only when IDs match, otherwise displays `Branch not available`.
-          - No `Main Store` fallback remains in the A4 invoice.
-          - PDF export is resilient to external-image capture failure and large browser rasterisation, with printing unaffected.
-          - Institutional context is bounded on desktop and independently scrollable, while the product catalogue owns the remaining height and its item list scrolls independently.
+          ## Before and after
+          - Receipt Ledger now shows the canonical `receiptNumber` with a readable fallback only when missing.
+          - Identity display priority is institution, patient, Anonymous for unnamed walk-in, then `Identity not recorded`.
+          - Search matches receipt number, institution name and patient name.
+          - A4 branch resolution prefers stored `branchName`, then the sale `branchId`, then active branch only when IDs match, otherwise `Branch not available`.
+          - No false `Main Store` fallback remains in the A4 invoice.
+          - PDF export has a client-side recovery path and printing remains available separately.
+          - Institutional desktop context and catalogue now have explicit height/scroll ownership so product selection remains reachable at 100% zoom.
 
-          ## 7. POS V2 core protection
-          The workflow fails if any of these protected files change:
-          - `src/services/pos-v2/posCheckoutV2Repository.ts`
-          - `src/services/pos-v2/posCheckoutV2Calculator.ts`
-          - `src/services/pos-v2/posCheckoutV2Service.ts`
-          - `src/services/posCheckoutTierService.ts`
-          - `src/services/posTierCartService.ts`
-          - `firestore.rules`
+          ## POS V2 core protection
+          The validation fails if any protected transaction/rules file changes. No stock, batch, payment, outbox, activation, migration, tenant configuration or production-data operation is performed.
 
-          No stock, payment, outbox, activation, branch-engine, migration, or production-data operation is performed.
+          ## Tests added
+          `tests/pos-phase1-ui-docs.test.ts` covers receipt display, identity precedence, Anonymous/missing identity, the three search fields, A4 branch resolution, removal of Main Store fallback, PDF recovery contract, and desktop catalogue scrolling.
 
-          ## 8. Tests added
-          `tests/pos-phase1-ui-docs.test.ts` covers:
-          1. receipt number display helper
-          2. readable missing-receipt fallback
-          3. institution identity priority
-          4. patient identity
-          5. Anonymous walk-in
-          6. missing identity warning
-          7. receipt number search
-          8. institution search
-          9. patient search
-          10. A4 branch resolution and removal of Main Store fallback
-          11. resilient PDF export contract
-          12. institutional desktop independent scrolling contract
-
-          ## 9. Required gate results
-          All required Phase 1 gates passed in GitHub Actions before this report was committed:
+          ## Gate results
+          All gates below passed before the implementation commit was written:
           - `npm ci`: PASS
           - `npm test`: PASS
           - `npm run lint`: PASS
           - `npm run typecheck`: PASS
           - `npm run build`: PASS
           - `git diff --check`: PASS
-          - protected POS V2 core diff guard: PASS
+          - protected core diff guard: PASS
 
-          ## 10. Risks
-          - A4 PDF remains browser-side and therefore still depends on browser PDF/download capabilities. The new fallback removes the common asset/canvas failure mode but cannot guarantee every embedded browser permits file downloads.
-          - Branch resolution performs one read of the receipt branch when `branchName` is absent.
-          - The institutional context card may itself scroll on shorter desktop viewports. This is deliberate to preserve product selection and checkout accessibility at 100% zoom.
+          ## Risks
+          - PDF remains browser-side and still depends on browser download permissions. Print A4 remains the fallback.
+          - Resolving a missing stored branch name requires one branch-document read.
+          - On short desktop viewports the context card can scroll independently by design.
 
-          ## 11. Rollback plan
-          Revert the single Phase 1 implementation commit on `fix/pos-v2-phase1-ui-docs`. No data migration, rules deployment, stock mutation, or production configuration change is required for rollback.
+          ## Rollback
+          Revert the single Phase 1 implementation commit. No migration, rules rollback, stock repair or configuration rollback is required.
 
-          ## 12. Recommended live validation after approval and deployment
-          1. Open Masaka Receipt Ledger and confirm the recent V2 receipt shows the canonical receipt number, not the V2 sale document prefix.
-          2. Confirm institutional, named-patient and anonymous walk-in identity labels.
-          3. Search by receipt number, institution name and patient name.
-          4. Open A4 invoice for a Masaka receipt and confirm `Masaka` rather than `Main Store`.
-          5. Download A4 PDF on desktop Chrome and mobile Safari, including a tenant with a remote logo.
-          6. Confirm Print A4 remains functional even if download is blocked by browser policy.
-          7. At 100% desktop zoom choose Institutional and verify institution/prescriber fields, product search/results, basket and checkout remain reachable.
-          8. Do not perform Phase 2 context-rule changes during this validation.
+          ## Recommended live validation after approval and deployment
+          1. Verify a Masaka V2 receipt shows its canonical receipt number.
+          2. Verify institution, named patient and Anonymous display cases.
+          3. Search by receipt number, institution and patient.
+          4. Verify the A4 invoice shows Masaka, not Main Store.
+          5. Test PDF download on desktop Chrome and mobile Safari, including a remote logo.
+          6. Verify Print A4 remains available.
+          7. At 100% desktop zoom select Institutional and confirm fields, product search/results, basket and checkout remain reachable.
           EOF
 
       - name: Final protected-core and diff checks
+        if: steps.guard.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -497,14 +173,14 @@ test('Institutional desktop layout retains an independently scrollable product r
             echo 'Protected POS V2 core/rules file changed unexpectedly.' >&2
             exit 1
           fi
-          echo 'Changed files:'
           git status --short
 
       - name: Commit validated Phase 1 changes only
+        if: steps.guard.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          git rm .github/workflows/phase1-ui-docs-patch.yml
+          git rm .github/workflows/phase1-ui-docs-patch.yml scripts/apply-phase1-ui-docs.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src/pages/Sales.tsx src/components/sales/A4InvoiceTemplate.tsx src/utils/salePresentation.ts tests/pos-phase1-ui-docs.test.ts package.json docs/POS_V2_PHASE1_UI_DOCUMENT_FIX_REPORT.md
