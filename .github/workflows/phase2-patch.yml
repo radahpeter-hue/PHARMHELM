@@ -1,0 +1,8 @@
+name: Phase2 Patch
+on: push
+jobs:
+  patch:
+    if: github.ref == 'refs/heads/fix/pos-v2-phase2-context-validation'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
