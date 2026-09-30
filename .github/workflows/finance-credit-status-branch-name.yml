@@ -1,0 +1,71 @@
+name: Finance Credit Status Branch Name Fix
+
+on:
+  push:
+    branches:
+      - fix/finance-credit-status-branch-name
+    paths:
+      - .finance-credit-status-branch-name-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/finance-credit-status-branch-name
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Apply finance sync patch
+        run: node scripts/applyFinanceCreditStatusBranchNameFix.mjs
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run focused finance tests
+        run: |
+          node --import tsx --test tests/finance-branch-credit-display.test.ts
+          node --import tsx --test tests/finance-credit-status-branch-name.test.ts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Production build
+        run: npm run build
+
+      - name: Diff safety check
+        run: git diff --check
+
+      - name: Guard scope
+        shell: bash
+        run: |
+          changed=$(git diff --name-only HEAD)
+          echo "$changed"
+          echo "$changed" | grep -q '^src/pages/Finance.tsx$'
+          echo "$changed" | grep -q '^src/pages/finance/management/CreditLedger.tsx$'
+          echo "$changed" | grep -q '^tests/finance-credit-status-branch-name.test.ts$'
+          prohibited=$(echo "$changed" | grep -E 'src/services/pos-v2|src/services/posCheckoutTierService.ts|src/services/posTierCartService.ts|firestore.rules|scripts/process-pos-v2-outbox.mjs' || true)
+          if [ -n "$prohibited" ]; then
+            echo "Protected files changed unexpectedly:"
+            echo "$prohibited"
+            exit 1
+          fi
+
+      - name: Commit validated patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pages/Finance.tsx src/pages/finance/management/CreditLedger.tsx tests/finance-credit-status-branch-name.test.ts
+          git commit -m "fix: sync branch credit status and resolve branch names [skip ci]"
+          git push origin HEAD:fix/finance-credit-status-branch-name
