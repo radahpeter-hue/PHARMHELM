@@ -1,0 +1,403 @@
+name: Phase 2 Context Validation Implementation
+
+on:
+  push:
+    branches:
+      - fix/pos-v2-phase2-context-validation
+
+permissions:
+  contents: write
+
+jobs:
+  implement-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Apply Phase 2 changes
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          sales_path = Path('src/pages/Sales.tsx')
+          sales = sales_path.read_text()
+
+          auth_import = "import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';"
+          validation_import = "import { validateSaleCheckoutContext } from '../utils/saleContextValidation';"
+          if validation_import not in sales:
+              if auth_import not in sales:
+                  raise SystemExit('Expected posAuthorization import anchor not found')
+              sales = sales.replace(auth_import, auth_import + "\n" + validation_import, 1)
+
+          old_context_block = """    // Validation based on context
+    if (context === 'telepharmacy' && !selectedPatient) {
+      toast.error('Patient is mandatory for Telepharmacy');
+      return;
+    }
+    if (context === 'institutional' && !selectedInstitution) {
+      toast.error('Institution is mandatory for Institutional billing');
+      return;
+    }
+"""
+          new_context_block = """    const contextValidation = validateSaleCheckoutContext({
+      context,
+      paymentMethod,
+      hasPatient: Boolean(selectedPatient),
+      hasInstitution: Boolean(selectedInstitution)
+    });
+    if (!contextValidation.valid) {
+      toast.error(contextValidation.message);
+      return;
+    }
+"""
+          if old_context_block in sales:
+              sales = sales.replace(old_context_block, new_context_block, 1)
+          elif new_context_block not in sales:
+              raise SystemExit('Expected handleCheckout context validation anchor not found')
+
+          complete_anchor = """    if (!editingSaleId && !activeBranchId) {
+      receiptWindow?.close();
+      toast.error('Select an active branch before processing a sale.');
+      return;
+    }
+
+    // Check if any cart item's price is below cost price of that specific batch
+"""
+          complete_replacement = """    if (!editingSaleId && !activeBranchId) {
+      receiptWindow?.close();
+      toast.error('Select an active branch before processing a sale.');
+      return;
+    }
+
+    const contextValidation = validateSaleCheckoutContext({
+      context,
+      paymentMethod,
+      hasPatient: Boolean(selectedPatient),
+      hasInstitution: Boolean(selectedInstitution)
+    });
+    if (!contextValidation.valid) {
+      receiptWindow?.close();
+      toast.error(contextValidation.message);
+      return;
+    }
+
+    // Check if any cart item's price is below cost price of that specific batch
+"""
+          if complete_anchor in sales:
+              sales = sales.replace(complete_anchor, complete_replacement, 1)
+          elif sales.count('const contextValidation = validateSaleCheckoutContext({') < 2:
+              raise SystemExit('Expected completeSale validation anchor not found')
+
+          sales_path.write_text(sales)
+
+          Path('src/utils/saleContextValidation.ts').write_text("""export interface SaleCheckoutContextValidationInput {
+  context: string;
+  paymentMethod: string;
+  hasPatient: boolean;
+  hasInstitution: boolean;
+}
+
+export type SaleCheckoutContextValidationResult =
+  | { valid: true }
+  | {
+      valid: false;
+      code:
+        | 'telepharmacy_patient_required'
+        | 'institution_required'
+        | 'institutional_credit_institution_required'
+        | 'credit_identity_required';
+      message: string;
+    };
+
+/**
+ * Validates sale identity/context integrity before any checkout engine is allowed
+ * to start. It deliberately does not perform stock, FEFO, payment posting or
+ * credit-limit calculations; those remain the responsibility of existing flows.
+ */
+export function validateSaleCheckoutContext(
+  input: SaleCheckoutContextValidationInput
+): SaleCheckoutContextValidationResult {
+  const context = String(input.context || '').trim().toLowerCase();
+  const paymentMethod = String(input.paymentMethod || '').trim().toLowerCase();
+
+  if (context === 'telepharmacy' && !input.hasPatient) {
+    return {
+      valid: false,
+      code: 'telepharmacy_patient_required',
+      message: 'Client/patient name is required for a telepharmacy sale.'
+    };
+  }
+
+  if (paymentMethod === 'institutional_credit' && !input.hasInstitution) {
+    return {
+      valid: false,
+      code: 'institutional_credit_institution_required',
+      message: 'An institution is required for institutional credit.'
+    };
+  }
+
+  if (context === 'institutional' && !input.hasInstitution) {
+    return {
+      valid: false,
+      code: 'institution_required',
+      message: 'Select an institution before completing an institutional sale.'
+    };
+  }
+
+  if (paymentMethod === 'credit' && !input.hasPatient && !input.hasInstitution) {
+    return {
+      valid: false,
+      code: 'credit_identity_required',
+      message: 'An identifiable client or institution is required for a credit sale.'
+    };
+  }
+
+  return { valid: true };
+}
+""")
+
+          Path('tests/pos-phase2-context-validation.test.ts').write_text("""import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
+import { validateSaleCheckoutContext } from '../src/utils/saleContextValidation';
+
+const validate = (overrides: Partial<Parameters<typeof validateSaleCheckoutContext>[0]> = {}) =>
+  validateSaleCheckoutContext({
+    context: 'walk-in',
+    paymentMethod: 'cash',
+    hasPatient: false,
+    hasInstitution: false,
+    ...overrides
+  });
+
+test('anonymous walk-in passes context validation', () => {
+  assert.deepEqual(validate(), { valid: true });
+});
+
+test('named walk-in passes context validation', () => {
+  assert.deepEqual(validate({ hasPatient: true }), { valid: true });
+});
+
+test('telepharmacy without a client/patient is rejected with an actionable message', () => {
+  assert.deepEqual(validate({ context: 'telepharmacy' }), {
+    valid: false,
+    code: 'telepharmacy_patient_required',
+    message: 'Client/patient name is required for a telepharmacy sale.'
+  });
+});
+
+test('telepharmacy with a named client/patient passes', () => {
+  assert.deepEqual(validate({ context: 'telepharmacy', hasPatient: true }), { valid: true });
+});
+
+test('institutional sale without an institution is rejected', () => {
+  assert.deepEqual(validate({ context: 'institutional' }), {
+    valid: false,
+    code: 'institution_required',
+    message: 'Select an institution before completing an institutional sale.'
+  });
+});
+
+test('institutional sale with an institution passes', () => {
+  assert.deepEqual(validate({ context: 'institutional', hasInstitution: true }), { valid: true });
+});
+
+test('institutional credit without an institution is rejected', () => {
+  assert.deepEqual(validate({ context: 'institutional', paymentMethod: 'institutional_credit' }), {
+    valid: false,
+    code: 'institutional_credit_institution_required',
+    message: 'An institution is required for institutional credit.'
+  });
+});
+
+test('institutional credit with an institution passes context validation', () => {
+  assert.deepEqual(validate({ context: 'institutional', paymentMethod: 'institutional_credit', hasInstitution: true }), { valid: true });
+});
+
+test('anonymous walk-in generic credit is rejected', () => {
+  assert.deepEqual(validate({ paymentMethod: 'credit' }), {
+    valid: false,
+    code: 'credit_identity_required',
+    message: 'An identifiable client or institution is required for a credit sale.'
+  });
+});
+
+test('identified generic credit remains eligible for existing downstream credit rules', () => {
+  assert.deepEqual(validate({ paymentMethod: 'credit', hasPatient: true }), { valid: true });
+  assert.deepEqual(validate({ paymentMethod: 'credit', hasInstitution: true }), { valid: true });
+});
+
+test('Phase 2 validation is wired before checkout attempt locking and POS V2 invocation', () => {
+  const source = readFileSync('src/pages/Sales.tsx', 'utf8');
+  const completeSaleIndex = source.indexOf('const completeSale = async');
+  const completeValidationIndex = source.indexOf('const contextValidation = validateSaleCheckoutContext({', completeSaleIndex);
+  const submissionLockIndex = source.indexOf('checkoutSubmissionRef.current = true', completeSaleIndex);
+  const v2InvocationIndex = source.indexOf('await executeCheckoutV2({', completeSaleIndex);
+
+  assert.notEqual(completeSaleIndex, -1);
+  assert.notEqual(completeValidationIndex, -1);
+  assert.notEqual(submissionLockIndex, -1);
+  assert.notEqual(v2InvocationIndex, -1);
+  assert.ok(completeValidationIndex < submissionLockIndex, 'context validation must precede checkout submission lock');
+  assert.ok(completeValidationIndex < v2InvocationIndex, 'context validation must precede POS V2 invocation');
+});
+
+test('validation failure path has no inventory, payment or outbox side effects', () => {
+  const helperSource = readFileSync('src/utils/saleContextValidation.ts', 'utf8');
+  assert.equal(helperSource.includes('executeCheckoutV2'), false);
+  assert.equal(helperSource.includes('product_batches'), false);
+  assert.equal(helperSource.includes('runTransaction'), false);
+  assert.equal(helperSource.includes('payment'), true); // paymentMethod is input only
+  assert.equal(helperSource.includes('outbox'), false);
+});
+""")
+
+          Path('docs/POS_V2_PHASE2_CONTEXT_VALIDATION_REPORT.md').write_text("""# POS V2 Phase 2 Context Validation Report
+
+## 1. Objective
+Prevent invalid sale identity/context combinations from reaching either checkout engine, especially the protected POS V2 production transaction path.
+
+## 2. Production state inherited from Phase 1
+Phase 1 and PR #26 were already merged to `main`. The POS V2 canonical transaction chain is treated as working production functionality and is intentionally protected by this change.
+
+## 3. Files inspected
+- `src/pages/Sales.tsx`
+- `src/types.ts`
+- POS V2 activation/service references needed only to locate the checkout boundary
+- existing POS V2 tests and Phase 1 presentation tests
+
+## 4. Existing context architecture discovered
+The POS UI exposes three sale contexts: `walk-in`, `telepharmacy`, and `institutional`. `SaleContext` is currently typed as `string`.
+
+## 5. Existing identity architecture
+Patient/client identity is represented by `selectedPatient` and persisted using `patientId` and `patientName`. Institution identity is represented by `selectedInstitution` and persisted using `institutionId` and `institutionName`.
+
+## 6. Institutional credit representation
+Institutional credit is not a sale context. It is a `PaymentMethodType` value, `institutional_credit`. The generic `credit` payment method also exists.
+
+## 7. Validation gaps found
+Existing `handleCheckout` logic blocked missing telepharmacy patient identity and missing institutional institution identity, but the rules were embedded in `Sales.tsx`, had inconsistent messages, did not guarantee an institution for `institutional_credit`, and did not prevent anonymous generic credit.
+
+## 8. Root cause
+Context identity validation and payment/credit identity validation were not represented as one coherent pre-checkout rule set. Because payment method is selected in the checkout flow, validation only at the initial checkout-button boundary is insufficient.
+
+## 9. Implementation
+Added a pure `validateSaleCheckoutContext` helper and applied it both before the checkout modal is opened and again in `completeSale` before the synchronous submission lock, checkout-attempt creation, engine resolution, or POS V2 invocation.
+
+Rules implemented:
+- Anonymous walk-in: allowed.
+- Named walk-in: allowed.
+- Telepharmacy: named client/patient required.
+- Institutional: institution required.
+- Institutional credit: institution required.
+- Generic credit: at least one identifiable client or institution required.
+
+No additional phone, address, demographic, prescriber, or institution requirements were introduced beyond existing rules.
+
+## 10. Files changed
+- `src/pages/Sales.tsx`
+- `src/utils/saleContextValidation.ts`
+- `tests/pos-phase2-context-validation.test.ts`
+- `docs/POS_V2_PHASE2_CONTEXT_VALIDATION_REPORT.md`
+
+## 11. Validation matrix
+1. Walk-in + no patient: PASS as anonymous.
+2. Walk-in + patient: PASS.
+3. Telepharmacy + no patient: BLOCK.
+4. Telepharmacy + patient: PASS.
+5. Institutional + no institution: BLOCK.
+6. Institutional + institution: PASS.
+7. Institutional credit + no institution: BLOCK.
+8. Institutional credit + institution: PASS subject to existing downstream credit rules.
+9. Anonymous generic credit: BLOCK.
+10. Failed context validation returns before checkout execution and leaves basket state untouched.
+
+## 12. Tests added
+Focused unit tests cover the validation matrix, exact user-facing messages, identified generic credit, validation ordering before the checkout submission lock and V2 invocation, and the pure helper's lack of inventory/payment/outbox side effects.
+
+## 13. Test results
+The implementation workflow runs `npm ci`, targeted Phase 2 tests, the complete `npm test` suite, lint, typecheck, build, and `git diff --check` before committing implementation changes.
+
+## 14. Build result
+Must be green in the implementation workflow before the implementation commit is pushed.
+
+## 15. Proof POS V2 core was untouched
+The implementation workflow explicitly fails if the diff changes any of:
+- `src/services/pos-v2/posCheckoutV2Repository.ts`
+- `src/services/pos-v2/posCheckoutV2Calculator.ts`
+- `src/services/pos-v2/posCheckoutV2Service.ts`
+- `src/services/posCheckoutTierService.ts`
+- `src/services/posTierCartService.ts`
+
+## 16. Risks
+Primary regression risk is blocking a previously tolerated anonymous `credit` payment. This is intentional under the Phase 2 no-anonymous-credit rule. Existing identified credit and institutional credit remain eligible for downstream credit checks.
+
+## 17. Rollback plan
+Revert the Phase 2 implementation commit. No data migration, schema migration, Firestore rule change, stock rewrite, payment rewrite, or activation change is involved.
+
+## 18. Recommended live validation
+- Walk-in anonymous: checkout remains eligible.
+- Telepharmacy without client: block; add client; retry.
+- Institutional without institution: block; add institution; retry.
+- Institutional credit without institution: block; add institution; retry subject to existing credit eligibility.
+- Confirm basket and quantities remain intact after every invalid-path block.
+
+Invalid-path tests should stop before any production transaction is created.
+
+## 19. Remaining Phase 3/4/5 work
+Not included. Dispenser authorization, FEFO multi-batch live validation, receipt revision, and transaction backdating remain explicitly out of scope.
+""")
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Targeted Phase 2 tests
+        run: node --import tsx --test tests/pos-phase2-context-validation.test.ts
+
+      - name: Full test suite
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Diff check
+        run: git diff --check
+
+      - name: Prove protected core untouched
+        shell: bash
+        run: |
+          protected='^(src/services/pos-v2/posCheckoutV2Repository.ts|src/services/pos-v2/posCheckoutV2Calculator.ts|src/services/pos-v2/posCheckoutV2Service.ts|src/services/posCheckoutTierService.ts|src/services/posTierCartService.ts|firestore.rules)$'
+          if git diff --name-only HEAD | grep -E "$protected"; then
+            echo 'Protected POS V2 core or Firestore rules were modified.' >&2
+            exit 1
+          fi
+
+      - name: Commit verified implementation
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo 'No implementation changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/pages/Sales.tsx src/utils/saleContextValidation.ts tests/pos-phase2-context-validation.test.ts docs/POS_V2_PHASE2_CONTEXT_VALIDATION_REPORT.md
+          git commit -m 'fix: validate POS sale context before checkout'
+          git push origin HEAD:fix/pos-v2-phase2-context-validation
