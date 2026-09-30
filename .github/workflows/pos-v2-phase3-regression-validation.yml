@@ -1,0 +1,46 @@
+name: POS V2 Phase 3 Regression Validation
+
+on:
+  push:
+    branches:
+      - fix/pos-v2-phase3-branch-user-authorization
+    paths:
+      - '.github/workflows/pos-v2-phase3-regression-validation.yml'
+      - 'firestore.rules'
+      - 'tests/pos-v2-dispenser-boundary.test.ts'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript validation
+        run: npm run typecheck
+
+      - name: Existing repository tests
+        run: npm test
+
+      - name: Confirm protected POS V2 engine unchanged from main
+        run: |
+          git fetch origin main --depth=1
+          if ! git diff --quiet origin/main -- \
+            src/services/pos-v2/posCheckoutV2Repository.ts \
+            src/services/pos-v2/posCheckoutV2Calculator.ts \
+            src/services/pos-v2/posCheckoutV2Service.ts; then
+            echo 'Protected POS V2 transaction engine changed unexpectedly.' >&2
+            git diff origin/main -- src/services/pos-v2/
+            exit 1
+          fi
+          echo 'Protected POS V2 transaction engine unchanged.'
