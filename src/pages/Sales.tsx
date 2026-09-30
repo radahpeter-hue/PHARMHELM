@@ -33,7 +33,7 @@ import { QuotationsLog } from '../components/sales/QuotationsLog';
 import { openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
 import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';
 import { validateSaleCheckoutContext } from '../utils/saleContextValidation';
-import { getReceiptLedgerReference, getSaleIdentityLabel, matchesReceiptLedgerSearch } from '../utils/salePresentation';
+import { getReceiptLedgerReference, getSaleIdentityLabel, getSaleSystemReference, matchesReceiptLedgerSearch, resolveSaleOperatorName } from '../utils/salePresentation';
 import type { SellingTierCode } from '../types/sellingTier';
 import { resolveSellingTiers } from '../services/sellingTierService';
 import { buildTierCartItem, capRequestedCommercialQuantity, getCartLineIdentity, getProductEligibleBatches, getProductUsableBaseStock, getReservedBaseQuantityForProduct, isProductBatchEligibleForPos, mergeTierCartItem, replaceTierCartPrice, replaceTierCartQuantity } from '../services/posTierCartService';
@@ -3076,6 +3076,7 @@ const Sales: React.FC = () => {
         <A4InvoiceTemplate 
           receiptId={selectedA4ReceiptId}
           isOpen={showA4InvoiceModal}
+          staff={staff}
           onClose={() => {
             setShowA4InvoiceModal(false);
             setSelectedA4ReceiptId(null);
@@ -3303,7 +3304,8 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
             <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50">
               <div className="flex flex-col">
                 <h3 className="text-lg font-bold text-zinc-900">Sale Details</h3>
-                <span className="text-xs font-mono text-zinc-400">ID: {selectedSale.id}</span>
+                <span className="text-xs font-bold text-zinc-600">Receipt Number: {getReceiptLedgerReference(selectedSale)}</span>
+                <span className="text-[10px] font-mono text-zinc-400">System Reference: {getSaleSystemReference(selectedSale)}</span>
               </div>
               <button 
                 onClick={() => setSelectedSale(null)}
@@ -3642,7 +3644,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
               <div className="p-6 bg-zinc-50 border-t border-zinc-100 flex flex-col gap-2">
                 <button
                   onClick={() => {
-                    const cashier = staff.find(s => s.uid === selectedSale.servedBy)?.displayName || staff.find(s => s.id === selectedSale.servedBy)?.displayName || selectedSale.servedBy || 'Operator';
+                    const cashier = resolveSaleOperatorName(selectedSale, staff);
                     const opened = printThermalReceipt(selectedSale, {
                       companyName: brandCompanyName,
                       logoUrl: brandLogoUrl,

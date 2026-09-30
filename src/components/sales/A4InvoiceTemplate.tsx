@@ -3,7 +3,8 @@ import { X, Download, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Sale } from '../../types';
+import { Sale, Staff } from '../../types';
+import { resolveSaleOperatorName } from '../../utils/salePresentation';
 import { describeSaleItemQuantity } from '../../services/saleTierHistoryService';
 import { exportInvoicePdf } from '../../services/invoicePdfExportService';
 
@@ -12,6 +13,7 @@ interface A4InvoiceTemplateProps {
   isOpen: boolean;
   onClose: () => void;
   activeBranch: any;
+  staff: Staff[];
   systemSettings: any;
 }
 
@@ -20,6 +22,7 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
   isOpen,
   onClose,
   activeBranch,
+  staff,
   systemSettings
 }) => {
   const [receipt, setReceipt] = useState<Sale | null>(null);
@@ -82,6 +85,7 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
   }
   if (!receipt) return null;
 
+  const sellerName = resolveSaleOperatorName(receipt, staff);
   const brandCompanyName = activeBranch?.brandName || systemSettings?.branding?.companyName || 'PharmHelm Pharmacy';
   const brandLogoUrl = activeBranch?.brandLogoUrl || systemSettings?.branding?.logoUrl;
   const brandAddress = activeBranch?.address || systemSettings?.branding?.address || 'Kampala, Uganda';
@@ -113,6 +117,7 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
       exportInvoicePdf({
         receipt,
         branchName: resolvedBranchName,
+        sellerName,
         branding: {
           companyName: brandCompanyName,
           address: brandAddress,
@@ -160,6 +165,7 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
                   <p className="text-zinc-500">Invoice No: <span className="font-bold text-zinc-900">{receipt.receiptNumber}</span></p>
                   <p className="text-zinc-500">Date: <span className="font-bold text-zinc-900">{new Date(receipt.timestamp).toLocaleDateString()}</span></p>
                   <p className="text-zinc-500">Branch: <span className="font-bold text-zinc-900">{resolvedBranchName}</span></p>
+                  <p className="text-zinc-500">Served By: <span className="font-bold text-zinc-900">{sellerName}</span></p>
                 </div>
               </div>
             </div>
