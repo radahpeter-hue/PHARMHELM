@@ -44,29 +44,21 @@ test('institutional sale with an institution passes', () => {
   assert.deepEqual(validate({ context: 'institutional', hasInstitution: true }), { valid: true });
 });
 
-test('institutional credit without an institution is rejected', () => {
-  assert.deepEqual(validate({ context: 'institutional', paymentMethod: 'institutional_credit' }), {
-    valid: false,
-    code: 'institutional_credit_institution_required',
-    message: 'An institution is required for institutional credit.'
-  });
-});
-
-test('institutional credit with an institution passes context validation', () => {
-  assert.deepEqual(validate({ context: 'institutional', paymentMethod: 'institutional_credit', hasInstitution: true }), { valid: true });
-});
-
-test('anonymous walk-in generic credit is rejected', () => {
-  assert.deepEqual(validate({ paymentMethod: 'credit' }), {
+test('credit without either a patient or institution is rejected, including the legacy internal token', () => {
+  const expected = {
     valid: false,
     code: 'credit_identity_required',
     message: 'An identifiable client or institution is required for a credit sale.'
-  });
+  };
+  assert.deepEqual(validate({ paymentMethod: 'credit' }), expected);
+  assert.deepEqual(validate({ paymentMethod: 'institutional_credit' }), expected);
 });
 
-test('identified generic credit remains eligible for existing downstream credit rules', () => {
+test('credit passes with either a patient/client or institution account', () => {
   assert.deepEqual(validate({ paymentMethod: 'credit', hasPatient: true }), { valid: true });
   assert.deepEqual(validate({ paymentMethod: 'credit', hasInstitution: true }), { valid: true });
+  assert.deepEqual(validate({ paymentMethod: 'institutional_credit', hasPatient: true }), { valid: true });
+  assert.deepEqual(validate({ paymentMethod: 'institutional_credit', hasInstitution: true }), { valid: true });
 });
 
 test('Phase 2 validation is wired before checkout attempt locking and POS V2 invocation', () => {
@@ -90,4 +82,11 @@ test('validation helper has no inventory, transaction or outbox side effects', (
   assert.equal(helperSource.includes('product_batches'), false);
   assert.equal(helperSource.includes('runTransaction'), false);
   assert.equal(helperSource.includes('outbox'), false);
+});
+
+
+test('POS presents a single Credit option while retaining the legacy internal token for downstream compatibility', () => {
+  const source = readFileSync('src/pages/Sales.tsx', 'utf8');
+  assert.ok(source.includes("{ id: 'institutional_credit', label: 'Credit', icon: CreditCard }"));
+  assert.equal(source.includes("label: 'Inst. Credit'"), false);
 });

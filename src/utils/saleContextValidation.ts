@@ -12,7 +12,6 @@ export type SaleCheckoutContextValidationResult =
       code:
         | 'telepharmacy_patient_required'
         | 'institution_required'
-        | 'institutional_credit_institution_required'
         | 'credit_identity_required';
       message: string;
     };
@@ -36,14 +35,6 @@ export function validateSaleCheckoutContext(
     };
   }
 
-  if (paymentMethod === 'institutional_credit' && !input.hasInstitution) {
-    return {
-      valid: false,
-      code: 'institutional_credit_institution_required',
-      message: 'An institution is required for institutional credit.'
-    };
-  }
-
   if (context === 'institutional' && !input.hasInstitution) {
     return {
       valid: false,
@@ -52,7 +43,7 @@ export function validateSaleCheckoutContext(
     };
   }
 
-  if (paymentMethod === 'credit' && !input.hasPatient && !input.hasInstitution) {
+  if ((paymentMethod === 'credit' || paymentMethod === 'institutional_credit') && !input.hasPatient && !input.hasInstitution) {
     return {
       valid: false,
       code: 'credit_identity_required',

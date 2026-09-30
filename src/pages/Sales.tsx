@@ -2364,7 +2364,7 @@ const Sales: React.FC = () => {
                     { id: 'airtel_money', label: 'Airtel Money', icon: Smartphone },
                     { id: 'card', label: 'Card / POS', icon: CreditCard },
                     { id: 'insurance', label: 'Insurance', icon: ShieldCheck },
-                    { id: 'institutional_credit', label: 'Inst. Credit', icon: Building2 },
+                    { id: 'institutional_credit', label: 'Credit', icon: CreditCard },
                     { id: 'staff_welfare', label: 'Staff Welfare', icon: User, disabled: !isEmployee }
                   ].map(method => (
                     <button
@@ -2904,7 +2904,7 @@ const Sales: React.FC = () => {
                           { id: 'cash', label: 'Cash Payment' },
                           { id: 'momo', label: 'Mobile Money' },
                           { id: 'card', label: 'Bank Card' },
-                          { id: 'institutional_credit', label: 'Inst. Credit' }
+                          { id: 'institutional_credit', label: 'Credit' }
                         ].map(pm => (
                           <button
                             key={pm.id}

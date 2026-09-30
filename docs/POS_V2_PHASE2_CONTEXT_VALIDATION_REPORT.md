@@ -19,7 +19,7 @@ The POS UI exposes three sale contexts: `walk-in`, `telepharmacy`, and `institut
 Patient/client identity is represented by `selectedPatient` and persisted using `patientId` and `patientName`. Institution identity is represented by `selectedInstitution` and persisted using `institutionId` and `institutionName`.
 
 ## 6. Institutional credit representation
-Institutional credit is not a sale context. It is a `PaymentMethodType` value, `institutional_credit`. The generic `credit` payment method also exists.
+The user-facing POS now exposes one payment choice named `Credit`. For production compatibility, the current V2 checkout continues to persist the established internal token `institutional_credit`, because the protected durable outbox receivables consumer keys off that token. The business meaning is no longer institution-only: either a patient/client account or an institution account may support the credit sale.
 
 ## 7. Validation gaps found
 Existing `handleCheckout` logic blocked missing telepharmacy patient identity and missing institutional institution identity, but the rules were embedded in `Sales.tsx`, had inconsistent messages, did not guarantee an institution for `institutional_credit`, and did not prevent anonymous generic credit.
@@ -35,8 +35,8 @@ Rules implemented:
 - Named walk-in: allowed.
 - Telepharmacy: named client/patient required.
 - Institutional: institution required.
-- Institutional credit: institution required.
-- Generic credit: at least one identifiable client or institution required.
+- Credit: at least one identifiable patient/client or institution account is required.
+- The legacy internal `institutional_credit` token is validated by the same rule and is not presented to the user as an institution-only option.
 
 No additional phone, address, demographic, prescriber, or institution requirements were introduced beyond existing rules.
 
@@ -53,9 +53,9 @@ No additional phone, address, demographic, prescriber, or institution requiremen
 4. Telepharmacy + patient: PASS.
 5. Institutional + no institution: BLOCK.
 6. Institutional + institution: PASS.
-7. Institutional credit + no institution: BLOCK.
-8. Institutional credit + institution: PASS subject to existing downstream credit rules.
-9. Anonymous generic credit: BLOCK.
+7. Credit + no patient/client and no institution: BLOCK.
+8. Credit + patient/client: PASS subject to existing downstream credit rules.
+9. Credit + institution: PASS subject to existing downstream credit rules.
 10. Failed context validation returns before checkout execution and leaves basket state untouched.
 
 ## 12. Tests added
@@ -101,7 +101,7 @@ Revert the Phase 2 changes. No data migration, schema migration, Firestore rule 
 - Walk-in anonymous: checkout remains eligible.
 - Telepharmacy without client: block; add client; retry.
 - Institutional without institution: block; add institution; retry.
-- Institutional credit without institution: block; add institution; retry subject to existing credit eligibility.
+- Credit without an attached patient/client or institution: block; attach either account type; retry subject to existing credit eligibility.
 - Anonymous generic credit, if reachable through any existing workflow: block until an identifiable client or institution is attached.
 - Confirm basket and quantities remain intact after every invalid-path block.
 
@@ -109,3 +109,7 @@ Invalid-path tests should stop before any production transaction is created. No 
 
 ## 19. Remaining Phase 3/4/5 work
 Not included. Dispenser authorization, FEFO multi-batch live validation, receipt revision, and transaction backdating remain explicitly out of scope.
+
+
+## Credit naming compatibility note
+The business concept is now simply **Credit**. No institution-only restriction is intended. The current storage/payment token `institutional_credit` remains temporarily as an internal compatibility value because the protected V2 durable outbox worker posts `credit_receivables` from that token and already resolves either `institutionId`/`institutionName` or `patientId`/`patientName`. Renaming that internal token to `credit` would require a separately controlled downstream migration and is intentionally not part of Phase 2.
