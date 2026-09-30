@@ -1,0 +1,40 @@
+name: POS V2 Phase 3 Dispenser Authority Diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/pos-v2-phase3-branch-user-authorization
+    paths:
+      - '.github/workflows/pos-v2-phase3-dispenser-authority-diagnostic.yml'
+      - 'scripts/diagnose-pos-v2-dispenser-authority.mjs'
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+      FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+      TARGET_BRANCH_ID: 1agW2eYBOGGqKR9w2V31
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install diagnostic runtime
+        run: npm install firebase-admin@^13 --no-save --ignore-scripts
+
+      - name: Authenticate to Firebase
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Diagnose dispenser authority (read only)
+        run: node scripts/diagnose-pos-v2-dispenser-authority.mjs

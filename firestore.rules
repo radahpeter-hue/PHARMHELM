@@ -767,7 +767,6 @@ service cloud.firestore {
       allow update: if isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
         && (
-          isInventoryOperator() ||
           (isPOSOperator()
             && (
               (
@@ -784,7 +783,8 @@ service cloud.firestore {
                 && request.resource.data.stock == request.resource.data.quantityInStock
                 && request.resource.data.stockAggregateSource == 'product_batches'
               )
-            ))
+            )) ||
+          isInventoryOperator()
         );
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
@@ -815,11 +815,6 @@ service cloud.firestore {
       allow update: if isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
         && (
-          isInventoryOperator() ||
-          (isQA()
-            && (hasAnyRole(['QA Head', 'QA Manager', 'admin', 'Admin']) || isAdmin() || isAssignedToBranch(resource.data.branchId))
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['batch_status', 'lastUpdated'])
-            && request.resource.data.batch_status == 'quarantined') ||
           (isPOSOperator()
             && isAssignedToBranch(resource.data.branchId)
             && (
@@ -827,7 +822,12 @@ service cloud.firestore {
               request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'lastUpdated'])
             )
             && request.resource.data.quantity is number
-            && request.resource.data.quantity >= 0)
+            && request.resource.data.quantity >= 0) ||
+          isInventoryOperator() ||
+          (isQA()
+            && (hasAnyRole(['QA Head', 'QA Manager', 'admin', 'Admin']) || isAdmin() || isAssignedToBranch(resource.data.branchId))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['batch_status', 'lastUpdated'])
+            && request.resource.data.batch_status == 'quarantined')
         );
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
