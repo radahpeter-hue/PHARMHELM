@@ -27,10 +27,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install diagnostic runtime
+        run: npm install firebase-admin@^13 --no-save --ignore-scripts
 
       - name: Authenticate to Firebase
         uses: google-github-actions/auth@v2
