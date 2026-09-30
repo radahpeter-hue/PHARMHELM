@@ -32,6 +32,7 @@ import { A4InvoiceTemplate } from '../components/sales/A4InvoiceTemplate';
 import { QuotationsLog } from '../components/sales/QuotationsLog';
 import { openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
 import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';
+import { getReceiptLedgerReference, getSaleIdentityLabel, matchesReceiptLedgerSearch } from '../utils/salePresentation';
 import type { SellingTierCode } from '../types/sellingTier';
 import { resolveSellingTiers } from '../services/sellingTierService';
 import { buildTierCartItem, capRequestedCommercialQuantity, getCartLineIdentity, getProductEligibleBatches, getProductUsableBaseStock, getReservedBaseQuantityForProduct, isProductBatchEligibleForPos, mergeTierCartItem, replaceTierCartPrice, replaceTierCartQuantity } from '../services/posTierCartService';
@@ -1811,9 +1812,9 @@ const Sales: React.FC = () => {
             </div>
 
             {/* Right Column: Demographics Cards & Suggestion-driven Product search sidebar */}
-            <div className="lg:col-span-4 flex flex-col gap-6 overflow-hidden min-h-0">
+            <div className="lg:col-span-4 flex flex-col gap-6 overflow-visible lg:overflow-hidden min-h-0">
               {/* Patient Details & Context Card */}
-              <div className="bg-white p-5 rounded-3xl border border-zinc-200/90 shadow-lg shadow-zinc-100/10 space-y-4 relative">
+              <div className="bg-white p-5 rounded-3xl border border-zinc-200/90 shadow-lg shadow-zinc-100/10 space-y-4 relative shrink-0 lg:max-h-[48%] lg:overflow-y-auto custom-scrollbar">
                 <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
                   <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Patient Details</span>
                   <button 
@@ -2034,7 +2035,7 @@ const Sales: React.FC = () => {
               </div>
 
               {/* Suggestions Finder, Catalog List sidebar */}
-              <div className="flex-1 bg-white rounded-3xl border border-zinc-200/95 shadow-xl shadow-zinc-100/10 flex flex-col overflow-hidden">
+              <div className="flex-1 min-h-0 bg-white rounded-3xl border border-zinc-200/95 shadow-xl shadow-zinc-100/10 flex flex-col overflow-hidden">
                 {/* Catalog type toggles */}
                 <div className="p-4 bg-zinc-50/40 border-b border-zinc-150 flex flex-col gap-3">
                   <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-xl">
@@ -2089,7 +2090,7 @@ const Sales: React.FC = () => {
                   <h3 className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Available Items</h3>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar min-h-[250px]">
+                <div className="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar min-h-[250px] lg:min-h-0">
                   {filteredItems.map(item => {
                     const isProduct = activeTab === 'products';
                     const product = isProduct ? item as Product : null;
@@ -3102,8 +3103,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
   const [isReprintModalOpen, setIsReprintModalOpen] = useState(false);
 
   const filteredSales = sales.filter(sale => {
-    const matchesSearch = sale.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         (sale.receiptNumber || '').toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = matchesReceiptLedgerSearch(sale, searchTerm);
     const matchesStaff = selectedStaff === 'all' || sale.servedBy === selectedStaff;
     
     // Simple date filter
@@ -3123,7 +3123,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 w-4 h-4" />
             <input
               type="text"
-              placeholder="Search by receipt ID or patient..."
+              placeholder="Search by receipt number, patient or institution..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/5"
@@ -3182,7 +3182,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                   )}
                 >
                   <td className="px-6 py-4">
-                    <span className="font-mono text-xs font-bold text-zinc-900">{sale.id.slice(0, 8).toUpperCase()}</span>
+                    <span className="font-mono text-xs font-bold text-zinc-900">{getReceiptLedgerReference(sale)}</span>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-col">
@@ -3196,7 +3196,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                         <User className="w-4 h-4 text-zinc-400" />
                       </div>
                       <div className="flex flex-col">
-                        <span className="text-sm font-medium text-zinc-900">{sale.receiptNumber}</span>
+                        <span className="text-sm font-medium text-zinc-900">{getSaleIdentityLabel(sale)}</span>
                         <span className="text-xs text-zinc-400 uppercase tracking-tighter">{sale.context}</span>
                       </div>
                     </div>

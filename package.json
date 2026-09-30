@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
