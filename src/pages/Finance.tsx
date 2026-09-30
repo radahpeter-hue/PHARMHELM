@@ -164,8 +164,20 @@ const BranchFinance: React.FC = () => {
   const expensesToday = todayExpenses.reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
 
   // 3. Credit Raised Today
-  const creditSalesToday = todaySales.filter(s => s.paymentMethod === 'Credit' || s.paymentMethod === 'Insurance');
-  const creditRaisedToday = creditSalesToday.reduce((sum, s) => sum + (s.total || s.totalAmount || 0), 0);
+  // POS V2 retains the internal `institutional_credit` token for durable
+  // receivables compatibility even though the UI presents it simply as Credit.
+  // Include legacy `credit` and split-payment credit components as well.
+  const creditAmountForSale = (s: any) => {
+    const primaryIsCredit = s.paymentMethod === 'institutional_credit' || s.paymentMethod === 'credit';
+    if (primaryIsCredit) return s.totalAmount ?? s.total ?? 0;
+
+    const secondaryIsCredit = s.secondaryPaymentMethod === 'institutional_credit' || s.secondaryPaymentMethod === 'credit';
+    if (secondaryIsCredit) return s.secondaryAmount ?? 0;
+
+    return 0;
+  };
+  const creditSalesToday = todaySales.filter(s => creditAmountForSale(s) > 0);
+  const creditRaisedToday = creditSalesToday.reduce((sum, s) => sum + creditAmountForSale(s), 0);
 
   const tabs = [
     { id: 'eod', label: 'EOD Reconciliation', icon: History },
@@ -895,10 +907,19 @@ const BranchCreditView: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId && activeBranchId) {
       const unsubscribe = firestoreService.subscribeToCollection('sales', profile.tenantId, (data: any[]) => {
-        const filtered = data.filter(s => 
-          s.branchId === activeBranchId && 
-          (s.paymentMethod === 'insurance' || s.paymentMethod === 'institutional_credit')
-        );
+        const filtered = data.filter(s => {
+          const primaryMethod = s.paymentMethod;
+          const secondaryMethod = s.secondaryPaymentMethod;
+          const isCreditOrInsurance =
+            primaryMethod === 'insurance' ||
+            primaryMethod === 'institutional_credit' ||
+            primaryMethod === 'credit' ||
+            secondaryMethod === 'insurance' ||
+            secondaryMethod === 'institutional_credit' ||
+            secondaryMethod === 'credit';
+
+          return s.branchId === activeBranchId && isCreditOrInsurance;
+        });
         setSales(filtered);
       });
       return () => unsubscribe();
@@ -951,8 +972,11 @@ const BranchCreditView: React.FC = () => {
           </thead>
           <tbody className="divide-y divide-zinc-100">
             {filteredCredits.map((credit) => {
-              const invNum = credit.invoiceNumber || credit.invoice_number || `INV-${credit.id?.slice(-6)}`;
-              const cName = credit.patientName || credit.clientName || 'Walk-in Client';
+              // The POS receipt number is the canonical sale-facing invoice/receipt identifier.
+              const invNum = credit.receiptNumber || credit.invoiceNumber || credit.invoice_number || `INV-${credit.id?.slice(-6)}`;
+              // Credit cannot be anonymous. Prefer the attached institution for institutional
+              // accounts, otherwise show the attached patient/client identity.
+              const cName = credit.institutionName || credit.patientName || credit.clientName || 'Unidentified credit account';
               const dateVal = credit.timestamp || credit.created_at || credit.date || '';
               const displayDate = dateVal ? new Date(dateVal).toLocaleDateString() : 'N/A';
               const amount = credit.total || credit.totalAmount || 0;
