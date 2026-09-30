@@ -110,10 +110,10 @@ test('presentation consumers use the shared resolver', () => {
   const sales = readFileSync('src/pages/Sales.tsx', 'utf8');
   const a4 = readFileSync('src/components/sales/A4InvoiceTemplate.tsx', 'utf8');
   const pdf = readFileSync('src/services/invoicePdfExportService.ts', 'utf8');
-  assert.match(sales, /resolveSaleOperatorName\(selectedSale, staff\)/);
-  assert.match(sales, /Receipt Number:/);
-  assert.match(a4, /Served By:/);
-  assert.match(pdf, /Served By:/);
+  assert.ok(sales.includes('resolveSaleOperatorName(selectedSale, staff)'));
+  assert.ok(sales.includes('Receipt Number: {getReceiptLedgerReference(selectedSale)}'));
+  assert.ok(a4.includes('Served By:'));
+  assert.ok(pdf.includes('Served By:'));
 });
 `);
 
