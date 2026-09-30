@@ -32,6 +32,7 @@ import { A4InvoiceTemplate } from '../components/sales/A4InvoiceTemplate';
 import { QuotationsLog } from '../components/sales/QuotationsLog';
 import { openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
 import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';
+import { validateSaleCheckoutContext } from '../utils/saleContextValidation';
 import { getReceiptLedgerReference, getSaleIdentityLabel, matchesReceiptLedgerSearch } from '../utils/salePresentation';
 import type { SellingTierCode } from '../types/sellingTier';
 import { resolveSellingTiers } from '../services/sellingTierService';
@@ -651,13 +652,14 @@ const Sales: React.FC = () => {
       return;
     }
 
-    // Validation based on context
-    if (context === 'telepharmacy' && !selectedPatient) {
-      toast.error('Patient is mandatory for Telepharmacy');
-      return;
-    }
-    if (context === 'institutional' && !selectedInstitution) {
-      toast.error('Institution is mandatory for Institutional billing');
+    const contextValidation = validateSaleCheckoutContext({
+      context,
+      paymentMethod,
+      hasPatient: Boolean(selectedPatient),
+      hasInstitution: Boolean(selectedInstitution)
+    });
+    if ('message' in contextValidation) {
+      toast.error(contextValidation.message);
       return;
     }
 
@@ -700,6 +702,18 @@ const Sales: React.FC = () => {
     if (!editingSaleId && !activeBranchId) {
       receiptWindow?.close();
       toast.error('Select an active branch before processing a sale.');
+      return;
+    }
+
+    const contextValidation = validateSaleCheckoutContext({
+      context,
+      paymentMethod,
+      hasPatient: Boolean(selectedPatient),
+      hasInstitution: Boolean(selectedInstitution)
+    });
+    if ('message' in contextValidation) {
+      receiptWindow?.close();
+      toast.error(contextValidation.message);
       return;
     }
 
@@ -2350,7 +2364,7 @@ const Sales: React.FC = () => {
                     { id: 'airtel_money', label: 'Airtel Money', icon: Smartphone },
                     { id: 'card', label: 'Card / POS', icon: CreditCard },
                     { id: 'insurance', label: 'Insurance', icon: ShieldCheck },
-                    { id: 'institutional_credit', label: 'Inst. Credit', icon: Building2 },
+                    { id: 'institutional_credit', label: 'Credit', icon: CreditCard },
                     { id: 'staff_welfare', label: 'Staff Welfare', icon: User, disabled: !isEmployee }
                   ].map(method => (
                     <button
@@ -2890,7 +2904,7 @@ const Sales: React.FC = () => {
                           { id: 'cash', label: 'Cash Payment' },
                           { id: 'momo', label: 'Mobile Money' },
                           { id: 'card', label: 'Bank Card' },
-                          { id: 'institutional_credit', label: 'Inst. Credit' }
+                          { id: 'institutional_credit', label: 'Credit' }
                         ].map(pm => (
                           <button
                             key={pm.id}
