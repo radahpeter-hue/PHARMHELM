@@ -17,6 +17,7 @@ interface InvoicePdfBranding {
 interface InvoicePdfInput {
   receipt: any;
   branchName: string;
+  sellerName: string;
   branding: InvoicePdfBranding;
 }
 
@@ -49,7 +50,7 @@ const downloadBlob = (blob: Blob, filename: string) => {
  * pattern: render from already-loaded business data into jsPDF, output a Blob,
  * and download through an object URL. It is read-only and does not write sale data.
  */
-export const exportInvoicePdf = ({ receipt, branchName, branding }: InvoicePdfInput) => {
+export const exportInvoicePdf = ({ receipt, branchName, sellerName, branding }: InvoicePdfInput) => {
   const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4', compress: true });
   const pageWidth = 210;
   const pageHeight = 297;
@@ -89,7 +90,8 @@ export const exportInvoicePdf = ({ receipt, branchName, branding }: InvoicePdfIn
   pdf.text(`Invoice No: ${clean(receipt.receiptNumber, 'Not available')}`, pageWidth - margin, y + 5, { align: 'right' });
   pdf.text(`Date: ${safeDate(receipt.timestamp)}`, pageWidth - margin, y + 9, { align: 'right' });
   pdf.text(`Branch: ${clean(branchName, 'Branch not available')}`, pageWidth - margin, y + 13, { align: 'right' });
-  y += 21;
+  pdf.text(`Served By: ${clean(sellerName, 'Operator')}`, pageWidth - margin, y + 17, { align: 'right' });
+  y += 25;
   line(margin, y, pageWidth - margin, y);
   y += 7;
 
