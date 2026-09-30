@@ -109,10 +109,29 @@ export const CreditLedger: React.FC = () => {
         where('tenantId', '==', profile.tenantId)
       );
       const recSnapshot = await getDocs(recQ);
-      const recData = recSnapshot.docs.map(doc => ({
-        ...(doc.data() as any),
-        id: doc.id
-      }));
+
+      // Resolve branch document IDs to human-readable tenant branch names.
+      const branchCol = collection(db, 'branches');
+      const branchQ = query(branchCol, where('tenantId', '==', profile.tenantId));
+      const branchSnapshot = await getDocs(branchQ);
+      const branchNameById = new Map<string, string>();
+      branchSnapshot.docs.forEach(branchDoc => {
+        const branch = branchDoc.data() as any;
+        branchNameById.set(
+          branchDoc.id,
+          branch.name || branch.branch_name || branch.branchName || branchDoc.id
+        );
+      });
+
+      const recData = recSnapshot.docs.map(doc => {
+        const rec = doc.data() as any;
+        const branchId = rec.branch_id || rec.branchId || 'HQ';
+        return {
+          ...rec,
+          id: doc.id,
+          branch_name: rec.branch_name || rec.branchName || branchNameById.get(branchId) || branchId
+        };
+      });
 
       // 2b. Fetch POS sales labeled as institutional_credit
       const salesCol = collection(db, 'sales');
@@ -167,6 +186,7 @@ export const CreditLedger: React.FC = () => {
             outstanding_ugx: sale.creditAmount,
             status: 'outstanding',
             branch_id: sale.branchId || 'HQ',
+            branch_name: branchNameById.get(sale.branchId || '') || sale.branchName || sale.branchId || 'HQ',
             due_date: sale.timestamp || new Date().toISOString(),
             invoice_number: sale.receiptNumber || 'N/A',
             created_at: sale.timestamp || new Date().toISOString()
@@ -427,7 +447,7 @@ export const CreditLedger: React.FC = () => {
           'Date Accrued': dateStr,
           'Invoice/Receipt Ref': c.invoice_number || c.receipt_id || '',
           'Supplier/Client': c.client_name || 'Client',
-          'Branch': c.branch_id || 'HQ',
+          'Branch': c.branch_name || c.branch_id || 'HQ',
           'Original Credit Amount (UGX)': c.amount_ugx || 0,
           'Remaining Balance (UGX)': c.outstanding_ugx || 0,
           'Status': (c.status || '').toUpperCase()
@@ -720,7 +740,7 @@ export const CreditLedger: React.FC = () => {
                             {rec.invoice_number || rec.receipt_id || 'N/A'}
                           </td>
                           <td className="px-6 py-4 text-zinc-900 font-bold">{rec.client_name || 'Individual client'}</td>
-                          <td className="px-6 py-4 text-zinc-600">{rec.branch_id || 'HQ'}</td>
+                          <td className="px-6 py-4 text-zinc-600">{rec.branch_name || rec.branch_id || 'HQ'}</td>
                           <td className="px-6 py-4 text-right font-mono font-bold text-zinc-400">
                             {(rec.amount_ugx || 0).toLocaleString()}
                           </td>
