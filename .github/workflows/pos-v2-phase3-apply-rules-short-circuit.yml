@@ -1,0 +1,45 @@
+name: POS V2 Phase 3 Apply Rules Short Circuit
+
+on:
+  push:
+    branches:
+      - fix/pos-v2-phase3-branch-user-authorization
+    paths:
+      - '.github/workflows/pos-v2-phase3-apply-rules-short-circuit.yml'
+      - 'scripts/apply-phase3-pos-rules-short-circuit.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Phase 3 branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/pos-v2-phase3-branch-user-authorization
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Apply guarded rule reordering
+        run: node scripts/apply-phase3-pos-rules-short-circuit.mjs
+
+      - name: Verify only Firestore rule ordering changed
+        run: |
+          git diff --check
+          git diff -- firestore.rules
+          test -n "$(git status --porcelain firestore.rules)"
+
+      - name: Commit optimized rules to Phase 3 branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add firestore.rules
+          git commit -m "fix(rules): short-circuit legitimate POS mutations before broader role paths"
+          git push origin HEAD:fix/pos-v2-phase3-branch-user-authorization
