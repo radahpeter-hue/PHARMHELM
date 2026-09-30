@@ -5,7 +5,7 @@ on:
     branches:
       - fix/finance-credit-status-branch-name
     paths:
-      - .finance-credit-status-branch-name-trigger
+      - '.finance-credit-status-branch-name-trigger*'
 
 permissions:
   contents: write
