@@ -24,18 +24,28 @@ jobs:
       - name: Apply narrow receipt-integrity patch
         run: node scripts/apply-phase4-receipt-integrity-v2.mjs
 
-      - name: Remove temporary patch machinery and diagnostics
-        run: |
-          rm -f scripts/apply-phase4-receipt-integrity.mjs
-          rm -f scripts/apply-phase4-receipt-integrity-v2.mjs
-          rm -f docs/PHASE4_PATCH_ERROR.txt
-          rm -f .github/workflows/pos-v2-phase4-receipt-integrity.yml
-
       - name: Install dependencies
         run: npm ci
 
       - name: Run focused receipt presentation tests
-        run: node --import tsx --test tests/sale-presentation.test.ts
+        run: |
+          set +e
+          node --import tsx --test tests/sale-presentation.test.ts > phase4-test.log 2>&1
+          code=$?
+          cat phase4-test.log
+          if [ "$code" -ne 0 ]; then
+            cp phase4-test.log /tmp/PHASE4_TEST_ERROR.txt
+            git reset --hard HEAD
+            mkdir -p docs
+            cp /tmp/PHASE4_TEST_ERROR.txt docs/PHASE4_TEST_ERROR.txt
+            git config user.name "PharmHelm CI"
+            git config user.email "actions@users.noreply.github.com"
+            git add docs/PHASE4_TEST_ERROR.txt
+            git commit -m "ci: capture Phase 4 test failure" || true
+            git push origin HEAD:fix/pos-v2-phase4-receipt-integrity || true
+            exit "$code"
+          fi
+          rm -f phase4-test.log
 
       - name: TypeScript validation
         run: npm run typecheck
@@ -49,6 +59,14 @@ jobs:
             src/services/pos-v2/posCheckoutV2Repository.ts \
             src/services/pos-v2/posCheckoutV2Calculator.ts \
             src/services/pos-v2/posCheckoutV2Service.ts
+
+      - name: Remove temporary patch machinery and diagnostics
+        run: |
+          rm -f scripts/apply-phase4-receipt-integrity.mjs
+          rm -f scripts/apply-phase4-receipt-integrity-v2.mjs
+          rm -f docs/PHASE4_PATCH_ERROR.txt
+          rm -f docs/PHASE4_TEST_ERROR.txt
+          rm -f .github/workflows/pos-v2-phase4-receipt-integrity.yml
 
       - name: Commit validated Phase 4 repair
         run: |
