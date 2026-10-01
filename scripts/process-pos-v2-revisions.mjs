@@ -11,6 +11,7 @@ import {
 import { executeInventoryAndConsumptionReversal } from './pos-v2-revision-inventory-executor.mjs';
 import { executePaymentReversal } from './pos-v2-revision-payment-executor.mjs';
 import { executeWelfareReversal } from './pos-v2-revision-welfare-executor.mjs';
+import { executeInstitutionalCreditReversal } from './pos-v2-revision-credit-executor.mjs';
 
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0911422817';
 const DATABASE_ID = process.env.FIRESTORE_DATABASE_ID || 'ai-studio-f7d8654b-e089-425a-a506-38159afe1e75';
@@ -302,6 +303,42 @@ async function markWelfareCompleted(ref, result) {
   });
 }
 
+async function markInstitutionalCreditCompleted(ref, result) {
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    const request = snap.data();
+    const consumers = { ...(request.reversalConsumers || {}) };
+    const previous = consumers.institutionalCredit;
+    if (!previous || previous.status === 'NOT_APPLICABLE') return;
+    const nowIso = new Date().toISOString();
+    consumers.institutionalCredit = {
+      ...previous,
+      status: 'COMPLETED',
+      lastError: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      completedAt: previous.completedAt || nowIso,
+      updatedAt: nowIso,
+      requiresManualReview: false
+    };
+    const reversalState = deriveReversalState(consumers);
+    tx.update(ref, {
+      reversalConsumers: consumers,
+      reversalState,
+      status: reversalState === 'REVERSAL_COMPLETE' ? 'REVERSAL_COMPLETE' : 'PROCESSING',
+      institutionalCreditReversalId: result.reversalId,
+      institutionalCreditReversalReplay: Boolean(result.replayed),
+      institutionalCreditReceivableId: result.receivableId,
+      institutionalCreditAmountDelta: Number(result.amountDelta || 0),
+      institutionalCreditOutstandingDelta: Number(result.outstandingDelta || 0),
+      institutionalCreditReversalCompletedAt: FieldValue.serverTimestamp(),
+      lastError: null,
+      updatedAt: FieldValue.serverTimestamp()
+    });
+  });
+}
+
 async function markConsumerFailure(ref, name, error, fallbackMessage) {
   await db.runTransaction(async tx => {
     const snap = await tx.get(ref);
@@ -345,6 +382,10 @@ async function markPaymentFailure(ref, error) {
 
 async function markWelfareFailure(ref, error) {
   return markConsumerFailure(ref, 'welfare', error, 'Unknown welfare reversal error');
+}
+
+async function markInstitutionalCreditFailure(ref, error) {
+  return markConsumerFailure(ref, 'institutionalCredit', error, 'Unknown institutional credit reversal error');
 }
 
 async function releaseRequestLease(ref) {
@@ -470,6 +511,35 @@ async function processWelfareStage(ref, claimed) {
   }
 }
 
+async function processInstitutionalCreditStage(ref, claimed) {
+  const state = claimed.reversalConsumers?.institutionalCredit?.status;
+  if (state === 'NOT_APPLICABLE') return { skipped: true, reason: 'NOT_APPLICABLE' };
+  if (state === 'COMPLETED') return { skipped: true, reason: 'ALREADY_COMPLETED' };
+
+  const marked = await markConsumerProcessing(ref, 'institutionalCredit');
+  if (!marked) return { skipped: true, reason: 'LEASE_OR_STATE_NOT_RUNNABLE' };
+
+  const sale = await loadOriginalSale(claimed.originalSaleId);
+  const payment = await loadCanonicalPayment(claimed.canonicalPaymentId);
+  try {
+    const result = await executeInstitutionalCreditReversal({
+      db,
+      sale,
+      payment,
+      revisionId: claimed.revisionId,
+      requestedBy: claimed.requestedBy,
+      requestedByName: claimed.requestedByName,
+      reason: claimed.reason,
+      FieldValue
+    });
+    await markInstitutionalCreditCompleted(ref, result);
+    return { skipped: false, ...result };
+  } catch (error) {
+    await markInstitutionalCreditFailure(ref, error);
+    throw error;
+  }
+}
+
 async function candidateRefs() {
   const snapshot = await db.collection('pos_sale_revision_requests')
     .where('status', 'in', ['PENDING', 'FAILED', 'PROCESSING'])
@@ -496,6 +566,7 @@ async function main() {
     inventoryProcessed: 0,
     paymentProcessed: 0,
     welfareProcessed: 0,
+    institutionalCreditProcessed: 0,
     skipped: 0,
     failed: 0
   };
@@ -515,8 +586,10 @@ async function main() {
       if (!payment.skipped) summary.paymentProcessed += 1;
       const welfare = await processWelfareStage(ref, claimed);
       if (!welfare.skipped) summary.welfareProcessed += 1;
+      const institutionalCredit = await processInstitutionalCreditStage(ref, claimed);
+      if (!institutionalCredit.skipped) summary.institutionalCreditProcessed += 1;
       await releaseRequestLease(ref);
-      console.log(JSON.stringify({ mode: 'revision-welfare', workerId: WORKER_ID, ...claimed, inventory, payment, welfare }));
+      console.log(JSON.stringify({ mode: 'revision-credit', workerId: WORKER_ID, ...claimed, inventory, payment, welfare, institutionalCredit }));
     } catch (error) {
       summary.failed += 1;
       console.error(`[POS V2 revision worker] ${ref.id}:`, error);
@@ -525,7 +598,7 @@ async function main() {
     }
   }
 
-  console.log(JSON.stringify({ mode: 'revision-welfare', workerId: WORKER_ID, ...summary }, null, 2));
+  console.log(JSON.stringify({ mode: 'revision-credit', workerId: WORKER_ID, ...summary }, null, 2));
   if (summary.failed > 0) process.exitCode = 1;
 }
 
