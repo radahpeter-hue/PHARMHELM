@@ -34,8 +34,12 @@ test('payment executor preserves explicit monetary deltas for later finance comp
   assert.match(source, /originalPaymentId: expected\.originalPaymentId/);
 });
 
-test('isolated payment executor is not wired until its own contract is certified', () => {
+test('revision worker wires payment compensation as a separate stage after inventory', () => {
   const worker = readFileSync('scripts/process-pos-v2-revisions.mjs', 'utf8');
-  assert.doesNotMatch(worker, /pos-v2-revision-payment-executor/);
-  assert.doesNotMatch(worker, /executePaymentReversal/);
+  assert.match(worker, /pos-v2-revision-payment-executor/);
+  assert.match(worker, /executePaymentReversal/);
+  assert.match(worker, /processInventoryStage/);
+  assert.match(worker, /processPaymentStage/);
+  assert.ok(worker.indexOf('processPaymentStage(ref, claimed)') > worker.indexOf('processInventoryStage(ref, claimed)'));
+  assert.match(worker, /paymentReversalCompletedAt/);
 });
