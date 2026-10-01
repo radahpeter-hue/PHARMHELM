@@ -31,7 +31,7 @@ function canonicalSaleTotal(sale) {
   return numberValue(sale?.totalAmount ?? sale?.total, NaN);
 }
 
-export function validateRevisionRequest({ request, sale, payment, outbox }) {
+export function validateRevisionRequest({ request, sale, payment, outbox, resume = false }) {
   if (!request || request.requestType !== REVISION_REQUEST_TYPE) {
     throw new Error('Unsupported POS revision request.');
   }
@@ -54,9 +54,19 @@ export function validateRevisionRequest({ request, sale, payment, outbox }) {
   if (!sale || Number(sale.engineVersion || 0) !== 2 || sale.status !== 'completed') {
     throw new Error('Only a completed canonical POS V2 sale can be revised.');
   }
-  if (sale.revisionLocked || clean(sale.revisionId) || clean(sale.supersededBySaleId)) {
-    throw new Error('The original POS V2 sale is already locked by a revision lifecycle.');
+
+  const hasRevisionLock = Boolean(sale.revisionLocked || clean(sale.revisionId) || clean(sale.supersededBySaleId));
+  if (hasRevisionLock) {
+    const sameRevisionResume = resume === true
+      && sale.revisionLocked === true
+      && clean(sale.revisionId) === clean(request.revisionId)
+      && clean(sale.revisionLifecycle) === 'REVERSAL_PENDING'
+      && !clean(sale.supersededBySaleId);
+    if (!sameRevisionResume) {
+      throw new Error('The original POS V2 sale is already locked by a revision lifecycle.');
+    }
   }
+
   if (!payment || Number(payment.engineVersion || 0) !== 2) {
     throw new Error('Canonical V2 payment is missing or invalid.');
   }
