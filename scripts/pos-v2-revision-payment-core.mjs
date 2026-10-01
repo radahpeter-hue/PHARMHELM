@@ -9,6 +9,11 @@ function numberValue(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function negativeDelta(value) {
+  const amount = numberValue(value);
+  return amount === 0 ? 0 : -amount;
+}
+
 function stablePart(value, max = 180) {
   return clean(value).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, max);
 }
@@ -65,9 +70,9 @@ export function buildPaymentReversal({ payment, sale, revisionId, requestedBy, r
     originalAmount: numberValue(row.amount),
     originalSettledAmount: numberValue(row.settledAmount),
     originalOutstandingAmount: numberValue(row.outstandingAmount),
-    amountDelta: -numberValue(row.amount),
-    settledDelta: -numberValue(row.settledAmount),
-    outstandingDelta: -numberValue(row.outstandingAmount),
+    amountDelta: negativeDelta(row.amount),
+    settledDelta: negativeDelta(row.settledAmount),
+    outstandingDelta: negativeDelta(row.outstandingAmount),
     originalStatus: row.status || null
   }));
 
@@ -84,9 +89,9 @@ export function buildPaymentReversal({ payment, sale, revisionId, requestedBy, r
     originalAmount: numberValue(payment.amount),
     originalSettledAmount: numberValue(payment.settledAmount),
     originalOutstandingAmount: numberValue(payment.outstandingAmount),
-    amountDelta: -numberValue(payment.amount),
-    settledDelta: -numberValue(payment.settledAmount),
-    outstandingDelta: -numberValue(payment.outstandingAmount),
+    amountDelta: negativeDelta(payment.amount),
+    settledDelta: negativeDelta(payment.settledAmount),
+    outstandingDelta: negativeDelta(payment.outstandingAmount),
     components,
     requestedBy: actor,
     requestedByName: actorName,
