@@ -18,12 +18,15 @@ import type { Branch, Product, ProductBatch, Sale, SaleItem, Staff, SystemSettin
 import { SYSTEM_ROLE_PERMISSIONS, roleRealmId } from '../../config/rbac';
 import { calculateCheckoutV2 } from './posCheckoutV2Calculator';
 import { PosCheckoutV2Error } from './posCheckoutV2Errors';
+import { checkoutV2AttemptDocumentId, checkoutV2SaleDocumentId } from './posCheckoutV2Identity';
 import {
   buildPosCheckoutV2OutboxEvent,
   buildPosCheckoutV2Payment,
   posCheckoutV2OutboxEventDocumentId,
   posCheckoutV2PaymentDocumentId
 } from './posCheckoutV2PaymentOutbox';
+import { validatePosCheckoutV2RevisionReplacementContract } from './posCheckoutV2RevisionReplacement';
+import { validatePosCheckoutV2ReplacementOriginalLifecycle } from './posCheckoutV2RevisionReplacementGuard';
 import type {
   CheckoutV2Request,
   PosCheckoutV2AttemptRecord,
@@ -108,30 +111,24 @@ export function buildCheckoutV2IntentFingerprint(request: CheckoutV2Request): st
     institutionId: request.institutionId ?? null,
     prescriberId: request.prescriberId ?? null,
     isExceptionalConsumption: Boolean(request.isExceptionalConsumption),
-    exceptionalConsumptionReason: request.exceptionalConsumptionReason ?? null
+    exceptionalConsumptionReason: request.exceptionalConsumptionReason ?? null,
+    revisionReplacement: request.revisionReplacement ? {
+      revisionId: request.revisionReplacement.revisionId,
+      revisionRequestId: request.revisionReplacement.revisionRequestId,
+      sequence: request.revisionReplacement.sequence,
+      originalSaleId: request.revisionReplacement.originalSaleId,
+      originalReceiptNumber: request.revisionReplacement.originalReceiptNumber,
+      replacementSaleId: request.revisionReplacement.replacementSaleId,
+      replacementPaymentId: request.revisionReplacement.replacementPaymentId,
+      replacementOutboxEventId: request.revisionReplacement.replacementOutboxEventId
+    } : null
   }));
-}
-
-function deterministicDocumentId(prefix: string, tenantId: string, attemptId: string): string {
-  const raw = `${tenantId}__${attemptId}`;
-  let checksum = 5381;
-  for (let i = 0; i < raw.length; i += 1) checksum = ((checksum << 5) + checksum) ^ raw.charCodeAt(i);
-  const safe = raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
-  return `${prefix}_${safe}_${(checksum >>> 0).toString(16)}`;
 }
 
 function deterministicReceiptSuffix(saleId: string): string {
   let checksum = 0;
   for (let i = 0; i < saleId.length; i += 1) checksum = ((checksum * 31) + saleId.charCodeAt(i)) >>> 0;
   return String(100000 + (checksum % 900000));
-}
-
-export function checkoutV2AttemptDocumentId(tenantId: string, attemptId: string): string {
-  return deterministicDocumentId('attempt', tenantId, attemptId);
-}
-
-export function checkoutV2SaleDocumentId(tenantId: string, attemptId: string): string {
-  return deterministicDocumentId('v2sale', tenantId, attemptId);
 }
 
 export async function recoverCompletedCheckoutV2(params: {
@@ -371,7 +368,30 @@ function assertTransactionAuthority(staff: Staff, expected: PosCheckoutV2Prepare
   if (!branchAuthorized) throw new PosCheckoutV2Error('BRANCH_NOT_AUTHORIZED', 'Branch authority changed during checkout.');
 }
 
+function assertReplacementReplayLinkage(sale: Sale, replacement: ReturnType<typeof validatePosCheckoutV2RevisionReplacementContract>) {
+  if (!replacement) return;
+  const row = sale as Sale & Record<string, unknown>;
+  if (
+    String(row.revisionId || '').trim() !== replacement.revisionId
+    || String(row.revisionRequestId || '').trim() !== replacement.revisionRequestId
+    || String(row.revisionOfSaleId || '').trim() !== replacement.originalSaleId
+    || Number(row.revisionSequence || 0) !== replacement.sequence
+    || String(row.originalReceiptNumber || '').trim() !== replacement.originalReceiptNumber
+  ) {
+    throw new PosCheckoutV2Error('IDEMPOTENCY_CONFLICT', 'Existing replacement checkout does not match the revision linkage for this attempt.');
+  }
+}
+
 export async function commitCheckoutV2(request: CheckoutV2Request, prepared: PosCheckoutV2RepositoryPreparation): Promise<PosCheckoutV2CompletedResult> {
+  const replacement = validatePosCheckoutV2RevisionReplacementContract({
+    tenantId: prepared.authority.tenantId,
+    attemptId: request.attemptId,
+    preparedSaleId: prepared.saleId,
+    preparedPaymentId: prepared.paymentId,
+    preparedOutboxEventId: prepared.outboxEventId,
+    context: request.revisionReplacement
+  });
+
   return runTransaction(db, async (transaction: Transaction) => {
     const attemptSnap = await transaction.get(prepared.attemptRef);
     if (attemptSnap.exists()) {
@@ -391,6 +411,7 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
       }
       const sale = { ...(existingSaleSnap.data() as Sale), id: existingSaleSnap.id };
       const payment = existingPaymentSnap.data() as PosCheckoutV2Payment;
+      assertReplacementReplayLinkage(sale, replacement);
       return {
         saleId: sale.id,
         receiptNumber: sale.receiptNumber,
@@ -414,6 +435,21 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
     const liveSalesAccess = await resolveSalesAccessInTransaction(transaction, prepared.authority.tenantId, liveRoles);
     if (!(liveSalesAccess === 'operate' || liveSalesAccess === 'all')) {
       throw new PosCheckoutV2Error('AUTHORIZATION_DENIED', 'The operator no longer has effective sales:operate permission.');
+    }
+
+    if (replacement) {
+      const originalSaleRef = doc(db, 'sales', replacement.originalSaleId);
+      const originalSaleSnap = await transaction.get(originalSaleRef);
+      if (!originalSaleSnap.exists()) {
+        throw new PosCheckoutV2Error('TRANSACTION_CONFLICT', 'The original POS V2 sale no longer exists for this revision replacement.');
+      }
+      validatePosCheckoutV2ReplacementOriginalLifecycle({
+        context: replacement,
+        originalSale: { id: originalSaleSnap.id, ...originalSaleSnap.data() },
+        tenantId: prepared.authority.tenantId,
+        branchId: prepared.authority.branch.id,
+        preparedSaleId: prepared.saleId
+      });
     }
 
     const liveProducts = new Map<string, Product>();
@@ -555,8 +591,18 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
       inventoryPostedAt: serverTimestamp()
     };
 
+    const revisionLinkage = replacement ? {
+      isRevisionReplacement: true,
+      revisionId: replacement.revisionId,
+      revisionRequestId: replacement.revisionRequestId,
+      revisionSequence: replacement.sequence,
+      revisionOfSaleId: replacement.originalSaleId,
+      originalReceiptNumber: replacement.originalReceiptNumber
+    } : {};
+
     transaction.set(prepared.saleRef, omitUndefinedDeep({
       ...sale,
+      ...revisionLinkage,
       engineVersion: 2,
       integrityVersion: 3,
       checkoutAttemptId: request.attemptId,
@@ -574,12 +620,14 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
 
     transaction.set(prepared.paymentRef, omitUndefinedDeep({
       ...payment,
+      ...revisionLinkage,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     }));
 
     transaction.set(prepared.outboxRef, omitUndefinedDeep({
       ...outboxEvent,
+      ...revisionLinkage,
       createdAt: serverTimestamp(),
       availableAt: serverTimestamp(),
       processedAt: null,
@@ -600,7 +648,7 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
       createdAt: serverTimestamp(),
       completedAt: serverTimestamp()
     };
-    transaction.set(prepared.attemptRef, omitUndefinedDeep(attempt));
+    transaction.set(prepared.attemptRef, omitUndefinedDeep({ ...attempt, ...revisionLinkage }));
 
     return {
       saleId: prepared.saleId,
