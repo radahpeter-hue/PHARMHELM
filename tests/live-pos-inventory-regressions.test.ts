@@ -45,6 +45,6 @@ test('separates inventory view access from operational controls', () => {
 test('sanitizes POS V2 writes and normalizes batch expiry values', () => {
   const repo = read('src/services/pos-v2/posCheckoutV2Repository.ts');
   assert.ok(repo.includes('omitUndefinedDeep({'));
-  assert.ok(repo.includes('omitUndefinedDeep(attempt)'));
+  assert.ok(repo.includes('omitUndefinedDeep({ ...attempt, ...revisionLinkage })'));
   assert.ok(repo.includes('normalizeDateValue(batch.expiryDate)?.toISOString() ?? null'));
 });
