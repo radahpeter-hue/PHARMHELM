@@ -50,7 +50,7 @@ test('revision identifiers are deterministic and sequence scoped', () => {
   assert.notEqual(first.replacementSaleId, second.replacementSaleId);
 });
 
-test('revision envelope preserves original identity and creates replacement linkage', () => {
+test('revision envelope preserves original identity and locks the original without inventing a new Sale.status', () => {
   const envelope = buildPosV2RevisionEnvelope({
     originalSale,
     plan: plan(),
@@ -64,9 +64,11 @@ test('revision envelope preserves original identity and creates replacement link
   assert.equal(envelope.revision.originalReceiptNumber, originalSale.receiptNumber);
   assert.equal(envelope.revision.originalSellerId, 'seller-1');
   assert.equal(envelope.revision.originalTimestamp, originalSale.timestamp);
-  assert.equal(envelope.originalSalePatch.status, 'revised');
+  assert.equal('status' in envelope.originalSalePatch, false);
+  assert.equal(envelope.originalSalePatch.revisionLifecycle, 'REVERSAL_PENDING');
+  assert.equal(envelope.originalSalePatch.revisionLocked, true);
   assert.equal(envelope.originalSalePatch.revisionId, envelope.identifiers.revisionId);
-  assert.equal(envelope.originalSalePatch.supersededBySaleId, envelope.identifiers.replacementSaleId);
+  assert.equal(envelope.originalSalePatch.pendingReplacementSaleId, envelope.identifiers.replacementSaleId);
   assert.equal(envelope.replacementSaleSeed.revisionOfSaleId, originalSale.id);
   assert.equal(envelope.replacementSaleSeed.originalReceiptNumber, originalSale.receiptNumber);
   assert.equal(envelope.replacementSaleSeed.engineVersion, 2);
