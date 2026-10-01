@@ -9,6 +9,7 @@ import {
   validateRevisionRequest
 } from './pos-v2-revision-worker-core.mjs';
 import { executeInventoryAndConsumptionReversal } from './pos-v2-revision-inventory-executor.mjs';
+import { executePaymentReversal } from './pos-v2-revision-payment-executor.mjs';
 
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0911422817';
 const DATABASE_ID = process.env.FIRESTORE_DATABASE_ID || 'ai-studio-f7d8654b-e089-425a-a506-38159afe1e75';
@@ -59,6 +60,7 @@ function reversalApplicability({ sale, payment, outbox }) {
   return {
     inventory: hasStockLines,
     consumption: completed('consumption') && hasStockLines,
+    payment: true,
     welfare: completed('welfare') || welfareAmount > 0,
     institutionalCredit: completed('institutionalCredit') || institutionalCreditAmount > 0,
     quotation: completed('quotation') || Boolean(clean(sale?.sourceQuotationId))
@@ -143,6 +145,10 @@ async function claimRevisionRequest(ref) {
       requestId: request.requestId || requestSnap.id,
       revisionId: request.revisionId,
       originalSaleId: sale.id,
+      canonicalPaymentId: payment.paymentId,
+      requestedBy: request.requestedBy,
+      requestedByName: request.requestedByName,
+      reason: clean(request.reason).replace(/\s+/g, ' '),
       reversalConsumers: consumers,
       attemptCount: nextAttempt,
       resumed: resumingOwnLock
@@ -153,6 +159,12 @@ async function claimRevisionRequest(ref) {
 async function loadOriginalSale(originalSaleId) {
   const snap = await db.collection('sales').doc(originalSaleId).get();
   if (!snap.exists) throw new Error('The original POS V2 sale disappeared after revision intake.');
+  return { id: snap.id, ...snap.data() };
+}
+
+async function loadCanonicalPayment(paymentId) {
+  const snap = await db.collection('pos_payments').doc(paymentId).get();
+  if (!snap.exists) throw new Error('The canonical POS V2 payment disappeared after revision intake.');
   return { id: snap.id, ...snap.data() };
 }
 
@@ -220,15 +232,50 @@ async function markInventoryAndConsumptionCompleted(ref, result) {
   });
 }
 
-async function markInventoryFailure(ref, error) {
+async function markPaymentCompleted(ref, result) {
   await db.runTransaction(async tx => {
     const snap = await tx.get(ref);
     if (!snap.exists) return;
     const request = snap.data();
-    const previous = request.reversalConsumers?.inventory || {};
+    const consumers = { ...(request.reversalConsumers || {}) };
+    const previous = consumers.payment;
+    if (!previous || previous.status === 'NOT_APPLICABLE') return;
+    consumers.payment = {
+      ...previous,
+      status: 'COMPLETED',
+      lastError: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      completedAt: previous.completedAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      requiresManualReview: false
+    };
+    const reversalState = deriveReversalState(consumers);
+    tx.update(ref, {
+      reversalConsumers: consumers,
+      reversalState,
+      status: reversalState === 'REVERSAL_COMPLETE' ? 'REVERSAL_COMPLETE' : 'PROCESSING',
+      paymentReversalId: result.reversalId,
+      paymentReversalReplay: Boolean(result.replayed),
+      paymentAmountDelta: Number(result.amountDelta || 0),
+      paymentSettledDelta: Number(result.settledDelta || 0),
+      paymentOutstandingDelta: Number(result.outstandingDelta || 0),
+      paymentReversalCompletedAt: FieldValue.serverTimestamp(),
+      lastError: null,
+      updatedAt: FieldValue.serverTimestamp()
+    });
+  });
+}
+
+async function markConsumerFailure(ref, name, error, fallbackMessage) {
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    const request = snap.data();
+    const previous = request.reversalConsumers?.[name] || {};
     const attemptCount = Number(previous.attemptCount || 0);
     const terminal = attemptCount >= MAX_ATTEMPTS;
-    const message = error instanceof Error ? error.message.slice(0, 1000) : String(error || 'Unknown inventory reversal error').slice(0, 1000);
+    const message = error instanceof Error ? error.message.slice(0, 1000) : String(error || fallbackMessage).slice(0, 1000);
     const next = {
       ...previous,
       status: 'FAILED',
@@ -238,9 +285,9 @@ async function markInventoryFailure(ref, error) {
       updatedAt: new Date().toISOString(),
       requiresManualReview: terminal
     };
-    const consumers = { ...(request.reversalConsumers || {}), inventory: next };
+    const consumers = { ...(request.reversalConsumers || {}), [name]: next };
     tx.update(ref, {
-      'reversalConsumers.inventory': next,
+      [`reversalConsumers.${name}`]: next,
       reversalState: 'FAILED',
       status: 'FAILED',
       lastError: message,
@@ -251,6 +298,14 @@ async function markInventoryFailure(ref, error) {
       updatedAt: FieldValue.serverTimestamp()
     });
   });
+}
+
+async function markInventoryFailure(ref, error) {
+  return markConsumerFailure(ref, 'inventory', error, 'Unknown inventory reversal error');
+}
+
+async function markPaymentFailure(ref, error) {
+  return markConsumerFailure(ref, 'payment', error, 'Unknown payment reversal error');
 }
 
 async function releaseRequestLease(ref) {
@@ -318,6 +373,35 @@ async function processInventoryStage(ref, claimed) {
   }
 }
 
+async function processPaymentStage(ref, claimed) {
+  const paymentState = claimed.reversalConsumers?.payment?.status;
+  if (paymentState === 'NOT_APPLICABLE') return { skipped: true, reason: 'NOT_APPLICABLE' };
+  if (paymentState === 'COMPLETED') return { skipped: true, reason: 'ALREADY_COMPLETED' };
+
+  const marked = await markConsumerProcessing(ref, 'payment');
+  if (!marked) return { skipped: true, reason: 'LEASE_OR_STATE_NOT_RUNNABLE' };
+
+  const sale = await loadOriginalSale(claimed.originalSaleId);
+  const payment = await loadCanonicalPayment(claimed.canonicalPaymentId);
+  try {
+    const result = await executePaymentReversal({
+      db,
+      sale,
+      payment,
+      revisionId: claimed.revisionId,
+      requestedBy: claimed.requestedBy,
+      requestedByName: claimed.requestedByName,
+      reason: claimed.reason,
+      FieldValue
+    });
+    await markPaymentCompleted(ref, result);
+    return { skipped: false, ...result };
+  } catch (error) {
+    await markPaymentFailure(ref, error);
+    throw error;
+  }
+}
+
 async function candidateRefs() {
   const snapshot = await db.collection('pos_sale_revision_requests')
     .where('status', 'in', ['PENDING', 'FAILED', 'PROCESSING'])
@@ -338,7 +422,7 @@ async function candidateRefs() {
 
 async function main() {
   const refs = await candidateRefs();
-  const summary = { candidates: refs.length, claimed: 0, inventoryProcessed: 0, skipped: 0, failed: 0 };
+  const summary = { candidates: refs.length, claimed: 0, inventoryProcessed: 0, paymentProcessed: 0, skipped: 0, failed: 0 };
 
   for (const ref of refs) {
     try {
@@ -351,8 +435,10 @@ async function main() {
       summary.claimed += 1;
       const inventory = await processInventoryStage(ref, claimed);
       if (!inventory.skipped) summary.inventoryProcessed += 1;
+      const payment = await processPaymentStage(ref, claimed);
+      if (!payment.skipped) summary.paymentProcessed += 1;
       await releaseRequestLease(ref);
-      console.log(JSON.stringify({ mode: 'revision-inventory', workerId: WORKER_ID, ...claimed, inventory }));
+      console.log(JSON.stringify({ mode: 'revision-payment', workerId: WORKER_ID, ...claimed, inventory, payment }));
     } catch (error) {
       summary.failed += 1;
       console.error(`[POS V2 revision worker] ${ref.id}:`, error);
@@ -361,7 +447,7 @@ async function main() {
     }
   }
 
-  console.log(JSON.stringify({ mode: 'revision-inventory', workerId: WORKER_ID, ...summary }, null, 2));
+  console.log(JSON.stringify({ mode: 'revision-payment', workerId: WORKER_ID, ...summary }, null, 2));
   if (summary.failed > 0) process.exitCode = 1;
 }
 
