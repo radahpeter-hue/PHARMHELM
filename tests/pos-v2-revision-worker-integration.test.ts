@@ -36,7 +36,11 @@ test('revision intake validates canonical sale payment and outbox before locking
   assert.match(revisionWorker, /if \(!resumingOwnLock\) \{/);
 });
 
-test('Stage 5D-2 keeps payment, welfare, credit and quotation compensation out of the inventory step', () => {
+test('Stage 5D-3 runs payment compensation separately and keeps welfare, credit and quotation compensation deferred', () => {
+  assert.match(revisionWorker, /executeInventoryAndConsumptionReversal/);
+  assert.match(revisionWorker, /executePaymentReversal/);
+  assert.match(revisionWorker, /payment: true/);
+  assert.match(revisionWorker, /processPaymentStage/);
   for (const collection of [
     'welfare',
     'branch_expenses',
@@ -46,7 +50,6 @@ test('Stage 5D-2 keeps payment, welfare, credit and quotation compensation out o
   ]) {
     assert.doesNotMatch(revisionWorker, new RegExp(`collection\\('${collection}'\\)`));
   }
-  assert.doesNotMatch(revisionWorker, /PAYMENT_REVERSAL|PAYMENT_COMPENSATION|reversePayment|compensatePayment/);
 });
 
 test('revision intake is lease and retry bounded', () => {
