@@ -13,6 +13,7 @@ import { executePaymentReversal } from './pos-v2-revision-payment-executor.mjs';
 import { executeWelfareReversal } from './pos-v2-revision-welfare-executor.mjs';
 import { executeInstitutionalCreditReversal } from './pos-v2-revision-credit-executor.mjs';
 import { executeQuotationReversal } from './pos-v2-revision-quotation-executor.mjs';
+import { closeoutRevisionReversal } from './pos-v2-revision-lifecycle-executor.mjs';
 
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0911422817';
 const DATABASE_ID = process.env.FIRESTORE_DATABASE_ID || 'ai-studio-f7d8654b-e089-425a-a506-38159afe1e75';
@@ -77,7 +78,7 @@ async function claimRevisionRequest(ref) {
     const request = { id: requestSnap.id, ...requestSnap.data() };
 
     if (request.requestType !== REVISION_REQUEST_TYPE || Number(request.engineVersion || 0) !== 2) return null;
-    if (request.status === 'COMPLETED' || request.status === 'REVERSAL_COMPLETE' || request.status === 'REPLACEMENT_PENDING') return null;
+    if (request.status === 'COMPLETED' || request.status === 'REPLACEMENT_PENDING') return null;
     if (request.status === 'PROCESSING' && !isLeaseExpired(request.leaseExpiresAt)) return null;
     if (request.requiresManualReview === true || Number(request.attemptCount || 0) >= MAX_ATTEMPTS) return null;
 
@@ -115,9 +116,10 @@ async function claimRevisionRequest(ref) {
     const nextAttempt = Number(request.attemptCount || 0) + 1;
     const leaseExpiresAt = Timestamp.fromMillis(Date.now() + LEASE_SECONDS * 1000);
     const pendingReplacementSaleId = clean(request.pendingReplacementSaleId || request.replacementSaleId);
+    const preservingReversalComplete = request.status === 'REVERSAL_COMPLETE';
 
     tx.update(ref, {
-      status: 'PROCESSING',
+      status: preservingReversalComplete ? 'REVERSAL_COMPLETE' : 'PROCESSING',
       attemptCount: nextAttempt,
       leaseOwner: WORKER_ID,
       leaseExpiresAt,
@@ -154,7 +156,8 @@ async function claimRevisionRequest(ref) {
       reason: clean(request.reason).replace(/\s+/g, ' '),
       reversalConsumers: consumers,
       attemptCount: nextAttempt,
-      resumed: resumingOwnLock
+      resumed: resumingOwnLock,
+      preservingReversalComplete
     };
   });
 }
@@ -608,9 +611,13 @@ async function processQuotationStage(ref, claimed) {
   }
 }
 
+async function processLifecycleCloseout(ref) {
+  return closeoutRevisionReversal({ db, requestRef: ref, FieldValue });
+}
+
 async function candidateRefs() {
   const snapshot = await db.collection('pos_sale_revision_requests')
-    .where('status', 'in', ['PENDING', 'FAILED', 'PROCESSING'])
+    .where('status', 'in', ['PENDING', 'FAILED', 'PROCESSING', 'REVERSAL_COMPLETE'])
     .limit(MAX_REQUESTS * 3)
     .get();
 
@@ -636,6 +643,7 @@ async function main() {
     welfareProcessed: 0,
     institutionalCreditProcessed: 0,
     quotationProcessed: 0,
+    lifecycleClosed: 0,
     skipped: 0,
     failed: 0
   };
@@ -659,8 +667,10 @@ async function main() {
       if (!institutionalCredit.skipped) summary.institutionalCreditProcessed += 1;
       const quotation = await processQuotationStage(ref, claimed);
       if (!quotation.skipped) summary.quotationProcessed += 1;
+      const closeout = await processLifecycleCloseout(ref);
+      if (!closeout.replayed) summary.lifecycleClosed += 1;
       await releaseRequestLease(ref);
-      console.log(JSON.stringify({ mode: 'revision-credit', workerId: WORKER_ID, ...claimed, inventory, payment, welfare, institutionalCredit, quotation }));
+      console.log(JSON.stringify({ mode: 'revision-credit', workerId: WORKER_ID, ...claimed, inventory, payment, welfare, institutionalCredit, quotation, closeout }));
     } catch (error) {
       summary.failed += 1;
       console.error(`[POS V2 revision worker] ${ref.id}:`, error);
