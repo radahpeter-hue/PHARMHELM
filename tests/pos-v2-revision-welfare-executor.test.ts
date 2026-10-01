@@ -54,3 +54,16 @@ test('welfare executor uses deterministic original posting identities compatible
   assert.match(source, /originalExpenseRef/);
   assert.match(source, /originalTransferRef/);
 });
+
+test('revision worker runs welfare compensation only after inventory and payment, while later consumers remain deferred', () => {
+  const worker = readFileSync('scripts/process-pos-v2-revisions.mjs', 'utf8');
+  assert.match(worker, /pos-v2-revision-welfare-executor/);
+  assert.match(worker, /executeWelfareReversal/);
+  assert.match(worker, /processWelfareStage/);
+  assert.match(worker, /welfareReversalCompletedAt/);
+  assert.match(worker, /welfareAmountDelta/);
+  assert.ok(worker.indexOf('processPaymentStage(ref, claimed)') > worker.indexOf('processInventoryStage(ref, claimed)'));
+  assert.ok(worker.indexOf('processWelfareStage(ref, claimed)') > worker.indexOf('processPaymentStage(ref, claimed)'));
+  assert.doesNotMatch(worker, /processInstitutionalCreditStage/);
+  assert.doesNotMatch(worker, /processQuotationStage/);
+});
