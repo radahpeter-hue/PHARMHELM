@@ -70,8 +70,12 @@ test('inventory executor validates original consumption and exact live historica
   assert.ok(firstWrite > productValidation);
 });
 
-test('isolated executor is not yet wired into the live revision worker', () => {
+test('revision worker wires only the Stage 5D-2 inventory executor and records coupled consumption completion', () => {
   const worker = readFileSync('scripts/process-pos-v2-revisions.mjs', 'utf8');
-  assert.doesNotMatch(worker, /pos-v2-revision-inventory-executor/);
-  assert.doesNotMatch(worker, /executeInventoryAndConsumptionReversal/);
+  assert.match(worker, /pos-v2-revision-inventory-executor/);
+  assert.match(worker, /executeInventoryAndConsumptionReversal/);
+  assert.match(worker, /markInventoryAndConsumptionCompleted/);
+  assert.match(worker, /processInventoryStage/);
+  assert.match(worker, /inventoryReversalCompletedAt/);
+  assert.doesNotMatch(worker, /PAYMENT_REVERSAL|PAYMENT_COMPENSATION|reversePayment|compensatePayment/);
 });
