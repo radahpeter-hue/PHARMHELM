@@ -131,3 +131,85 @@ test('live product validation rejects cross-tenant and corrupt stock', () => {
     tenantId: 'tenant_1'
   }), /invalid live stock/);
 });
+
+test('ordinary consumption reversal removes exactly the original sale contribution', () => {
+  const original = {
+    transactionCount: 4,
+    closingUsableStock: 30,
+    ordinaryUnitsSold: 50,
+    validConsumptionUnits: 45,
+    consumptionTransactionCount: 3,
+    exceptionalUnits: 5
+  };
+  const next = core.reverseConsumptionSummary({
+    summary: original,
+    baseQuantity: 20,
+    exceptional: false,
+    productId: 'p1'
+  });
+  assert.deepEqual(next, {
+    ...original,
+    transactionCount: 3,
+    closingUsableStock: 50,
+    ordinaryUnitsSold: 30,
+    validConsumptionUnits: 25,
+    consumptionTransactionCount: 2
+  });
+  assert.deepEqual(original, {
+    transactionCount: 4,
+    closingUsableStock: 30,
+    ordinaryUnitsSold: 50,
+    validConsumptionUnits: 45,
+    consumptionTransactionCount: 3,
+    exceptionalUnits: 5
+  });
+});
+
+test('exceptional consumption reversal restores stock without reducing ordinary demand', () => {
+  const next = core.reverseConsumptionSummary({
+    summary: {
+      transactionCount: 2,
+      closingUsableStock: 8,
+      ordinaryUnitsSold: 12,
+      validConsumptionUnits: 12,
+      consumptionTransactionCount: 1,
+      exceptionalUnits: 7
+    },
+    baseQuantity: 5,
+    exceptional: true,
+    productId: 'p2'
+  });
+  assert.equal(next.transactionCount, 1);
+  assert.equal(next.closingUsableStock, 13);
+  assert.equal(next.exceptionalUnits, 2);
+  assert.equal(next.ordinaryUnitsSold, 12);
+  assert.equal(next.validConsumptionUnits, 12);
+  assert.equal(next.consumptionTransactionCount, 1);
+});
+
+test('consumption reversal fails closed instead of creating negative summary values', () => {
+  assert.throws(() => core.reverseConsumptionSummary({
+    summary: { transactionCount: 0, closingUsableStock: 2 },
+    baseQuantity: 1,
+    productId: 'p1'
+  }), /transaction count is corrupt/);
+
+  assert.throws(() => core.reverseConsumptionSummary({
+    summary: {
+      transactionCount: 1,
+      closingUsableStock: 2,
+      ordinaryUnitsSold: 3,
+      validConsumptionUnits: 3,
+      consumptionTransactionCount: 1
+    },
+    baseQuantity: 4,
+    productId: 'p1'
+  }), /summary is insufficient/);
+
+  assert.throws(() => core.reverseConsumptionSummary({
+    summary: { transactionCount: 1, closingUsableStock: 2, exceptionalUnits: 1 },
+    baseQuantity: 2,
+    exceptional: true,
+    productId: 'p1'
+  }), /Exceptional consumption summary is insufficient/);
+});
