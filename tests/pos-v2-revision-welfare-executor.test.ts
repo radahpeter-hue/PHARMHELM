@@ -67,5 +67,7 @@ test('revision worker keeps welfare ordered after inventory/payment and before l
   if (worker.includes('processInstitutionalCreditStage(ref, claimed)')) {
     assert.ok(worker.indexOf('processInstitutionalCreditStage(ref, claimed)') > worker.indexOf('processWelfareStage(ref, claimed)'));
   }
-  assert.doesNotMatch(worker, /processQuotationStage/);
+  if (worker.includes('processQuotationStage(ref, claimed)')) {
+    assert.ok(worker.indexOf('processQuotationStage(ref, claimed)') > worker.indexOf('processInstitutionalCreditStage(ref, claimed)'));
+  }
 });

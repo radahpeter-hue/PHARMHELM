@@ -4,13 +4,13 @@ import { readFileSync } from 'node:fs';
 
 const worker = readFileSync('scripts/process-pos-v2-revisions.mjs', 'utf8');
 
-test('revision worker wires institutional credit compensation after welfare and before quotation work', () => {
+test('revision worker wires institutional credit compensation after welfare and before quotation compensation', () => {
   assert.match(worker, /pos-v2-revision-credit-executor/);
   assert.match(worker, /executeInstitutionalCreditReversal/);
   assert.match(worker, /processInstitutionalCreditStage/);
   assert.match(worker, /institutionalCreditProcessed/);
   assert.ok(worker.indexOf('processInstitutionalCreditStage(ref, claimed)') > worker.indexOf('processWelfareStage(ref, claimed)'));
-  assert.doesNotMatch(worker, /processQuotationStage/);
+  assert.ok(worker.indexOf('processQuotationStage(ref, claimed)') > worker.indexOf('processInstitutionalCreditStage(ref, claimed)'));
 });
 
 test('institutional credit stage uses its own consumer lifecycle and durable completion metadata', () => {
