@@ -54,9 +54,10 @@ export interface PosV2RevisionEnvelope {
     sequence: number;
   };
   originalSalePatch: {
-    status: 'revised';
+    revisionLifecycle: 'REVERSAL_PENDING';
+    revisionLocked: true;
     revisionId: string;
-    supersededBySaleId: string;
+    pendingReplacementSaleId: string;
   };
   replacementSaleSeed: {
     tenantId: string;
@@ -186,9 +187,10 @@ export function buildPosV2RevisionEnvelope(input: PosV2RevisionEnvelopeInput): P
       sequence
     },
     originalSalePatch: {
-      status: 'revised',
+      revisionLifecycle: 'REVERSAL_PENDING',
+      revisionLocked: true,
       revisionId: identifiers.revisionId,
-      supersededBySaleId: identifiers.replacementSaleId
+      pendingReplacementSaleId: identifiers.replacementSaleId
     },
     replacementSaleSeed: {
       tenantId: originalSale.tenantId,
