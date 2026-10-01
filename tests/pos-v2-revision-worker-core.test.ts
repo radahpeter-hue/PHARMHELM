@@ -97,6 +97,47 @@ test('revision request rejects an already locked or superseded sale', () => {
   );
 });
 
+test('revision retry can resume only its own pending reversal lock', () => {
+  const ownPendingLock = {
+    ...sale,
+    revisionLocked: true,
+    revisionId: 'revision_1',
+    revisionLifecycle: 'REVERSAL_PENDING'
+  };
+  assert.equal(core.validateRevisionRequest({ request, sale: ownPendingLock, payment, outbox, resume: true }), true);
+
+  assert.throws(
+    () => core.validateRevisionRequest({
+      request,
+      sale: { ...ownPendingLock, revisionId: 'revision_other' },
+      payment,
+      outbox,
+      resume: true
+    }),
+    /already locked/
+  );
+  assert.throws(
+    () => core.validateRevisionRequest({
+      request,
+      sale: { ...ownPendingLock, revisionLifecycle: 'REVERSAL_COMPLETE' },
+      payment,
+      outbox,
+      resume: true
+    }),
+    /already locked/
+  );
+  assert.throws(
+    () => core.validateRevisionRequest({
+      request,
+      sale: { ...ownPendingLock, supersededBySaleId: 'replacement_1' },
+      payment,
+      outbox,
+      resume: true
+    }),
+    /already locked/
+  );
+});
+
 test('revision request cannot masquerade as a normal sale commit or use a weak reason', () => {
   assert.throws(
     () => core.validateRevisionRequest({ request: { ...request, requestType: 'POS_SALE_COMMITTED' }, sale, payment, outbox }),
