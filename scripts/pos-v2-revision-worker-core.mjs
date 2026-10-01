@@ -11,6 +11,7 @@ export const REVISION_STATUSES = [
 export const REVERSAL_CONSUMERS = [
   'inventory',
   'consumption',
+  'payment',
   'welfare',
   'institutionalCredit',
   'quotation'
