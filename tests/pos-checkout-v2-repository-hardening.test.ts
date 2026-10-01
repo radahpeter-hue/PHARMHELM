@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const repository = readFileSync('src/services/pos-v2/posCheckoutV2Repository.ts', 'utf8');
+const identity = readFileSync('src/services/pos-v2/posCheckoutV2Identity.ts', 'utf8');
 
 test('transaction revalidates effective sales permission from the live staff roles', () => {
   assert.match(repository, /resolveSalesAccessInTransaction/);
@@ -19,7 +20,10 @@ test('human receipt number keeps the established branch-year-six-digit shape', (
 });
 
 test('technical sale identity remains deterministic and separate from human receipt numbering', () => {
-  assert.match(repository, /checkoutV2SaleDocumentId\(tenantId: string, attemptId: string\)/);
-  assert.match(repository, /deterministicDocumentId\('v2sale', tenantId, attemptId\)/);
+  assert.match(repository, /from '\.\/posCheckoutV2Identity'/);
+  assert.match(repository, /const saleId = checkoutV2SaleDocumentId\(authority\.tenantId, request\.attemptId\)/);
+  assert.match(identity, /checkoutV2SaleDocumentId\(tenantId: string, attemptId: string\)/);
+  assert.match(identity, /deterministicDocumentId\('v2sale', tenantId, attemptId\)/);
   assert.match(repository, /saleRef: doc\(db, 'sales', saleId\)/);
+  assert.doesNotMatch(repository, /function deterministicDocumentId/);
 });
