@@ -25,12 +25,15 @@ test('revision intake locks lifecycle metadata without changing the canonical sa
   assert.doesNotMatch(revisionWorker, /tx\.update\(saleRef,[\s\S]{0,900}status:/);
 });
 
-test('revision intake validates canonical sale payment and outbox before locking', () => {
+test('revision intake validates canonical sale payment and outbox before locking or resuming', () => {
   assert.match(revisionWorker, /sale\.canonicalPaymentId/);
   assert.match(revisionWorker, /sale\.transactionOutboxEventId/);
   assert.match(revisionWorker, /collection\('pos_payments'\)/);
   assert.match(revisionWorker, /collection\('pos_transaction_outbox'\)/);
-  assert.match(revisionWorker, /validateRevisionRequest\(\{ request: validationRequest, sale, payment, outbox \}\)/);
+  assert.match(revisionWorker, /validateRevisionRequest\(\{ request: validationRequest, sale, payment, outbox, resume: resumingOwnLock \}\)/);
+  assert.match(revisionWorker, /clean\(sale\.revisionId\) === clean\(request\.revisionId\)/);
+  assert.match(revisionWorker, /revisionLifecycle\) === 'REVERSAL_PENDING'/);
+  assert.match(revisionWorker, /if \(!resumingOwnLock\) \{/);
 });
 
 test('Stage 5B intake does not yet mutate inventory or downstream finance records', () => {
