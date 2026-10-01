@@ -8,6 +8,7 @@ import {
   initializeReversalConsumers,
   validateRevisionRequest
 } from './pos-v2-revision-worker-core.mjs';
+import { executeInventoryAndConsumptionReversal } from './pos-v2-revision-inventory-executor.mjs';
 
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0911422817';
 const DATABASE_ID = process.env.FIRESTORE_DATABASE_ID || 'ai-studio-f7d8654b-e089-425a-a506-38159afe1e75';
@@ -149,6 +150,126 @@ async function claimRevisionRequest(ref) {
   });
 }
 
+async function loadOriginalSale(originalSaleId) {
+  const snap = await db.collection('sales').doc(originalSaleId).get();
+  if (!snap.exists) throw new Error('The original POS V2 sale disappeared after revision intake.');
+  return { id: snap.id, ...snap.data() };
+}
+
+async function markConsumerProcessing(ref, name) {
+  return db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const request = snap.data();
+    if (request.leaseOwner !== WORKER_ID || isLeaseExpired(request.leaseExpiresAt)) return false;
+    const state = request.reversalConsumers?.[name];
+    if (!state || state.status === 'COMPLETED' || state.status === 'NOT_APPLICABLE') return false;
+    if (state.status === 'PROCESSING' && !isLeaseExpired(state.leaseExpiresAt)) return false;
+
+    tx.update(ref, {
+      [`reversalConsumers.${name}.status`]: 'PROCESSING',
+      [`reversalConsumers.${name}.attemptCount`]: Number(state.attemptCount || 0) + 1,
+      [`reversalConsumers.${name}.leaseOwner`]: WORKER_ID,
+      [`reversalConsumers.${name}.leaseExpiresAt`]: request.leaseExpiresAt,
+      [`reversalConsumers.${name}.lastError`]: null,
+      [`reversalConsumers.${name}.updatedAt`]: FieldValue.serverTimestamp(),
+      reversalState: 'PROCESSING',
+      status: 'PROCESSING',
+      updatedAt: FieldValue.serverTimestamp()
+    });
+    return true;
+  });
+}
+
+async function markInventoryAndConsumptionCompleted(ref, result) {
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    const request = snap.data();
+    const consumers = { ...(request.reversalConsumers || {}) };
+    const nowIso = new Date().toISOString();
+
+    for (const name of ['inventory', 'consumption']) {
+      const previous = consumers[name];
+      if (!previous || previous.status === 'NOT_APPLICABLE') continue;
+      consumers[name] = {
+        ...previous,
+        status: 'COMPLETED',
+        lastError: null,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        completedAt: previous.completedAt || nowIso,
+        updatedAt: nowIso,
+        requiresManualReview: false
+      };
+    }
+
+    const reversalState = deriveReversalState(consumers);
+    tx.update(ref, {
+      reversalConsumers: consumers,
+      reversalState,
+      status: reversalState === 'REVERSAL_COMPLETE' ? 'REVERSAL_COMPLETE' : 'PROCESSING',
+      inventoryReversalReplay: Boolean(result?.replayed),
+      inventoryReversalProductCount: Number(result?.productCount || 0),
+      inventoryReversalBatchCount: Number(result?.batchCount || 0),
+      inventoryReversalBaseUnits: Number(result?.totalBaseUnits || 0),
+      inventoryReversalCompletedAt: FieldValue.serverTimestamp(),
+      lastError: null,
+      updatedAt: FieldValue.serverTimestamp()
+    });
+  });
+}
+
+async function markInventoryFailure(ref, error) {
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    const request = snap.data();
+    const previous = request.reversalConsumers?.inventory || {};
+    const attemptCount = Number(previous.attemptCount || 0);
+    const terminal = attemptCount >= MAX_ATTEMPTS;
+    const message = error instanceof Error ? error.message.slice(0, 1000) : String(error || 'Unknown inventory reversal error').slice(0, 1000);
+    const next = {
+      ...previous,
+      status: 'FAILED',
+      lastError: message,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      updatedAt: new Date().toISOString(),
+      requiresManualReview: terminal
+    };
+    const consumers = { ...(request.reversalConsumers || {}), inventory: next };
+    tx.update(ref, {
+      'reversalConsumers.inventory': next,
+      reversalState: 'FAILED',
+      status: 'FAILED',
+      lastError: message,
+      requiresManualReview: terminal || Object.values(consumers).some(state => Boolean(state?.requiresManualReview)),
+      manualReviewAt: terminal ? (request.manualReviewAt || FieldValue.serverTimestamp()) : request.manualReviewAt || null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      updatedAt: FieldValue.serverTimestamp()
+    });
+  });
+}
+
+async function releaseRequestLease(ref) {
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    const request = snap.data();
+    if (request.leaseOwner !== WORKER_ID) return;
+    const reversalState = deriveReversalState(request.reversalConsumers || {});
+    tx.update(ref, {
+      reversalState,
+      status: reversalState === 'REVERSAL_COMPLETE' ? 'REVERSAL_COMPLETE' : request.status === 'FAILED' ? 'FAILED' : 'PROCESSING',
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      updatedAt: FieldValue.serverTimestamp()
+    });
+  });
+}
+
 async function markClaimFailure(ref, error) {
   await db.runTransaction(async tx => {
     const snap = await tx.get(ref);
@@ -167,6 +288,34 @@ async function markClaimFailure(ref, error) {
       updatedAt: FieldValue.serverTimestamp()
     });
   });
+}
+
+async function processInventoryStage(ref, claimed) {
+  const inventoryState = claimed.reversalConsumers?.inventory?.status;
+  const consumptionState = claimed.reversalConsumers?.consumption?.status;
+  if (inventoryState === 'NOT_APPLICABLE') return { skipped: true, reason: 'NOT_APPLICABLE' };
+  if (inventoryState === 'COMPLETED' && (consumptionState === 'COMPLETED' || consumptionState === 'NOT_APPLICABLE')) {
+    return { skipped: true, reason: 'ALREADY_COMPLETED' };
+  }
+
+  const marked = inventoryState === 'COMPLETED' ? true : await markConsumerProcessing(ref, 'inventory');
+  if (!marked) return { skipped: true, reason: 'LEASE_OR_STATE_NOT_RUNNABLE' };
+
+  const sale = await loadOriginalSale(claimed.originalSaleId);
+  try {
+    const result = await executeInventoryAndConsumptionReversal({
+      db,
+      sale,
+      revisionId: claimed.revisionId,
+      workerId: WORKER_ID,
+      FieldValue
+    });
+    await markInventoryAndConsumptionCompleted(ref, result);
+    return { skipped: false, ...result };
+  } catch (error) {
+    await markInventoryFailure(ref, error);
+    throw error;
+  }
 }
 
 async function candidateRefs() {
@@ -189,25 +338,30 @@ async function candidateRefs() {
 
 async function main() {
   const refs = await candidateRefs();
-  const summary = { candidates: refs.length, claimed: 0, skipped: 0, failed: 0 };
+  const summary = { candidates: refs.length, claimed: 0, inventoryProcessed: 0, skipped: 0, failed: 0 };
 
   for (const ref of refs) {
     try {
       const claimed = await claimRevisionRequest(ref);
-      if (claimed) {
-        summary.claimed += 1;
-        console.log(JSON.stringify({ mode: 'revision-intake', workerId: WORKER_ID, ...claimed }));
-      } else {
+      if (!claimed) {
         summary.skipped += 1;
+        continue;
       }
+
+      summary.claimed += 1;
+      const inventory = await processInventoryStage(ref, claimed);
+      if (!inventory.skipped) summary.inventoryProcessed += 1;
+      await releaseRequestLease(ref);
+      console.log(JSON.stringify({ mode: 'revision-inventory', workerId: WORKER_ID, ...claimed, inventory }));
     } catch (error) {
       summary.failed += 1;
-      console.error(`[POS V2 revision intake] ${ref.id}:`, error);
-      await markClaimFailure(ref, error);
+      console.error(`[POS V2 revision worker] ${ref.id}:`, error);
+      const snap = await ref.get();
+      if (snap.exists && snap.data()?.status !== 'FAILED') await markClaimFailure(ref, error);
     }
   }
 
-  console.log(JSON.stringify({ mode: 'revision-intake', workerId: WORKER_ID, ...summary }, null, 2));
+  console.log(JSON.stringify({ mode: 'revision-inventory', workerId: WORKER_ID, ...summary }, null, 2));
   if (summary.failed > 0) process.exitCode = 1;
 }
 
