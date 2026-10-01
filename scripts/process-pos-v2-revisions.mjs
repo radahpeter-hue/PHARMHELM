@@ -93,12 +93,16 @@ async function claimRevisionRequest(ref) {
     const payment = { id: paymentSnap.id, ...paymentSnap.data() };
     const outbox = { id: outboxSnap.id, ...outboxSnap.data() };
     const validationRequest = { ...request, status: 'PENDING' };
-    validateRevisionRequest({ request: validationRequest, sale, payment, outbox });
+    const resumingOwnLock = sale.revisionLocked === true
+      && clean(sale.revisionId) === clean(request.revisionId)
+      && clean(sale.revisionLifecycle) === 'REVERSAL_PENDING'
+      && !clean(sale.supersededBySaleId);
+    validateRevisionRequest({ request: validationRequest, sale, payment, outbox, resume: resumingOwnLock });
 
     const applicability = reversalApplicability({ sale, payment, outbox });
     const consumers = initializeReversalConsumers(applicability, request.reversalConsumers || {});
     const reversalState = deriveReversalState(consumers);
-    if (reversalState === 'REVERSAL_COMPLETE') {
+    if (!resumingOwnLock && reversalState === 'REVERSAL_COMPLETE') {
       throw new Error('A new revision request cannot start with every reversal consumer already complete.');
     }
 
@@ -120,24 +124,27 @@ async function claimRevisionRequest(ref) {
       updatedAt: FieldValue.serverTimestamp()
     });
 
-    tx.update(saleRef, {
-      revisionLocked: true,
-      revisionId: request.revisionId,
-      revisionLifecycle: 'REVERSAL_PENDING',
-      pendingReplacementSaleId: pendingReplacementSaleId || null,
-      revisionRequestedBy: request.requestedBy,
-      revisionRequestedByName: request.requestedByName,
-      revisionReason: clean(request.reason).replace(/\s+/g, ' '),
-      revisionRequestedAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp()
-    });
+    if (!resumingOwnLock) {
+      tx.update(saleRef, {
+        revisionLocked: true,
+        revisionId: request.revisionId,
+        revisionLifecycle: 'REVERSAL_PENDING',
+        pendingReplacementSaleId: pendingReplacementSaleId || null,
+        revisionRequestedBy: request.requestedBy,
+        revisionRequestedByName: request.requestedByName,
+        revisionReason: clean(request.reason).replace(/\s+/g, ' '),
+        revisionRequestedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      });
+    }
 
     return {
       requestId: request.requestId || requestSnap.id,
       revisionId: request.revisionId,
       originalSaleId: sale.id,
       reversalConsumers: consumers,
-      attemptCount: nextAttempt
+      attemptCount: nextAttempt,
+      resumed: resumingOwnLock
     };
   });
 }
