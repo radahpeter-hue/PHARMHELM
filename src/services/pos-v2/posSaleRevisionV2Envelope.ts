@@ -1,5 +1,10 @@
 import type { Sale, SaleItem } from '../../types';
 import type { PosV2RevisionPlan } from './posSaleRevisionV2Planner';
+import { checkoutV2SaleDocumentId } from './posCheckoutV2Identity';
+import {
+  posCheckoutV2OutboxEventDocumentId,
+  posCheckoutV2PaymentDocumentId
+} from './posCheckoutV2PaymentOutbox';
 
 export const POS_V2_REVISION_EVENT_TYPE = 'POS_SALE_REVISION_REQUESTED' as const;
 export const POS_V2_REVERSAL_EVENT_TYPE = 'POS_SALE_REVERSAL_REQUESTED' as const;
@@ -129,9 +134,9 @@ export function buildPosV2RevisionIdentifiers(params: {
   const key = `${params.tenantId}__${params.originalSaleId}__rev${sequence}`;
   const revisionId = deterministicId('pos_revision', key);
   const replacementAttemptId = deterministicId('pos_revision_attempt', key);
-  const replacementSaleId = deterministicId('pos_revision_sale', key);
-  const replacementPaymentId = deterministicId('pos_revision_payment', replacementSaleId);
-  const replacementOutboxEventId = deterministicId('pos_revision_outbox', replacementSaleId);
+  const replacementSaleId = checkoutV2SaleDocumentId(params.tenantId, replacementAttemptId);
+  const replacementPaymentId = posCheckoutV2PaymentDocumentId(replacementSaleId);
+  const replacementOutboxEventId = posCheckoutV2OutboxEventDocumentId(replacementSaleId);
   const reversalEventId = deterministicId('pos_reversal_outbox', params.originalSaleId, revisionId);
   const auditId = deterministicId('audit_pos_revision', params.originalSaleId, revisionId);
   return {
