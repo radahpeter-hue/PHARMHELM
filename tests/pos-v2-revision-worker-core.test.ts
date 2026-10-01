@@ -151,13 +151,25 @@ test('revision request cannot masquerade as a normal sale commit or use a weak r
 
 test('reversal consumers preserve completed work across retries', () => {
   const consumers = core.initializeReversalConsumers(
-    { inventory: true, consumption: true, welfare: false, institutionalCredit: false, quotation: false },
+    { inventory: true, consumption: true, payment: true, welfare: false, institutionalCredit: false, quotation: false },
     { inventory: { status: 'COMPLETED', attemptCount: 1, lastError: null } }
   );
   assert.equal(consumers.inventory.status, 'COMPLETED');
   assert.equal(consumers.inventory.attemptCount, 1);
   assert.equal(consumers.consumption.status, 'PENDING');
+  assert.equal(consumers.payment.status, 'PENDING');
   assert.equal(consumers.welfare.status, 'NOT_APPLICABLE');
+});
+
+test('payment compensation is an explicit required consumer before reversal can complete', () => {
+  const consumers = core.initializeReversalConsumers({ inventory: true, consumption: true, payment: true });
+  consumers.inventory.status = 'COMPLETED';
+  consumers.consumption.status = 'COMPLETED';
+  assert.equal(core.deriveReversalState(consumers), 'PENDING');
+  consumers.payment.status = 'PROCESSING';
+  assert.equal(core.deriveReversalState(consumers), 'PROCESSING');
+  consumers.payment.status = 'COMPLETED';
+  assert.equal(core.deriveReversalState(consumers), 'REVERSAL_COMPLETE');
 });
 
 test('reversal state becomes complete only when every applicable consumer completes', () => {
