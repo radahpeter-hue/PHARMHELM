@@ -120,3 +120,42 @@ export function assertLiveProductCanRestore({ product, restore, tenantId }) {
   if (!Number.isFinite(stock) || stock < 0) throw new Error(`Product ${restore.productId} has invalid live stock.`);
   return true;
 }
+
+export function reverseConsumptionSummary({ summary, baseQuantity, exceptional = false, productId = '' }) {
+  if (!summary) throw new Error(`Consumption summary is missing for ${productId || 'product'}.`);
+  const quantity = numberValue(baseQuantity, NaN);
+  if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Consumption reversal quantity must be positive.');
+
+  const next = { ...summary };
+  const transactionCount = numberValue(next.transactionCount, NaN);
+  if (!Number.isFinite(transactionCount) || transactionCount < 1) {
+    throw new Error(`Consumption summary transaction count is corrupt for ${productId || 'product'}.`);
+  }
+  next.transactionCount = transactionCount - 1;
+  next.closingUsableStock = numberValue(next.closingUsableStock) + quantity;
+
+  if (exceptional) {
+    const exceptionalUnits = numberValue(next.exceptionalUnits, NaN);
+    if (!Number.isFinite(exceptionalUnits) || exceptionalUnits + EPSILON < quantity) {
+      throw new Error(`Exceptional consumption summary is insufficient for ${productId || 'product'}.`);
+    }
+    next.exceptionalUnits = exceptionalUnits - quantity;
+    return next;
+  }
+
+  const ordinaryUnitsSold = numberValue(next.ordinaryUnitsSold, NaN);
+  const validConsumptionUnits = numberValue(next.validConsumptionUnits, NaN);
+  const consumptionTransactionCount = numberValue(next.consumptionTransactionCount, NaN);
+  if (!Number.isFinite(ordinaryUnitsSold) || !Number.isFinite(validConsumptionUnits)
+    || ordinaryUnitsSold + EPSILON < quantity || validConsumptionUnits + EPSILON < quantity) {
+    throw new Error(`Consumption summary is insufficient for ${productId || 'product'}.`);
+  }
+  if (!Number.isFinite(consumptionTransactionCount) || consumptionTransactionCount < 1) {
+    throw new Error(`Consumption transaction count is corrupt for ${productId || 'product'}.`);
+  }
+
+  next.ordinaryUnitsSold = ordinaryUnitsSold - quantity;
+  next.validConsumptionUnits = validConsumptionUnits - quantity;
+  next.consumptionTransactionCount = consumptionTransactionCount - 1;
+  return next;
+}
