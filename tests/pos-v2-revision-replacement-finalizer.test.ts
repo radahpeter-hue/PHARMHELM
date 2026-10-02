@@ -71,6 +71,25 @@ function fixture() {
   } as any;
 }
 
+function completedFixture() {
+  const base = fixture();
+  return {
+    ...base,
+    request: {
+      ...base.request,
+      status: 'REPLACEMENT_CREATED',
+      replacementLifecycle: 'REPLACEMENT_CREATED',
+      replacementReceiptNumber: base.replacementSale.receiptNumber
+    },
+    originalSale: {
+      ...base.originalSale,
+      revisionLifecycle: 'REPLACEMENT_CREATED',
+      supersededBySaleId: base.replacementSale.id,
+      supersededByReceiptNumber: base.replacementSale.receiptNumber
+    }
+  } as any;
+}
+
 test('replacement finalizer accepts only a complete canonical replacement chain', () => {
   assert.equal(assertReplacementChain(fixture()), 'READY');
 });
@@ -85,9 +104,37 @@ test('replacement finalizer rejects identity, tenant and canonical-link drift', 
 
 test('replacement finalizer refuses premature or conflicting supersession', () => {
   const base = fixture();
-  assert.throws(() => assertReplacementChain({ ...base, request: { ...base.request, status: 'PROCESSING' } }), /REPLACEMENT_PENDING/i);
+  assert.throws(() => assertReplacementChain({ ...base, request: { ...base.request, status: 'PROCESSING' } }), /REPLACEMENT_PENDING or REPLACEMENT_CREATED/i);
   assert.throws(() => assertReplacementChain({ ...base, originalSale: { ...base.originalSale, revisionLifecycle: 'REVERSAL_PENDING' } }), /not awaiting its replacement/i);
   assert.throws(() => assertReplacementChain({ ...base, originalSale: { ...base.originalSale, supersededBySaleId: 'different-sale' } }), /already superseded/i);
+});
+
+test('completed linkage replay is accepted only after revalidating the entire canonical chain', () => {
+  assert.equal(assertReplacementChain(completedFixture()), 'REPLAY');
+
+  const base = completedFixture();
+  assert.throws(() => assertReplacementChain({
+    ...base,
+    originalSale: { ...base.originalSale, supersededBySaleId: 'other-sale' }
+  }), /supersession does not match/i);
+
+  assert.throws(() => assertReplacementChain({
+    ...base,
+    request: { ...base.request, replacementLifecycle: 'REPLACEMENT_PENDING' }
+  }), /replacement lifecycle is inconsistent/i);
+
+  assert.throws(() => assertReplacementChain({
+    ...base,
+    payment: { ...base.payment, revisionId: 'other-revision' }
+  }), /payment revision linkage mismatch/i);
+});
+
+test('crash after replacement checkout but before linkage remains recoverable from REPLACEMENT_PENDING', () => {
+  const base = fixture();
+  assert.equal(base.request.status, 'REPLACEMENT_PENDING');
+  assert.equal(base.originalSale.revisionLifecycle, 'REPLACEMENT_PENDING');
+  assert.equal(base.originalSale.supersededBySaleId, undefined);
+  assert.equal(assertReplacementChain(base), 'READY');
 });
 
 test('replacement finalizer preserves canonical completed sale statuses and uses linkage lifecycle instead', () => {
@@ -108,4 +155,12 @@ test('replacement finalizer links original and request atomically without mutati
   assert.doesNotMatch(source, /tx\.update\(paymentRef/);
   assert.doesNotMatch(source, /tx\.update\(outboxRef/);
   assert.doesNotMatch(source, /tx\.update\(replacementRef/);
+});
+
+test('replay path re-reads original sale, replacement sale, payment and outbox before returning success', () => {
+  const source = readFileSync('scripts/pos-v2-revision-replacement-finalizer.mjs', 'utf8');
+  const readIndex = source.indexOf('Promise.all([');
+  const assertIndex = source.indexOf('assertReplacementChain({ request, originalSale, replacementSale, payment, outbox })');
+  const replayIndex = source.indexOf("if (chainState === 'REPLAY')");
+  assert.ok(readIndex >= 0 && readIndex < assertIndex && assertIndex < replayIndex);
 });
