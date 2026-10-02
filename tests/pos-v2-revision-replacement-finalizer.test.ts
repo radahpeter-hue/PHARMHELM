@@ -160,7 +160,7 @@ test('replacement finalizer links original and request atomically without mutati
 test('replay path re-reads original sale, replacement sale, payment and outbox before returning success', () => {
   const source = readFileSync('scripts/pos-v2-revision-replacement-finalizer.mjs', 'utf8');
   const readIndex = source.indexOf('Promise.all([');
-  const assertIndex = source.indexOf('assertReplacementChain({ request, originalSale, replacementSale, payment, outbox })');
+  const assertIndex = source.indexOf('const chainState = assertReplacementChain({ request, originalSale, replacementSale, payment, outbox })');
   const replayIndex = source.indexOf("if (chainState === 'REPLAY')");
   assert.ok(readIndex >= 0 && readIndex < assertIndex && assertIndex < replayIndex);
 });
