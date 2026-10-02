@@ -34,10 +34,18 @@ test('remaining revision window is presented without changing the authoritative 
   assert.equal(getPosV2ReceiptRevisionRemainingLabel(null), null);
 });
 
-test('revision action remains presentation-only and cannot invoke legacy mutation services', () => {
+test('eligible ledger action opens the dedicated local-only revision editor', () => {
+  const source = readFileSync('src/components/sales/PosV2ReceiptRevisionAction.tsx', 'utf8');
+  assert.match(source, /PosV2ReceiptRevisionEditor/);
+  assert.match(source, /setIsEditorOpen\(true\)/);
+  assert.match(source, /onCancel=\{\(\) => setIsEditorOpen\(false\)\}/);
+  assert.match(source, /holdDraftForReview/);
+  assert.match(source, /Review and submission will be enabled in the next controlled checkpoint/);
+});
+
+test('revision action remains mutation-free and cannot invoke legacy or checkout mutation services', () => {
   const source = readFileSync('src/components/sales/PosV2ReceiptRevisionAction.tsx', 'utf8');
   assert.match(source, /getPosV2ReceiptRevisionUiDecision/);
-  assert.match(source, /decision\.canRevise\s*&&\s*onRevise\(sale\)/);
   assert.doesNotMatch(source, /firestoreService/);
   assert.doesNotMatch(source, /reviseSaleInventoryAtomically/);
   assert.doesNotMatch(source, /voidSaleInventoryAtomically/);
