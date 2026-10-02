@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { buildPosV2RevisionIdentifiers } from '../src/services/pos-v2/posSaleRevisionV2Envelope';
 import { buildPosV2ReplacementCheckoutRequest } from '../src/services/pos-v2/posSaleRevisionV2ReplacementOrchestrator';
 
@@ -167,7 +168,7 @@ test('replacement orchestration refuses incomplete durable identity and never pe
   const source = envelope();
   assert.throws(() => buildPosV2ReplacementCheckoutRequest({ revisionRequestId: '', envelope: source }), /durable revision request ID/i);
 
-  const sourceText = require('node:fs').readFileSync('src/services/pos-v2/posSaleRevisionV2ReplacementOrchestrator.ts', 'utf8');
+  const sourceText = readFileSync('src/services/pos-v2/posSaleRevisionV2ReplacementOrchestrator.ts', 'utf8');
   assert.doesNotMatch(sourceText, /runTransaction|transaction\.set|transaction\.update|setDoc|updateDoc/);
   assert.match(sourceText, /executeCheckoutV2/);
 });
