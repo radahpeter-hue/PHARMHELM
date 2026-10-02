@@ -13,7 +13,12 @@ test('replacement linkage worker watches only replacement-pending revision reque
 test('worker waits harmlessly until the canonical replacement checkout exists', () => {
   assert.match(worker, /AWAITING_REPLACEMENT_CHECKOUT/);
   assert.match(worker, /db\.collection\('sales'\)\.doc\(replacementSaleId\)\.get\(\)/);
-  assert.ok(worker.indexOf('replacementExists(ref)') < worker.indexOf('finalizeRevisionReplacementLinkage'));
+
+  const readinessCall = worker.indexOf('const readiness = await replacementExists(ref);');
+  const finalizeCall = worker.indexOf('const result = await finalizeRevisionReplacementLinkage');
+  assert.ok(readinessCall >= 0, 'replacement readiness check must be present in the worker loop');
+  assert.ok(finalizeCall >= 0, 'replacement linkage finalizer call must be present in the worker loop');
+  assert.ok(readinessCall < finalizeCall, 'replacement readiness must be checked before linkage finalization');
 });
 
 test('worker delegates original-replacement mutation to the isolated finalizer', () => {
