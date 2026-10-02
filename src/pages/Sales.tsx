@@ -30,6 +30,7 @@ import { where, query, collection, doc, serverTimestamp } from 'firebase/firesto
 import { QuotationPreview } from '../components/sales/QuotationPreview';
 import { A4InvoiceTemplate } from '../components/sales/A4InvoiceTemplate';
 import { QuotationsLog } from '../components/sales/QuotationsLog';
+import { PosV2ReceiptRevisionAction } from '../components/sales/PosV2ReceiptRevisionAction';
 import { openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
 import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';
 import { validateSaleCheckoutContext } from '../utils/saleContextValidation';
@@ -1603,7 +1604,6 @@ const Sales: React.FC = () => {
                               {item.isService ? 'Standard Service' : (item.genericName || product?.genericName || 'Unspecified formula')}
                             </p>
                             
-                            {/* Batch semantics: tier lines stay commercial until transactional FEFO checkout. */}
                             {!item.isService && (
                               item.tierCode ? (
                                 <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[8px] font-bold">
@@ -1638,7 +1638,6 @@ const Sales: React.FC = () => {
                             )}
                           </div>
 
-                          {/* Unit Price Input */}
                           <div className="col-span-2 text-center">
                             <span className="block text-[8px] font-extrabold text-zinc-400 uppercase leading-none mb-0.5">UGX</span>
                             <input 
@@ -1656,7 +1655,6 @@ const Sales: React.FC = () => {
                             />
                           </div>
 
-                          {/* Quantity selector buttons */}
                           <div className="col-span-2 flex justify-center">
                             <div className="flex items-center gap-0.5 bg-zinc-50/80 p-0.5 rounded-lg border border-zinc-200/60 max-w-[85px] shadow-inner">
                               <button 
@@ -1694,7 +1692,6 @@ const Sales: React.FC = () => {
                             </div>
                           </div>
 
-                          {/* Subtotal Display */}
                           <div className="col-span-2 text-right">
                             <span className="block text-[8px] font-extrabold text-zinc-400 uppercase leading-none mb-0.5">UGX</span>
                             <span className="text-xs font-black text-zinc-900 leading-none">
@@ -1702,7 +1699,6 @@ const Sales: React.FC = () => {
                             </span>
                           </div>
 
-                          {/* Trash Delete Icon */}
                           <div className="col-span-1 text-center">
                             <button 
                               onClick={() => removeFromCart(getCartLineIdentity(item))}
@@ -1728,10 +1724,8 @@ const Sales: React.FC = () => {
                 )}
               </div>
 
-              {/* Price Totals & Discounter footer */}
               <div className="p-6 bg-zinc-50 border-t border-zinc-150/80 space-y-4 shadow-sm">
                 <div className="flex flex-col md:flex-row gap-6 items-end justify-between">
-                  {/* Applied Discount percentage cards */}
                   <div className="w-full md:flex-1 space-y-2">
                     <div className="flex items-center gap-2">
                       <Percent size={14} className="text-zinc-400" />
@@ -1755,7 +1749,6 @@ const Sales: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Pricing grid summary */}
                   <div className="w-full md:w-72 space-y-1.5 bg-white p-4 rounded-2xl border border-zinc-200/80 shadow-md shadow-zinc-100/30">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-zinc-500 font-bold uppercase tracking-wider">Subtotal</span>
@@ -1825,9 +1818,7 @@ const Sales: React.FC = () => {
               </div>
             </div>
 
-            {/* Right Column: Demographics Cards & Suggestion-driven Product search sidebar */}
             <div className="lg:col-span-4 flex flex-col gap-6 overflow-visible lg:overflow-hidden min-h-0">
-              {/* Patient Details & Context Card */}
               <div className="bg-white p-5 rounded-3xl border border-zinc-200/90 shadow-lg shadow-zinc-100/10 space-y-4 relative shrink-0 lg:max-h-[48%] lg:overflow-y-auto custom-scrollbar">
                 <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
                   <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Patient Details</span>
@@ -1840,7 +1831,6 @@ const Sales: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Patient Selector card with Custom suggestions list trigger */}
                 <div className="relative">
                   {isPatientDropdownOpen ? (
                     <div className="space-y-2">
@@ -1865,7 +1855,6 @@ const Sales: React.FC = () => {
                         </button>
                       </div>
 
-                      {/* Matching dropdown options list */}
                       <div className="absolute top-11 left-0 right-0 max-h-48 overflow-y-auto bg-white border border-zinc-200 rounded-xl shadow-xl z-20 p-1 divide-y divide-zinc-50 custom-scrollbar">
                         <button
                           onClick={() => {
@@ -1921,10 +1910,8 @@ const Sales: React.FC = () => {
                   )}
                 </div>
 
-                {/* Optional parameters for Institutional mode (Patient, Institution, Prescriber) */}
                 {context === 'institutional' && (
                   <div className="space-y-4 pt-3 border-t border-zinc-105/80 animate-fade-in divide-y divide-zinc-50">
-                    {/* Institution Selector dropdown */}
                     <div className="space-y-1.5 pt-2">
                       <span className="text-[8px] font-black text-zinc-400 uppercase tracking-widest block">Institution Reference</span>
                       {isInstitutionDropdownOpen ? (
@@ -1984,7 +1971,6 @@ const Sales: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Prescriber Selector dropdown */}
                     <div className="space-y-1.5 pt-3">
                       <span className="text-[8px] font-black text-zinc-400 uppercase tracking-widest block">Medical Prescriber</span>
                       {isPrescriberDropdownOpen ? (
@@ -2048,9 +2034,7 @@ const Sales: React.FC = () => {
                 )}
               </div>
 
-              {/* Suggestions Finder, Catalog List sidebar */}
               <div className="flex-1 min-h-0 bg-white rounded-3xl border border-zinc-200/95 shadow-xl shadow-zinc-100/10 flex flex-col overflow-hidden">
-                {/* Catalog type toggles */}
                 <div className="p-4 bg-zinc-50/40 border-b border-zinc-150 flex flex-col gap-3">
                   <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-xl">
                     <button
@@ -2073,7 +2057,6 @@ const Sales: React.FC = () => {
                     </button>
                   </div>
 
-                  {/* Search box "Quick find product..." */}
                   <div className="flex items-center gap-2">
                     <div className="relative flex-1">
                       <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" size={16} strokeWidth={2.5} />
@@ -2099,7 +2082,6 @@ const Sales: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Vertical Available Items with dynamic badges */}
                 <div className="p-4 border-b border-zinc-100 bg-zinc-50/20">
                   <h3 className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Available Items</h3>
                 </div>
@@ -2203,7 +2185,6 @@ const Sales: React.FC = () => {
             </div>
           </div>
 
-      {/* Checkout Modal */}
       <AnimatePresence>
         {isCheckoutOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -2223,7 +2204,6 @@ const Sales: React.FC = () => {
               aria-label="Complete transaction"
               className="relative w-full max-w-5xl bg-white rounded-2xl sm:rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col md:flex-row max-h-[calc(100dvh-1rem)] sm:max-h-[92vh]"
             >
-              {/* Receipt Preview (Left) */}
               <div className="hidden md:block flex-1 bg-zinc-100 p-5 lg:p-8 overflow-y-auto custom-scrollbar border-r border-zinc-200">
                 <div className="bg-white p-8 shadow-sm rounded-sm max-w-md mx-auto font-mono text-[10px] text-zinc-800">
                   <div className="text-center mb-6">
@@ -2311,14 +2291,12 @@ const Sales: React.FC = () => {
                 </div>
               </div>
 
-              {/* Payment Selection (Right) */}
               <div className="w-full md:w-[25rem] p-4 sm:p-6 lg:p-8 flex flex-col gap-4 sm:gap-6 overflow-y-auto custom-scrollbar min-h-0">
                 <div>
                   <h3 className="text-xl font-bold text-zinc-900 mb-2">Complete Transaction</h3>
                   <p className="text-sm text-zinc-500">Select payment method to finish.</p>
                 </div>
 
-                {/* Exceptional Consumption Toggle & Input */}
                 <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-200/60 space-y-3">
                   <label className="flex items-center gap-2.5 cursor-pointer select-none">
                     <input
@@ -2459,10 +2437,13 @@ const Sales: React.FC = () => {
 
       {view === 'ledger' && (
         <ReceiptLedger 
-
           sales={sales} 
           staff={staff}
           systemSettings={systemSettings}
+          canOperatePos={canProcessSales}
+          onReviseV2={(sale) => {
+            toast.info(`Receipt ${sale.receiptNumber} is eligible for safe POS V2 revision. The dedicated revision editor is the next Stage 7 checkpoint.`);
+          }}
           onVoid={async (saleId, reason) => {
             const sale = sales.find(s => s.id === saleId);
             if (!sale) return;
@@ -2520,7 +2501,6 @@ const Sales: React.FC = () => {
         />
       )}
 
-      {/* Service Modal */}
       <AnimatePresence>
         {isServiceModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -2634,7 +2614,6 @@ const Sales: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* Edit Receipt Direct Modal */}
       <AnimatePresence>
         {ledgerEditingSale && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
@@ -2651,7 +2630,6 @@ const Sales: React.FC = () => {
               exit={{ scale: 0.95, opacity: 0, y: 20 }}
               className="relative w-full max-w-5xl bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[90vh]"
             >
-              {/* Modal Header */}
               <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50">
                 <div className="flex flex-col">
                   <h3 className="text-xl font-extrabold text-zinc-900">Edit Receipt Details</h3>
@@ -2667,9 +2645,7 @@ const Sales: React.FC = () => {
                 </button>
               </div>
 
-              {/* Modal Content - Two columns */}
               <div className="flex-1 overflow-y-auto p-6 md:p-8 grid grid-cols-1 lg:grid-cols-12 gap-8 custom-scrollbar">
-                {/* Left Column: List of items + Add Item */}
                 <div className="lg:col-span-7 space-y-6">
                   <div>
                     <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider mb-3">Items Sold in Receipt</h4>
@@ -2689,7 +2665,6 @@ const Sales: React.FC = () => {
                                 </p>
                               </div>
 
-                              {/* Unit Price input */}
                               <div className="w-24">
                                 <label className="text-[8px] font-bold text-zinc-400 uppercase block mb-0.5">Unit Price</label>
                                 <input 
@@ -2700,7 +2675,6 @@ const Sales: React.FC = () => {
                                 />
                               </div>
 
-                              {/* Qty incrementer */}
                               <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
@@ -2729,7 +2703,6 @@ const Sales: React.FC = () => {
                                 </button>
                               </div>
 
-                              {/* subtotal displaying */}
                               <div className="text-right min-w-[70px]">
                                 <span className="text-[8px] block font-semibold text-zinc-400">SUBTOTAL</span>
                                 <span className="text-xs font-black text-zinc-900">
@@ -2737,7 +2710,6 @@ const Sales: React.FC = () => {
                                 </span>
                               </div>
 
-                              {/* Remove item */}
                               <button
                                 type="button"
                                 onClick={() => removeLedgerItem(item.lineId, item.productId, item.batchNumber)}
@@ -2757,7 +2729,6 @@ const Sales: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Add New Item to Receipt Box */}
                   <div className="p-4 border border-zinc-150 rounded-2xl bg-zinc-50/20 relative">
                     <h4 className="text-xs font-bold text-zinc-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
                       <Plus size={14} strokeWidth={2.5} className="text-emerald-500" />
@@ -2803,11 +2774,8 @@ const Sales: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Right Column: Transaction Configuration / Billing */}
                 <div className="lg:col-span-5 space-y-6 lg:border-l lg:border-zinc-100 lg:pl-8">
-                  {/* Client Context Details */}
                   <div className="grid grid-cols-1 gap-5">
-                    {/* Patient search & Select */}
                     <div className="space-y-1.5 relative">
                       <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Customer / Patient</span>
                       <div className="flex items-center justify-between px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-800 shadow-sm">
@@ -2870,7 +2838,6 @@ const Sales: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Sales context radio buttons */}
                     <div className="space-y-1.5">
                       <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Transaction Context</span>
                       <div className="grid grid-cols-3 gap-2">
@@ -2896,7 +2863,6 @@ const Sales: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Payment methods */}
                     <div className="space-y-1.5">
                       <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Payment Channel</span>
                       <div className="grid grid-cols-2 gap-2">
@@ -2923,7 +2889,6 @@ const Sales: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Discounter */}
                     <div className="space-y-1.5">
                       <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Apply Discount</span>
                       <div className="flex flex-wrap items-center gap-1 bg-zinc-50 p-1 rounded-xl border border-zinc-200 w-fit">
@@ -2946,7 +2911,6 @@ const Sales: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Summary Totals breakdown */}
                   <div className="p-5 bg-zinc-50 rounded-2xl border border-zinc-200/80 space-y-2">
                     <span className="text-[9px] font-black uppercase text-zinc-400 tracking-wider">Live Breakdown</span>
                     <div className="flex justify-between text-xs">
@@ -2982,7 +2946,6 @@ const Sales: React.FC = () => {
                 </div>
               </div>
 
-              {/* Modal Footer */}
               <div className="p-6 bg-zinc-50 border-t border-zinc-150/60 flex items-center justify-end gap-3">
                 <button
                   type="button"
@@ -3034,7 +2997,6 @@ const Sales: React.FC = () => {
         />
       )}
 
-      {/* Quotation Preview modal overlay */}
       {showQuotationModal && (
         <QuotationPreview 
           isOpen={showQuotationModal}
@@ -3071,7 +3033,6 @@ const Sales: React.FC = () => {
         />
       )}
 
-      {/* A4 Tax Invoice modal overlay */}
       {showA4InvoiceModal && selectedA4ReceiptId && (
         <A4InvoiceTemplate 
           receiptId={selectedA4ReceiptId}
@@ -3095,11 +3056,13 @@ interface ReceiptLedgerProps {
   onVoid: (saleId: string, reason: string) => Promise<void>;
   onEdit: (sale: Sale) => void;
   onEditInPOS?: (sale: Sale) => void;
+  onReviseV2: (sale: Sale) => void;
+  canOperatePos: boolean;
   systemSettings: SystemSettings | null;
   onPrintA4: (receiptId: string) => void;
 }
 
-const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettings, onPrintA4 }: ReceiptLedgerProps) => {
+const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, canOperatePos, systemSettings, onPrintA4 }: ReceiptLedgerProps) => {
   const { activeBranch } = useAuth();
   const brandCompanyName = activeBranch?.brandName || systemSettings?.branding?.companyName || 'PharmHelm Pharmacy';
   const brandLogoUrl = activeBranch?.brandLogoUrl || systemSettings?.branding?.logoUrl;
@@ -3121,7 +3084,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
     const matchesSearch = matchesReceiptLedgerSearch(sale, searchTerm);
     const matchesStaff = selectedStaff === 'all' || sale.servedBy === selectedStaff;
     
-    // Simple date filter
     const saleDate = new Date(sale.timestamp).toISOString().split('T')[0];
     const matchesStart = !dateRange.start || saleDate >= dateRange.start;
     const matchesEnd = !dateRange.end || saleDate <= dateRange.end;
@@ -3131,7 +3093,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
 
   return (
     <div className="flex-1 flex gap-6 overflow-hidden">
-      {/* Sales List */}
       <div className="flex-1 bg-white rounded-2xl border border-zinc-200 shadow-sm flex flex-col overflow-hidden">
         <div className="p-4 border-b border-zinc-100 flex flex-wrap items-center gap-4">
           <div className="flex-1 relative">
@@ -3236,21 +3197,32 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                      <button 
-                        onClick={() => onEdit(sale)}
-                        className="p-2 hover:bg-zinc-200 rounded-lg transition-colors text-zinc-600"
-                        title="Edit Receipt Details Directly"
-                      >
-                        <History className="w-4 h-4" />
-                      </button>
-                      {onEditInPOS && (
-                        <button 
-                          onClick={() => onEditInPOS(sale)}
-                          className="p-2 hover:bg-emerald-100 rounded-lg transition-colors text-emerald-600"
-                          title="Edit Receipt in POS Active Basket"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
+                      {sale.engineVersion === 2 ? (
+                        <PosV2ReceiptRevisionAction
+                          sale={sale}
+                          canOperatePos={canOperatePos}
+                          onRevise={onReviseV2}
+                          compact
+                        />
+                      ) : (
+                        <>
+                          <button 
+                            onClick={() => onEdit(sale)}
+                            className="p-2 hover:bg-zinc-200 rounded-lg transition-colors text-zinc-600"
+                            title="Edit Receipt Details Directly"
+                          >
+                            <History className="w-4 h-4" />
+                          </button>
+                          {onEditInPOS && (
+                            <button 
+                              onClick={() => onEditInPOS(sale)}
+                              className="p-2 hover:bg-emerald-100 rounded-lg transition-colors text-emerald-600"
+                              title="Edit Receipt in POS Active Basket"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </>
                       )}
                       {sale.status !== 'voided' && (
                         <button 
@@ -3292,7 +3264,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
         </div>
       </div>
 
-      {/* Sale Details Panel */}
       <AnimatePresence>
         {selectedSale && (
           <motion.div
@@ -3316,7 +3287,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
             </div>
 
             <div className="flex-1 overflow-auto p-6 space-y-6">
-              {/* Customer Info */}
               <div className="space-y-3">
                 <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Customer Information</h4>
                 <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100">
@@ -3339,7 +3309,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                 </div>
               </div>
 
-              {/* Items */}
               <div className="space-y-3">
                 <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Items Sold</h4>
                 <div className="space-y-2">
@@ -3355,7 +3324,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                 </div>
               </div>
 
-              {/* Totals */}
               <div className="space-y-3 pt-4 border-t border-zinc-100">
                 <div className="flex justify-between text-sm">
                   <span className="text-zinc-500">Subtotal</span>
@@ -3371,7 +3339,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                 </div>
               </div>
 
-              {/* Payment Info */}
               <div className="space-y-3 pt-4 border-t border-zinc-100">
                 <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Payment Details</h4>
                 <div className="flex items-center gap-2">
@@ -3386,7 +3353,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                 </div>
               </div>
 
-              {/* Void Info */}
               {selectedSale.status === 'voided' && (
                 <div className="p-4 bg-rose-50 rounded-2xl border border-rose-100 space-y-2">
                   <div className="flex items-center gap-2 text-rose-700">
@@ -3409,7 +3375,16 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
             </div>
 
             <div className="p-6 bg-zinc-50 border-t border-zinc-100 space-y-2">
-              {onEditInPOS && (
+              {selectedSale.engineVersion === 2 ? (
+                <PosV2ReceiptRevisionAction
+                  sale={selectedSale}
+                  canOperatePos={canOperatePos}
+                  onRevise={(sale) => {
+                    onReviseV2(sale);
+                    setSelectedSale(null);
+                  }}
+                />
+              ) : onEditInPOS ? (
                 <button 
                   onClick={() => {
                     onEditInPOS(selectedSale);
@@ -3420,7 +3395,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                   <Edit2 className="w-4 h-4" />
                   Edit Receipt in POS Basket
                 </button>
-              )}
+              ) : null}
               <button 
                 onClick={() => setIsReprintModalOpen(true)}
                 className="w-full py-3 bg-zinc-900 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-zinc-800 transition-colors"
@@ -3447,7 +3422,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
         )}
       </AnimatePresence>
 
-      {/* Void Modal */}
       <AnimatePresence>
         {isVoidModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -3511,7 +3485,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
         )}
       </AnimatePresence>
 
-      {/* Reprint Receipt Modal */}
       <AnimatePresence>
         {isReprintModalOpen && selectedSale && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overflow-y-auto">
@@ -3541,7 +3514,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                 </button>
               </div>
 
-              {/* Thermal Receipt Paper representation */}
               <div className="p-6 bg-zinc-100 flex justify-center max-h-[60vh] overflow-y-auto">
                 <div className="bg-white p-6 shadow-md rounded border border-zinc-200 w-full max-w-xs font-mono text-[10px] text-zinc-800 leading-relaxed">
                   <div className="text-center mb-5 space-y-0.5">
