@@ -3,8 +3,10 @@ function clean(value) {
 }
 
 function assertReplacementChain({ request, originalSale, replacementSale, payment, outbox }) {
-  if (!request || clean(request.status) !== 'REPLACEMENT_PENDING') {
-    throw new Error('Revision replacement finalization requires a REPLACEMENT_PENDING request.');
+  const requestStatus = clean(request?.status);
+  const replay = requestStatus === 'REPLACEMENT_CREATED';
+  if (!request || (requestStatus !== 'REPLACEMENT_PENDING' && !replay)) {
+    throw new Error('Revision replacement finalization requires a REPLACEMENT_PENDING or REPLACEMENT_CREATED request.');
   }
 
   const revisionId = clean(request.revisionId);
@@ -23,15 +25,30 @@ function assertReplacementChain({ request, originalSale, replacementSale, paymen
   if (originalSale.revisionLocked !== true || clean(originalSale.revisionId) !== revisionId) {
     throw new Error('Original POS V2 sale revision lock does not belong to this revision.');
   }
-  if (clean(originalSale.revisionLifecycle) !== 'REPLACEMENT_PENDING') {
-    throw new Error('Original POS V2 sale is not awaiting its replacement.');
-  }
   if (clean(originalSale.pendingReplacementSaleId) !== replacementSaleId) {
     throw new Error('Original POS V2 sale pending replacement identity mismatch.');
   }
-  if (clean(originalSale.supersededBySaleId)) {
-    if (clean(originalSale.supersededBySaleId) === replacementSaleId && clean(originalSale.revisionLifecycle) === 'REPLACEMENT_CREATED') return 'REPLAY';
-    throw new Error('Original POS V2 sale is already superseded by a different transaction.');
+
+  if (replay) {
+    if (clean(request.replacementLifecycle) !== 'REPLACEMENT_CREATED') {
+      throw new Error('Completed revision request replacement lifecycle is inconsistent.');
+    }
+    if (clean(originalSale.revisionLifecycle) !== 'REPLACEMENT_CREATED') {
+      throw new Error('Completed original POS V2 sale replacement lifecycle is inconsistent.');
+    }
+    if (clean(originalSale.supersededBySaleId) !== replacementSaleId) {
+      throw new Error('Completed original POS V2 sale supersession does not match the canonical replacement.');
+    }
+    if (clean(request.replacementSaleId) !== replacementSaleId || clean(request.replacementReceiptNumber) !== clean(replacementSale?.receiptNumber)) {
+      throw new Error('Completed revision request replacement identity is inconsistent.');
+    }
+  } else {
+    if (clean(originalSale.revisionLifecycle) !== 'REPLACEMENT_PENDING') {
+      throw new Error('Original POS V2 sale is not awaiting its replacement.');
+    }
+    if (clean(originalSale.supersededBySaleId)) {
+      throw new Error('Original POS V2 sale is already superseded by a different transaction.');
+    }
   }
 
   if (!replacementSale || clean(replacementSale.id) !== replacementSaleId || Number(replacementSale.engineVersion || 0) !== 2 || clean(replacementSale.status) !== 'completed') {
@@ -67,7 +84,7 @@ function assertReplacementChain({ request, originalSale, replacementSale, paymen
     throw new Error('Replacement POS V2 outbox revision linkage mismatch.');
   }
 
-  return 'READY';
+  return replay ? 'REPLAY' : 'READY';
 }
 
 export async function finalizeRevisionReplacementLinkage({ db, requestRef, FieldValue }) {
@@ -78,15 +95,6 @@ export async function finalizeRevisionReplacementLinkage({ db, requestRef, Field
     const requestSnap = await tx.get(requestRef);
     if (!requestSnap.exists) throw new Error('Revision request no longer exists.');
     const request = { id: requestSnap.id, ...requestSnap.data() };
-
-    if (clean(request.status) === 'REPLACEMENT_CREATED') {
-      return {
-        replayed: true,
-        originalSaleId: clean(request.originalSaleId),
-        replacementSaleId: clean(request.replacementSaleId || request.pendingReplacementSaleId),
-        replacementReceiptNumber: clean(request.replacementReceiptNumber)
-      };
-    }
 
     const originalSaleId = clean(request.originalSaleId);
     const replacementSaleId = clean(request.pendingReplacementSaleId || request.replacementSaleId);
@@ -112,7 +120,17 @@ export async function finalizeRevisionReplacementLinkage({ db, requestRef, Field
     const payment = paymentSnap.exists ? { id: paymentSnap.id, ...paymentSnap.data() } : null;
     const outbox = outboxSnap.exists ? { id: outboxSnap.id, ...outboxSnap.data() } : null;
 
-    assertReplacementChain({ request, originalSale, replacementSale, payment, outbox });
+    const chainState = assertReplacementChain({ request, originalSale, replacementSale, payment, outbox });
+    if (chainState === 'REPLAY') {
+      return {
+        replayed: true,
+        originalSaleId,
+        replacementSaleId,
+        replacementReceiptNumber: clean(replacementSale.receiptNumber),
+        replacementPaymentId,
+        replacementOutboxEventId
+      };
+    }
 
     const timestamp = FieldValue.serverTimestamp();
     tx.update(originalRef, {
