@@ -6,10 +6,12 @@ import {
   getPosV2ReceiptRevisionUiDecision,
   type PosV2ReceiptRevisionUiDecision
 } from '../../services/pos-v2/posSaleRevisionV2UiPolicy';
+import type { PosV2RevisionPlan } from '../../services/pos-v2/posSaleRevisionV2Planner';
 import {
   PosV2ReceiptRevisionEditor,
   type PosV2ReceiptRevisionDraft
 } from './PosV2ReceiptRevisionEditor';
+import { PosV2ReceiptRevisionReview } from './PosV2ReceiptRevisionReview';
 import { usePosV2RevisionCatalogData } from './usePosV2RevisionCatalogData';
 
 interface PosV2ReceiptRevisionActionProps {
@@ -49,17 +51,18 @@ function remainingWindowLabel(remainingMs: number | null): string | null {
 }
 
 /**
- * Dedicated POS V2 ledger action. The action may open a local-only revision editor,
- * but it does not write Firestore, submit a revision request, or call legacy mutation paths.
+ * Dedicated POS V2 ledger action. The action owns the local editor/review flow only.
+ * It does not write Firestore, submit a revision request, or call legacy mutation paths.
  */
 export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProps> = ({
   sale,
   canOperatePos,
-  onRevise,
+  onRevise: _onRevise,
   compact = false,
   now
 }) => {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [reviewDraft, setReviewDraft] = useState<PosV2ReceiptRevisionDraft | null>(null);
   const decision = getPosV2ReceiptRevisionUiDecision(sale as any, { canOperatePos, now });
   const tenantId = String((sale as any).tenantId || '').trim() || null;
   const catalog = usePosV2RevisionCatalogData(tenantId, isEditorOpen && decision.canRevise);
@@ -72,23 +75,50 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
 
   const openEditor = () => {
     if (!decision.canRevise) return;
+    setReviewDraft(null);
     setIsEditorOpen(true);
   };
 
-  const holdDraftForReview = (_draft: PosV2ReceiptRevisionDraft) => {
+  const continueToReview = (draft: PosV2ReceiptRevisionDraft) => {
+    setReviewDraft(draft);
     setIsEditorOpen(false);
-    toast.info('Revision draft prepared. Review and submission will be enabled in the next controlled checkpoint.');
+  };
+
+  const backToEditor = () => {
+    setReviewDraft(null);
+    setIsEditorOpen(true);
+  };
+
+  const cancelRevisionFlow = () => {
+    setIsEditorOpen(false);
+    setReviewDraft(null);
+  };
+
+  const holdReviewedDraft = (_plan: PosV2RevisionPlan, _draft: PosV2ReceiptRevisionDraft) => {
+    setReviewDraft(null);
+    toast.info('Revision review completed. Durable submission will be enabled in the next controlled checkpoint.');
   };
 
   const editor = isEditorOpen ? (
     <PosV2ReceiptRevisionEditor
       sale={sale}
-      onCancel={() => setIsEditorOpen(false)}
-      onContinue={holdDraftForReview}
+      onCancel={cancelRevisionFlow}
+      onContinue={continueToReview}
       catalogProducts={catalog.products}
       catalogBatches={catalog.batches}
       catalogSystemSettings={catalog.systemSettings}
       catalogReady={catalog.isReady}
+    />
+  ) : null;
+
+  const review = reviewDraft ? (
+    <PosV2ReceiptRevisionReview
+      sale={sale}
+      draft={reviewDraft}
+      onBack={backToEditor}
+      onCancel={cancelRevisionFlow}
+      onConfirm={holdReviewedDraft}
+      now={now}
     />
   ) : null;
 
@@ -108,6 +138,7 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
           <RotateCcw className="w-4 h-4" />
         </button>
         {editor}
+        {review}
       </>
     );
   }
@@ -132,6 +163,7 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
         </p>
       </div>
       {editor}
+      {review}
     </>
   );
 };
