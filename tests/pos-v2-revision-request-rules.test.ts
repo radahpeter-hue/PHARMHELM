@@ -62,21 +62,23 @@ test('revision request identity and immutable envelope fields are allowlisted at
   }
 });
 
-test('generic tenant fallback cannot reopen revision request lifecycle writes', () => {
+test('generic tenant fallback cannot reopen revision request reads, writes or deletion', () => {
   assert.match(protectedHelper, /'pos_sale_revision_requests'/);
 
   const genericRules = rules.slice(rules.indexOf('match /{collectionName}/{docId}'));
-  const genericNonDeleteAllows = genericRules
+  const genericAllows = genericRules
     .split('\n')
-    .filter((line) => /allow (get|list|create|update):/.test(line));
+    .filter((line) => /allow (get|list|create|update|delete):/.test(line));
 
-  assert.equal(genericNonDeleteAllows.length, 4, 'expected generic get, list, create and update rules');
-  for (const line of genericNonDeleteAllows) {
-    assert.match(line, /!isProtectedFinanceCollection\(collectionName\)/);
+  assert.equal(genericAllows.length, 5, 'expected generic get, list, create, update and delete rules');
+  for (const line of genericAllows) {
+    assert.match(
+      line,
+      /!isProtectedFinanceCollection\(collectionName\)/,
+      `protected revision collection escaped generic boundary: ${line.trim()}`
+    );
   }
 
-  // Even though generic delete is admin-only, the explicit revision match is
-  // immutable client-side and therefore remains fail-closed for deletion.
   assert.match(revisionRules, /allow update, delete: if false/);
 });
 
