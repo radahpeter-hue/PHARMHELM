@@ -10,6 +10,7 @@ import {
   PosV2ReceiptRevisionEditor,
   type PosV2ReceiptRevisionDraft
 } from './PosV2ReceiptRevisionEditor';
+import { usePosV2RevisionCatalogData } from './usePosV2RevisionCatalogData';
 
 interface PosV2ReceiptRevisionActionProps {
   sale: Sale;
@@ -60,6 +61,9 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
 }) => {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const decision = getPosV2ReceiptRevisionUiDecision(sale as any, { canOperatePos, now });
+  const tenantId = String((sale as any).tenantId || '').trim() || null;
+  const catalog = usePosV2RevisionCatalogData(tenantId, isEditorOpen && decision.canRevise);
+
   if (!decision.showReviseAction) return null;
 
   const label = actionLabel(decision);
@@ -81,6 +85,10 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
       sale={sale}
       onCancel={() => setIsEditorOpen(false)}
       onContinue={holdDraftForReview}
+      catalogProducts={catalog.products}
+      catalogBatches={catalog.batches}
+      catalogSystemSettings={catalog.systemSettings}
+      catalogReady={catalog.isReady}
     />
   ) : null;
 
