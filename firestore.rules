@@ -810,7 +810,7 @@ service cloud.firestore {
             request.resource.data.batchNumber == getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.lines[request.resource.data.openingStockLineIndex].batchNumber &&
             request.resource.data.expiryDate == getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.lines[request.resource.data.openingStockLineIndex].expiryDate &&
             request.resource.data.quantity == getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.receiptResults[request.resource.data.openingStockLineIndex].acceptedQuantity &&
-            request.resource.data.quantity <= getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.lines[request.resource.data.openingStockSessionId].quantity
+            request.resource.data.quantity <= getAfter(/databases/$(database)/documents/opening_stock_sessions/$(request.resource.data.openingStockSessionId)).data.lines[request.resource.data.openingStockLineIndex].quantity
           )
         );
       allow update: if isTenantMember(resource.data.tenantId)
