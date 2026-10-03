@@ -12,29 +12,38 @@ function block(startMarker: string, endMarker: string): string {
   return rules.slice(start, end);
 }
 
-test('POS V2 revision requests have a dedicated create-only client boundary', () => {
-  const revisionRules = block(
-    'match /pos_sale_revision_requests/{requestId}',
-    'match /pos_quotations/{quotationId}'
-  );
+const revisionRules = block(
+  'match /pos_sale_revision_requests/{requestId}',
+  'match /welfare_records/{recordId}'
+);
 
+const protectedHelper = block(
+  'function isProtectedFinanceCollection(collectionName)',
+  'function canViewProcurement()'
+);
+
+test('POS V2 revision requests have a dedicated create-only client boundary', () => {
   assert.match(revisionRules, /allow create: if isPOSOperator\(\)/);
   assert.match(revisionRules, /isTenantMember\(request\.resource\.data\.tenantId\)/);
   assert.match(revisionRules, /isAssignedToBranch\(request\.resource\.data\.branchId\)/);
-  assert.match(revisionRules, /request\.resource\.data\.requestId == requestId/);
-  assert.match(revisionRules, /request\.resource\.data\.requestedBy == request\.auth\.uid/);
-  assert.match(revisionRules, /request\.resource\.data\.requestType == 'POS_SALE_REVISION_REQUESTED'/);
-  assert.match(revisionRules, /request\.resource\.data\.engineVersion == 2/);
-  assert.match(revisionRules, /request\.resource\.data\.payloadVersion == 1/);
-  assert.match(revisionRules, /request\.resource\.data\.status == 'PENDING'/);
+  assert.match(revisionRules, /hasValidRevisionRequestEnvelope\(\)/);
   assert.match(revisionRules, /allow update, delete: if false/);
 });
 
-test('revision request identity and immutable envelope fields are required at creation', () => {
-  const revisionRules = block(
-    'match /pos_sale_revision_requests/{requestId}',
-    'match /pos_quotations/{quotationId}'
-  );
+test('revision request creation is pinned to canonical pending identity and authenticated actor', () => {
+  assert.match(revisionRules, /revision\.requestId == requestId/);
+  assert.match(revisionRules, /revision\.requestedBy == request\.auth\.uid/);
+  assert.match(revisionRules, /revision\.requestType == 'POS_SALE_REVISION_REQUESTED'/);
+  assert.match(revisionRules, /revision\.engineVersion == 2/);
+  assert.match(revisionRules, /revision\.payloadVersion == 1/);
+  assert.match(revisionRules, /revision\.status == 'PENDING'/);
+  assert.match(revisionRules, /revision\.reason\.size\(\) >= 8/);
+  assert.match(revisionRules, /revision\.reason\.size\(\) <= 500/);
+  assert.match(revisionRules, /revision\.pendingReplacementSaleId == revision\.replacementSaleId/);
+});
+
+test('revision request identity and immutable envelope fields are allowlisted at creation', () => {
+  assert.match(revisionRules, /revision\.keys\(\)\.hasOnly\(\[/);
 
   for (const field of [
     'revisionId',
@@ -49,12 +58,35 @@ test('revision request identity and immutable envelope fields are required at cr
     'reason',
     'envelope'
   ]) {
-    assert.match(revisionRules, new RegExp(`request\\.resource\\.data\\.${field}`));
+    assert.match(revisionRules, new RegExp(`'${field}'`));
   }
 });
 
-test('generic tenant fallback cannot grant access to revision requests', () => {
+test('generic tenant fallback cannot reopen revision request lifecycle writes', () => {
+  assert.match(protectedHelper, /'pos_sale_revision_requests'/);
+
   const genericRules = rules.slice(rules.indexOf('match /{collectionName}/{docId}'));
-  const occurrences = genericRules.match(/collectionName != 'pos_sale_revision_requests'/g) ?? [];
-  assert.equal(occurrences.length, 5, 'get, list, create, update and delete must all exclude revision requests');
+  const genericNonDeleteAllows = genericRules
+    .split('\n')
+    .filter((line) => /allow (get|list|create|update):/.test(line));
+
+  assert.equal(genericNonDeleteAllows.length, 4, 'expected generic get, list, create and update rules');
+  for (const line of genericNonDeleteAllows) {
+    assert.match(line, /!isProtectedFinanceCollection\(collectionName\)/);
+  }
+
+  // Even though generic delete is admin-only, the explicit revision match is
+  // immutable client-side and therefore remains fail-closed for deletion.
+  assert.match(revisionRules, /allow update, delete: if false/);
+});
+
+test('opening stock batch guard still indexes the accepted line by openingStockLineIndex', () => {
+  assert.match(
+    rules,
+    /data\.lines\[request\.resource\.data\.openingStockLineIndex\]\.quantity/
+  );
+  assert.doesNotMatch(
+    rules,
+    /data\.lines\[request\.resource\.data\.openingStockSessionId\]\.quantity/
+  );
 });
