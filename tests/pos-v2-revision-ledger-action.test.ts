@@ -38,12 +38,21 @@ test('eligible ledger action opens the dedicated local-only revision editor', ()
   const source = readFileSync('src/components/sales/PosV2ReceiptRevisionAction.tsx', 'utf8');
   assert.match(source, /PosV2ReceiptRevisionEditor/);
   assert.match(source, /setIsEditorOpen\(true\)/);
-  assert.match(source, /onCancel=\{\(\) => setIsEditorOpen\(false\)\}/);
-  assert.match(source, /holdDraftForReview/);
-  assert.match(source, /Review and submission will be enabled in the next controlled checkpoint/);
+  assert.match(source, /onCancel=\{cancelRevisionFlow\}/);
+  assert.match(source, /onContinue=\{continueToReview\}/);
 });
 
-test('revision action remains mutation-free and cannot invoke legacy or checkout mutation services', () => {
+test('editor draft advances to the dedicated review screen and can return to edit', () => {
+  const source = readFileSync('src/components/sales/PosV2ReceiptRevisionAction.tsx', 'utf8');
+  assert.match(source, /PosV2ReceiptRevisionReview/);
+  assert.match(source, /setReviewDraft\(draft\)/);
+  assert.match(source, /onBack=\{backToEditor\}/);
+  assert.match(source, /setReviewDraft\(null\)/);
+  assert.match(source, /onConfirm=\{holdReviewedDraft\}/);
+  assert.match(source, /Durable submission will be enabled in the next controlled checkpoint/);
+});
+
+test('review confirmation is still non-durable and cannot invoke legacy or checkout mutation services', () => {
   const source = readFileSync('src/components/sales/PosV2ReceiptRevisionAction.tsx', 'utf8');
   assert.match(source, /getPosV2ReceiptRevisionUiDecision/);
   assert.doesNotMatch(source, /firestoreService/);
