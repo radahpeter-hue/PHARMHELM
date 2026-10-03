@@ -7,6 +7,8 @@ import {
 } from '../src/components/sales/PosV2ReceiptRevisionEditor';
 
 const source = readFileSync('src/components/sales/PosV2ReceiptRevisionEditor.tsx', 'utf8');
+const actionSource = readFileSync('src/components/sales/PosV2ReceiptRevisionAction.tsx', 'utf8');
+const catalogDataSource = readFileSync('src/components/sales/usePosV2RevisionCatalogData.ts', 'utf8');
 
 const sale = {
   id: 'sale-original',
@@ -82,11 +84,24 @@ test('editor remains presentation-only and does not write Firestore or invoke ch
   assert.doesNotMatch(source, /process-pos-v2-revisions/);
 });
 
-test('add-product flow is delegated so the editor cannot fabricate tier or batch snapshots', () => {
-  assert.match(source, /onRequestAddItem\?: \(\) => void/);
-  assert.match(source, /onClick=\{onRequestAddItem\}/);
-  assert.doesNotMatch(source, /product_batches/);
+test('add-product flow opens the certified picker and inserts its canonical line into the local draft', () => {
+  assert.match(source, /PosV2ReceiptRevisionCatalogPicker/);
+  assert.match(source, /setIsCatalogOpen\(true\)/);
+  assert.match(source, /updateItems\(\[\.\.\.draft\.items, item\]\)/);
+  assert.match(source, /existingItems=\{draft\.items\}/);
+  assert.match(source, /tenantId=\{catalogTenantId\}/);
+  assert.match(source, /branchId=\{catalogBranchId\}/);
   assert.doesNotMatch(source, /allocateFefo/);
+});
+
+test('catalog data bridge is read-only and loads only while an eligible editor is open', () => {
+  assert.match(actionSource, /usePosV2RevisionCatalogData\(tenantId, isEditorOpen && decision\.canRevise\)/);
+  assert.match(actionSource, /catalogProducts=\{catalog\.products\}/);
+  assert.match(actionSource, /catalogReady=\{catalog\.isReady\}/);
+  assert.match(catalogDataSource, /subscribeToCollection<Product>\(\s*'products'/);
+  assert.match(catalogDataSource, /subscribeToCollection<ProductBatch>\(\s*'product_batches'/);
+  assert.match(catalogDataSource, /subscribeToCollection<SystemSettings>\(\s*'system_settings'/);
+  assert.doesNotMatch(catalogDataSource, /addDocument|updateDocument|deleteDocument|setDoc|updateDoc|deleteDoc|runTransaction/);
 });
 
 test('revision reason uses the authoritative bounded reason policy', () => {
