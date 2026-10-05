@@ -67,12 +67,13 @@ export function validateRevisionRequest({ request, sale, payment, outbox, reques
 
   if (!resume) {
     const originalSaleMillis = millis(sale.timestamp);
-    const requestCreatedMillis = millis(requestCreatedAt);
-    if (!Number.isFinite(originalSaleMillis) || !Number.isFinite(requestCreatedMillis)) {
-      throw new Error('POS revision 72-hour eligibility timestamps are invalid.');
+    const suppliedRequestMillis = millis(requestCreatedAt);
+    const eligibilityCheckMillis = Number.isFinite(suppliedRequestMillis) ? suppliedRequestMillis : Date.now();
+    if (!Number.isFinite(originalSaleMillis)) {
+      throw new Error('POS revision 72-hour eligibility timestamp is invalid.');
     }
-    if (requestCreatedMillis < originalSaleMillis || requestCreatedMillis > originalSaleMillis + REVISION_WINDOW_MS) {
-      throw new Error('The POS V2 revision request was created outside the 72-hour revision window.');
+    if (eligibilityCheckMillis < originalSaleMillis || eligibilityCheckMillis > originalSaleMillis + REVISION_WINDOW_MS) {
+      throw new Error('The POS V2 revision request is outside the 72-hour revision window.');
     }
   }
 
