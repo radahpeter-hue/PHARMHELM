@@ -58,7 +58,7 @@ function clean(value: unknown): string {
   return String(value ?? '').trim();
 }
 
-function revisionRequestId(revisionId: string): string {
+export function posV2RevisionRequestIdForRevision(revisionId: string): string {
   const normalized = clean(revisionId);
   if (!normalized) throw new Error('Revision identity is required before submission.');
   return `pos_revision_request_${normalized}`.slice(0, 240);
@@ -73,7 +73,7 @@ export function buildPosV2RevisionSubmissionRequest(
 ): PosV2RevisionSubmissionRequest {
   const envelope = buildPosV2RevisionEnvelope(input);
   const { identifiers, revision } = envelope;
-  const requestId = revisionRequestId(identifiers.revisionId);
+  const requestId = posV2RevisionRequestIdForRevision(identifiers.revisionId);
 
   if (revision.status !== 'PLANNED') {
     throw new Error('Only a planned POS V2 revision may be submitted.');
