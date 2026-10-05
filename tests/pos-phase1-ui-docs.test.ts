@@ -59,6 +59,11 @@ test('Receipt Ledger search matches patientName', () => {
   assert.equal(matchesReceiptLedgerSearch(sale({ patientName: 'Peter Kato' }), 'kato'), true);
 });
 
+test('Receipt Ledger search matches original and corrected revision references', () => {
+  assert.equal(matchesReceiptLedgerSearch(sale({ originalReceiptNumber: 'ORIGINAL-100' }), 'original-100'), true);
+  assert.equal(matchesReceiptLedgerSearch(sale({ supersededByReceiptNumber: 'CORRECTED-200' }), 'corrected-200'), true);
+});
+
 test('A4 invoice resolves correct branch and never uses false Main Store fallback', () => {
   assert.ok(invoiceSource.includes("getDoc(doc(db, 'branches', sale.branchId))"));
   assert.ok(invoiceSource.includes("activeBranch?.id === sale.branchId"));

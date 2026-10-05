@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import type { Sale } from '../src/types';
-import { getPosV2RevisionReceiptPresentation } from '../src/services/pos-v2/posSaleRevisionV2Presentation';
+import { findLinkedPosV2RevisionSale, getPosV2RevisionReceiptPresentation } from '../src/services/pos-v2/posSaleRevisionV2Presentation';
 
 const sale = (overrides: Partial<Sale> = {}): Sale => ({
   id: 'sale-original',
@@ -21,6 +22,8 @@ const sale = (overrides: Partial<Sale> = {}): Sale => ({
   engineVersion: 2,
   ...overrides
 });
+
+const salesSource = readFileSync(new URL('../src/pages/Sales.tsx', import.meta.url), 'utf8');
 
 test('standard receipt has no revision presentation', () => {
   const result = getPosV2RevisionReceiptPresentation(sale());
@@ -75,4 +78,22 @@ test('replacement is explicitly corrected and links back to the original receipt
   assert.equal(result.linkedSaleId, 'sale-original');
   assert.equal(result.linkedReceiptNumber, 'MSK-2026-000001');
   assert.equal(result.linkedReceiptLabel, 'Original receipt');
+});
+
+test('counterpart lookup stays inside the current tenant and branch ledger', () => {
+  const original = sale({ supersededBySaleId: 'sale-corrected', supersededByReceiptNumber: 'MSK-2026-000002' });
+  const wrongTenant = sale({ id: 'sale-corrected', tenantId: 'tenant-other' });
+  const wrongBranch = sale({ id: 'sale-corrected', branchId: 'branch-other' });
+  const corrected = sale({ id: 'sale-corrected', receiptNumber: 'MSK-2026-000002' });
+
+  assert.equal(findLinkedPosV2RevisionSale(original, [wrongTenant, wrongBranch]), null);
+  assert.equal(findLinkedPosV2RevisionSale(original, [wrongTenant, corrected]), corrected);
+});
+
+test('Receipt Ledger renders revision badges and opens only a resolved branch counterpart', () => {
+  assert.match(salesSource, /getPosV2RevisionReceiptPresentation\(sale\)/);
+  assert.match(salesSource, /findLinkedPosV2RevisionSale\(sale, sales\)/);
+  assert.match(salesSource, /revisionPresentation\.badgeLabel/);
+  assert.match(salesSource, /revisionPresentation\.linkedReceiptNumber/);
+  assert.match(salesSource, /openLinkedRevisionReceipt\(sale\)/);
 });

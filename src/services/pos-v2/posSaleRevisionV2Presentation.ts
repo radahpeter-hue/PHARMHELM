@@ -109,3 +109,14 @@ export function getPosV2RevisionReceiptPresentation(sale: Sale): PosV2RevisionRe
     linkedReceiptLabel: null
   };
 }
+
+export function findLinkedPosV2RevisionSale(sale: Sale, branchSales: Sale[]): Sale | null {
+  const presentation = getPosV2RevisionReceiptPresentation(sale);
+  if (!presentation.linkedSaleId) return null;
+
+  return branchSales.find(candidate =>
+    candidate.id === presentation.linkedSaleId
+    && candidate.tenantId === sale.tenantId
+    && candidate.branchId === sale.branchId
+  ) || null;
+}

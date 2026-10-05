@@ -42,6 +42,7 @@ import { allocateFefoCheckoutLines, assertCheckoutLineCostFloors, buildCheckoutL
 import { reviseSaleInventoryAtomically, voidSaleInventoryAtomically } from '../services/saleInventoryIntegrityService';
 import { convertQuotationToSale, reconcilePendingPosFinancials, reconcilePosWelfarePosting } from '../services/posFinancialPostingService';
 import { executeCheckoutV2, recoverCheckoutV2Attempt } from '../services/pos-v2/posCheckoutV2Service';
+import { findLinkedPosV2RevisionSale, getPosV2RevisionReceiptPresentation } from '../services/pos-v2/posSaleRevisionV2Presentation';
 import { loadPosCheckoutV2Mode } from '../services/pos-v2/posCheckoutV2FeatureService';
 import {
   clearPendingPosCheckoutV2Attempt,
@@ -3080,6 +3081,20 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
   const [voidReason, setVoidReason] = useState('');
   const [isReprintModalOpen, setIsReprintModalOpen] = useState(false);
 
+  useEffect(() => {
+    setSelectedSale(current => current ? (sales.find(sale => sale.id === current.id) || current) : null);
+  }, [sales]);
+
+  const openLinkedRevisionReceipt = (sale: Sale) => {
+    const presentation = getPosV2RevisionReceiptPresentation(sale);
+    const linkedSale = findLinkedPosV2RevisionSale(sale, sales);
+    if (!linkedSale) {
+      toast.error(`${presentation.linkedReceiptLabel || 'Linked receipt'} is not available in this branch ledger yet.`);
+      return;
+    }
+    setSelectedSale(linkedSale);
+  };
+
   const filteredSales = sales.filter(sale => {
     const matchesSearch = matchesReceiptLedgerSearch(sale, searchTerm);
     const matchesStaff = selectedStaff === 'all' || sale.servedBy === selectedStaff;
@@ -3148,7 +3163,9 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {filteredSales.map((sale) => (
+              {filteredSales.map((sale) => {
+                const revisionPresentation = getPosV2RevisionReceiptPresentation(sale);
+                return (
                 <tr 
                   key={sale.id}
                   onClick={() => setSelectedSale(sale)}
@@ -3158,7 +3175,34 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                   )}
                 >
                   <td className="px-6 py-4">
-                    <span className="font-mono text-xs font-bold text-zinc-900">{getReceiptLedgerReference(sale)}</span>
+                    <div className="flex flex-col items-start gap-1.5">
+                      <span className="font-mono text-xs font-bold text-zinc-900">{getReceiptLedgerReference(sale)}</span>
+                      {revisionPresentation.badgeLabel && (
+                        <span className={cn(
+                          "px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider",
+                          revisionPresentation.kind === 'CORRECTED_RECEIPT'
+                            ? "bg-blue-100 text-blue-700"
+                            : revisionPresentation.kind === 'ORIGINAL_SUPERSEDED'
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-violet-100 text-violet-700"
+                        )}>
+                          {revisionPresentation.badgeLabel}
+                        </span>
+                      )}
+                      {revisionPresentation.linkedReceiptNumber && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openLinkedRevisionReceipt(sale);
+                          }}
+                          className="text-[10px] font-bold text-blue-700 hover:text-blue-900 hover:underline text-left"
+                          title={`Open ${revisionPresentation.linkedReceiptLabel?.toLowerCase()}`}
+                        >
+                          {revisionPresentation.linkedReceiptLabel}: {revisionPresentation.linkedReceiptNumber}
+                        </button>
+                      )}
+                    </div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-col">
@@ -3258,7 +3302,8 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
