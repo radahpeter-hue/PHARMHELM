@@ -1,6 +1,7 @@
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { auth, db } from '../../firebase';
 import type { Sale, Staff } from '../../types';
+import { normalizeDateValue } from '../../utils/dateValue';
 import {
   buildPosV2RevisionLedgerEntry,
   type PosV2RevisionLedgerEntry
@@ -63,8 +64,8 @@ export async function loadPosV2RevisionLedger(
   }));
 
   return entries.sort((left, right) => {
-    const leftTime = new Date(String(left.timestamps.completedAt || left.timestamps.updatedAt || left.timestamps.originalSaleAt || 0)).getTime();
-    const rightTime = new Date(String(right.timestamps.completedAt || right.timestamps.updatedAt || right.timestamps.originalSaleAt || 0)).getTime();
-    return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+    const leftTime = normalizeDateValue(left.timestamps.completedAt || left.timestamps.updatedAt || left.timestamps.originalSaleAt)?.getTime() || 0;
+    const rightTime = normalizeDateValue(right.timestamps.completedAt || right.timestamps.updatedAt || right.timestamps.originalSaleAt)?.getTime() || 0;
+    return rightTime - leftTime;
   });
 }

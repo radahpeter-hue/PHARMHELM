@@ -97,3 +97,18 @@ test('ledger repository is read-only and always queries tenant plus branch for b
   assert.match(source, /collection\(db, 'pos_sale_revision_requests'\)/);
   assert.doesNotMatch(source, /addDoc|setDoc|updateDoc|deleteDoc|runTransaction|writeBatch/);
 });
+
+test('Sales exposes the immutable branch revision ledger without mutation controls', () => {
+  const sales = readFileSync('src/pages/Sales.tsx', 'utf8');
+  const component = readFileSync('src/components/sales/PosV2RevisionLedger.tsx', 'utf8');
+  assert.match(sales, /setView\('revisions'\)/);
+  assert.match(sales, /<PosV2RevisionLedger/);
+  assert.match(component, /Immutable Revision Ledger/);
+  assert.match(component, /Original seller/);
+  assert.match(component, /Revision editor/);
+  assert.match(component, /Replacement executor/);
+  assert.match(component, /Item changes/);
+  assert.match(component, /Contextual changes/);
+  assert.match(component, /Manual review required/);
+  assert.doesNotMatch(component, /Edit revision|Delete revision|updateDoc|deleteDoc/);
+});

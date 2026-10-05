@@ -31,6 +31,7 @@ import { QuotationPreview } from '../components/sales/QuotationPreview';
 import { A4InvoiceTemplate } from '../components/sales/A4InvoiceTemplate';
 import { QuotationsLog } from '../components/sales/QuotationsLog';
 import { PosV2ReceiptRevisionAction } from '../components/sales/PosV2ReceiptRevisionAction';
+import { PosV2RevisionLedger } from '../components/sales/PosV2RevisionLedger';
 import { buildReceiptRevisionPlainText, openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
 import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';
 import { validateSaleCheckoutContext } from '../utils/saleContextValidation';
@@ -72,7 +73,7 @@ function generateUUID() {
 const Sales: React.FC = () => {
   const { profile, activeBranchId, activeBranch, hasPermission } = useAuth();
   const canProcessSales = canOperatePos(profile, hasPermission('sales', 'operate'));
-  const [view, setView] = useState<'pos' | 'ledger' | 'quotations'>('pos');
+  const [view, setView] = useState<'pos' | 'ledger' | 'revisions' | 'quotations'>('pos');
   const [products, setProducts] = useState<Product[]>([]);
   const [batches, setBatches] = useState<ProductBatch[]>([]);
   const [services, setServices] = useState<BillableService[]>([]);
@@ -1427,6 +1428,18 @@ const Sales: React.FC = () => {
             <FileText className="w-4 h-4" />
             Quotations
           </button>
+          <button
+            onClick={() => setView('revisions')}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
+              view === 'revisions'
+                ? "bg-white text-zinc-900 shadow-sm border border-zinc-200"
+                : "text-zinc-500 hover:text-zinc-700"
+            )}
+          >
+            <ShieldCheck className="w-4 h-4" />
+            Revision Ledger
+          </button>
         </div>
       </div>
 
@@ -2499,6 +2512,15 @@ const Sales: React.FC = () => {
             setSelectedA4ReceiptId(receiptId);
             setShowA4InvoiceModal(true);
           }}
+        />
+      )}
+
+      {view === 'revisions' && profile?.tenantId && profile?.uid && activeBranchId && (
+        <PosV2RevisionLedger
+          tenantId={profile.tenantId}
+          branchId={activeBranchId}
+          actorUid={profile.uid}
+          staff={staff}
         />
       )}
 
