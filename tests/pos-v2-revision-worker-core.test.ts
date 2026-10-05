@@ -206,13 +206,15 @@ test('reversal state becomes complete only when every applicable consumer comple
   assert.equal(core.deriveReversalState(consumers), 'REVERSAL_COMPLETE');
 });
 
-test('revision lifecycle prevents premature completion and permits controlled retry', () => {
+test('revision lifecycle follows reversal, replacement creation and completion in order', () => {
   assert.equal(core.assertRevisionTransition('PENDING', 'PROCESSING'), true);
   assert.equal(core.assertRevisionTransition('PROCESSING', 'REVERSAL_COMPLETE'), true);
   assert.equal(core.assertRevisionTransition('REVERSAL_COMPLETE', 'REPLACEMENT_PENDING'), true);
-  assert.equal(core.assertRevisionTransition('REPLACEMENT_PENDING', 'COMPLETED'), true);
+  assert.equal(core.assertRevisionTransition('REPLACEMENT_PENDING', 'REPLACEMENT_CREATED'), true);
+  assert.equal(core.assertRevisionTransition('REPLACEMENT_CREATED', 'COMPLETED'), true);
   assert.equal(core.assertRevisionTransition('FAILED', 'PROCESSING'), true);
   assert.throws(() => core.assertRevisionTransition('PENDING', 'COMPLETED'), /Illegal POS revision transition/);
+  assert.throws(() => core.assertRevisionTransition('REPLACEMENT_PENDING', 'COMPLETED'), /Illegal POS revision transition/);
   assert.throws(() => core.assertRevisionTransition('REVERSAL_COMPLETE', 'COMPLETED'), /Illegal POS revision transition/);
 });
 
