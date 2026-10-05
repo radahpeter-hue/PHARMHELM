@@ -3,7 +3,10 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import type { Sale, Staff } from '../src/types';
 import { buildPosV2RevisionLedgerEntry } from '../src/services/pos-v2/posSaleRevisionV2Ledger';
-import { buildPosV2BranchRevisionAnalytics } from '../src/services/pos-v2/posSaleRevisionV2Analytics';
+import {
+  buildPosV2BranchRevisionAnalytics,
+  buildPosV2GlobalRevisionAnalytics
+} from '../src/services/pos-v2/posSaleRevisionV2Analytics';
 
 const original: Sale = {
   id: 'sale-original', tenantId: 'tenant-1', branchId: 'branch-1', receiptNumber: 'MSK-001',
@@ -150,5 +153,49 @@ test('branch analytics reject mixed tenant or branch evidence', () => {
   assert.throws(
     () => buildPosV2BranchRevisionAnalytics([{ ...ledger, branchId: 'branch-other' }], { tenantId: 'tenant-1', branchId: 'branch-1' }),
     /cannot combine cross-tenant or cross-branch evidence/i
+  );
+});
+
+test('global analytics aggregate revisions by readable branch without losing tenant totals', () => {
+  const branchOne = buildPosV2RevisionLedgerEntry({ request, originalSale: original, replacementSale: replacement, staff });
+  const branchTwo = buildPosV2RevisionLedgerEntry({
+    request: {
+      ...request,
+      requestId: 'request-2', revisionId: 'revision-2', branchId: 'branch-2',
+      originalSaleId: 'sale-original-2', originalReceiptNumber: 'JIN-001', replacementSaleId: null,
+      replacementReceiptNumber: null, revisedTotal: 8000, monetaryDelta: -2000,
+      adjustmentDirection: 'DECREASE', status: 'FAILED', replacementLifecycle: null
+    },
+    originalSale: { ...original, id: 'sale-original-2', branchId: 'branch-2', receiptNumber: 'JIN-001' },
+    staff
+  });
+  const analytics = buildPosV2GlobalRevisionAnalytics(
+    [branchOne, branchTwo],
+    { tenantId: 'tenant-1' },
+    [
+      { id: 'branch-1', tenantId: 'tenant-1', name: 'Masaka' },
+      { id: 'branch-2', tenantId: 'tenant-1', name: 'Jinja' }
+    ]
+  );
+  assert.equal(analytics.revisedReceiptCount, 2);
+  assert.equal(analytics.completedRevisionCount, 1);
+  assert.equal(analytics.failedRevisionCount, 1);
+  assert.equal(analytics.originalValue, 20000);
+  assert.equal(analytics.correctedValue, 20000);
+  assert.equal(analytics.additions, 2000);
+  assert.equal(analytics.deductions, 2000);
+  assert.equal(analytics.netChange, 0);
+  assert.deepEqual(analytics.branches.map(branch => branch.branchName), ['Jinja', 'Masaka']);
+});
+
+test('global analytics reject cross-tenant ledger or branch metadata', () => {
+  const ledger = buildPosV2RevisionLedgerEntry({ request, originalSale: original, replacementSale: replacement, staff });
+  assert.throws(
+    () => buildPosV2GlobalRevisionAnalytics([{ ...ledger, tenantId: 'tenant-other' }], { tenantId: 'tenant-1' }),
+    /cannot combine cross-tenant evidence/i
+  );
+  assert.throws(
+    () => buildPosV2GlobalRevisionAnalytics([ledger], { tenantId: 'tenant-1' }, [{ id: 'branch-1', tenantId: 'tenant-other', name: 'Wrong' }]),
+    /cannot resolve cross-tenant branches/i
   );
 });
