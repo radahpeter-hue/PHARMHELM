@@ -111,6 +111,12 @@ test('Sales exposes the immutable branch revision ledger without mutation contro
   assert.match(component, /Item changes/);
   assert.match(component, /Contextual changes/);
   assert.match(component, /Manual review required/);
+  assert.match(component, /buildPosV2BranchRevisionAnalytics/);
+  assert.match(component, /Additions/);
+  assert.match(component, /Deductions/);
+  assert.match(component, /All lifecycle states/);
+  assert.match(component, /type="date"/);
+  assert.match(component, /Receipt, editor, seller, reason or revision/);
   assert.doesNotMatch(component, /Edit revision|Delete revision|updateDoc|deleteDoc/);
 });
 
