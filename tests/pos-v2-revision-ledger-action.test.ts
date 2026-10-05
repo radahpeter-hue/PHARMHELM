@@ -18,6 +18,8 @@ function decision(state: any, overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
+const source = readFileSync('src/components/sales/PosV2ReceiptRevisionAction.tsx', 'utf8');
+
 test('ledger action labels clearly distinguish revision lifecycle states', () => {
   assert.equal(getPosV2ReceiptRevisionActionLabel(decision('ELIGIBLE')), 'Revise Receipt');
   assert.equal(getPosV2ReceiptRevisionActionLabel(decision('WINDOW_EXPIRED')), 'Revision Window Expired');
@@ -34,38 +36,45 @@ test('remaining revision window is presented without changing the authoritative 
   assert.equal(getPosV2ReceiptRevisionRemainingLabel(null), null);
 });
 
-test('eligible ledger action opens the dedicated local-only revision editor', () => {
-  const source = readFileSync('src/components/sales/PosV2ReceiptRevisionAction.tsx', 'utf8');
+test('eligible ledger action opens the dedicated revision editor and review flow', () => {
   assert.match(source, /PosV2ReceiptRevisionEditor/);
-  assert.match(source, /setIsEditorOpen\(true\)/);
-  assert.match(source, /onCancel=\{cancelRevisionFlow\}/);
-  assert.match(source, /onContinue=\{continueToReview\}/);
-});
-
-test('editor draft advances to the dedicated review screen and can return to edit', () => {
-  const source = readFileSync('src/components/sales/PosV2ReceiptRevisionAction.tsx', 'utf8');
   assert.match(source, /PosV2ReceiptRevisionReview/);
+  assert.match(source, /setIsEditorOpen\(true\)/);
   assert.match(source, /setReviewDraft\(draft\)/);
   assert.match(source, /onBack=\{backToEditor\}/);
-  assert.match(source, /setReviewDraft\(null\)/);
-  assert.match(source, /onConfirm=\{holdReviewedDraft\}/);
-  assert.match(source, /Durable submission will be enabled in the next controlled checkpoint/);
+  assert.match(source, /onConfirm=\{submitReviewedDraft\}/);
 });
 
-test('review confirmation is still non-durable and cannot invoke legacy or checkout mutation services', () => {
-  const source = readFileSync('src/components/sales/PosV2ReceiptRevisionAction.tsx', 'utf8');
-  assert.match(source, /getPosV2ReceiptRevisionUiDecision/);
+test('review confirmation uses only the dedicated immutable revision submission repository', () => {
+  assert.match(source, /submitPosV2RevisionRequest/);
+  assert.match(source, /watchPosV2RevisionRequest/);
+  assert.match(source, /PosV2ReceiptRevisionProgress/);
+  assert.match(source, /profile\.uid/);
   assert.doesNotMatch(source, /firestoreService/);
   assert.doesNotMatch(source, /reviseSaleInventoryAtomically/);
   assert.doesNotMatch(source, /voidSaleInventoryAtomically/);
-  assert.doesNotMatch(source, /executeCheckoutV2/);
   assert.doesNotMatch(source, /updateDocument|addDocument|setDoc|updateDoc|deleteDoc/);
 });
 
-test('ineligible V2 revision states are rendered disabled rather than routed into legacy edit', () => {
-  const source = readFileSync('src/components/sales/PosV2ReceiptRevisionAction.tsx', 'utf8');
-  assert.match(source, /disabled=!\{?decision\.canRevise\}?|disabled=\{!decision\.canRevise\}/);
+test('revision recovery derives the durable request identity from the original sale revision id', () => {
+  assert.match(source, /posV2RevisionRequestIdForRevision/);
+  assert.match(source, /decision\.state !== 'REVISION_IN_PROGRESS'/);
+  assert.match(source, /sale as any\)\.revisionId/);
+  assert.match(source, /watchPosV2RevisionRequest/);
+});
+
+test('canonical replacement checkout runs only after the durable request reaches REPLACEMENT_PENDING', () => {
+  assert.match(source, /executePosV2RevisionReplacement/);
+  assert.match(source, /REPLACEMENT_PENDING/);
+  assert.match(source, /replacementAttemptRef/);
+  assert.match(source, /canOperatePos/);
+  assert.doesNotMatch(source, /executeCheckoutV2\s*\(/);
+});
+
+test('ineligible V2 revision states remain disabled and never route to legacy edit or void', () => {
+  assert.match(source, /disabled=!\{?decision\.canRevise\}?|disabled=\{!decision\.canRevise \|\| isSubmitting\}/);
   assert.doesNotMatch(source, /onEditInPOS|onEdit\(/);
+  assert.doesNotMatch(source, /voidSaleInventoryAtomically/);
   assert.match(source, /Revision Window Expired/);
   assert.match(source, /Corrected Receipt/);
 });
