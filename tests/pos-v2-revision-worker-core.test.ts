@@ -10,6 +10,7 @@ const sale = {
   receiptNumber: 'R-1001',
   engineVersion: 2,
   status: 'completed',
+  timestamp: '2026-10-03T00:00:00.000Z',
   totalAmount: 15000,
   canonicalPaymentId: 'pay_1',
   transactionOutboxEventId: 'outbox_1'
@@ -53,46 +54,78 @@ const request = {
   reason: 'Quantity entered incorrectly'
 };
 
+const requestCreatedAt = new Date('2026-10-04T00:00:00.000Z');
+
+function validate(overrides: Record<string, unknown> = {}) {
+  return core.validateRevisionRequest({ request, sale, payment, outbox, requestCreatedAt, ...overrides });
+}
+
 test('canonical processed V2 chain accepts one new revision request', () => {
-  assert.equal(core.validateRevisionRequest({ request, sale, payment, outbox }), true);
+  assert.equal(validate(), true);
 });
 
 test('revision validation does not require or mutate a new sale status', () => {
   const snapshot = structuredClone(sale);
-  core.validateRevisionRequest({ request, sale, payment, outbox });
+  validate();
   assert.equal(sale.status, 'completed');
   assert.deepEqual(sale, snapshot);
 });
 
+test('new revision request must be claimed within the 72-hour revision window', () => {
+  assert.equal(core.REVISION_WINDOW_HOURS, 72);
+  assert.equal(validate({ requestCreatedAt: new Date('2026-10-05T23:59:59.999Z') }), true);
+  assert.throws(
+    () => validate({ requestCreatedAt: new Date('2026-10-06T00:00:00.001Z') }),
+    /outside the 72-hour revision window/
+  );
+  assert.throws(
+    () => validate({ requestCreatedAt: new Date('2026-10-02T23:59:59.999Z') }),
+    /outside the 72-hour revision window/
+  );
+});
+
+test('a legitimate revision retry may finish after the 72-hour window once its own lock exists', () => {
+  const ownPendingLock = {
+    ...sale,
+    revisionLocked: true,
+    revisionId: 'revision_1',
+    revisionLifecycle: 'REVERSAL_PENDING'
+  };
+  assert.equal(
+    validate({ sale: ownPendingLock, requestCreatedAt: new Date('2026-10-20T00:00:00.000Z'), resume: true }),
+    true
+  );
+});
+
 test('revision request fails closed until original downstream posting is fully processed', () => {
   assert.throws(
-    () => core.validateRevisionRequest({ request, sale, payment, outbox: { ...outbox, status: 'PROCESSING' } }),
+    () => validate({ outbox: { ...outbox, status: 'PROCESSING' } }),
     /finish downstream posting/
   );
 });
 
 test('revision request rejects cross-tenant, cross-branch and receipt drift', () => {
   assert.throws(
-    () => core.validateRevisionRequest({ request: { ...request, tenantId: 'tenant_2' }, sale, payment, outbox }),
+    () => validate({ request: { ...request, tenantId: 'tenant_2' } }),
     /tenant linkage mismatch/
   );
   assert.throws(
-    () => core.validateRevisionRequest({ request: { ...request, branchId: 'branch_2' }, sale, payment, outbox }),
+    () => validate({ request: { ...request, branchId: 'branch_2' } }),
     /branch linkage mismatch/
   );
   assert.throws(
-    () => core.validateRevisionRequest({ request: { ...request, originalReceiptNumber: 'OTHER' }, sale, payment, outbox }),
+    () => validate({ request: { ...request, originalReceiptNumber: 'OTHER' } }),
     /receipt linkage mismatch/
   );
 });
 
 test('revision request rejects an already locked or superseded sale', () => {
   assert.throws(
-    () => core.validateRevisionRequest({ request, sale: { ...sale, revisionLocked: true }, payment, outbox }),
+    () => validate({ sale: { ...sale, revisionLocked: true } }),
     /already locked/
   );
   assert.throws(
-    () => core.validateRevisionRequest({ request, sale: { ...sale, supersededBySaleId: 'replacement_1' }, payment, outbox }),
+    () => validate({ sale: { ...sale, supersededBySaleId: 'replacement_1' } }),
     /already locked/
   );
 });
@@ -104,34 +137,25 @@ test('revision retry can resume only its own pending reversal lock', () => {
     revisionId: 'revision_1',
     revisionLifecycle: 'REVERSAL_PENDING'
   };
-  assert.equal(core.validateRevisionRequest({ request, sale: ownPendingLock, payment, outbox, resume: true }), true);
+  assert.equal(validate({ sale: ownPendingLock, resume: true }), true);
 
   assert.throws(
-    () => core.validateRevisionRequest({
-      request,
+    () => validate({
       sale: { ...ownPendingLock, revisionId: 'revision_other' },
-      payment,
-      outbox,
       resume: true
     }),
     /already locked/
   );
   assert.throws(
-    () => core.validateRevisionRequest({
-      request,
+    () => validate({
       sale: { ...ownPendingLock, revisionLifecycle: 'REVERSAL_COMPLETE' },
-      payment,
-      outbox,
       resume: true
     }),
     /already locked/
   );
   assert.throws(
-    () => core.validateRevisionRequest({
-      request,
+    () => validate({
       sale: { ...ownPendingLock, supersededBySaleId: 'replacement_1' },
-      payment,
-      outbox,
       resume: true
     }),
     /already locked/
@@ -140,11 +164,11 @@ test('revision retry can resume only its own pending reversal lock', () => {
 
 test('revision request cannot masquerade as a normal sale commit or use a weak reason', () => {
   assert.throws(
-    () => core.validateRevisionRequest({ request: { ...request, requestType: 'POS_SALE_COMMITTED' }, sale, payment, outbox }),
+    () => validate({ request: { ...request, requestType: 'POS_SALE_COMMITTED' } }),
     /Unsupported POS revision request/
   );
   assert.throws(
-    () => core.validateRevisionRequest({ request: { ...request, reason: 'short' }, sale, payment, outbox }),
+    () => validate({ request: { ...request, reason: 'short' } }),
     /8 to 500/
   );
 });
