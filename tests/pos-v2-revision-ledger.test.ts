@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import type { Sale, Staff } from '../src/types';
 import { buildPosV2RevisionLedgerEntry } from '../src/services/pos-v2/posSaleRevisionV2Ledger';
+import { buildPosV2BranchRevisionAnalytics } from '../src/services/pos-v2/posSaleRevisionV2Analytics';
 
 const original: Sale = {
   id: 'sale-original', tenantId: 'tenant-1', branchId: 'branch-1', receiptNumber: 'MSK-001',
@@ -111,4 +112,37 @@ test('Sales exposes the immutable branch revision ledger without mutation contro
   assert.match(component, /Contextual changes/);
   assert.match(component, /Manual review required/);
   assert.doesNotMatch(component, /Edit revision|Delete revision|updateDoc|deleteDoc/);
+});
+
+test('branch analytics calculate original, corrected, additions, deductions and net values', () => {
+  const increase = buildPosV2RevisionLedgerEntry({ request, originalSale: original, replacementSale: replacement, staff });
+  const decrease = buildPosV2RevisionLedgerEntry({
+    request: {
+      ...request,
+      requestId: 'request-2', revisionId: 'revision-2', replacementSaleId: null, replacementReceiptNumber: null,
+      revisedTotal: 7000, monetaryDelta: -3000, adjustmentDirection: 'DECREASE', status: 'FAILED', replacementLifecycle: null
+    },
+    originalSale: original,
+    staff
+  });
+  const analytics = buildPosV2BranchRevisionAnalytics([increase, decrease], { tenantId: 'tenant-1', branchId: 'branch-1' });
+  assert.equal(analytics.revisedReceiptCount, 2);
+  assert.equal(analytics.completedRevisionCount, 1);
+  assert.equal(analytics.failedRevisionCount, 1);
+  assert.equal(analytics.originalValue, 20000);
+  assert.equal(analytics.correctedValue, 19000);
+  assert.equal(analytics.additions, 2000);
+  assert.equal(analytics.deductions, 3000);
+  assert.equal(analytics.netChange, -1000);
+  assert.equal(analytics.rows[0].revisionEditor.name, 'Revision Editor');
+  assert.equal(analytics.rows[0].originalSeller.name, 'Original Seller');
+  assert.equal(analytics.rows[0].reason, 'Correct the supplied quantity');
+});
+
+test('branch analytics reject mixed tenant or branch evidence', () => {
+  const ledger = buildPosV2RevisionLedgerEntry({ request, originalSale: original, replacementSale: replacement, staff });
+  assert.throws(
+    () => buildPosV2BranchRevisionAnalytics([{ ...ledger, branchId: 'branch-other' }], { tenantId: 'tenant-1', branchId: 'branch-1' }),
+    /cannot combine cross-tenant or cross-branch evidence/i
+  );
 });
