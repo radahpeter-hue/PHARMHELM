@@ -31,7 +31,7 @@ import { QuotationPreview } from '../components/sales/QuotationPreview';
 import { A4InvoiceTemplate } from '../components/sales/A4InvoiceTemplate';
 import { QuotationsLog } from '../components/sales/QuotationsLog';
 import { PosV2ReceiptRevisionAction } from '../components/sales/PosV2ReceiptRevisionAction';
-import { openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
+import { buildReceiptRevisionPlainText, openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
 import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';
 import { validateSaleCheckoutContext } from '../utils/saleContextValidation';
 import { getReceiptLedgerReference, getSaleIdentityLabel, getSaleSystemReference, matchesReceiptLedgerSearch, resolveSaleOperatorName } from '../utils/salePresentation';
@@ -3636,6 +3636,25 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                     <p className="text-[8px] text-zinc-500">NDA Reg: {brandNdaReg}</p>
                   </div>
 
+                  {selectedRevisionPresentation?.isRevisionRelated && (
+                    <div className={cn(
+                      "border-2 px-2 py-2 mb-3 text-center",
+                      selectedRevisionPresentation.kind === 'CORRECTED_RECEIPT'
+                        ? "border-blue-700 text-blue-800 bg-blue-50"
+                        : selectedRevisionPresentation.kind === 'ORIGINAL_SUPERSEDED'
+                          ? "border-amber-700 text-amber-800 bg-amber-50"
+                          : "border-violet-700 text-violet-800 bg-violet-50"
+                    )}>
+                      <p className="font-black text-[10px] tracking-wider">{selectedRevisionPresentation.documentTitle}</p>
+                      {selectedRevisionPresentation.linkedReceiptNumber && (
+                        <p className="text-[8px] mt-1">{selectedRevisionPresentation.linkedReceiptLabel}: <span className="font-bold">{selectedRevisionPresentation.linkedReceiptNumber}</span></p>
+                      )}
+                      {selectedRevisionPresentation.revisionId && <p className="text-[7px] mt-1 break-all">Revision: {selectedRevisionPresentation.revisionId}</p>}
+                      {selectedRevisionPresentation.editorName && <p className="text-[8px] mt-1">Revision editor: {selectedRevisionPresentation.editorName}</p>}
+                      {selectedRevisionPresentation.reason && <p className="text-[8px] mt-1 text-left"><span className="font-bold">Reason:</span> {selectedRevisionPresentation.reason}</p>}
+                    </div>
+                  )}
+
                   <div className="border-t border-b border-dashed border-zinc-300 py-2 mb-3 space-y-0.5 text-[8px]">
                     <div className="flex justify-between">
                       <span>Receipt #:</span>
@@ -3650,7 +3669,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                       <span className="uppercase font-semibold">{selectedSale.context}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Cashier:</span>
+                      <span>{selectedRevisionPresentation?.kind === 'CORRECTED_RECEIPT' ? 'Replacement executor:' : selectedRevisionPresentation?.isRevisionRelated ? 'Original seller:' : 'Cashier:'}</span>
                       <span>{resolveSaleOperatorName(selectedSale, staff)}</span>
                     </div>
                   </div>
@@ -3752,9 +3771,9 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
 ${activeBranch?.address || 'Plot 45 Kampala Road, Kampala HQ'}
 NDA Reg: ${brandNdaReg}
 ---------------------------------
+${buildReceiptRevisionPlainText(selectedSale, resolveSaleOperatorName(selectedSale, staff))}
 Receipt: ${selectedSale.receiptNumber || selectedSale.id.substring(0, 8).toUpperCase()}
 Date: ${format(new Date(selectedSale.timestamp), 'dd/MM/yyyy HH:mm')}
-Cashier: ${resolveSaleOperatorName(selectedSale, staff)}
 ---------------------------------
 ${selectedSale.items.map(item => `${item.productName}\n  ${item.quantity} x UGX ${item.unitPrice.toLocaleString()} = UGX ${item.subtotal.toLocaleString()}`).join('\n')}
 ---------------------------------

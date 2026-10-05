@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import type { Sale } from '../src/types';
 import { findLinkedPosV2RevisionSale, getPosV2RevisionReceiptPresentation } from '../src/services/pos-v2/posSaleRevisionV2Presentation';
+import { buildReceiptRevisionPlainText } from '../src/utils/receiptPrinting';
 
 const sale = (overrides: Partial<Sale> = {}): Sale => ({
   id: 'sale-original',
@@ -106,4 +107,42 @@ test('receipt details keep seller, editor and replacement executor as separate a
   assert.match(salesSource, /selectedRevisionPresentation\.editorName/);
   assert.match(salesSource, /Open \{selectedRevisionPresentation\.linkedReceiptLabel\}/);
   assert.doesNotMatch(salesSource, /selectedSale\.servedBy\s*=\s*selectedRevisionPresentation/);
+});
+
+test('thermal and shared text identify superseded and corrected receipts without changing operator identity', () => {
+  const originalText = buildReceiptRevisionPlainText(sale({
+    revisionId: 'revision-1',
+    revisionLifecycle: 'COMPLETED',
+    revisionRequestedByName: 'Revision Editor',
+    revisionReason: 'Correct quantity',
+    supersededBySaleId: 'sale-corrected',
+    supersededByReceiptNumber: 'MSK-2026-000002'
+  }), 'Original Seller');
+  assert.match(originalText, /^SUPERSEDED RECEIPT/m);
+  assert.match(originalText, /Original seller: Original Seller/);
+  assert.match(originalText, /Corrected receipt: MSK-2026-000002/);
+  assert.match(originalText, /Revision editor: Revision Editor/);
+  assert.match(originalText, /Correction reason: Correct quantity/);
+
+  const correctedText = buildReceiptRevisionPlainText(sale({
+    id: 'sale-corrected',
+    isRevisionReplacement: true,
+    revisionId: 'revision-1',
+    revisionRequestId: 'request-1',
+    revisionOfSaleId: 'sale-original',
+    originalReceiptNumber: 'MSK-2026-000001'
+  }), 'Replacement Operator');
+  assert.match(correctedText, /^CORRECTED RECEIPT/m);
+  assert.match(correctedText, /Replacement executor: Replacement Operator/);
+  assert.match(correctedText, /Original receipt: MSK-2026-000001/);
+  assert.match(correctedText, /Request reference: request-1/);
+});
+
+test('reprint preview and thermal printer use the revision presentation contract', () => {
+  const thermalSource = readFileSync(new URL('../src/utils/receiptPrinting.ts', import.meta.url), 'utf8');
+  assert.match(thermalSource, /getPosV2RevisionReceiptPresentation\(sale\)/);
+  assert.match(thermalSource, /revisionPresentation\.documentTitle/);
+  assert.match(thermalSource, /revisionPresentation\.linkedReceiptNumber/);
+  assert.match(salesSource, /buildReceiptRevisionPlainText\(selectedSale/);
+  assert.match(salesSource, /selectedRevisionPresentation\.documentTitle/);
 });
