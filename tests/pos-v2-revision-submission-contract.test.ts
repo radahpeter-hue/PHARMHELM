@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   buildPosV2RevisionSubmissionRequest,
-  posV2RevisionRequestDocumentId
+  posV2RevisionRequestDocumentId,
+  posV2RevisionRequestIdForRevision
 } from '../src/services/pos-v2/posSaleRevisionV2Submission';
 
 const sale: any = {
@@ -69,6 +70,15 @@ test('submission contract starts as deterministic pending request expected by re
   assert.equal(request.reason, plan.revisionReason);
   assert.match(request.requestId, /^pos_revision_request_pos_revision_/);
   assert.equal(posV2RevisionRequestDocumentId(request), request.requestId);
+  assert.equal(posV2RevisionRequestIdForRevision(request.revisionId), request.requestId);
+});
+
+test('submission contract exposes deterministic request recovery identity', () => {
+  const first = posV2RevisionRequestIdForRevision('pos_revision_tenant_sale_rev1_hash');
+  const replay = posV2RevisionRequestIdForRevision('pos_revision_tenant_sale_rev1_hash');
+  assert.equal(first, replay);
+  assert.match(first, /^pos_revision_request_pos_revision_/);
+  assert.throws(() => posV2RevisionRequestIdForRevision(''), /Revision identity/);
 });
 
 test('submission contract preserves canonical replacement identities and reviewed envelope', () => {
