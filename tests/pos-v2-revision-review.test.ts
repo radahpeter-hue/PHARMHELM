@@ -91,7 +91,7 @@ test('planner feeding review detects item and context changes without mutating o
   assert.equal(originalSale.paymentMethod, 'Cash');
 });
 
-test('review screen is fail-closed and mutation-free', () => {
+test('review screen remains fail-closed and mutation-free', () => {
   assert.match(source, /Revision review failed closed/);
   assert.match(source, /disabled=!\{?plan\}?|disabled=\{!plan\}/);
   assert.doesNotMatch(source, /firebase\/firestore/);
@@ -99,12 +99,12 @@ test('review screen is fail-closed and mutation-free', () => {
   assert.doesNotMatch(source, /setDoc\s*\(/);
   assert.doesNotMatch(source, /updateDoc\s*\(/);
   assert.doesNotMatch(source, /runTransaction\s*\(/);
-  assert.doesNotMatch(source, /process-pos-v2-revisions/);
 });
 
-test('review confirmation only hands the certified plan and draft to the next checkpoint', () => {
+test('review confirmation hands the certified plan and draft to controlled durable submission', () => {
   assert.match(source, /onConfirm: \(plan: PosV2RevisionPlan, draft: PosV2ReceiptRevisionDraft\) => void/);
   assert.match(source, /onClick=\{\(\) => plan && onConfirm\(plan, draft\)\}/);
-  assert.match(source, /Confirm Reviewed Draft/);
-  assert.match(source, /No reversal, stock movement, payment adjustment, Finance posting or replacement sale occurs/);
+  assert.match(source, /Submit Revision/);
+  assert.match(source, /original receipt is never overwritten/i);
+  assert.match(source, /irreversible once the worker begins reversal/i);
 });
