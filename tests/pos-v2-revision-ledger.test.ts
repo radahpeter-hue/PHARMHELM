@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import type { Sale, Staff } from '../src/types';
 import { buildPosV2RevisionLedgerEntry } from '../src/services/pos-v2/posSaleRevisionV2Ledger';
 
@@ -85,4 +86,14 @@ test('ledger projection fails closed on monetary or cross-branch linkage drift',
     () => buildPosV2RevisionLedgerEntry({ request, originalSale: original, replacementSale: { ...replacement, revisionId: 'revision-other' } }),
     /replacement sale linkage is inconsistent/i
   );
+});
+
+test('ledger repository is read-only and always queries tenant plus branch for branch scope', () => {
+  const source = readFileSync('src/services/pos-v2/posSaleRevisionV2LedgerRepository.ts', 'utf8');
+  assert.match(source, /auth\.currentUser/);
+  assert.match(source, /where\('tenantId', '==', clean\(scope\.tenantId\)\)/);
+  assert.match(source, /scope\.kind === 'BRANCH'/);
+  assert.match(source, /where\('branchId', '==', clean\(scope\.branchId\)\)/);
+  assert.match(source, /collection\(db, 'pos_sale_revision_requests'\)/);
+  assert.doesNotMatch(source, /addDoc|setDoc|updateDoc|deleteDoc|runTransaction|writeBatch/);
 });

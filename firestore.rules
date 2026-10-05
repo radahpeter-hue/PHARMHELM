@@ -248,6 +248,26 @@ service cloud.firestore {
         || hasCustomModuleView('marketing');
     }
 
+    function canViewGlobalRevisionLedger() {
+      return isAuthenticated() && (
+        isAdmin() ||
+        isFinance() ||
+        isIT() ||
+        hasAnyRole(['QA Head', 'QA Manager'])
+      );
+    }
+
+    function canViewBranchRevisionLedger(branchId) {
+      return isAuthenticated()
+        && isAssignedToBranch(branchId)
+        && (
+          isPOSOperator() ||
+          isBranchManager() ||
+          hasAnyRole(['QA Officer', 'QA Head', 'QA Manager']) ||
+          hasCustomModuleView('sales')
+        );
+    }
+
 
     function isOwner(userId) {
       return isAuthenticated() && (
@@ -1203,8 +1223,22 @@ service cloud.firestore {
           && revision.envelope is map;
       }
 
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow get: if isAuthenticated() && (
+        resource == null ||
+        (
+          isTenantMember(resource.data.tenantId)
+          && (
+            canViewGlobalRevisionLedger() ||
+            canViewBranchRevisionLedger(resource.data.branchId)
+          )
+        )
+      );
+      allow list: if isAuthenticated()
+        && isTenantMember(resource.data.tenantId)
+        && (
+          canViewGlobalRevisionLedger() ||
+          canViewBranchRevisionLedger(resource.data.branchId)
+        );
       allow create: if isPOSOperator()
         && isTenantMember(request.resource.data.tenantId)
         && isAssignedToBranch(request.resource.data.branchId)

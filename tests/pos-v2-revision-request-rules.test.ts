@@ -82,6 +82,19 @@ test('generic tenant fallback cannot reopen revision request reads, writes or de
   assert.match(revisionRules, /allow update, delete: if false/);
 });
 
+test('revision ledger reads enforce assigned-branch or explicit tenant-wide management authority', () => {
+  assert.match(rules, /function canViewGlobalRevisionLedger\(\)/);
+  assert.match(rules, /function canViewBranchRevisionLedger\(branchId\)/);
+  assert.match(rules, /isAssignedToBranch\(branchId\)/);
+  assert.match(rules, /hasAnyRole\(\['QA Head', 'QA Manager'\]\)/);
+  assert.match(revisionRules, /canViewGlobalRevisionLedger\(\)/);
+  assert.match(revisionRules, /canViewBranchRevisionLedger\(resource\.data\.branchId\)/);
+  assert.doesNotMatch(
+    revisionRules,
+    /allow list: if isAuthenticated\(\) && isTenantMember\(resource\.data\.tenantId\);/
+  );
+});
+
 test('opening stock batch guard still indexes the accepted line by openingStockLineIndex', () => {
   assert.match(
     rules,
