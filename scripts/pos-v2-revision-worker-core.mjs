@@ -17,6 +17,9 @@ export const REVERSAL_CONSUMERS = [
   'quotation'
 ];
 
+export const REVISION_WINDOW_HOURS = 72;
+export const REVISION_WINDOW_MS = REVISION_WINDOW_HOURS * 60 * 60 * 1000;
+
 const EPSILON = 0.0001;
 
 function clean(value) {
@@ -32,7 +35,13 @@ function canonicalSaleTotal(sale) {
   return numberValue(sale?.totalAmount ?? sale?.total, NaN);
 }
 
-export function validateRevisionRequest({ request, sale, payment, outbox, resume = false }) {
+function millis(value) {
+  if (value && typeof value.toMillis === 'function') return value.toMillis();
+  const parsed = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+export function validateRevisionRequest({ request, sale, payment, outbox, requestCreatedAt, resume = false }) {
   if (!request || request.requestType !== REVISION_REQUEST_TYPE) {
     throw new Error('Unsupported POS revision request.');
   }
@@ -54,6 +63,17 @@ export function validateRevisionRequest({ request, sale, payment, outbox, resume
   }
   if (!sale || Number(sale.engineVersion || 0) !== 2 || sale.status !== 'completed') {
     throw new Error('Only a completed canonical POS V2 sale can be revised.');
+  }
+
+  if (!resume) {
+    const originalSaleMillis = millis(sale.timestamp);
+    const requestCreatedMillis = millis(requestCreatedAt);
+    if (!Number.isFinite(originalSaleMillis) || !Number.isFinite(requestCreatedMillis)) {
+      throw new Error('POS revision 72-hour eligibility timestamps are invalid.');
+    }
+    if (requestCreatedMillis < originalSaleMillis || requestCreatedMillis > originalSaleMillis + REVISION_WINDOW_MS) {
+      throw new Error('The POS V2 revision request was created outside the 72-hour revision window.');
+    }
   }
 
   const hasRevisionLock = Boolean(sale.revisionLocked || clean(sale.revisionId) || clean(sale.supersededBySaleId));
