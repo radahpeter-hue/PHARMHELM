@@ -97,3 +97,13 @@ test('Receipt Ledger renders revision badges and opens only a resolved branch co
   assert.match(salesSource, /revisionPresentation\.linkedReceiptNumber/);
   assert.match(salesSource, /openLinkedRevisionReceipt\(sale\)/);
 });
+
+test('receipt details keep seller, editor and replacement executor as separate audit concepts', () => {
+  assert.match(salesSource, /'Replacement executor'/);
+  assert.match(salesSource, /'Original seller'/);
+  assert.match(salesSource, /Revision editor/);
+  assert.match(salesSource, /resolveSaleOperatorName\(selectedSale, staff\)/);
+  assert.match(salesSource, /selectedRevisionPresentation\.editorName/);
+  assert.match(salesSource, /Open \{selectedRevisionPresentation\.linkedReceiptLabel\}/);
+  assert.doesNotMatch(salesSource, /selectedSale\.servedBy\s*=\s*selectedRevisionPresentation/);
+});

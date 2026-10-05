@@ -3105,6 +3105,9 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
 
     return matchesSearch && matchesStaff && matchesStart && matchesEnd;
   });
+  const selectedRevisionPresentation = selectedSale
+    ? getPosV2RevisionReceiptPresentation(selectedSale)
+    : null;
 
   return (
     <div className="flex-1 flex gap-6 overflow-hidden">
@@ -3322,6 +3325,18 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                 <h3 className="text-lg font-bold text-zinc-900">Sale Details</h3>
                 <span className="text-xs font-bold text-zinc-600">Receipt Number: {getReceiptLedgerReference(selectedSale)}</span>
                 <span className="text-[10px] font-mono text-zinc-400">System Reference: {getSaleSystemReference(selectedSale)}</span>
+                {selectedRevisionPresentation?.badgeLabel && (
+                  <span className={cn(
+                    "mt-2 w-fit px-2 py-1 rounded-full text-[9px] font-black uppercase tracking-wider",
+                    selectedRevisionPresentation.kind === 'CORRECTED_RECEIPT'
+                      ? "bg-blue-100 text-blue-700"
+                      : selectedRevisionPresentation.kind === 'ORIGINAL_SUPERSEDED'
+                        ? "bg-amber-100 text-amber-800"
+                        : "bg-violet-100 text-violet-700"
+                  )}>
+                    {selectedRevisionPresentation.badgeLabel}
+                  </span>
+                )}
               </div>
               <button 
                 onClick={() => setSelectedSale(null)}
@@ -3343,16 +3358,64 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                       <span className="font-bold text-zinc-900">{selectedSale.receiptNumber}</span>
                       <span className="text-xs text-zinc-500">{selectedSale.context.toUpperCase()}</span>
                       <span className="text-xs text-zinc-500 mt-1">
-                        Issued by: <span className="font-semibold text-zinc-700">
-                          {staff.find(s => s.uid === selectedSale.servedBy || s.id === selectedSale.servedBy)?.displayName || 
-                           staff.find(s => s.uid === selectedSale.servedBy || s.id === selectedSale.servedBy)?.full_name || 
-                           selectedSale.servedBy || 'System / Admin'}
+                        {selectedRevisionPresentation?.kind === 'CORRECTED_RECEIPT'
+                          ? 'Replacement executor'
+                          : selectedRevisionPresentation?.isRevisionRelated
+                            ? 'Original seller'
+                            : 'Issued by'}: <span className="font-semibold text-zinc-700">
+                          {resolveSaleOperatorName(selectedSale, staff)}
                         </span>
                       </span>
                     </div>
                   </div>
                 </div>
               </div>
+
+              {selectedRevisionPresentation?.isRevisionRelated && (
+                <div className={cn(
+                  "p-4 rounded-2xl border space-y-3",
+                  selectedRevisionPresentation.kind === 'CORRECTED_RECEIPT'
+                    ? "bg-blue-50 border-blue-100"
+                    : selectedRevisionPresentation.kind === 'ORIGINAL_SUPERSEDED'
+                      ? "bg-amber-50 border-amber-100"
+                      : "bg-violet-50 border-violet-100"
+                )}>
+                  <div>
+                    <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-700">Revision audit linkage</h4>
+                    <p className="text-xs text-zinc-600 mt-1">
+                      {selectedRevisionPresentation.kind === 'CORRECTED_RECEIPT'
+                        ? 'This is a new canonical POS V2 transaction created to correct the linked original receipt.'
+                        : selectedRevisionPresentation.kind === 'ORIGINAL_SUPERSEDED'
+                          ? 'This original transaction is immutable and has been superseded by the linked corrected receipt.'
+                          : 'This original transaction is immutable while its controlled correction is in progress.'}
+                    </p>
+                  </div>
+                  <dl className="space-y-1.5 text-xs">
+                    {selectedRevisionPresentation.revisionId && (
+                      <div className="flex justify-between gap-3"><dt className="text-zinc-500">Revision reference</dt><dd className="font-mono font-bold text-zinc-800 text-right break-all">{selectedRevisionPresentation.revisionId}</dd></div>
+                    )}
+                    {selectedRevisionPresentation.revisionRequestId && (
+                      <div className="flex justify-between gap-3"><dt className="text-zinc-500">Request reference</dt><dd className="font-mono font-bold text-zinc-800 text-right break-all">{selectedRevisionPresentation.revisionRequestId}</dd></div>
+                    )}
+                    <div className="flex justify-between gap-3"><dt className="text-zinc-500">Lifecycle</dt><dd className="font-bold text-zinc-800 text-right">{selectedRevisionPresentation.lifecycle?.replaceAll('_', ' ') || 'CORRECTED REPLACEMENT'}</dd></div>
+                    {selectedRevisionPresentation.editorName && (
+                      <div className="flex justify-between gap-3"><dt className="text-zinc-500">Revision editor</dt><dd className="font-bold text-zinc-800 text-right">{selectedRevisionPresentation.editorName}</dd></div>
+                    )}
+                    {selectedRevisionPresentation.reason && (
+                      <div className="pt-1"><dt className="text-zinc-500">Correction reason</dt><dd className="font-medium text-zinc-800 mt-0.5">{selectedRevisionPresentation.reason}</dd></div>
+                    )}
+                  </dl>
+                  {selectedRevisionPresentation.linkedReceiptNumber && (
+                    <button
+                      type="button"
+                      onClick={() => openLinkedRevisionReceipt(selectedSale)}
+                      className="w-full py-2.5 px-3 rounded-xl bg-white border border-zinc-200 text-xs font-bold text-blue-700 hover:bg-blue-50 transition-colors"
+                    >
+                      Open {selectedRevisionPresentation.linkedReceiptLabel}: {selectedRevisionPresentation.linkedReceiptNumber}
+                    </button>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-3">
                 <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Items Sold</h4>
