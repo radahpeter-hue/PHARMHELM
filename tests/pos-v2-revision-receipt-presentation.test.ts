@@ -146,3 +146,16 @@ test('reprint preview and thermal printer use the revision presentation contract
   assert.match(salesSource, /buildReceiptRevisionPlainText\(selectedSale/);
   assert.match(salesSource, /selectedRevisionPresentation\.documentTitle/);
 });
+
+test('A4 screen, browser print and deterministic PDF carry revision identity and linkage', () => {
+  const a4Source = readFileSync(new URL('../src/components/sales/A4InvoiceTemplate.tsx', import.meta.url), 'utf8');
+  const pdfSource = readFileSync(new URL('../src/services/invoicePdfExportService.ts', import.meta.url), 'utf8');
+  assert.match(a4Source, /getPosV2RevisionReceiptPresentation\(receipt\)/);
+  assert.match(a4Source, /Revision Linkage/);
+  assert.match(a4Source, /revisionPresentation\.linkedReceiptNumber/);
+  assert.match(a4Source, /operatorLabel/);
+  assert.match(pdfSource, /getPosV2RevisionReceiptPresentation\(receipt\)/);
+  assert.match(pdfSource, /pdf\.text\(documentTitle/);
+  assert.match(pdfSource, /REVISION LINKAGE/);
+  assert.match(pdfSource, /revisionPresentation\.revisionRequestId/);
+});

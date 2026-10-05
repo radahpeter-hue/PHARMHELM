@@ -7,6 +7,7 @@ import { Sale, Staff } from '../../types';
 import { resolveSaleOperatorName } from '../../utils/salePresentation';
 import { describeSaleItemQuantity } from '../../services/saleTierHistoryService';
 import { exportInvoicePdf } from '../../services/invoicePdfExportService';
+import { getPosV2RevisionReceiptPresentation } from '../../services/pos-v2/posSaleRevisionV2Presentation';
 
 interface A4InvoiceTemplateProps {
   receiptId: string;
@@ -86,6 +87,25 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
   if (!receipt) return null;
 
   const sellerName = resolveSaleOperatorName(receipt, staff);
+  const revisionPresentation = getPosV2RevisionReceiptPresentation(receipt);
+  const documentTitle = revisionPresentation.isRevisionRelated ? revisionPresentation.documentTitle : 'INVOICE';
+  const operatorLabel = revisionPresentation.kind === 'CORRECTED_RECEIPT'
+    ? 'Replacement Executor'
+    : revisionPresentation.isRevisionRelated
+      ? 'Original Seller'
+      : 'Served By';
+  const revisionLabelClass = revisionPresentation.kind === 'CORRECTED_RECEIPT'
+    ? 'bg-blue-50 text-blue-700'
+    : revisionPresentation.kind === 'ORIGINAL_SUPERSEDED'
+      ? 'bg-amber-50 text-amber-800'
+      : revisionPresentation.kind === 'REVISION_IN_PROGRESS'
+        ? 'bg-violet-50 text-violet-700'
+        : 'bg-emerald-50 text-emerald-700';
+  const revisionPanelClass = revisionPresentation.kind === 'CORRECTED_RECEIPT'
+    ? 'bg-blue-50 border-blue-200'
+    : revisionPresentation.kind === 'ORIGINAL_SUPERSEDED'
+      ? 'bg-amber-50 border-amber-200'
+      : 'bg-violet-50 border-violet-200';
   const brandCompanyName = activeBranch?.brandName || systemSettings?.branding?.companyName || 'PharmHelm Pharmacy';
   const brandLogoUrl = activeBranch?.brandLogoUrl || systemSettings?.branding?.logoUrl;
   const brandAddress = activeBranch?.address || systemSettings?.branding?.address || 'Kampala, Uganda';
@@ -143,7 +163,7 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
       <div className="bg-white rounded-3xl w-full max-w-[850px] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-zinc-150 animate-scale-up">
         <div className="px-6 py-4 border-b flex justify-between items-center bg-zinc-50">
           <div>
-            <h3 className="font-bold text-zinc-900 text-sm">A4 Invoice</h3>
+            <h3 className="font-bold text-zinc-900 text-sm">A4 {documentTitle}</h3>
             <p className="text-[10px] text-zinc-500 font-medium">Verify billable items and client associations</p>
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-zinc-200 rounded-full text-zinc-400 hover:text-zinc-600 transition-colors"><X size={18} /></button>
@@ -160,15 +180,26 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
                 <p className="text-zinc-500 text-[10px] font-semibold">NDA Lic No: {brandNdaReg}</p>
               </div>
               <div className="text-right space-y-2">
-                <span className="px-4 py-1.5 bg-emerald-50 text-emerald-700 font-extrabold text-sm rounded-lg uppercase tracking-wider block">INVOICE</span>
+                <span className={`px-4 py-1.5 font-extrabold text-sm rounded-lg uppercase tracking-wider block ${revisionLabelClass}`}>{documentTitle}</span>
                 <div className="text-[10px] space-y-0.5">
                   <p className="text-zinc-500">Invoice No: <span className="font-bold text-zinc-900">{receipt.receiptNumber}</span></p>
                   <p className="text-zinc-500">Date: <span className="font-bold text-zinc-900">{new Date(receipt.timestamp).toLocaleDateString()}</span></p>
                   <p className="text-zinc-500">Branch: <span className="font-bold text-zinc-900">{resolvedBranchName}</span></p>
-                  <p className="text-zinc-500">Served By: <span className="font-bold text-zinc-900">{sellerName}</span></p>
+                  <p className="text-zinc-500">{operatorLabel}: <span className="font-bold text-zinc-900">{sellerName}</span></p>
                 </div>
               </div>
             </div>
+
+            {revisionPresentation.isRevisionRelated && (
+              <div className={`p-4 rounded-xl border text-[10px] space-y-1.5 ${revisionPanelClass}`}>
+                <p className="font-extrabold uppercase tracking-wider text-zinc-800">Revision Linkage</p>
+                {revisionPresentation.linkedReceiptNumber && <p className="text-zinc-600">{revisionPresentation.linkedReceiptLabel}: <span className="font-bold text-zinc-900">{revisionPresentation.linkedReceiptNumber}</span></p>}
+                {revisionPresentation.revisionId && <p className="text-zinc-600">Revision reference: <span className="font-mono font-bold text-zinc-900">{revisionPresentation.revisionId}</span></p>}
+                {revisionPresentation.revisionRequestId && <p className="text-zinc-600">Request reference: <span className="font-mono font-bold text-zinc-900">{revisionPresentation.revisionRequestId}</span></p>}
+                {revisionPresentation.editorName && <p className="text-zinc-600">Revision editor: <span className="font-bold text-zinc-900">{revisionPresentation.editorName}</span></p>}
+                {revisionPresentation.reason && <p className="text-zinc-600">Correction reason: <span className="font-medium text-zinc-900">{revisionPresentation.reason}</span></p>}
+              </div>
+            )}
 
             <div className="p-4 bg-zinc-50 rounded-xl border border-zinc-150 grid grid-cols-2 gap-4">
               {receipt.patientName && <div><span className="text-[10px] text-zinc-400 font-bold block uppercase tracking-wider">Bill To Client</span><p className="text-zinc-900 font-bold text-sm mt-0.5">{receipt.patientName}</p>{receipt.patientId && <p className="text-zinc-500 text-[10px] font-semibold mt-0.5">ID: {receipt.patientId}</p>}</div>}
