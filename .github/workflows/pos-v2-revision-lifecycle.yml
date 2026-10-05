@@ -1,0 +1,61 @@
+name: POS V2 Revision Lifecycle
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      max_requests:
+        description: 'Maximum revision requests to inspect per lifecycle stage'
+        required: true
+        default: '10'
+        type: string
+
+concurrency:
+  group: pos-v2-revision-lifecycle
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  revision-lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+      FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+      POS_V2_REVISION_MAX_REQUESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_requests || '10' }}
+      POS_V2_REVISION_REPLACEMENT_MAX_REQUESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_requests || '10' }}
+      POS_V2_REVISION_COMPLETION_MAX_REQUESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_requests || '10' }}
+      POS_V2_REVISION_WORKER_ID: github-actions-revision-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Install revision worker runtime dependency
+        run: npm install --no-save firebase-admin
+
+      - name: Authenticate Google service account
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+
+      - name: Process POS V2 revision reversals
+        run: node scripts/process-pos-v2-revisions.mjs
+
+      - name: Finalize replacement sale linkage when checkout exists
+        run: node scripts/process-pos-v2-revision-replacements.mjs
+
+      - name: Complete revision lifecycle after replacement downstream posting
+        run: node scripts/process-pos-v2-revision-completions.mjs
