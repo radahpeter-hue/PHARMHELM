@@ -28,6 +28,8 @@ test('presentation consumers use the shared resolver', () => {
   const pdf = readFileSync('src/services/invoicePdfExportService.ts', 'utf8');
   assert.ok(sales.includes('resolveSaleOperatorName(selectedSale, staff)'));
   assert.ok(sales.includes('Receipt Number: {getReceiptLedgerReference(selectedSale)}'));
-  assert.ok(a4.includes('Served By:'));
-  assert.ok(pdf.includes('Served By:'));
+  assert.ok(a4.includes("operatorLabel"));
+  assert.ok(a4.includes(": 'Served By'"));
+  assert.ok(pdf.includes("operatorLabel"));
+  assert.ok(pdf.includes(": 'Served By'"));
 });
