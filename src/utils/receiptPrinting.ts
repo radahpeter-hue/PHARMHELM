@@ -1,5 +1,6 @@
 import { Sale } from '../types';
 import { describeSaleItemQuantity } from '../services/saleTierHistoryService';
+import { getPosV2RevisionReceiptPresentation } from '../services/pos-v2/posSaleRevisionV2Presentation';
 
 export interface ReceiptBranding {
   companyName: string;
@@ -25,6 +26,24 @@ export const openReceiptPrintWindow = () => {
   return printWindow;
 };
 
+export const buildReceiptRevisionPlainText = (sale: Sale, operatorName: string): string => {
+  const presentation = getPosV2RevisionReceiptPresentation(sale);
+  const operatorLabel = presentation.kind === 'CORRECTED_RECEIPT'
+    ? 'Replacement executor'
+    : presentation.isRevisionRelated
+      ? 'Original seller'
+      : 'Cashier';
+  const lines = [presentation.documentTitle, `${operatorLabel}: ${operatorName}`];
+  if (presentation.linkedReceiptNumber && presentation.linkedReceiptLabel) {
+    lines.push(`${presentation.linkedReceiptLabel}: ${presentation.linkedReceiptNumber}`);
+  }
+  if (presentation.revisionId) lines.push(`Revision reference: ${presentation.revisionId}`);
+  if (presentation.revisionRequestId) lines.push(`Request reference: ${presentation.revisionRequestId}`);
+  if (presentation.editorName) lines.push(`Revision editor: ${presentation.editorName}`);
+  if (presentation.reason) lines.push(`Correction reason: ${presentation.reason}`);
+  return lines.join('\n');
+};
+
 export const printThermalReceipt = (
   sale: Sale,
   branding: ReceiptBranding,
@@ -39,6 +58,20 @@ export const printThermalReceipt = (
   const subtotal = sale.subtotal ?? total;
   const tax = sale.taxAmount ?? sale.tax ?? 0;
   const discount = sale.discountAmount ?? 0;
+  const revisionPresentation = getPosV2RevisionReceiptPresentation(sale);
+  const operatorLabel = revisionPresentation.kind === 'CORRECTED_RECEIPT'
+    ? 'Replacement Executor'
+    : revisionPresentation.isRevisionRelated
+      ? 'Original Seller'
+      : 'Cashier';
+  const revisionLinkage = revisionPresentation.isRevisionRelated ? `
+      <div class="revision-banner">${escapeHtml(revisionPresentation.documentTitle)}</div>
+      ${revisionPresentation.linkedReceiptNumber && revisionPresentation.linkedReceiptLabel ? `<div class="row"><span>${escapeHtml(revisionPresentation.linkedReceiptLabel)}</span><span class="strong">${escapeHtml(revisionPresentation.linkedReceiptNumber)}</span></div>` : ''}
+      ${revisionPresentation.revisionId ? `<div class="row"><span>Revision Ref</span><span>${escapeHtml(revisionPresentation.revisionId)}</span></div>` : ''}
+      ${revisionPresentation.revisionRequestId ? `<div class="row"><span>Request Ref</span><span>${escapeHtml(revisionPresentation.revisionRequestId)}</span></div>` : ''}
+      ${revisionPresentation.editorName ? `<div class="row"><span>Revision Editor</span><span>${escapeHtml(revisionPresentation.editorName)}</span></div>` : ''}
+      ${revisionPresentation.reason ? `<div class="revision-reason"><span class="strong">Correction Reason:</span> ${escapeHtml(revisionPresentation.reason)}</div>` : ''}
+      <div class="rule"></div>` : '';
   const items = (sale.items || []).map(item => {
     const lineTotal = item.lineTotal ?? item.subtotal ?? item.total ?? (item.quantity * item.unitPrice);
     const quantity = describeSaleItemQuantity(item);
@@ -70,6 +103,8 @@ export const printThermalReceipt = (
       .base-qty { color: #666; font-size: 8px; margin-top: 1px; }
       .total { font-size: 13px; font-weight: 900; padding-top: 4px; }
       .duplicate { font-weight: 800; margin-top: 8px; }
+      .revision-banner { border: 2px solid #111; padding: 4px; margin: 6px 0; text-align: center; font-size: 12px; font-weight: 900; }
+      .revision-reason { margin-top: 4px; overflow-wrap: anywhere; }
       @media print { body { width: 72mm; } }
     </style></head><body>
       ${branding.logoUrl ? `<img class="logo" src="${escapeHtml(branding.logoUrl)}" alt="">` : ''}
@@ -77,12 +112,13 @@ export const printThermalReceipt = (
       <div>${escapeHtml(branding.address || '')}</div><div>${escapeHtml(branding.phone || '')}</div>
       ${branding.ndaRegistration ? `<div>NDA Licence: ${escapeHtml(branding.ndaRegistration)}</div>` : ''}</div>
       <div class="rule"></div>
+      ${revisionLinkage}
       <div class="row"><span>Receipt</span><span class="strong">${escapeHtml(sale.receiptNumber || sale.id)}</span></div>
       <div class="row"><span>Date</span><span>${escapeHtml(new Date(sale.timestamp).toLocaleString())}</span></div>
       <div class="row"><span>Context</span><span>${escapeHtml((sale.context || 'walk-in').replace('-', ' ').toUpperCase())}</span></div>
       ${sale.patientName ? `<div class="row"><span>Customer</span><span>${escapeHtml(sale.patientName)}</span></div>` : ''}
       ${sale.institutionName ? `<div class="row"><span>Institution</span><span>${escapeHtml(sale.institutionName)}</span></div>` : ''}
-      <div class="row"><span>Cashier</span><span>${escapeHtml(cashierName)}</span></div>
+      <div class="row"><span>${operatorLabel}</span><span>${escapeHtml(cashierName)}</span></div>
       <div class="rule"></div>
       <table><thead><tr><th>Item / Qty</th><th>Batch</th><th>Total</th></tr></thead><tbody>${items}</tbody></table>
       <div class="rule"></div>

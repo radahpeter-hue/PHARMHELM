@@ -35,6 +35,13 @@ export const getSaleIdentityLabel = (sale: Sale): string => {
 export const matchesReceiptLedgerSearch = (sale: Sale, searchTerm: string): boolean => {
   const query = searchTerm.trim().toLowerCase();
   if (!query) return true;
-  return [sale.receiptNumber, sale.patientName, sale.institutionName]
+  return [
+    sale.receiptNumber,
+    sale.patientName,
+    sale.institutionName,
+    sale.originalReceiptNumber,
+    sale.supersededByReceiptNumber,
+    sale.revisionId
+  ]
     .some(value => String(value || '').toLowerCase().includes(query));
 };

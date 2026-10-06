@@ -34,6 +34,17 @@ export interface CheckoutV2RequestLine extends SaleItem {
   tierCode?: SellingTierCode;
 }
 
+export interface PosCheckoutV2RevisionReplacementContext {
+  revisionId: string;
+  revisionRequestId: string;
+  sequence: number;
+  originalSaleId: string;
+  originalReceiptNumber: string;
+  replacementSaleId: string;
+  replacementPaymentId: string;
+  replacementOutboxEventId: string;
+}
+
 export interface CheckoutV2Request {
   attemptId: string;
   branchId: string;
@@ -55,6 +66,7 @@ export interface CheckoutV2Request {
   prescriberName?: string;
   isExceptionalConsumption?: boolean;
   exceptionalConsumptionReason?: string | null;
+  revisionReplacement?: PosCheckoutV2RevisionReplacementContext;
 }
 
 export interface PosCheckoutV2CalculationInput {

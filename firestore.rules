@@ -228,7 +228,8 @@ service cloud.firestore {
         'finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
         'credit_receivables', 'supplier_payables', 'banking_records',
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
-        'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses'
+        'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
+        'pos_sale_revision_requests'
       ];
     }
 
@@ -245,6 +246,26 @@ service cloud.firestore {
         || hasAnyRole(['QA Head', 'Finance Head'])
         || isITPersonnel()
         || hasCustomModuleView('marketing');
+    }
+
+    function canViewGlobalRevisionLedger() {
+      return isAuthenticated() && (
+        isAdmin() ||
+        isFinance() ||
+        isIT() ||
+        hasAnyRole(['QA Head', 'QA Manager'])
+      );
+    }
+
+    function canViewBranchRevisionLedger(branchId) {
+      return isAuthenticated()
+        && isAssignedToBranch(branchId)
+        && (
+          isPOSOperator() ||
+          isBranchManager() ||
+          hasAnyRole(['QA Officer', 'QA Head', 'QA Manager']) ||
+          hasCustomModuleView('sales')
+        );
     }
 
 
@@ -1145,6 +1166,87 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /pos_sale_revision_requests/{requestId} {
+      function hasValidRevisionRequestEnvelope() {
+        let revision = request.resource.data;
+        return revision.keys().hasOnly([
+            'requestType', 'engineVersion', 'payloadVersion', 'status',
+            'requestId', 'revisionId', 'tenantId', 'branchId',
+            'originalSaleId', 'originalReceiptNumber', 'originalSellerId', 'originalTimestamp',
+            'requestedBy', 'requestedByName', 'requestedByRole', 'reason', 'sequence',
+            'replacementAttemptId', 'replacementSaleId', 'pendingReplacementSaleId',
+            'replacementPaymentId', 'replacementOutboxEventId', 'reversalEventId', 'auditId',
+            'originalTotal', 'revisedTotal', 'monetaryDelta', 'adjustmentDirection',
+            'changeTypes', 'itemChanges', 'before', 'after', 'revisedItems', 'envelope'
+          ])
+          && revision.requestId == requestId
+          && revision.requestType == 'POS_SALE_REVISION_REQUESTED'
+          && revision.engineVersion == 2
+          && revision.payloadVersion == 1
+          && revision.status == 'PENDING'
+          && revision.revisionId is string
+          && revision.revisionId.size() > 0
+          && revision.tenantId is string
+          && revision.tenantId.size() > 0
+          && revision.branchId is string
+          && revision.branchId.size() > 0
+          && revision.originalSaleId is string
+          && revision.originalSaleId.size() > 0
+          && revision.originalReceiptNumber is string
+          && revision.originalReceiptNumber.size() > 0
+          && revision.requestedBy == request.auth.uid
+          && revision.requestedByName is string
+          && revision.requestedByName.size() > 0
+          && revision.reason is string
+          && revision.reason.size() >= 8
+          && revision.reason.size() <= 500
+          && revision.sequence is int
+          && revision.sequence >= 1
+          && revision.replacementAttemptId is string
+          && revision.replacementSaleId is string
+          && revision.pendingReplacementSaleId == revision.replacementSaleId
+          && revision.replacementPaymentId is string
+          && revision.replacementOutboxEventId is string
+          && revision.reversalEventId is string
+          && revision.auditId is string
+          && revision.originalTotal is number
+          && revision.revisedTotal is number
+          && revision.monetaryDelta is number
+          && revision.revisedTotal - revision.originalTotal == revision.monetaryDelta
+          && revision.adjustmentDirection in ['INCREASE', 'DECREASE', 'NO_VALUE_CHANGE']
+          && revision.changeTypes is list
+          && revision.itemChanges is list
+          && revision.revisedItems is list
+          && revision.revisedItems.size() > 0
+          && revision.before is map
+          && revision.after is map
+          && revision.envelope is map;
+      }
+
+      allow get: if isAuthenticated() && (
+        resource == null ||
+        (
+          isTenantMember(resource.data.tenantId)
+          && (
+            canViewGlobalRevisionLedger() ||
+            canViewBranchRevisionLedger(resource.data.branchId)
+          )
+        )
+      );
+      allow list: if isAuthenticated()
+        && isTenantMember(resource.data.tenantId)
+        && (
+          canViewGlobalRevisionLedger() ||
+          canViewBranchRevisionLedger(resource.data.branchId)
+        );
+      allow create: if isPOSOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && isAssignedToBranch(request.resource.data.branchId)
+        && hasValidRevisionRequestEnvelope();
+      // Revision lifecycle transitions are owned exclusively by the Admin SDK workers.
+      allow update, delete: if false;
+    }
+
     match /welfare_records/{recordId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
       allow create: if isHR() && isTenantMember(request.resource.data.tenantId);
@@ -1203,7 +1305,7 @@ service cloud.firestore {
       allow list: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
       allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
       allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && isAdmin() && isTenantMember(resource.data.tenantId);
+      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAdmin() && isTenantMember(resource.data.tenantId);
     }
   }
 }

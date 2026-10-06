@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { describeSaleItemQuantity } from './saleTierHistoryService';
+import { getPosV2RevisionReceiptPresentation } from './pos-v2/posSaleRevisionV2Presentation';
 
 interface InvoicePdfBranding {
   companyName: string;
@@ -51,6 +52,13 @@ const downloadBlob = (blob: Blob, filename: string) => {
  * and download through an object URL. It is read-only and does not write sale data.
  */
 export const exportInvoicePdf = ({ receipt, branchName, sellerName, branding }: InvoicePdfInput) => {
+  const revisionPresentation = getPosV2RevisionReceiptPresentation(receipt);
+  const documentTitle = revisionPresentation.isRevisionRelated ? revisionPresentation.documentTitle : 'INVOICE';
+  const operatorLabel = revisionPresentation.kind === 'CORRECTED_RECEIPT'
+    ? 'Replacement Executor'
+    : revisionPresentation.isRevisionRelated
+      ? 'Original Seller'
+      : 'Served By';
   const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4', compress: true });
   const pageWidth = 210;
   const pageHeight = 297;
@@ -83,17 +91,44 @@ export const exportInvoicePdf = ({ receipt, branchName, sellerName, branding }: 
   pdf.setTextColor(4, 120, 87);
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(15);
-  pdf.text('INVOICE', pageWidth - margin, y, { align: 'right' });
+  pdf.text(documentTitle, pageWidth - margin, y, { align: 'right' });
   pdf.setTextColor(70, 70, 70);
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8.5);
   pdf.text(`Invoice No: ${clean(receipt.receiptNumber, 'Not available')}`, pageWidth - margin, y + 5, { align: 'right' });
   pdf.text(`Date: ${safeDate(receipt.timestamp)}`, pageWidth - margin, y + 9, { align: 'right' });
   pdf.text(`Branch: ${clean(branchName, 'Branch not available')}`, pageWidth - margin, y + 13, { align: 'right' });
-  pdf.text(`Served By: ${clean(sellerName, 'Operator')}`, pageWidth - margin, y + 17, { align: 'right' });
+  pdf.text(`${operatorLabel}: ${clean(sellerName, 'Operator')}`, pageWidth - margin, y + 17, { align: 'right' });
   y += 25;
   line(margin, y, pageWidth - margin, y);
   y += 7;
+
+  if (revisionPresentation.isRevisionRelated) {
+    const detailLines: string[] = [];
+    if (revisionPresentation.linkedReceiptNumber && revisionPresentation.linkedReceiptLabel) {
+      detailLines.push(`${revisionPresentation.linkedReceiptLabel}: ${revisionPresentation.linkedReceiptNumber}`);
+    }
+    if (revisionPresentation.revisionId) detailLines.push(`Revision reference: ${revisionPresentation.revisionId}`);
+    if (revisionPresentation.revisionRequestId) detailLines.push(`Request reference: ${revisionPresentation.revisionRequestId}`);
+    if (revisionPresentation.editorName) detailLines.push(`Revision editor: ${revisionPresentation.editorName}`);
+    if (revisionPresentation.reason) detailLines.push(`Correction reason: ${revisionPresentation.reason}`);
+
+    const wrappedLines = detailLines.flatMap(detail => pdf.splitTextToSize(detail, contentWidth - 12));
+    const boxHeight = 10 + Math.max(1, wrappedLines.length) * 4;
+    ensureSpace(boxHeight + 5);
+    pdf.setFillColor(248, 248, 248);
+    pdf.setDrawColor(205, 205, 205);
+    pdf.roundedRect(margin, y, contentWidth, boxHeight, 2, 2, 'FD');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(8);
+    pdf.setTextColor(35, 35, 35);
+    pdf.text('REVISION LINKAGE', margin + 5, y + 6);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(7.5);
+    pdf.setTextColor(75, 75, 75);
+    wrappedLines.forEach((detail, index) => pdf.text(detail, margin + 5, y + 11 + index * 4));
+    y += boxHeight + 6;
+  }
 
   const billedTo = clean(receipt.institutionName || receipt.patientName);
   if (billedTo) {

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
 import { Search, Filter, Download, History, ChevronLeft, ChevronRight, CheckCircle2 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { exportRecordsToExcel } from '../../../utils/excelExport';
 import { collection, query, where, getDocs, Timestamp, orderBy } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
@@ -184,8 +184,8 @@ export const EodReconciliationBox: React.FC = () => {
     return { cash, card, momo, airtel, credit, welfare, revenue, variance };
   }, [filteredReconciliations]);
 
-  // Export to Excel using SheetJS
-  const handleExport = () => {
+  // Export to Excel through the shared hardened exporter
+  const handleExport = async () => {
     if (filteredReconciliations.length === 0) {
       toast.error("No reconciliation data to export");
       return;
@@ -225,17 +225,17 @@ export const EodReconciliationBox: React.FC = () => {
       'Reconciled By': ''
     });
 
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "EOD Reconciliations");
-
     const branchNamePart = selectedBranchId === 'All' 
       ? 'AllBranches' 
       : (branchMap.get(selectedBranchId) || 'Branch').replace(/\s+/g, '');
     const formattedFrom = dateRange.start.split('-').reverse().join('-');
     const formattedTo = dateRange.end.split('-').reverse().join('-');
 
-    XLSX.writeFile(wb, `EODReport_${branchNamePart}_${formattedFrom}_${formattedTo}.xlsx`);
+    await exportRecordsToExcel(
+      exportData,
+      'EOD Reconciliations',
+      `EODReport_${branchNamePart}_${formattedFrom}_${formattedTo}.xlsx`
+    );
     toast.success("Excel report exported successfully");
   };
 

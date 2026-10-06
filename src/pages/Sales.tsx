@@ -30,7 +30,9 @@ import { where, query, collection, doc, serverTimestamp } from 'firebase/firesto
 import { QuotationPreview } from '../components/sales/QuotationPreview';
 import { A4InvoiceTemplate } from '../components/sales/A4InvoiceTemplate';
 import { QuotationsLog } from '../components/sales/QuotationsLog';
-import { openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
+import { PosV2ReceiptRevisionAction } from '../components/sales/PosV2ReceiptRevisionAction';
+import { PosV2RevisionLedger } from '../components/sales/PosV2RevisionLedger';
+import { buildReceiptRevisionPlainText, openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
 import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';
 import { validateSaleCheckoutContext } from '../utils/saleContextValidation';
 import { getReceiptLedgerReference, getSaleIdentityLabel, getSaleSystemReference, matchesReceiptLedgerSearch, resolveSaleOperatorName } from '../utils/salePresentation';
@@ -41,6 +43,7 @@ import { allocateFefoCheckoutLines, assertCheckoutLineCostFloors, buildCheckoutL
 import { reviseSaleInventoryAtomically, voidSaleInventoryAtomically } from '../services/saleInventoryIntegrityService';
 import { convertQuotationToSale, reconcilePendingPosFinancials, reconcilePosWelfarePosting } from '../services/posFinancialPostingService';
 import { executeCheckoutV2, recoverCheckoutV2Attempt } from '../services/pos-v2/posCheckoutV2Service';
+import { findLinkedPosV2RevisionSale, getPosV2RevisionReceiptPresentation } from '../services/pos-v2/posSaleRevisionV2Presentation';
 import { loadPosCheckoutV2Mode } from '../services/pos-v2/posCheckoutV2FeatureService';
 import {
   clearPendingPosCheckoutV2Attempt,
@@ -70,7 +73,7 @@ function generateUUID() {
 const Sales: React.FC = () => {
   const { profile, activeBranchId, activeBranch, hasPermission } = useAuth();
   const canProcessSales = canOperatePos(profile, hasPermission('sales', 'operate'));
-  const [view, setView] = useState<'pos' | 'ledger' | 'quotations'>('pos');
+  const [view, setView] = useState<'pos' | 'ledger' | 'revisions' | 'quotations'>('pos');
   const [products, setProducts] = useState<Product[]>([]);
   const [batches, setBatches] = useState<ProductBatch[]>([]);
   const [services, setServices] = useState<BillableService[]>([]);
@@ -1425,6 +1428,18 @@ const Sales: React.FC = () => {
             <FileText className="w-4 h-4" />
             Quotations
           </button>
+          <button
+            onClick={() => setView('revisions')}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
+              view === 'revisions'
+                ? "bg-white text-zinc-900 shadow-sm border border-zinc-200"
+                : "text-zinc-500 hover:text-zinc-700"
+            )}
+          >
+            <ShieldCheck className="w-4 h-4" />
+            Revision Ledger
+          </button>
         </div>
       </div>
 
@@ -1603,7 +1618,6 @@ const Sales: React.FC = () => {
                               {item.isService ? 'Standard Service' : (item.genericName || product?.genericName || 'Unspecified formula')}
                             </p>
                             
-                            {/* Batch semantics: tier lines stay commercial until transactional FEFO checkout. */}
                             {!item.isService && (
                               item.tierCode ? (
                                 <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[8px] font-bold">
@@ -1638,7 +1652,6 @@ const Sales: React.FC = () => {
                             )}
                           </div>
 
-                          {/* Unit Price Input */}
                           <div className="col-span-2 text-center">
                             <span className="block text-[8px] font-extrabold text-zinc-400 uppercase leading-none mb-0.5">UGX</span>
                             <input 
@@ -1656,7 +1669,6 @@ const Sales: React.FC = () => {
                             />
                           </div>
 
-                          {/* Quantity selector buttons */}
                           <div className="col-span-2 flex justify-center">
                             <div className="flex items-center gap-0.5 bg-zinc-50/80 p-0.5 rounded-lg border border-zinc-200/60 max-w-[85px] shadow-inner">
                               <button 
@@ -1694,7 +1706,6 @@ const Sales: React.FC = () => {
                             </div>
                           </div>
 
-                          {/* Subtotal Display */}
                           <div className="col-span-2 text-right">
                             <span className="block text-[8px] font-extrabold text-zinc-400 uppercase leading-none mb-0.5">UGX</span>
                             <span className="text-xs font-black text-zinc-900 leading-none">
@@ -1702,7 +1713,6 @@ const Sales: React.FC = () => {
                             </span>
                           </div>
 
-                          {/* Trash Delete Icon */}
                           <div className="col-span-1 text-center">
                             <button 
                               onClick={() => removeFromCart(getCartLineIdentity(item))}
@@ -1728,10 +1738,8 @@ const Sales: React.FC = () => {
                 )}
               </div>
 
-              {/* Price Totals & Discounter footer */}
               <div className="p-6 bg-zinc-50 border-t border-zinc-150/80 space-y-4 shadow-sm">
                 <div className="flex flex-col md:flex-row gap-6 items-end justify-between">
-                  {/* Applied Discount percentage cards */}
                   <div className="w-full md:flex-1 space-y-2">
                     <div className="flex items-center gap-2">
                       <Percent size={14} className="text-zinc-400" />
@@ -1755,7 +1763,6 @@ const Sales: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Pricing grid summary */}
                   <div className="w-full md:w-72 space-y-1.5 bg-white p-4 rounded-2xl border border-zinc-200/80 shadow-md shadow-zinc-100/30">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-zinc-500 font-bold uppercase tracking-wider">Subtotal</span>
@@ -1825,9 +1832,7 @@ const Sales: React.FC = () => {
               </div>
             </div>
 
-            {/* Right Column: Demographics Cards & Suggestion-driven Product search sidebar */}
             <div className="lg:col-span-4 flex flex-col gap-6 overflow-visible lg:overflow-hidden min-h-0">
-              {/* Patient Details & Context Card */}
               <div className="bg-white p-5 rounded-3xl border border-zinc-200/90 shadow-lg shadow-zinc-100/10 space-y-4 relative shrink-0 lg:max-h-[48%] lg:overflow-y-auto custom-scrollbar">
                 <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
                   <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Patient Details</span>
@@ -1840,7 +1845,6 @@ const Sales: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Patient Selector card with Custom suggestions list trigger */}
                 <div className="relative">
                   {isPatientDropdownOpen ? (
                     <div className="space-y-2">
@@ -1865,7 +1869,6 @@ const Sales: React.FC = () => {
                         </button>
                       </div>
 
-                      {/* Matching dropdown options list */}
                       <div className="absolute top-11 left-0 right-0 max-h-48 overflow-y-auto bg-white border border-zinc-200 rounded-xl shadow-xl z-20 p-1 divide-y divide-zinc-50 custom-scrollbar">
                         <button
                           onClick={() => {
@@ -1921,10 +1924,8 @@ const Sales: React.FC = () => {
                   )}
                 </div>
 
-                {/* Optional parameters for Institutional mode (Patient, Institution, Prescriber) */}
                 {context === 'institutional' && (
                   <div className="space-y-4 pt-3 border-t border-zinc-105/80 animate-fade-in divide-y divide-zinc-50">
-                    {/* Institution Selector dropdown */}
                     <div className="space-y-1.5 pt-2">
                       <span className="text-[8px] font-black text-zinc-400 uppercase tracking-widest block">Institution Reference</span>
                       {isInstitutionDropdownOpen ? (
@@ -1984,7 +1985,6 @@ const Sales: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Prescriber Selector dropdown */}
                     <div className="space-y-1.5 pt-3">
                       <span className="text-[8px] font-black text-zinc-400 uppercase tracking-widest block">Medical Prescriber</span>
                       {isPrescriberDropdownOpen ? (
@@ -2048,9 +2048,7 @@ const Sales: React.FC = () => {
                 )}
               </div>
 
-              {/* Suggestions Finder, Catalog List sidebar */}
               <div className="flex-1 min-h-0 bg-white rounded-3xl border border-zinc-200/95 shadow-xl shadow-zinc-100/10 flex flex-col overflow-hidden">
-                {/* Catalog type toggles */}
                 <div className="p-4 bg-zinc-50/40 border-b border-zinc-150 flex flex-col gap-3">
                   <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-xl">
                     <button
@@ -2073,7 +2071,6 @@ const Sales: React.FC = () => {
                     </button>
                   </div>
 
-                  {/* Search box "Quick find product..." */}
                   <div className="flex items-center gap-2">
                     <div className="relative flex-1">
                       <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" size={16} strokeWidth={2.5} />
@@ -2099,7 +2096,6 @@ const Sales: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Vertical Available Items with dynamic badges */}
                 <div className="p-4 border-b border-zinc-100 bg-zinc-50/20">
                   <h3 className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Available Items</h3>
                 </div>
@@ -2203,7 +2199,6 @@ const Sales: React.FC = () => {
             </div>
           </div>
 
-      {/* Checkout Modal */}
       <AnimatePresence>
         {isCheckoutOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -2223,7 +2218,6 @@ const Sales: React.FC = () => {
               aria-label="Complete transaction"
               className="relative w-full max-w-5xl bg-white rounded-2xl sm:rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col md:flex-row max-h-[calc(100dvh-1rem)] sm:max-h-[92vh]"
             >
-              {/* Receipt Preview (Left) */}
               <div className="hidden md:block flex-1 bg-zinc-100 p-5 lg:p-8 overflow-y-auto custom-scrollbar border-r border-zinc-200">
                 <div className="bg-white p-8 shadow-sm rounded-sm max-w-md mx-auto font-mono text-[10px] text-zinc-800">
                   <div className="text-center mb-6">
@@ -2311,14 +2305,12 @@ const Sales: React.FC = () => {
                 </div>
               </div>
 
-              {/* Payment Selection (Right) */}
               <div className="w-full md:w-[25rem] p-4 sm:p-6 lg:p-8 flex flex-col gap-4 sm:gap-6 overflow-y-auto custom-scrollbar min-h-0">
                 <div>
                   <h3 className="text-xl font-bold text-zinc-900 mb-2">Complete Transaction</h3>
                   <p className="text-sm text-zinc-500">Select payment method to finish.</p>
                 </div>
 
-                {/* Exceptional Consumption Toggle & Input */}
                 <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-200/60 space-y-3">
                   <label className="flex items-center gap-2.5 cursor-pointer select-none">
                     <input
@@ -2459,10 +2451,13 @@ const Sales: React.FC = () => {
 
       {view === 'ledger' && (
         <ReceiptLedger 
-
           sales={sales} 
           staff={staff}
           systemSettings={systemSettings}
+          canOperatePos={canProcessSales}
+          onReviseV2={(sale) => {
+            toast.info(`Receipt ${sale.receiptNumber} is eligible for safe POS V2 revision. The dedicated revision editor is the next Stage 7 checkpoint.`);
+          }}
           onVoid={async (saleId, reason) => {
             const sale = sales.find(s => s.id === saleId);
             if (!sale) return;
@@ -2520,7 +2515,15 @@ const Sales: React.FC = () => {
         />
       )}
 
-      {/* Service Modal */}
+      {view === 'revisions' && profile?.tenantId && profile?.uid && activeBranchId && (
+        <PosV2RevisionLedger
+          tenantId={profile.tenantId}
+          branchId={activeBranchId}
+          actorUid={profile.uid}
+          staff={staff}
+        />
+      )}
+
       <AnimatePresence>
         {isServiceModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -2634,7 +2637,6 @@ const Sales: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* Edit Receipt Direct Modal */}
       <AnimatePresence>
         {ledgerEditingSale && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
@@ -2651,7 +2653,6 @@ const Sales: React.FC = () => {
               exit={{ scale: 0.95, opacity: 0, y: 20 }}
               className="relative w-full max-w-5xl bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[90vh]"
             >
-              {/* Modal Header */}
               <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50">
                 <div className="flex flex-col">
                   <h3 className="text-xl font-extrabold text-zinc-900">Edit Receipt Details</h3>
@@ -2667,9 +2668,7 @@ const Sales: React.FC = () => {
                 </button>
               </div>
 
-              {/* Modal Content - Two columns */}
               <div className="flex-1 overflow-y-auto p-6 md:p-8 grid grid-cols-1 lg:grid-cols-12 gap-8 custom-scrollbar">
-                {/* Left Column: List of items + Add Item */}
                 <div className="lg:col-span-7 space-y-6">
                   <div>
                     <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider mb-3">Items Sold in Receipt</h4>
@@ -2689,7 +2688,6 @@ const Sales: React.FC = () => {
                                 </p>
                               </div>
 
-                              {/* Unit Price input */}
                               <div className="w-24">
                                 <label className="text-[8px] font-bold text-zinc-400 uppercase block mb-0.5">Unit Price</label>
                                 <input 
@@ -2700,7 +2698,6 @@ const Sales: React.FC = () => {
                                 />
                               </div>
 
-                              {/* Qty incrementer */}
                               <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
@@ -2729,7 +2726,6 @@ const Sales: React.FC = () => {
                                 </button>
                               </div>
 
-                              {/* subtotal displaying */}
                               <div className="text-right min-w-[70px]">
                                 <span className="text-[8px] block font-semibold text-zinc-400">SUBTOTAL</span>
                                 <span className="text-xs font-black text-zinc-900">
@@ -2737,7 +2733,6 @@ const Sales: React.FC = () => {
                                 </span>
                               </div>
 
-                              {/* Remove item */}
                               <button
                                 type="button"
                                 onClick={() => removeLedgerItem(item.lineId, item.productId, item.batchNumber)}
@@ -2757,7 +2752,6 @@ const Sales: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Add New Item to Receipt Box */}
                   <div className="p-4 border border-zinc-150 rounded-2xl bg-zinc-50/20 relative">
                     <h4 className="text-xs font-bold text-zinc-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
                       <Plus size={14} strokeWidth={2.5} className="text-emerald-500" />
@@ -2803,11 +2797,8 @@ const Sales: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Right Column: Transaction Configuration / Billing */}
                 <div className="lg:col-span-5 space-y-6 lg:border-l lg:border-zinc-100 lg:pl-8">
-                  {/* Client Context Details */}
                   <div className="grid grid-cols-1 gap-5">
-                    {/* Patient search & Select */}
                     <div className="space-y-1.5 relative">
                       <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Customer / Patient</span>
                       <div className="flex items-center justify-between px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-800 shadow-sm">
@@ -2870,7 +2861,6 @@ const Sales: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Sales context radio buttons */}
                     <div className="space-y-1.5">
                       <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Transaction Context</span>
                       <div className="grid grid-cols-3 gap-2">
@@ -2896,7 +2886,6 @@ const Sales: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Payment methods */}
                     <div className="space-y-1.5">
                       <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Payment Channel</span>
                       <div className="grid grid-cols-2 gap-2">
@@ -2923,7 +2912,6 @@ const Sales: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Discounter */}
                     <div className="space-y-1.5">
                       <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Apply Discount</span>
                       <div className="flex flex-wrap items-center gap-1 bg-zinc-50 p-1 rounded-xl border border-zinc-200 w-fit">
@@ -2946,7 +2934,6 @@ const Sales: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Summary Totals breakdown */}
                   <div className="p-5 bg-zinc-50 rounded-2xl border border-zinc-200/80 space-y-2">
                     <span className="text-[9px] font-black uppercase text-zinc-400 tracking-wider">Live Breakdown</span>
                     <div className="flex justify-between text-xs">
@@ -2982,7 +2969,6 @@ const Sales: React.FC = () => {
                 </div>
               </div>
 
-              {/* Modal Footer */}
               <div className="p-6 bg-zinc-50 border-t border-zinc-150/60 flex items-center justify-end gap-3">
                 <button
                   type="button"
@@ -3034,7 +3020,6 @@ const Sales: React.FC = () => {
         />
       )}
 
-      {/* Quotation Preview modal overlay */}
       {showQuotationModal && (
         <QuotationPreview 
           isOpen={showQuotationModal}
@@ -3071,7 +3056,6 @@ const Sales: React.FC = () => {
         />
       )}
 
-      {/* A4 Tax Invoice modal overlay */}
       {showA4InvoiceModal && selectedA4ReceiptId && (
         <A4InvoiceTemplate 
           receiptId={selectedA4ReceiptId}
@@ -3095,11 +3079,13 @@ interface ReceiptLedgerProps {
   onVoid: (saleId: string, reason: string) => Promise<void>;
   onEdit: (sale: Sale) => void;
   onEditInPOS?: (sale: Sale) => void;
+  onReviseV2: (sale: Sale) => void;
+  canOperatePos: boolean;
   systemSettings: SystemSettings | null;
   onPrintA4: (receiptId: string) => void;
 }
 
-const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettings, onPrintA4 }: ReceiptLedgerProps) => {
+const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, canOperatePos, systemSettings, onPrintA4 }: ReceiptLedgerProps) => {
   const { activeBranch } = useAuth();
   const brandCompanyName = activeBranch?.brandName || systemSettings?.branding?.companyName || 'PharmHelm Pharmacy';
   const brandLogoUrl = activeBranch?.brandLogoUrl || systemSettings?.branding?.logoUrl;
@@ -3117,21 +3103,36 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
   const [voidReason, setVoidReason] = useState('');
   const [isReprintModalOpen, setIsReprintModalOpen] = useState(false);
 
+  useEffect(() => {
+    setSelectedSale(current => current ? (sales.find(sale => sale.id === current.id) || current) : null);
+  }, [sales]);
+
+  const openLinkedRevisionReceipt = (sale: Sale) => {
+    const presentation = getPosV2RevisionReceiptPresentation(sale);
+    const linkedSale = findLinkedPosV2RevisionSale(sale, sales);
+    if (!linkedSale) {
+      toast.error(`${presentation.linkedReceiptLabel || 'Linked receipt'} is not available in this branch ledger yet.`);
+      return;
+    }
+    setSelectedSale(linkedSale);
+  };
+
   const filteredSales = sales.filter(sale => {
     const matchesSearch = matchesReceiptLedgerSearch(sale, searchTerm);
     const matchesStaff = selectedStaff === 'all' || sale.servedBy === selectedStaff;
     
-    // Simple date filter
     const saleDate = new Date(sale.timestamp).toISOString().split('T')[0];
     const matchesStart = !dateRange.start || saleDate >= dateRange.start;
     const matchesEnd = !dateRange.end || saleDate <= dateRange.end;
 
     return matchesSearch && matchesStaff && matchesStart && matchesEnd;
   });
+  const selectedRevisionPresentation = selectedSale
+    ? getPosV2RevisionReceiptPresentation(selectedSale)
+    : null;
 
   return (
     <div className="flex-1 flex gap-6 overflow-hidden">
-      {/* Sales List */}
       <div className="flex-1 bg-white rounded-2xl border border-zinc-200 shadow-sm flex flex-col overflow-hidden">
         <div className="p-4 border-b border-zinc-100 flex flex-wrap items-center gap-4">
           <div className="flex-1 relative">
@@ -3187,7 +3188,9 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {filteredSales.map((sale) => (
+              {filteredSales.map((sale) => {
+                const revisionPresentation = getPosV2RevisionReceiptPresentation(sale);
+                return (
                 <tr 
                   key={sale.id}
                   onClick={() => setSelectedSale(sale)}
@@ -3197,7 +3200,34 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                   )}
                 >
                   <td className="px-6 py-4">
-                    <span className="font-mono text-xs font-bold text-zinc-900">{getReceiptLedgerReference(sale)}</span>
+                    <div className="flex flex-col items-start gap-1.5">
+                      <span className="font-mono text-xs font-bold text-zinc-900">{getReceiptLedgerReference(sale)}</span>
+                      {revisionPresentation.badgeLabel && (
+                        <span className={cn(
+                          "px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider",
+                          revisionPresentation.kind === 'CORRECTED_RECEIPT'
+                            ? "bg-blue-100 text-blue-700"
+                            : revisionPresentation.kind === 'ORIGINAL_SUPERSEDED'
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-violet-100 text-violet-700"
+                        )}>
+                          {revisionPresentation.badgeLabel}
+                        </span>
+                      )}
+                      {revisionPresentation.linkedReceiptNumber && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openLinkedRevisionReceipt(sale);
+                          }}
+                          className="text-[10px] font-bold text-blue-700 hover:text-blue-900 hover:underline text-left"
+                          title={`Open ${revisionPresentation.linkedReceiptLabel?.toLowerCase()}`}
+                        >
+                          {revisionPresentation.linkedReceiptLabel}: {revisionPresentation.linkedReceiptNumber}
+                        </button>
+                      )}
+                    </div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-col">
@@ -3236,21 +3266,32 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                      <button 
-                        onClick={() => onEdit(sale)}
-                        className="p-2 hover:bg-zinc-200 rounded-lg transition-colors text-zinc-600"
-                        title="Edit Receipt Details Directly"
-                      >
-                        <History className="w-4 h-4" />
-                      </button>
-                      {onEditInPOS && (
-                        <button 
-                          onClick={() => onEditInPOS(sale)}
-                          className="p-2 hover:bg-emerald-100 rounded-lg transition-colors text-emerald-600"
-                          title="Edit Receipt in POS Active Basket"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
+                      {sale.engineVersion === 2 ? (
+                        <PosV2ReceiptRevisionAction
+                          sale={sale}
+                          canOperatePos={canOperatePos}
+                          onRevise={onReviseV2}
+                          compact
+                        />
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => onEdit(sale)}
+                            className="p-2 hover:bg-zinc-200 rounded-lg transition-colors text-zinc-600"
+                            title="Edit Receipt Details Directly"
+                          >
+                            <History className="w-4 h-4" />
+                          </button>
+                          {onEditInPOS && (
+                            <button
+                              onClick={() => onEditInPOS(sale)}
+                              className="p-2 hover:bg-emerald-100 rounded-lg transition-colors text-emerald-600"
+                              title="Edit Receipt in POS Active Basket"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </>
                       )}
                       {sale.status !== 'voided' && (
                         <button 
@@ -3286,13 +3327,13 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Sale Details Panel */}
       <AnimatePresence>
         {selectedSale && (
           <motion.div
@@ -3306,6 +3347,18 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                 <h3 className="text-lg font-bold text-zinc-900">Sale Details</h3>
                 <span className="text-xs font-bold text-zinc-600">Receipt Number: {getReceiptLedgerReference(selectedSale)}</span>
                 <span className="text-[10px] font-mono text-zinc-400">System Reference: {getSaleSystemReference(selectedSale)}</span>
+                {selectedRevisionPresentation?.badgeLabel && (
+                  <span className={cn(
+                    "mt-2 w-fit px-2 py-1 rounded-full text-[9px] font-black uppercase tracking-wider",
+                    selectedRevisionPresentation.kind === 'CORRECTED_RECEIPT'
+                      ? "bg-blue-100 text-blue-700"
+                      : selectedRevisionPresentation.kind === 'ORIGINAL_SUPERSEDED'
+                        ? "bg-amber-100 text-amber-800"
+                        : "bg-violet-100 text-violet-700"
+                  )}>
+                    {selectedRevisionPresentation.badgeLabel}
+                  </span>
+                )}
               </div>
               <button 
                 onClick={() => setSelectedSale(null)}
@@ -3316,7 +3369,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
             </div>
 
             <div className="flex-1 overflow-auto p-6 space-y-6">
-              {/* Customer Info */}
               <div className="space-y-3">
                 <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Customer Information</h4>
                 <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100">
@@ -3328,10 +3380,12 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                       <span className="font-bold text-zinc-900">{selectedSale.receiptNumber}</span>
                       <span className="text-xs text-zinc-500">{selectedSale.context.toUpperCase()}</span>
                       <span className="text-xs text-zinc-500 mt-1">
-                        Issued by: <span className="font-semibold text-zinc-700">
-                          {staff.find(s => s.uid === selectedSale.servedBy || s.id === selectedSale.servedBy)?.displayName || 
-                           staff.find(s => s.uid === selectedSale.servedBy || s.id === selectedSale.servedBy)?.full_name || 
-                           selectedSale.servedBy || 'System / Admin'}
+                        {selectedRevisionPresentation?.kind === 'CORRECTED_RECEIPT'
+                          ? 'Replacement executor'
+                          : selectedRevisionPresentation?.isRevisionRelated
+                            ? 'Original seller'
+                            : 'Issued by'}: <span className="font-semibold text-zinc-700">
+                          {resolveSaleOperatorName(selectedSale, staff)}
                         </span>
                       </span>
                     </div>
@@ -3339,7 +3393,52 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                 </div>
               </div>
 
-              {/* Items */}
+              {selectedRevisionPresentation?.isRevisionRelated && (
+                <div className={cn(
+                  "p-4 rounded-2xl border space-y-3",
+                  selectedRevisionPresentation.kind === 'CORRECTED_RECEIPT'
+                    ? "bg-blue-50 border-blue-100"
+                    : selectedRevisionPresentation.kind === 'ORIGINAL_SUPERSEDED'
+                      ? "bg-amber-50 border-amber-100"
+                      : "bg-violet-50 border-violet-100"
+                )}>
+                  <div>
+                    <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-700">Revision audit linkage</h4>
+                    <p className="text-xs text-zinc-600 mt-1">
+                      {selectedRevisionPresentation.kind === 'CORRECTED_RECEIPT'
+                        ? 'This is a new canonical POS V2 transaction created to correct the linked original receipt.'
+                        : selectedRevisionPresentation.kind === 'ORIGINAL_SUPERSEDED'
+                          ? 'This original transaction is immutable and has been superseded by the linked corrected receipt.'
+                          : 'This original transaction is immutable while its controlled correction is in progress.'}
+                    </p>
+                  </div>
+                  <dl className="space-y-1.5 text-xs">
+                    {selectedRevisionPresentation.revisionId && (
+                      <div className="flex justify-between gap-3"><dt className="text-zinc-500">Revision reference</dt><dd className="font-mono font-bold text-zinc-800 text-right break-all">{selectedRevisionPresentation.revisionId}</dd></div>
+                    )}
+                    {selectedRevisionPresentation.revisionRequestId && (
+                      <div className="flex justify-between gap-3"><dt className="text-zinc-500">Request reference</dt><dd className="font-mono font-bold text-zinc-800 text-right break-all">{selectedRevisionPresentation.revisionRequestId}</dd></div>
+                    )}
+                    <div className="flex justify-between gap-3"><dt className="text-zinc-500">Lifecycle</dt><dd className="font-bold text-zinc-800 text-right">{selectedRevisionPresentation.lifecycle?.replaceAll('_', ' ') || 'CORRECTED REPLACEMENT'}</dd></div>
+                    {selectedRevisionPresentation.editorName && (
+                      <div className="flex justify-between gap-3"><dt className="text-zinc-500">Revision editor</dt><dd className="font-bold text-zinc-800 text-right">{selectedRevisionPresentation.editorName}</dd></div>
+                    )}
+                    {selectedRevisionPresentation.reason && (
+                      <div className="pt-1"><dt className="text-zinc-500">Correction reason</dt><dd className="font-medium text-zinc-800 mt-0.5">{selectedRevisionPresentation.reason}</dd></div>
+                    )}
+                  </dl>
+                  {selectedRevisionPresentation.linkedReceiptNumber && (
+                    <button
+                      type="button"
+                      onClick={() => openLinkedRevisionReceipt(selectedSale)}
+                      className="w-full py-2.5 px-3 rounded-xl bg-white border border-zinc-200 text-xs font-bold text-blue-700 hover:bg-blue-50 transition-colors"
+                    >
+                      Open {selectedRevisionPresentation.linkedReceiptLabel}: {selectedRevisionPresentation.linkedReceiptNumber}
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-3">
                 <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Items Sold</h4>
                 <div className="space-y-2">
@@ -3355,7 +3454,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                 </div>
               </div>
 
-              {/* Totals */}
               <div className="space-y-3 pt-4 border-t border-zinc-100">
                 <div className="flex justify-between text-sm">
                   <span className="text-zinc-500">Subtotal</span>
@@ -3371,7 +3469,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                 </div>
               </div>
 
-              {/* Payment Info */}
               <div className="space-y-3 pt-4 border-t border-zinc-100">
                 <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Payment Details</h4>
                 <div className="flex items-center gap-2">
@@ -3386,7 +3483,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                 </div>
               </div>
 
-              {/* Void Info */}
               {selectedSale.status === 'voided' && (
                 <div className="p-4 bg-rose-50 rounded-2xl border border-rose-100 space-y-2">
                   <div className="flex items-center gap-2 text-rose-700">
@@ -3409,7 +3505,16 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
             </div>
 
             <div className="p-6 bg-zinc-50 border-t border-zinc-100 space-y-2">
-              {onEditInPOS && (
+              {selectedSale.engineVersion === 2 ? (
+                <PosV2ReceiptRevisionAction
+                  sale={selectedSale}
+                  canOperatePos={canOperatePos}
+                  onRevise={(sale) => {
+                    onReviseV2(sale);
+                    setSelectedSale(null);
+                  }}
+                />
+              ) : onEditInPOS ? (
                 <button 
                   onClick={() => {
                     onEditInPOS(selectedSale);
@@ -3420,7 +3525,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                   <Edit2 className="w-4 h-4" />
                   Edit Receipt in POS Basket
                 </button>
-              )}
+              ) : null}
               <button 
                 onClick={() => setIsReprintModalOpen(true)}
                 className="w-full py-3 bg-zinc-900 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-zinc-800 transition-colors"
@@ -3447,7 +3552,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
         )}
       </AnimatePresence>
 
-      {/* Void Modal */}
       <AnimatePresence>
         {isVoidModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -3511,7 +3615,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
         )}
       </AnimatePresence>
 
-      {/* Reprint Receipt Modal */}
       <AnimatePresence>
         {isReprintModalOpen && selectedSale && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overflow-y-auto">
@@ -3541,7 +3644,6 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                 </button>
               </div>
 
-              {/* Thermal Receipt Paper representation */}
               <div className="p-6 bg-zinc-100 flex justify-center max-h-[60vh] overflow-y-auto">
                 <div className="bg-white p-6 shadow-md rounded border border-zinc-200 w-full max-w-xs font-mono text-[10px] text-zinc-800 leading-relaxed">
                   <div className="text-center mb-5 space-y-0.5">
@@ -3555,6 +3657,25 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                     <p className="text-[8px] text-zinc-500">Tel: {activeBranch?.phone || '+256 700 000 000'}</p>
                     <p className="text-[8px] text-zinc-500">NDA Reg: {brandNdaReg}</p>
                   </div>
+
+                  {selectedRevisionPresentation?.isRevisionRelated && (
+                    <div className={cn(
+                      "border-2 px-2 py-2 mb-3 text-center",
+                      selectedRevisionPresentation.kind === 'CORRECTED_RECEIPT'
+                        ? "border-blue-700 text-blue-800 bg-blue-50"
+                        : selectedRevisionPresentation.kind === 'ORIGINAL_SUPERSEDED'
+                          ? "border-amber-700 text-amber-800 bg-amber-50"
+                          : "border-violet-700 text-violet-800 bg-violet-50"
+                    )}>
+                      <p className="font-black text-[10px] tracking-wider">{selectedRevisionPresentation.documentTitle}</p>
+                      {selectedRevisionPresentation.linkedReceiptNumber && (
+                        <p className="text-[8px] mt-1">{selectedRevisionPresentation.linkedReceiptLabel}: <span className="font-bold">{selectedRevisionPresentation.linkedReceiptNumber}</span></p>
+                      )}
+                      {selectedRevisionPresentation.revisionId && <p className="text-[7px] mt-1 break-all">Revision: {selectedRevisionPresentation.revisionId}</p>}
+                      {selectedRevisionPresentation.editorName && <p className="text-[8px] mt-1">Revision editor: {selectedRevisionPresentation.editorName}</p>}
+                      {selectedRevisionPresentation.reason && <p className="text-[8px] mt-1 text-left"><span className="font-bold">Reason:</span> {selectedRevisionPresentation.reason}</p>}
+                    </div>
+                  )}
 
                   <div className="border-t border-b border-dashed border-zinc-300 py-2 mb-3 space-y-0.5 text-[8px]">
                     <div className="flex justify-between">
@@ -3570,7 +3691,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
                       <span className="uppercase font-semibold">{selectedSale.context}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Cashier:</span>
+                      <span>{selectedRevisionPresentation?.kind === 'CORRECTED_RECEIPT' ? 'Replacement executor:' : selectedRevisionPresentation?.isRevisionRelated ? 'Original seller:' : 'Cashier:'}</span>
                       <span>{resolveSaleOperatorName(selectedSale, staff)}</span>
                     </div>
                   </div>
@@ -3672,9 +3793,9 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, systemSettin
 ${activeBranch?.address || 'Plot 45 Kampala Road, Kampala HQ'}
 NDA Reg: ${brandNdaReg}
 ---------------------------------
+${buildReceiptRevisionPlainText(selectedSale, resolveSaleOperatorName(selectedSale, staff))}
 Receipt: ${selectedSale.receiptNumber || selectedSale.id.substring(0, 8).toUpperCase()}
 Date: ${format(new Date(selectedSale.timestamp), 'dd/MM/yyyy HH:mm')}
-Cashier: ${resolveSaleOperatorName(selectedSale, staff)}
 ---------------------------------
 ${selectedSale.items.map(item => `${item.productName}\n  ${item.quantity} x UGX ${item.unitPrice.toLocaleString()} = UGX ${item.subtotal.toLocaleString()}`).join('\n')}
 ---------------------------------

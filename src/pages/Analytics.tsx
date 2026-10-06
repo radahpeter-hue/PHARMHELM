@@ -17,6 +17,7 @@ import { LogisticsAnalytics } from '../components/analytics/LogisticsAnalytics';
 import { HRAnalytics } from '../components/analytics/HRAnalytics';
 import { PredictivePanel } from '../components/analytics/PredictivePanel';
 import { ReportHub } from '../components/analytics/ReportHub';
+import { canViewGlobalPosV2RevisionAnalytics } from '../services/pos-v2/posSaleRevisionV2AnalyticsAccess';
 
 type AnalyticsDomain = 
   | 'POS & Sales' 
@@ -35,11 +36,12 @@ const Analytics = () => {
   const [dateRange, setDateRange] = useState<DateRangeOption>('This Month');
   const [isGlobalView, setIsGlobalView] = useState(false);
 
-  const userRoles = [profile?.role || 'Staff', ...(profile?.secondaryRoles || [])];
-
-  const canSeeGlobalView = userRoles.some(role =>
-    ['owner', 'CEO', 'CEO / MD', 'IT Head', 'Finance Head'].includes(role)
-  );
+  const canSeeGlobalView = profile
+    ? canViewGlobalPosV2RevisionAnalytics(
+      profile as typeof profile & { roleRealmId?: string | null },
+      hasPermission('finance', 'operate')
+    )
+    : false;
   const canSwitchBranch = assignedBranches.length > 1 || canSeeGlobalView;
 
   const domains = useMemo(() => {
@@ -81,7 +83,7 @@ const Analytics = () => {
 
   const renderDomainContent = () => {
     switch (activeDomain) {
-      case 'POS & Sales': return <POSAnalytics />;
+      case 'POS & Sales': return <POSAnalytics isGlobalView={isGlobalView} />;
       case 'Inventory & Stock': return <InventoryAnalytics />;
       case 'CRM': return <CRMAnalytics />;
       case 'Finance & OpEx': return <FinanceAnalytics />;

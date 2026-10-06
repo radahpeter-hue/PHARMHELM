@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
 import { Search, Filter, Download, CreditCard, ChevronLeft, ChevronRight, X, ArrowRight, Check, Ban } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { exportRecordsToExcel } from '../../../utils/excelExport';
 import { collection, query, where, getDocs, Timestamp, writeBatch, addDoc, doc, setDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
@@ -415,7 +415,7 @@ export const CreditLedger: React.FC = () => {
   };
 
   // Excel report generation
-  const handleExport = () => {
+  const handleExport = async () => {
     const isPayables = activeTab === 'payables';
     const itemsToExport = isPayables ? filteredCredits : filteredReceivables;
 
@@ -455,13 +455,13 @@ export const CreditLedger: React.FC = () => {
       }
     });
 
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, isPayables ? "Payables" : "Receivables");
-
     const formattedFrom = dateRange.start.split('-').reverse().join('-');
     const formattedTo = dateRange.end.split('-').reverse().join('-');
-    XLSX.writeFile(wb, `CreditReport_${isPayables ? "Payables" : "Receivables"}_${formattedFrom}_${formattedTo}.xlsx`);
+    await exportRecordsToExcel(
+      exportData,
+      isPayables ? 'Payables' : 'Receivables',
+      `CreditReport_${isPayables ? "Payables" : "Receivables"}_${formattedFrom}_${formattedTo}.xlsx`
+    );
     toast.success("Excel report exported successfully");
   };
 

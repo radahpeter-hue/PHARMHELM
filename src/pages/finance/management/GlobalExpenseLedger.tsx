@@ -15,7 +15,7 @@ import {
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
-import * as XLSX from 'xlsx';
+import { exportRecordsToExcel } from '../../../utils/excelExport';
 import { isExcludedFromOpex } from '../../../utils/finance';
 
 interface BranchExpense {
@@ -394,8 +394,8 @@ export const GlobalExpenseLedger: React.FC = () => {
     return { branch, mgmt, logistics, payroll };
   }, [filteredList]);
 
-  // Excel export using SheetJS
-  const handleExport = () => {
+  // Excel export through the shared hardened exporter
+  const handleExport = async () => {
     if (filteredList.length === 0) {
       toast.error("No global expenses data to export.");
       return;
@@ -423,13 +423,13 @@ export const GlobalExpenseLedger: React.FC = () => {
       'Logged By': ''
     });
 
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Global Consolidated Expenses");
-
     const formattedFrom = dateRange.start.split('-').reverse().join('-');
     const formattedTo = dateRange.end.split('-').reverse().join('-');
-    XLSX.writeFile(wb, `GlobalExpenses_Consolidated_${formattedFrom}_to_${formattedTo}.xlsx`);
+    await exportRecordsToExcel(
+      exportData,
+      'Global Consolidated Expenses',
+      `GlobalExpenses_Consolidated_${formattedFrom}_to_${formattedTo}.xlsx`
+    );
     toast.success("Consolidated Excel report downloaded successfully!");
   };
 
