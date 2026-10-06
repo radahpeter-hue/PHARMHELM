@@ -8,6 +8,7 @@ import {
   buildPosV2GlobalRevisionAnalytics
 } from '../src/services/pos-v2/posSaleRevisionV2Analytics';
 import { canViewGlobalPosV2RevisionAnalytics } from '../src/services/pos-v2/posSaleRevisionV2AnalyticsAccess';
+import { buildPosV2RevisionReportCsv, buildPosV2RevisionReportFilename } from '../src/services/pos-v2/posSaleRevisionV2ReportExport';
 
 const original: Sale = {
   id: 'sale-original', tenantId: 'tenant-1', branchId: 'branch-1', receiptNumber: 'MSK-001',
@@ -226,4 +227,38 @@ test('Analytics presents the tenant-wide revision report only through the certif
   assert.match(globalReport, /Original seller/);
   assert.match(globalReport, /Revision editor/);
   assert.doesNotMatch(globalReport, /addDoc|setDoc|updateDoc|deleteDoc|runTransaction|writeBatch/);
+});
+
+test('downloadable revision report preserves audit evidence and spreadsheet safety', () => {
+  const ledger = buildPosV2RevisionLedgerEntry({
+    request: { ...request, reason: '=malicious spreadsheet formula' },
+    originalSale: original,
+    replacementSale: replacement,
+    staff
+  });
+  const report = buildPosV2RevisionReportCsv(
+    [ledger],
+    { kind: 'GLOBAL', tenantId: 'tenant-1' },
+    [{ id: 'branch-1', tenantId: 'tenant-1', name: 'Masaka' }]
+  );
+  assert.match(report, /^\uFEFF"Revision ID"/);
+  assert.match(report, /"MSK-001"/);
+  assert.match(report, /"MSK-002"/);
+  assert.match(report, /"Original Seller"/);
+  assert.match(report, /"Revision Editor"/);
+  assert.match(report, /"'=malicious spreadsheet formula"/);
+  assert.match(report, /"Masaka"/);
+  assert.equal(buildPosV2RevisionReportFilename({ kind: 'BRANCH', tenantId: 'tenant-1', branchId: 'branch-1' }, new Date('2026-10-06T00:00:00Z')), 'pos-v2-revision-report-branch-branch-1-2026-10-06.csv');
+});
+
+test('downloadable revision reports reject tenant and branch scope drift', () => {
+  const ledger = buildPosV2RevisionLedgerEntry({ request, originalSale: original, replacementSale: replacement, staff });
+  assert.throws(
+    () => buildPosV2RevisionReportCsv([{ ...ledger, tenantId: 'tenant-other' }], { kind: 'GLOBAL', tenantId: 'tenant-1' }),
+    /cross-tenant evidence/i
+  );
+  assert.throws(
+    () => buildPosV2RevisionReportCsv([ledger], { kind: 'BRANCH', tenantId: 'tenant-1', branchId: 'branch-other' }),
+    /cross-branch evidence/i
+  );
 });

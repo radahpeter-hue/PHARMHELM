@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Globe2, RefreshCw, Search } from 'lucide-react';
+import { AlertTriangle, Download, Globe2, RefreshCw, Search } from 'lucide-react';
 import type { Branch, Staff } from '../../types';
 import type { PosV2RevisionLedgerEntry } from '../../services/pos-v2/posSaleRevisionV2Ledger';
 import { loadPosV2RevisionLedger } from '../../services/pos-v2/posSaleRevisionV2LedgerRepository';
 import { buildPosV2GlobalRevisionAnalytics } from '../../services/pos-v2/posSaleRevisionV2Analytics';
 import { firestoreService } from '../../services/firestore';
+import { buildPosV2RevisionReportCsv, buildPosV2RevisionReportFilename } from '../../services/pos-v2/posSaleRevisionV2ReportExport';
 import { formatDateValue, normalizeDateValue } from '../../utils/dateValue';
 
 interface Props {
@@ -69,6 +70,17 @@ export const PosV2GlobalRevisionAnalytics: React.FC<Props> = ({ tenantId, actorU
     [branches, filteredEntries, tenantId]
   );
 
+  const downloadReport = () => {
+    const scope = { kind: 'GLOBAL' as const, tenantId };
+    const content = buildPosV2RevisionReportCsv(filteredEntries, scope, branches);
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = buildPosV2RevisionReportFilename(scope);
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <section className="overflow-hidden rounded-3xl border border-indigo-200 bg-white shadow-sm">
       <header className="flex flex-col gap-3 border-b border-indigo-100 bg-indigo-50/50 p-5 md:flex-row md:items-center md:justify-between">
@@ -76,9 +88,10 @@ export const PosV2GlobalRevisionAnalytics: React.FC<Props> = ({ tenantId, actorU
           <div className="flex items-center gap-2"><Globe2 className="h-5 w-5 text-indigo-600" /><h2 className="text-lg font-black text-zinc-900">Global POS V2 Revision Analytics</h2></div>
           <p className="mt-1 text-xs text-zinc-500">Tenant-wide, read-only correction activity grouped by branch.</p>
         </div>
-        <button type="button" disabled={loading} onClick={() => setRefreshKey(value => value + 1)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-white px-4 py-2 text-xs font-black uppercase text-indigo-700 disabled:opacity-50">
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
-        </button>
+        <div className="flex gap-2">
+          <button type="button" disabled={loading || filteredEntries.length === 0} onClick={downloadReport} className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-white px-4 py-2 text-xs font-black uppercase text-indigo-700 disabled:opacity-50"><Download className="h-4 w-4" />Export CSV</button>
+          <button type="button" disabled={loading} onClick={() => setRefreshKey(value => value + 1)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-white px-4 py-2 text-xs font-black uppercase text-indigo-700 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />Refresh</button>
+        </div>
       </header>
 
       <div className="grid grid-cols-2 gap-3 p-5 md:grid-cols-3 xl:grid-cols-6">
