@@ -12,10 +12,11 @@ import { useAuth } from '../../contexts/AuthContext';
 import { firestoreService } from '../../services/firestore';
 import { db } from '../../firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
+import { PosV2GlobalRevisionAnalytics } from './PosV2GlobalRevisionAnalytics';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
-export const POSAnalytics: React.FC = () => {
+export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalView = false }) => {
   const { profile, activeBranch } = useAuth();
   const [sales, setSales] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -277,6 +278,9 @@ export const POSAnalytics: React.FC = () => {
 
   return (
     <div className="space-y-8 animate-in fade-in">
+      {isGlobalView && profile?.tenantId && profile.uid && (
+        <PosV2GlobalRevisionAnalytics tenantId={profile.tenantId} actorUid={profile.uid} />
+      )}
       {/* Live KPI Cards */}
       <div className="bg-zinc-50 border border-zinc-200 p-5 rounded-2xl flex items-center justify-between">
         <div>

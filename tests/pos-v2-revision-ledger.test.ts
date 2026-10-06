@@ -7,6 +7,7 @@ import {
   buildPosV2BranchRevisionAnalytics,
   buildPosV2GlobalRevisionAnalytics
 } from '../src/services/pos-v2/posSaleRevisionV2Analytics';
+import { canViewGlobalPosV2RevisionAnalytics } from '../src/services/pos-v2/posSaleRevisionV2AnalyticsAccess';
 
 const original: Sale = {
   id: 'sale-original', tenantId: 'tenant-1', branchId: 'branch-1', receiptNumber: 'MSK-001',
@@ -198,4 +199,31 @@ test('global analytics reject cross-tenant ledger or branch metadata', () => {
     () => buildPosV2GlobalRevisionAnalytics([ledger], { tenantId: 'tenant-1' }, [{ id: 'branch-1', tenantId: 'tenant-other', name: 'Wrong' }]),
     /cannot resolve cross-tenant branches/i
   );
+});
+
+test('global revision analytics UI gate mirrors named management roles and rejects branch-only roles', () => {
+  const profile = (role: string, secondaryRoles: string[] = [], roleRealmId?: string) => ({ role, secondaryRoles, roleRealmId });
+  for (const role of ['owner', 'CEO', 'CEO / MD', 'admin', 'Finance Head', 'Finance Officer', 'Accountant', 'IT Head', 'IT Support Staff', 'QA Head', 'QA Manager']) {
+    assert.equal(canViewGlobalPosV2RevisionAnalytics(profile(role), false), true, role);
+  }
+  for (const role of ['Branch Manager', 'QA Officer', 'Dispenser', 'cashier', 'pharmacist']) {
+    assert.equal(canViewGlobalPosV2RevisionAnalytics(profile(role), true), false, role);
+  }
+  assert.equal(canViewGlobalPosV2RevisionAnalytics(profile('Custom Finance Reviewer', [], 'realm-1'), true), true);
+  assert.equal(canViewGlobalPosV2RevisionAnalytics(profile('Custom Viewer', [], 'realm-2'), false), false);
+  assert.equal(canViewGlobalPosV2RevisionAnalytics(profile('Dispenser', ['Finance Officer']), false), true);
+});
+
+test('Analytics presents the tenant-wide revision report only through the certified global gate', () => {
+  const analyticsPage = readFileSync('src/pages/Analytics.tsx', 'utf8');
+  const posAnalytics = readFileSync('src/components/analytics/POSAnalytics.tsx', 'utf8');
+  const globalReport = readFileSync('src/components/analytics/PosV2GlobalRevisionAnalytics.tsx', 'utf8');
+  assert.match(analyticsPage, /canViewGlobalPosV2RevisionAnalytics/);
+  assert.match(analyticsPage, /<POSAnalytics isGlobalView=\{isGlobalView\}/);
+  assert.match(posAnalytics, /isGlobalView && profile\?\.tenantId && profile\.uid/);
+  assert.match(globalReport, /kind: 'GLOBAL'/);
+  assert.match(globalReport, /Global POS V2 Revision Analytics/);
+  assert.match(globalReport, /Original seller/);
+  assert.match(globalReport, /Revision editor/);
+  assert.doesNotMatch(globalReport, /addDoc|setDoc|updateDoc|deleteDoc|runTransaction|writeBatch/);
 });
