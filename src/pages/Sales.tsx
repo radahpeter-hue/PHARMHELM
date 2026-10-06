@@ -3275,7 +3275,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                         />
                       ) : (
                         <>
-                          <button 
+                          <button
                             onClick={() => onEdit(sale)}
                             className="p-2 hover:bg-zinc-200 rounded-lg transition-colors text-zinc-600"
                             title="Edit Receipt Details Directly"
@@ -3283,7 +3283,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                             <History className="w-4 h-4" />
                           </button>
                           {onEditInPOS && (
-                            <button 
+                            <button
                               onClick={() => onEditInPOS(sale)}
                               className="p-2 hover:bg-emerald-100 rounded-lg transition-colors text-emerald-600"
                               title="Edit Receipt in POS Active Basket"
