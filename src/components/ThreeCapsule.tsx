@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 
 interface ThreeCapsuleProps {
@@ -15,6 +15,7 @@ export const ThreeCapsule: React.FC<ThreeCapsuleProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const animationFrameId = useRef<number | null>(null);
+  const [webGLUnavailable, setWebGLUnavailable] = useState(false);
 
   // Keep references to state values to avoid recreating the Three.js scene
   const isLoggingInRef = useRef(isLoggingIn);
@@ -29,8 +30,35 @@ export const ThreeCapsule: React.FC<ThreeCapsuleProps> = ({
   }, [onAnimationComplete]);
 
   useEffect(() => {
+    if (!webGLUnavailable || !isLoggingIn) return;
+
+    const timeoutId = window.setTimeout(() => {
+      onAnimationCompleteRef.current?.();
+    }, 400);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isLoggingIn, webGLUnavailable]);
+
+  useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    let supportsWebGL = false;
+    try {
+      const capabilityCanvas = document.createElement('canvas');
+      supportsWebGL = Boolean(
+        capabilityCanvas.getContext('webgl2') || capabilityCanvas.getContext('webgl')
+      );
+    } catch {
+      supportsWebGL = false;
+    }
+
+    if (!supportsWebGL) {
+      setWebGLUnavailable(true);
+      return;
+    }
+
+    setWebGLUnavailable(false);
 
     const width = container.clientWidth || 300;
     const height = container.clientHeight || 240;
@@ -43,7 +71,13 @@ export const ThreeCapsule: React.FC<ThreeCapsuleProps> = ({
     camera.position.z = 4.2;
 
     // Create renderer
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    } catch {
+      setWebGLUnavailable(true);
+      return;
+    }
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(renderer.domElement);
@@ -213,6 +247,19 @@ export const ThreeCapsule: React.FC<ThreeCapsuleProps> = ({
       ref={containerRef} 
       className="w-full h-[240px] my-[-10px] cursor-grab active:cursor-grabbing relative z-20 flex justify-center items-center"
       id="animation-container"
-    />
+      aria-hidden="true"
+    >
+      {webGLUnavailable && (
+        <div
+          className={`relative h-28 w-14 overflow-hidden rounded-full border border-black/10 shadow-xl transition-all duration-500 ${
+            isLoggingIn ? 'scale-125 rotate-12 opacity-0' : 'rotate-[24deg] opacity-100'
+          }`}
+        >
+          <div className="h-1/2 w-full" style={{ backgroundColor: brandColor }} />
+          <div className="h-1/2 w-full bg-[#fbf9f8]" />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-white/35 via-transparent to-black/10" />
+        </div>
+      )}
+    </div>
   );
 };
