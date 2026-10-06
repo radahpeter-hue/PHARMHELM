@@ -13,6 +13,8 @@ on:
       - 'src/services/invoicePdfExportService.ts'
       - 'src/utils/receiptPrinting.ts'
       - 'src/utils/salePresentation.ts'
+      - 'src/utils/excelExport.ts'
+      - 'src/pages/finance/management/**'
       - 'scripts/pos-v2-batch4-core.mjs'
       - 'scripts/process-pos-v2-outbox.mjs'
       - 'scripts/pos-v2-revision-*.mjs'
@@ -22,6 +24,7 @@ on:
       - 'tests/pos-v2-revision-*.test.ts'
       - 'tests/pos-phase1-ui-docs.test.ts'
       - 'tests/sale-presentation.test.ts'
+      - 'tests/excelExport.test.ts'
       - 'tests/firebase-deploy-rules-drift.test.ts'
       - 'src/services/posCheckoutTierService.ts'
       - 'src/services/sellingTierService.ts'
@@ -54,6 +57,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=low
 
       - name: Run tests
         run: npm test

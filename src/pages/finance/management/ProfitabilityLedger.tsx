@@ -15,7 +15,7 @@ import {
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
-import * as XLSX from 'xlsx';
+import { exportRecordsToExcel } from '../../../utils/excelExport';
 import { isExcludedFromOpex } from '../../../utils/finance';
 
 interface BranchExpense {
@@ -183,8 +183,8 @@ export const ProfitabilityLedger: React.FC = () => {
     return grossProfit - totalExpenses;
   }, [grossProfit, totalExpenses]);
 
-  // Export spreadsheet report using SheetJS
-  const handleExport = () => {
+  // Export spreadsheet report through the shared hardened exporter
+  const handleExport = async () => {
     const reportData = [
       { 'Metric Label': 'Gross Sales Revenue', 'Value (UGX)': totalRevenue, 'Percentage of Revenue': '100.0%' },
       { 'Metric Label': 'Cost of Goods Sold (COGS)', 'Value (UGX)': totalCOGS, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalCOGS / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
@@ -198,13 +198,13 @@ export const ProfitabilityLedger: React.FC = () => {
       { 'Metric Label': 'Net Profit Payout Baseline', 'Value (UGX)': netProfit, 'Percentage of Revenue': totalRevenue > 0 ? `${((netProfit / totalRevenue) * 100).toFixed(1)}%` : '0.0%' }
     ];
 
-    const ws = XLSX.utils.json_to_sheet(reportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Profitability Statement");
-
     const formattedFrom = dateRange.start.split('-').reverse().join('-');
     const formattedTo = dateRange.end.split('-').reverse().join('-');
-    XLSX.writeFile(wb, `Profitability_Ledger_Statement_${formattedFrom}_to_${formattedTo}.xlsx`);
+    await exportRecordsToExcel(
+      reportData,
+      'Profitability Statement',
+      `Profitability_Ledger_Statement_${formattedFrom}_to_${formattedTo}.xlsx`
+    );
     toast.success("Profitability excel ledger downloaded successfully!");
   };
 

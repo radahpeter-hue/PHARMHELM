@@ -36,7 +36,7 @@
     "tailwind-merge": "^3.5.0",
     "three": "^0.185.1",
     "vite": "^6.2.0",
-    "xlsx": "^0.18.5",
+    "write-excel-file": "^4.1.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -48,5 +48,8 @@
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.3"
   }
 }

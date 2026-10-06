@@ -20,7 +20,7 @@ import {
 import { collection, query, where, getDocs, doc, writeBatch, addDoc, updateDoc, Timestamp, orderBy, runTransaction } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
-import * as XLSX from 'xlsx';
+import { exportRecordsToExcel } from '../../../utils/excelExport';
 import { calculateCreditSettlement } from '../../../services/financeRecordNormalization';
 
 interface ManagementExpense {
@@ -596,8 +596,8 @@ export const ManagementExpenseLedger: React.FC = () => {
     }
   };
 
-  // Export Excel using SheetJS
-  const handleExportExcel = () => {
+  // Export Excel through the shared hardened exporter
+  const handleExportExcel = async () => {
     if (filteredExpenses.length === 0) {
       toast.error("No data available to export");
       return;
@@ -631,13 +631,13 @@ export const ManagementExpenseLedger: React.FC = () => {
       'Logged By': ''
     });
 
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Management Expenses");
-
     const formattedFrom = dateRange.start.split('-').reverse().join('-');
     const formattedTo = dateRange.end.split('-').reverse().join('-');
-    XLSX.writeFile(wb, `ManagementExpenses_Report_${formattedFrom}_to_${formattedTo}.xlsx`);
+    await exportRecordsToExcel(
+      exportData,
+      'Management Expenses',
+      `ManagementExpenses_Report_${formattedFrom}_to_${formattedTo}.xlsx`
+    );
     toast.success("Excel report exported successfully!");
   };
 

@@ -15,7 +15,7 @@ import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/fire
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
 import { cn } from '../../../utils/cn';
-import * as XLSX from 'xlsx';
+import { exportRecordsToExcel } from '../../../utils/excelExport';
 
 interface SystemSettings {
   id: string;
@@ -143,7 +143,7 @@ export const TaxEngine: React.FC = () => {
   }, [filteredGrns]);
 
   // Excel Exports
-  const handleExportVat = () => {
+  const handleExportVat = async () => {
     const data: any[] = [];
     filteredSales.forEach(s => {
       data.push({
@@ -172,14 +172,11 @@ export const TaxEngine: React.FC = () => {
       'VAT (18% UGX)': `Input: UGX ${inputVat.toLocaleString()}`
     });
 
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "VAT Ledger");
-    XLSX.writeFile(wb, `VAT_Compliance_Report.xlsx`);
+    await exportRecordsToExcel(data, 'VAT Ledger', 'VAT_Compliance_Report.xlsx');
     toast.success("VAT Compliance Excel report exported!");
   };
 
-  const handleExportPaye = () => {
+  const handleExportPaye = async () => {
     const data = filteredPayroll.map(p => {
       const staff = staffList.find(s => s.id === p.staffId || s.id === p.staff_id || s.employeeId === p.staffId);
       return {
@@ -203,14 +200,11 @@ export const TaxEngine: React.FC = () => {
       'PAYE Deducted (UGX)': totalPaye
     });
 
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "PAYE Register");
-    XLSX.writeFile(wb, `PAYE_Withholdings_Register.xlsx`);
+    await exportRecordsToExcel(data, 'PAYE Register', 'PAYE_Withholdings_Register.xlsx');
     toast.success("PAYE Compliance Excel report exported!");
   };
 
-  const handleExportNssf = () => {
+  const handleExportNssf = async () => {
     const data = filteredPayroll.map(p => {
       const staff = staffList.find(s => s.id === p.staffId || s.id === p.staff_id || s.employeeId === p.staffId);
       return {
@@ -236,10 +230,7 @@ export const TaxEngine: React.FC = () => {
       'Total (15% UGX)': totalNssf
     });
 
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "NSSF Register");
-    XLSX.writeFile(wb, `NSSF_Contributions_Register.xlsx`);
+    await exportRecordsToExcel(data, 'NSSF Register', 'NSSF_Contributions_Register.xlsx');
     toast.success("NSSF Compliance Excel report exported!");
   };
 

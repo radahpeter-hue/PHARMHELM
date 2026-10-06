@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
 import { Search, Filter, Download, FileText, ChevronLeft, ChevronRight, X } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { exportRecordsToExcel } from '../../../utils/excelExport';
 import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
@@ -131,8 +131,8 @@ export const InvoiceLedger: React.FC = () => {
     setCurrentPage(1);
   }, [selectedBranch, selectedStatus, selectedSupplier, debouncedSearchText]);
 
-  // Export to Excel using SheetJS
-  const handleExport = () => {
+  // Export to Excel through the shared hardened exporter
+  const handleExport = async () => {
     if (filteredInvoices.length === 0) {
       toast.error("No invoice data to export");
       return;
@@ -154,13 +154,13 @@ export const InvoiceLedger: React.FC = () => {
       };
     });
 
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Invoices");
-    
     const formattedFrom = dateRange.start.split('-').reverse().join('-');
     const formattedTo = dateRange.end.split('-').reverse().join('-');
-    XLSX.writeFile(wb, `InvoiceReport_${formattedFrom}_${formattedTo}.xlsx`);
+    await exportRecordsToExcel(
+      exportData,
+      'Invoices',
+      `InvoiceReport_${formattedFrom}_${formattedTo}.xlsx`
+    );
     toast.success("Excel report exported successfully");
   };
 

@@ -31,6 +31,9 @@ jobs:
           npm ci
           npm install @tailwindcss/oxide-linux-x64-gnu --save-optional --no-save
 
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=low
+
       - name: Build project
         env:
           VITE_BUILD_SHA: ${{ github.sha }}
