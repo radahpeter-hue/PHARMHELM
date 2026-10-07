@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { getPosV2RevisionProgressCopy } from '../src/components/sales/PosV2ReceiptRevisionProgress';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { PosV2ReceiptRevisionProgress, getPosV2RevisionProgressCopy } from '../src/components/sales/PosV2ReceiptRevisionProgress';
 
 const source = readFileSync('src/components/sales/PosV2ReceiptRevisionProgress.tsx', 'utf8');
 
@@ -30,4 +32,22 @@ test('replacement retry is exposed only while the durable request remains replac
 test('completed progress displays the corrected receipt reference', () => {
   assert.match(source, /replacementReceiptNumber/);
   assert.match(source, /Corrected receipt/);
+});
+
+
+test('every pending legacy state and a failed status read can be dismissed without starting a checkout', () => {
+  for (const status of ['PENDING', 'PROCESSING', 'REVERSAL_COMPLETE', 'REPLACEMENT_PENDING', 'REPLACEMENT_CREATED']) {
+    const html = renderToStaticMarkup(React.createElement(PosV2ReceiptRevisionProgress, {
+      progress: { status } as any, onClose: () => {}
+    }));
+    assert.match(html, /Close revision progress/);
+    assert.match(html, /continue using the receipt ledger/);
+    assert.match(html, /Closing does not cancel or restart/);
+    assert.doesNotMatch(html, /Retry corrected checkout/);
+  }
+  const html = renderToStaticMarkup(React.createElement(PosV2ReceiptRevisionProgress, {
+    progress: null, localError: 'Permission denied', onClose: () => {}
+  }));
+  assert.match(html, /Close revision progress/);
+  assert.match(html, /Permission denied/);
 });

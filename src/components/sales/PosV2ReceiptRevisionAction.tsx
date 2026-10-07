@@ -1,6 +1,6 @@
 import { commitPosV2ReceiptCorrection } from '../../services/pos-v2/posSaleRevisionV2AtomicRepository';
 import { openReceiptPrintWindow } from '../../utils/receiptPrinting';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Sale } from '../../types';
@@ -15,7 +15,6 @@ import {
   watchPosV2RevisionRequest,
   type PosV2RevisionRequestProgress
 } from '../../services/pos-v2/posSaleRevisionV2SubmissionRepository';
-import { executePosV2RevisionReplacement } from '../../services/pos-v2/posSaleRevisionV2ReplacementExecution';
 import {
   PosV2ReceiptRevisionEditor,
   type PosV2ReceiptRevisionDraft
@@ -39,7 +38,7 @@ function actionLabel(decision: PosV2ReceiptRevisionUiDecision): string {
     case 'WINDOW_EXPIRED':
       return 'Revision Window Expired';
     case 'REVISION_IN_PROGRESS':
-      return 'Revision In Progress';
+      return 'View Revision Status';
     case 'ORIGINAL_REVISED':
       return 'Receipt Revised';
     case 'REPLACEMENT_RECEIPT':
@@ -91,25 +90,12 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
   const [progress, setProgress] = useState<PosV2RevisionRequestProgress | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [replacementCheckoutRunning, setReplacementCheckoutRunning] = useState(false);
-  const replacementAttemptRef = useRef<string | null>(null);
 
   const decision = getPosV2ReceiptRevisionUiDecision(sale as any, { canOperatePos, now });
   const authenticatedTenantId = String(profile?.tenantId || '').trim();
   const saleTenantId = String((sale as any).tenantId || '').trim();
   const tenantId = authenticatedTenantId && authenticatedTenantId === saleTenantId ? authenticatedTenantId : null;
   const catalog = usePosV2RevisionCatalogData(tenantId, isEditorOpen && decision.canRevise);
-
-  useEffect(() => {
-    const revisionId = String((sale as any).revisionId || '').trim();
-    const isReplacement = (sale as any).isRevisionReplacement === true || Boolean(String((sale as any).revisionOfSaleId || '').trim());
-    if (isReplacement || !revisionId || decision.state !== 'REVISION_IN_PROGRESS') return;
-    try {
-      setRequestId(current => current || posV2RevisionRequestIdForRevision(revisionId));
-    } catch {
-      // Invalid historical identity remains fail-closed and does not create a request.
-    }
-  }, [sale, decision.state]);
 
   useEffect(() => {
     if (!requestId) return;
@@ -121,46 +107,27 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
     );
   }, [requestId]);
 
-  const runReplacementCheckout = async (currentProgress: PosV2RevisionRequestProgress | null = progress) => {
-    if (!currentProgress || String(currentProgress.status || '').toUpperCase() !== 'REPLACEMENT_PENDING') return;
-    if (!canOperatePos) {
-      setSubmissionError('An authorized POS operator assigned to this branch must resume the corrected checkout.');
-      return;
-    }
-    const attemptKey = `${currentProgress.id}:${String(currentProgress.revisionId || '')}`;
-    if (replacementCheckoutRunning || replacementAttemptRef.current === attemptKey) return;
-
-    replacementAttemptRef.current = attemptKey;
-    setReplacementCheckoutRunning(true);
-    setSubmissionError(null);
-    try {
-      const result = await executePosV2RevisionReplacement({ progress: currentProgress, originalSale: sale });
-      toast.success(`Corrected receipt ${result.receiptNumber} created. Final lifecycle posting is being completed.`);
-    } catch (error) {
-      replacementAttemptRef.current = null;
-      const message = error instanceof Error ? error.message : 'Corrected replacement checkout failed safely.';
-      setSubmissionError(message);
-      toast.error(message);
-    } finally {
-      setReplacementCheckoutRunning(false);
-    }
-  };
-
-  useEffect(() => {
-    if (String(progress?.status || '').toUpperCase() !== 'REPLACEMENT_PENDING') return;
-    void runReplacementCheckout(progress);
-    // The durable request identity and deterministic checkout attempt make replay safe.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [progress?.id, progress?.status, canOperatePos]);
-
   if (!decision.showReviseAction && !requestId && !progress) return null;
 
+  const canViewProgress = Boolean(tenantId && decision.state === 'REVISION_IN_PROGRESS'
+    && String((sale as any).revisionId || '').trim());
   const label = actionLabel(decision);
   const remaining = remainingWindowLabel(decision.remainingMs);
   const title = remaining ? `${decision.message} ${remaining}.` : decision.message;
 
   const openEditor = () => {
-    if (!decision.canRevise || isSubmitting) return;
+    if (isSubmitting) return;
+    if (canViewProgress) {
+      try {
+        setSubmissionError(null);
+        setProgress(null);
+        setRequestId(posV2RevisionRequestIdForRevision(String((sale as any).revisionId).trim()));
+      } catch {
+        toast.error('The earlier revision reference is invalid and needs reconciliation.');
+      }
+      return;
+    }
+    if (!decision.canRevise) return;
     if (!tenantId) {
       const message = 'This receipt does not belong to the authenticated tenant and cannot be revised.';
       setSubmissionError(message);
@@ -244,12 +211,9 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
   };
 
   const closeProgress = () => {
-    const status = String(progress?.status || '').toUpperCase();
-    if (status !== 'COMPLETED' && status !== 'FAILED' && progress?.requiresManualReview !== true) return;
     setRequestId(null);
     setProgress(null);
     setSubmissionError(null);
-    replacementAttemptRef.current = null;
   };
 
   const editor = isEditorOpen ? (
@@ -287,11 +251,6 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
     <PosV2ReceiptRevisionProgress
       progress={progress}
       localError={submissionError}
-      replacementCheckoutRunning={replacementCheckoutRunning}
-      onRetryReplacement={() => {
-        replacementAttemptRef.current = null;
-        void runReplacementCheckout(progress);
-      }}
       onClose={closeProgress}
     />
   ) : null;
@@ -302,10 +261,10 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
         <button
           type="button"
           onClick={openEditor}
-          disabled={!decision.canRevise || isSubmitting}
+          disabled={!(decision.canRevise || canViewProgress) || isSubmitting}
           aria-label={label}
           title={title}
-          className={decision.canRevise
+          className={decision.canRevise || canViewProgress
             ? 'p-2 rounded-lg transition-colors text-amber-700 hover:bg-amber-100 cursor-pointer'
             : 'p-2 rounded-lg text-zinc-300 opacity-60 cursor-not-allowed'}
         >
@@ -324,9 +283,9 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
         <button
           type="button"
           onClick={openEditor}
-          disabled={!decision.canRevise || isSubmitting}
+          disabled={!(decision.canRevise || canViewProgress) || isSubmitting}
           title={title}
-          className={decision.canRevise
+          className={decision.canRevise || canViewProgress
             ? 'w-full py-3 bg-amber-700 hover:bg-amber-800 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors shadow-lg shadow-amber-500/10'
             : 'w-full py-3 bg-zinc-100 text-zinc-400 rounded-xl font-bold flex items-center justify-center gap-2 cursor-not-allowed'}
         >

@@ -23,7 +23,7 @@ const source = readFileSync('src/components/sales/PosV2ReceiptRevisionAction.tsx
 test('ledger action labels clearly distinguish revision lifecycle states', () => {
   assert.equal(getPosV2ReceiptRevisionActionLabel(decision('ELIGIBLE')), 'Revise Receipt');
   assert.equal(getPosV2ReceiptRevisionActionLabel(decision('WINDOW_EXPIRED')), 'Revision Window Expired');
-  assert.equal(getPosV2ReceiptRevisionActionLabel(decision('REVISION_IN_PROGRESS')), 'Revision In Progress');
+  assert.equal(getPosV2ReceiptRevisionActionLabel(decision('REVISION_IN_PROGRESS')), 'View Revision Status');
   assert.equal(getPosV2ReceiptRevisionActionLabel(decision('ORIGINAL_REVISED')), 'Receipt Revised');
   assert.equal(getPosV2ReceiptRevisionActionLabel(decision('REPLACEMENT_RECEIPT')), 'Corrected Receipt');
   assert.equal(getPosV2ReceiptRevisionActionLabel(decision('NO_PERMISSION')), 'Revision Unavailable');
@@ -60,21 +60,21 @@ test('review confirmation commits an immediate atomic correction and monitors it
 
 test('revision recovery derives the durable request identity from the original sale revision id', () => {
   assert.match(source, /posV2RevisionRequestIdForRevision/);
-  assert.match(source, /decision\.state !== 'REVISION_IN_PROGRESS'/);
+  assert.match(source, /decision\.state === 'REVISION_IN_PROGRESS'/);
   assert.match(source, /sale as any\)\.revisionId/);
   assert.match(source, /watchPosV2RevisionRequest/);
 });
 
-test('canonical replacement checkout runs only after the durable request reaches REPLACEMENT_PENDING', () => {
-  assert.match(source, /executePosV2RevisionReplacement/);
-  assert.match(source, /REPLACEMENT_PENDING/);
-  assert.match(source, /replacementAttemptRef/);
-  assert.match(source, /canOperatePos/);
-  assert.doesNotMatch(source, /executeCheckoutV2\s*\(/);
+test('opening the ledger never starts a legacy replacement checkout or opens its progress automatically', () => {
+  assert.doesNotMatch(source, /executePosV2RevisionReplacement|runReplacementCheckout|replacementAttemptRef/);
+  const effects = source.match(/useEffect\(\(\) => \{[\s\S]*?\}, \[[^\]]*\]\);/g) || [];
+  assert.equal(effects.length, 1);
+  assert.doesNotMatch(effects.join(''), /setRequestId|commitPosV2ReceiptCorrection/);
+  assert.match(source, /if \(canViewProgress\) \{[\s\S]*setRequestId\(posV2RevisionRequestIdForRevision/);
 });
 
 test('ineligible V2 revision states remain disabled and never route to legacy edit or void', () => {
-  assert.match(source, /disabled=!\{?decision\.canRevise\}?|disabled=\{!decision\.canRevise \|\| isSubmitting\}/);
+  assert.match(source, /disabled=\{!\(decision\.canRevise \|\| canViewProgress\) \|\| isSubmitting\}/);
   assert.doesNotMatch(source, /onEditInPOS|onEdit\(/);
   assert.doesNotMatch(source, /voidSaleInventoryAtomically/);
   assert.match(source, /Revision Window Expired/);
