@@ -94,7 +94,9 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
   const replacementAttemptRef = useRef<string | null>(null);
 
   const decision = getPosV2ReceiptRevisionUiDecision(sale as any, { canOperatePos, now });
-  const tenantId = String((sale as any).tenantId || '').trim() || null;
+  const authenticatedTenantId = String(profile?.tenantId || '').trim();
+  const saleTenantId = String((sale as any).tenantId || '').trim();
+  const tenantId = authenticatedTenantId && authenticatedTenantId === saleTenantId ? authenticatedTenantId : null;
   const catalog = usePosV2RevisionCatalogData(tenantId, isEditorOpen && decision.canRevise);
 
   useEffect(() => {
@@ -158,6 +160,12 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
 
   const openEditor = () => {
     if (!decision.canRevise || isSubmitting) return;
+    if (!tenantId) {
+      const message = 'This receipt does not belong to the authenticated tenant and cannot be revised.';
+      setSubmissionError(message);
+      toast.error(message);
+      return;
+    }
     setReviewDraft(null);
     setSubmissionError(null);
     setIsEditorOpen(true);
@@ -244,6 +252,10 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
       catalogBatches={catalog.batches}
       catalogSystemSettings={catalog.systemSettings}
       catalogReady={catalog.isReady}
+      referenceClients={catalog.clients}
+      referenceInstitutions={catalog.institutions}
+      referencePrescribers={catalog.prescribers}
+      referencesReady={catalog.referencesReady}
     />
   ) : null;
 
@@ -255,6 +267,8 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
       onCancel={cancelRevisionFlow}
       onConfirm={submitReviewedDraft}
       now={now}
+      isSubmitting={isSubmitting}
+      submissionError={submissionError}
     />
   ) : null;
 

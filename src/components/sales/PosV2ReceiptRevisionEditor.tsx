@@ -3,14 +3,31 @@ import { Minus, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import type { Product, ProductBatch, Sale, SaleItem, SystemSettings } from '../../types';
 import { assertRevisionReason } from '../../services/pos-v2/posSaleRevisionV2Policy';
 import { PosV2ReceiptRevisionCatalogPicker } from './PosV2ReceiptRevisionCatalogPicker';
+import { PosV2RevisionReferenceSelector } from './PosV2RevisionReferenceSelector';
+import {
+  revisionInstitutionSelection,
+  revisionPatientSelection,
+  revisionPrescriberSelection,
+  type PosV2RevisionReferenceOption
+} from '../../services/pos-v2/posSaleRevisionV2ReferenceData';
+import { validateSaleCheckoutContext } from '../../utils/saleContextValidation';
+import {
+  normalizePosPaymentMethod,
+  POS_CANONICAL_PAYMENT_METHODS
+} from '../../utils/posPaymentMethods';
 
 export interface PosV2ReceiptRevisionDraft {
   items: SaleItem[];
   paymentMethod: string;
   context: string | null;
   patientId: string | null;
+  patientName: string | null;
+  patientIsStaff: boolean;
   institutionId: string | null;
+  institutionName: string | null;
+  institutionBillingEligible: boolean;
   prescriberId: string | null;
+  prescriberName: string | null;
   discountPercentage: number;
   reason: string;
   revisedTotal: number;
@@ -24,6 +41,10 @@ interface PosV2ReceiptRevisionEditorProps {
   catalogBatches?: ProductBatch[];
   catalogSystemSettings?: SystemSettings | null;
   catalogReady?: boolean;
+  referenceClients?: PosV2RevisionReferenceOption[];
+  referenceInstitutions?: PosV2RevisionReferenceOption[];
+  referencePrescribers?: PosV2RevisionReferenceOption[];
+  referencesReady?: boolean;
 }
 
 const numberValue = (value: unknown, fallback = 0): number => {
@@ -57,15 +78,49 @@ export function buildInitialPosV2RevisionDraft(sale: Sale): PosV2ReceiptRevision
   const discountPercentage = numberValue(sale.discountPercentage, 0);
   return {
     items,
-    paymentMethod: String(sale.paymentMethod || ''),
-    context: cleanId((sale as any).context),
-    patientId: cleanId((sale as any).patientId),
+    paymentMethod: normalizePosPaymentMethod(sale.paymentMethod) || String(sale.paymentMethod || ''),
+    context: String((sale as any).context || 'walk-in').trim().toLowerCase(),
+    patientId: cleanId((sale as any).patientId ?? (sale as any).customerId ?? (sale as any).clientId),
+    patientName: cleanId((sale as any).patientName),
+    patientIsStaff: normalizePosPaymentMethod(sale.paymentMethod) === 'staff_welfare',
     institutionId: cleanId((sale as any).institutionId),
+    institutionName: cleanId((sale as any).institutionName),
+    institutionBillingEligible: true,
     prescriberId: cleanId((sale as any).prescriberId),
+    prescriberName: cleanId((sale as any).prescriberName),
     discountPercentage,
     reason: '',
     revisedTotal: calculatePosV2RevisionDraftTotal(items, discountPercentage)
   };
+}
+
+export function validatePosV2RevisionDraftContext(draft: PosV2ReceiptRevisionDraft, originalSale: Sale): string | null {
+  const normalizedPayment = normalizePosPaymentMethod(draft.paymentMethod);
+  if (!normalizedPayment) return 'Select a supported payment method.';
+  const context = String(draft.context || '').trim().toLowerCase();
+  if (!['walk-in', 'telepharmacy', 'institutional'].includes(context)) return 'Select a supported sale context.';
+  if (context === 'walk-in' && draft.institutionId) return 'Remove the institution or choose Telepharmacy / Institutional context.';
+  const result = validateSaleCheckoutContext({
+    context,
+    paymentMethod: normalizedPayment,
+    hasPatient: Boolean(draft.patientId),
+    hasInstitution: Boolean(draft.institutionId),
+    hasEligibleInstitution: draft.institutionBillingEligible
+  });
+  if ('message' in result) return result.message;
+  if (normalizedPayment === 'insurance' && !draft.patientId && !draft.institutionId) {
+    return 'Insurance payment requires a linked client or institution account.';
+  }
+  if (normalizedPayment === 'staff_welfare') {
+    if (normalizePosPaymentMethod(originalSale.paymentMethod) !== 'staff_welfare') {
+      return 'Changing a receipt into Staff Welfare is unavailable because the required allocation is not part of this revision.';
+    }
+    if (!draft.patientId || !draft.patientIsStaff) return 'Staff Welfare requires the linked eligible employee client.';
+    if (draft.patientId !== cleanId((originalSale as any).patientId ?? (originalSale as any).customerId ?? (originalSale as any).clientId)) {
+      return 'Changing the Staff Welfare beneficiary is unavailable because the revised allocation is not part of this revision.';
+    }
+  }
+  return null;
 }
 
 export const PosV2ReceiptRevisionEditor: React.FC<PosV2ReceiptRevisionEditorProps> = ({
@@ -75,7 +130,11 @@ export const PosV2ReceiptRevisionEditor: React.FC<PosV2ReceiptRevisionEditorProp
   catalogProducts = [],
   catalogBatches = [],
   catalogSystemSettings = null,
-  catalogReady = false
+  catalogReady = false,
+  referenceClients = [],
+  referenceInstitutions = [],
+  referencePrescribers = [],
+  referencesReady = false
 }) => {
   const [draft, setDraft] = useState<PosV2ReceiptRevisionDraft>(() => buildInitialPosV2RevisionDraft(sale));
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -132,6 +191,11 @@ export const PosV2ReceiptRevisionEditor: React.FC<PosV2ReceiptRevisionEditorProp
   const continueToReview = () => {
     if (draft.items.length === 0) {
       setValidationError('A revised receipt must retain at least one item.');
+      return;
+    }
+    const contextError = validatePosV2RevisionDraftContext(draft, sale);
+    if (contextError) {
+      setValidationError(contextError);
       return;
     }
     try {
@@ -229,29 +293,60 @@ export const PosV2ReceiptRevisionEditor: React.FC<PosV2ReceiptRevisionEditorProp
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <label className="space-y-1.5">
                   <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Payment method</span>
-                  <input value={draft.paymentMethod} onChange={event => setDraft(current => ({ ...current, paymentMethod: event.target.value }))} className="w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-sm" />
+                  <select value={draft.paymentMethod} onChange={event => { setDraft(current => ({ ...current, paymentMethod: event.target.value })); setValidationError(null); }} className="w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-sm bg-white">
+                    {!normalizePosPaymentMethod(draft.paymentMethod) && <option value={draft.paymentMethod}>Unsupported historical value</option>}
+                    {POS_CANONICAL_PAYMENT_METHODS.map(option => {
+                      const disabled = option.id === 'staff_welfare' && normalizePosPaymentMethod(sale.paymentMethod) !== 'staff_welfare';
+                      return <option key={option.id} value={option.id} disabled={disabled}>{option.label}{disabled ? ' (unavailable for transition)' : ''}</option>;
+                    })}
+                  </select>
                 </label>
                 <label className="space-y-1.5">
                   <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Context</span>
-                  <select value={draft.context || ''} onChange={event => setDraft(current => ({ ...current, context: cleanId(event.target.value) }))} className="w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-sm bg-white">
-                    <option value="">Unspecified</option>
+                  <select value={draft.context || 'walk-in'} onChange={event => { setDraft(current => ({ ...current, context: event.target.value })); setValidationError(null); }} className="w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-sm bg-white">
                     <option value="walk-in">Walk-in</option>
                     <option value="telepharmacy">Telepharmacy</option>
                     <option value="institutional">Institutional</option>
                   </select>
                 </label>
-                <label className="space-y-1.5">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Patient ID</span>
-                  <input value={draft.patientId || ''} onChange={event => setDraft(current => ({ ...current, patientId: cleanId(event.target.value) }))} className="w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-sm" />
-                </label>
-                <label className="space-y-1.5">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Institution ID</span>
-                  <input value={draft.institutionId || ''} onChange={event => setDraft(current => ({ ...current, institutionId: cleanId(event.target.value) }))} className="w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-sm" />
-                </label>
-                <label className="space-y-1.5">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Prescriber ID</span>
-                  <input value={draft.prescriberId || ''} onChange={event => setDraft(current => ({ ...current, prescriberId: cleanId(event.target.value) }))} className="w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-sm" />
-                </label>
+                <PosV2RevisionReferenceSelector
+                  label="Client / patient"
+                  placeholder={referencesReady ? 'No client selected' : 'Loading clients...'}
+                  options={referenceClients}
+                  selectedId={draft.patientId}
+                  selectedName={draft.patientName}
+                  required={draft.context === 'telepharmacy' || draft.paymentMethod === 'staff_welfare'}
+                  disabled={!referencesReady || draft.paymentMethod === 'staff_welfare'}
+                  onChange={option => {
+                    setDraft(current => ({ ...current, ...revisionPatientSelection(option) }));
+                    setValidationError(null);
+                  }}
+                />
+                <PosV2RevisionReferenceSelector
+                  label="Institution"
+                  placeholder={referencesReady ? 'No institution selected' : 'Loading institutions...'}
+                  options={referenceInstitutions}
+                  selectedId={draft.institutionId}
+                  selectedName={draft.institutionName}
+                  required={draft.context === 'institutional' || draft.paymentMethod === 'institutional_credit'}
+                  disabled={!referencesReady}
+                  onChange={option => {
+                    setDraft(current => ({ ...current, ...revisionInstitutionSelection(option) }));
+                    setValidationError(null);
+                  }}
+                />
+                <PosV2RevisionReferenceSelector
+                  label="Prescriber"
+                  placeholder={referencesReady ? 'No prescriber selected' : 'Loading prescribers...'}
+                  options={referencePrescribers}
+                  selectedId={draft.prescriberId}
+                  selectedName={draft.prescriberName}
+                  disabled={!referencesReady}
+                  onChange={option => {
+                    setDraft(current => ({ ...current, ...revisionPrescriberSelection(option) }));
+                    setValidationError(null);
+                  }}
+                />
                 <label className="space-y-1.5">
                   <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Discount %</span>
                   <input value={draft.discountPercentage} onChange={event => updateDiscount(Number(event.target.value))} type="number" min={0} max={100} className="w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-sm" />

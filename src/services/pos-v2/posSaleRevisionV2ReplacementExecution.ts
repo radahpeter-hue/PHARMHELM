@@ -18,10 +18,6 @@ function numberValue(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function sameId(left: unknown, right: unknown): boolean {
-  return clean(left) === clean(right);
-}
-
 export function buildPosV2ReplacementSnapshots(
   originalSale: Sale,
   envelope: PosV2RevisionEnvelope
@@ -46,10 +42,10 @@ export function buildPosV2ReplacementSnapshots(
   }
 
   const snapshots: PosV2ReplacementCheckoutSnapshots = {
-    customerId: sameId(seed.patientId, sale.patientId) ? clean(sale.customerId) || undefined : undefined,
-    patientName: sameId(seed.patientId, sale.patientId) ? clean(sale.patientName) || undefined : undefined,
-    institutionName: sameId(seed.institutionId, sale.institutionId) ? clean(sale.institutionName) || undefined : undefined,
-    prescriberName: sameId(seed.prescriberId, sale.prescriberId) ? clean(sale.prescriberName) || undefined : undefined,
+    customerId: clean(seed.customerId) || undefined,
+    patientName: clean(seed.patientName) || undefined,
+    institutionName: clean(seed.institutionName) || undefined,
+    prescriberName: clean(seed.prescriberName) || undefined,
     sourceQuotationId: clean(sale.sourceQuotationId) || undefined,
     isExceptionalConsumption: Boolean(sale.isExceptionalConsumption),
     exceptionalConsumptionReason: sale.exceptionalConsumptionReason ?? null

@@ -566,6 +566,7 @@ export interface Sale {
   quotationConvertedAt?: string;
   cashierId: string;
   clientId?: string;
+  customerId?: string;
   patientId?: string;
   patientName?: string;
   institutionId?: string;

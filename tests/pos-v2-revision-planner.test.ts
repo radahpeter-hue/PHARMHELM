@@ -85,10 +85,13 @@ test('planner detects product add/remove, payment, context, patient, institution
     originalSale: original,
     revisedItems,
     revisedTotal: 48000,
-    paymentMethod: 'mobile_money',
+    paymentMethod: 'mtn_momo',
     context: 'institutional',
     patientId: 'patient-9',
+    patientName: 'Patient Nine',
     institutionId: 'inst-2',
+    institutionName: 'Institution Two',
+    institutionBillingEligible: true,
     discountPercentage: 5,
     reason: 'Wrong client and payment context selected',
     now
@@ -113,6 +116,7 @@ test('planner preserves no-value-change revisions when non-monetary context chan
     revisedItems: original.items,
     revisedTotal: 51000,
     patientId: 'patient-1',
+    patientName: 'Patient One',
     reason: 'Attach correct patient to completed receipt',
     now
   });

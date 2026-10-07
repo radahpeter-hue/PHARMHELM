@@ -75,8 +75,12 @@ export interface PosV2RevisionEnvelope {
     paymentMethod: string;
     context: string | null;
     patientId: string | null;
+    patientName: string | null;
+    customerId: string | null;
     institutionId: string | null;
+    institutionName: string | null;
     prescriberId: string | null;
+    prescriberName: string | null;
     discountPercentage: number;
     totalAmount: number;
   };
@@ -208,8 +212,12 @@ export function buildPosV2RevisionEnvelope(input: PosV2RevisionEnvelopeInput): P
       paymentMethod: plan.after.paymentMethod,
       context: plan.after.context,
       patientId: plan.after.patientId,
+      patientName: plan.after.patientName,
+      customerId: plan.after.customerId,
       institutionId: plan.after.institutionId,
+      institutionName: plan.after.institutionName,
       prescriberId: plan.after.prescriberId,
+      prescriberName: plan.after.prescriberName,
       discountPercentage: plan.after.discountPercentage,
       totalAmount: plan.revisedTotal
     },

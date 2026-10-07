@@ -39,7 +39,7 @@ function envelope(overrides: Record<string, unknown> = {}) {
         discountPercentage: 0
       },
       after: {
-        paymentMethod: 'mobile_money',
+        paymentMethod: 'mtn_momo',
         context: 'institutional',
         patientId: 'patient-2',
         institutionId: 'institution-2',
@@ -63,7 +63,7 @@ function envelope(overrides: Record<string, unknown> = {}) {
       revisionId: identifiers.revisionId,
       originalReceiptNumber: 'MSK-2026-123456',
       items: [{ productId: 'product-1', productName: 'Amoxicillin', quantity: 2, commercialQuantity: 2, unitPrice: 6000 }],
-      paymentMethod: 'mobile_money',
+      paymentMethod: 'mtn_momo',
       context: 'institutional',
       patientId: 'patient-2',
       institutionId: 'institution-2',
@@ -117,7 +117,7 @@ test('replacement orchestration maps the corrected sale into the canonical POS V
   assert.equal(request.attemptId, source.identifiers.replacementAttemptId);
   assert.equal(request.branchId, 'branch-a');
   assert.equal(request.items, source.replacementSaleSeed.items);
-  assert.equal(request.paymentMethod, 'mobile_money');
+  assert.equal(request.paymentMethod, 'mtn_momo');
   assert.equal(request.context, 'institutional');
   assert.equal(request.patientId, 'patient-2');
   assert.equal(request.institutionId, 'institution-2');

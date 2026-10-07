@@ -1,4 +1,5 @@
 import { PosCheckoutV2Error } from './posCheckoutV2Errors';
+import { POS_CANONICAL_PAYMENT_METHODS } from '../../utils/posPaymentMethods';
 import type {
   CheckoutV2Request,
   PosCheckoutV2OutboxEvent,
@@ -10,13 +11,7 @@ import type {
 const EPSILON = 0.0001;
 
 export const POS_V2_SUPPORTED_PAYMENT_METHODS = [
-  'cash',
-  'mtn_momo',
-  'airtel_money',
-  'card',
-  'insurance',
-  'institutional_credit',
-  'staff_welfare',
+  ...POS_CANONICAL_PAYMENT_METHODS.map(option => option.id),
   // Retain historical aliases already present in the shared Sale type / older records.
   'momo',
   'airtel',

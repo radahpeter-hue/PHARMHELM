@@ -65,11 +65,13 @@ test('planner feeding review detects item and context changes without mutating o
       }
     ] as any,
     revisedTotal: 15000,
-    paymentMethod: 'Mobile Money',
+    paymentMethod: 'mtn_momo',
     context: 'telepharmacy',
     patientId: 'patient-2',
+    patientName: 'Patient Two',
     institutionId: null,
     prescriberId: 'prescriber-1',
+    prescriberName: 'Dr Prescriber',
     discountPercentage: 0,
     reason: 'Customer payment and item details were captured incorrectly at checkout.',
     now: new Date('2026-10-02T08:00:00.000Z')
@@ -93,7 +95,7 @@ test('planner feeding review detects item and context changes without mutating o
 
 test('review screen remains fail-closed and mutation-free', () => {
   assert.match(source, /Revision review failed closed/);
-  assert.match(source, /disabled=!\{?plan\}?|disabled=\{!plan\}/);
+  assert.match(source, /disabled=\{!plan \|\| isSubmitting\}/);
   assert.doesNotMatch(source, /firebase\/firestore/);
   assert.doesNotMatch(source, /executeCheckoutV2\s*\(/);
   assert.doesNotMatch(source, /setDoc\s*\(/);

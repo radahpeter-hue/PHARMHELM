@@ -9,6 +9,7 @@ import {
   posV2RevisionRequestDocumentId,
   type PosV2RevisionSubmissionRequest
 } from './posSaleRevisionV2Submission';
+import { assertPosV2RevisionFirestoreSafe } from './posSaleRevisionV2FirestoreSafety';
 
 export interface SubmitPosV2RevisionInput {
   originalSale: Sale;
@@ -78,7 +79,14 @@ export async function submitPosV2RevisionRequest(
       : `This receipt is no longer eligible for revision (${eligibility.code}).`);
   }
 
-  const request = buildPosV2RevisionSubmissionRequest(input);
+  let request: PosV2RevisionSubmissionRequest;
+  try {
+    request = buildPosV2RevisionSubmissionRequest(input);
+    assertPosV2RevisionFirestoreSafe(request);
+  } catch (error) {
+    console.error('POS V2 revision request failed Firestore safety validation:', error instanceof Error ? error.message : String(error));
+    throw new Error('The revision request contains invalid data and was not submitted. Return to the editor and try again.');
+  }
   const requestId = posV2RevisionRequestDocumentId(request);
   const requestRef = doc(db, 'pos_sale_revision_requests', requestId);
 

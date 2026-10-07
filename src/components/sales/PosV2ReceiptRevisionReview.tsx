@@ -7,6 +7,7 @@ import {
   type PosV2RevisionPlan
 } from '../../services/pos-v2/posSaleRevisionV2Planner';
 import type { PosV2ReceiptRevisionDraft } from './PosV2ReceiptRevisionEditor';
+import { posPaymentMethodLabel } from '../../utils/posPaymentMethods';
 
 interface PosV2ReceiptRevisionReviewProps {
   sale: Sale;
@@ -15,10 +16,22 @@ interface PosV2ReceiptRevisionReviewProps {
   onCancel: () => void;
   onConfirm: (plan: PosV2RevisionPlan, draft: PosV2ReceiptRevisionDraft) => void;
   now?: Date;
+  isSubmitting?: boolean;
+  submissionError?: string | null;
 }
 
 const money = (value: number) => `UGX ${Number(value || 0).toLocaleString()}`;
 const text = (value: string | null | undefined) => value || 'None';
+const contextLabel = (value: string | null | undefined) => ({
+  'walk-in': 'Walk-in', telepharmacy: 'Telepharmacy', institutional: 'Institutional'
+}[String(value || '')] || text(value));
+
+const identity = (name: string | null | undefined, id: string | null | undefined) => (
+  <>
+    <p className="font-bold">{text(name)}</p>
+    {id && <p className="text-[10px] text-zinc-400 break-all">{id}</p>}
+  </>
+);
 
 const itemChangeLabel = (change: PosV2RevisionItemChange): string => {
   switch (change.type) {
@@ -38,7 +51,9 @@ export const PosV2ReceiptRevisionReview: React.FC<PosV2ReceiptRevisionReviewProp
   onBack,
   onCancel,
   onConfirm,
-  now
+  now,
+  isSubmitting = false,
+  submissionError = null
 }) => {
   const review = useMemo(() => {
     try {
@@ -50,8 +65,12 @@ export const PosV2ReceiptRevisionReview: React.FC<PosV2ReceiptRevisionReviewProp
           paymentMethod: draft.paymentMethod,
           context: draft.context,
           patientId: draft.patientId,
+          patientName: draft.patientName,
           institutionId: draft.institutionId,
+          institutionName: draft.institutionName,
+          institutionBillingEligible: draft.institutionBillingEligible,
           prescriberId: draft.prescriberId,
+          prescriberName: draft.prescriberName,
           discountPercentage: draft.discountPercentage,
           reason: draft.reason,
           now
@@ -143,11 +162,11 @@ export const PosV2ReceiptRevisionReview: React.FC<PosV2ReceiptRevisionReviewProp
                 <div className="rounded-2xl border border-zinc-200 p-4 space-y-3">
                   <h3 className="text-xs font-black uppercase tracking-wider text-zinc-700">Original receipt context</h3>
                   <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Payment</p><p className="font-bold">{text(plan.before.paymentMethod)}</p></div>
-                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Context</p><p className="font-bold">{text(plan.before.context)}</p></div>
-                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Patient</p><p className="font-bold break-all">{text(plan.before.patientId)}</p></div>
-                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Institution</p><p className="font-bold break-all">{text(plan.before.institutionId)}</p></div>
-                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Prescriber</p><p className="font-bold break-all">{text(plan.before.prescriberId)}</p></div>
+                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Payment</p><p className="font-bold">{posPaymentMethodLabel(plan.before.paymentMethod)}</p></div>
+                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Context</p><p className="font-bold">{contextLabel(plan.before.context)}</p></div>
+                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Client</p>{identity(plan.before.patientName, plan.before.patientId)}</div>
+                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Institution</p>{identity(plan.before.institutionName, plan.before.institutionId)}</div>
+                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Prescriber</p>{identity(plan.before.prescriberName, plan.before.prescriberId)}</div>
                     <div><p className="text-[9px] uppercase font-black text-zinc-400">Discount</p><p className="font-bold">{plan.before.discountPercentage}%</p></div>
                   </div>
                 </div>
@@ -155,11 +174,11 @@ export const PosV2ReceiptRevisionReview: React.FC<PosV2ReceiptRevisionReviewProp
                 <div className="rounded-2xl border border-amber-200 bg-amber-50/40 p-4 space-y-3">
                   <h3 className="text-xs font-black uppercase tracking-wider text-amber-800">Corrected receipt context</h3>
                   <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Payment</p><p className="font-bold">{text(plan.after.paymentMethod)}</p></div>
-                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Context</p><p className="font-bold">{text(plan.after.context)}</p></div>
-                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Patient</p><p className="font-bold break-all">{text(plan.after.patientId)}</p></div>
-                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Institution</p><p className="font-bold break-all">{text(plan.after.institutionId)}</p></div>
-                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Prescriber</p><p className="font-bold break-all">{text(plan.after.prescriberId)}</p></div>
+                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Payment</p><p className="font-bold">{posPaymentMethodLabel(plan.after.paymentMethod)}</p></div>
+                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Context</p><p className="font-bold">{contextLabel(plan.after.context)}</p></div>
+                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Client</p>{identity(plan.after.patientName, plan.after.patientId)}</div>
+                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Institution</p>{identity(plan.after.institutionName, plan.after.institutionId)}</div>
+                    <div><p className="text-[9px] uppercase font-black text-zinc-400">Prescriber</p>{identity(plan.after.prescriberName, plan.after.prescriberId)}</div>
                     <div><p className="text-[9px] uppercase font-black text-zinc-400">Discount</p><p className="font-bold">{plan.after.discountPercentage}%</p></div>
                   </div>
                 </div>
@@ -169,6 +188,7 @@ export const PosV2ReceiptRevisionReview: React.FC<PosV2ReceiptRevisionReviewProp
                 <p className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Mandatory revision reason</p>
                 <p className="text-sm font-semibold text-zinc-800 mt-1 whitespace-pre-wrap">{plan.revisionReason}</p>
               </section>
+              {submissionError && <p className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-3 py-2">{submissionError}</p>}
             </>
           )}
         </div>
@@ -176,14 +196,14 @@ export const PosV2ReceiptRevisionReview: React.FC<PosV2ReceiptRevisionReviewProp
         <div className="px-5 sm:px-7 py-4 border-t border-zinc-100 bg-zinc-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <p className="text-[10px] text-zinc-500 max-w-xl">Confirming is irreversible once the worker begins reversal. The original receipt is never overwritten; it remains permanently linked to the corrected replacement receipt.</p>
           <div className="flex gap-2 justify-end">
-            <button type="button" onClick={onBack} className="px-4 py-2.5 rounded-xl border border-zinc-200 bg-white text-sm font-bold text-zinc-700 flex items-center gap-1.5"><ArrowLeft className="w-4 h-4" />Back to Edit</button>
+            <button type="button" onClick={onBack} disabled={isSubmitting} className="px-4 py-2.5 rounded-xl border border-zinc-200 bg-white text-sm font-bold text-zinc-700 flex items-center gap-1.5 disabled:opacity-50"><ArrowLeft className="w-4 h-4" />Back to Edit</button>
             <button
               type="button"
               onClick={() => plan && onConfirm(plan, draft)}
-              disabled={!plan}
+              disabled={!plan || isSubmitting}
               className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-black disabled:bg-zinc-200 disabled:text-zinc-400 flex items-center gap-1.5"
             >
-              <CheckCircle2 className="w-4 h-4" />Submit Revision
+              <CheckCircle2 className="w-4 h-4" />{isSubmitting ? 'Submitting...' : 'Submit Revision'}
             </button>
           </div>
         </div>
