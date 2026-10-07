@@ -205,7 +205,33 @@ jobs:
         run: bash scripts/verify-active-firestore-rules.sh
 
       - name: Deploy Firestore indexes
-        run: npx firebase-tools deploy --only firestore:indexes --project "$FIREBASE_PROJECT_ID" --non-interactive
+        shell: bash
+        run: |
+          set -euo pipefail
+          create_revision_index() {
+            local output status
+            set +e
+            output=$(gcloud firestore indexes composite create \
+              --project="$FIREBASE_PROJECT_ID" \
+              --database="$FIRESTORE_DATABASE_ID" \
+              --collection-group=pos_sale_revision_requests \
+              --query-scope=collection \
+              "$@" --async --quiet 2>&1)
+            status=$?
+            set -e
+            echo "$output"
+            if [ "$status" -eq 0 ] || echo "$output" | grep -Eqi 'already exists|ALREADY_EXISTS'; then
+              return 0
+            fi
+            return "$status"
+          }
+          create_revision_index \
+            --field-config=field-path=tenantId,order=ascending \
+            --field-config=field-path=originalTimestamp,order=descending
+          create_revision_index \
+            --field-config=field-path=tenantId,order=ascending \
+            --field-config=field-path=branchId,order=ascending \
+            --field-config=field-path=originalTimestamp,order=descending
 
       - name: Verify revision-ledger indexes are ready
         timeout-minutes: 15

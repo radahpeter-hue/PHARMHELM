@@ -20,7 +20,9 @@ test('revision-ledger release rejects a different field order or query scope', (
 });
 test('deployment creates and verifies the named-database indexes before releasing Hosting', () => {
   const workflow = readFileSync('.github/workflows/firebase-deploy.yml', 'utf8');
-  assert.match(workflow, /deploy --only firestore:indexes/);
+  assert.match(workflow, /gcloud firestore indexes composite create/);
+  assert.match(workflow, /--collection-group=pos_sale_revision_requests/);
+  assert.doesNotMatch(workflow, /deploy --only firestore:indexes/);
   assert.ok(workflow.indexOf('Deploy Firestore indexes') < workflow.indexOf('Verify revision-ledger indexes are ready'));
   assert.ok(workflow.indexOf('Verify revision-ledger indexes are ready') < workflow.indexOf('Deploy Firebase Hosting'));
 });
