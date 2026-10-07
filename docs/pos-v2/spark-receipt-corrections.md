@@ -8,7 +8,7 @@ Add Service uses the existing tenant's billable_services catalogue. Quantity and
 
 ## Validation
 
-- `npm test`: 529 passing tests.
+- `npm test`: 530 passing tests.
 - `npm run typecheck` and `npm run build`.
 - `npm audit --omit=dev --audit-level=low`: zero production vulnerabilities.
 - `node scripts/run-pos-v2-spark-emulator.mjs`: the actual repository and production rules, using a demo project and a checksummed local Firestore emulator. Covers cash increases/decreases, catalogue services, posted/unposted credit and welfare, multiple batches, six products, simultaneous saves, exact replay, conflicting intent, insufficient stock, settled credit, stale posting workers, fresh operator/reference validation, and rollback when required financial/audit writes are omitted. Also runs the existing revision RBAC suite.
@@ -21,3 +21,5 @@ The deployment workflow deploys rules and creates only the two required revision
 An existing scheduled revision request deliberately blocks a new atomic correction. Inspect its request, original/replacement sales, outbox leases, stock movements and financial reversals before recovering it. Do not delete the request or replay stock restoration to bypass the block. This change does not recover the live Masaka receipt BR-3QLNF-2026-420818 or alter production records.
 
 The existing 72-hour, tenant/branch and operator restrictions remain. Settled institutional credit, partial historical financial postings and unsupported split-payment changes require reconciliation. The existing ordinary POS stock permissions are retained; this repair does not redesign inventory authorization. Very large receipts remain subject to Firestore transaction and security-rule limits.
+
+The hosted rules compiler may return HTTP 503. CI accepts that outage only when the candidate source exactly matches the active named-database rules fingerprint; changed rules, validation errors and failed fingerprint requests remain blocking.

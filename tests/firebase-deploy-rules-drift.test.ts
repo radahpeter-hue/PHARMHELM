@@ -117,3 +117,13 @@ test('rules fingerprint verifier rejects stale active content', () => {
   assert.equal(result.status, 13, result.stderr || result.stdout);
   assert.match(result.stdout, /Firestore rules drift detected/);
 });
+
+
+test('compiler outage fallback requires HTTP 503 and exact active named-database rules', () => {
+  const ci = readFileSync('.github/workflows/pos-v2-foundation-ci.yml', 'utf8');
+  assert.match(ci, /FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75/);
+  assert.match(ci, /compiler_status="\$http_status"/);
+  assert.match(ci, /if \[ "\$compiler_status" = "503" \] && bash scripts\/verify-active-firestore-rules\.sh; then/);
+  assert.match(ci, /could not be verified as the exact active version[\s\S]*exit 3/);
+  assert.match(ci, /Minimal deny-all control[\s\S]*exit 2/);
+});

@@ -97,6 +97,7 @@ jobs:
         shell: bash
         env:
           FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+          FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
         run: |
           set -euo pipefail
 
@@ -119,6 +120,7 @@ jobs:
               --data "$body" \
               "https://firebaserules.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}:test")
 
+            compiler_status="$http_status"
             echo "${label} compiler response: HTTP ${http_status}"
             if [ "$http_status" != "200" ]; then
               jq . "$response_file" 2>/dev/null || cat "$response_file"
@@ -149,11 +151,15 @@ jobs:
           fi
 
           if ! test_rules_file "PharmHelm candidate" firestore.rules; then
-            echo "::error title=PharmHelm rules compilation failed::The minimal control passed but Firebase rejected the proposed PharmHelm rules."
-            exit 3
+            if [ "$compiler_status" = "503" ] && bash scripts/verify-active-firestore-rules.sh; then
+              echo "::warning title=Firebase compiler unavailable::Candidate compilation returned HTTP 503. Exact active named-database rules content verified; this commit introduces no rules change."
+            else
+              echo "::error title=PharmHelm rules compilation failed::Candidate rules failed validation or could not be verified as the exact active version."
+              exit 3
+            fi
+          else
+            echo "Hosted Firebase compiler accepted the minimal control and firestore.rules."
           fi
-
-          echo "Hosted Firebase compiler accepted the minimal control and firestore.rules."
 
       - name: Set up Java 21 for Firestore emulator
         uses: actions/setup-java@v4
