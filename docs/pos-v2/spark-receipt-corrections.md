@@ -8,7 +8,7 @@ Add Service uses the existing tenant's billable_services catalogue. Quantity and
 
 ## Validation
 
-- `npm test`: 528 passing tests.
+- `npm test`: 529 passing tests.
 - `npm run typecheck` and `npm run build`.
 - `npm audit --omit=dev --audit-level=low`: zero production vulnerabilities.
 - `node scripts/run-pos-v2-spark-emulator.mjs`: the actual repository and production rules, using a demo project and a checksummed local Firestore emulator. Covers cash increases/decreases, catalogue services, posted/unposted credit and welfare, multiple batches, six products, simultaneous saves, exact replay, conflicting intent, insufficient stock, settled credit, stale posting workers, fresh operator/reference validation, and rollback when required financial/audit writes are omitted. Also runs the existing revision RBAC suite.

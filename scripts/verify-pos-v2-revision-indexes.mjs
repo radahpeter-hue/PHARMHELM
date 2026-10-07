@@ -10,6 +10,13 @@ export function revisionLedgerIndexesReady(required, deployed) {
     && index.state === 'READY' && fields(index) === fields(candidate)));
 }
 
+export function loadRevisionLedgerIndexes(project, database, runCommand = execFileSync) {
+  const output = runCommand('gcloud', ['firestore', 'indexes', 'composite', 'list',
+    `--project=${project}`, `--database=${database}`, '--format=json'],
+  { encoding: 'utf8', timeout: 30000 });
+  return JSON.parse(output).filter(index => index.name?.includes('/collectionGroups/pos_sale_revision_requests/indexes/'));
+}
+
 async function verify() {
   const project = process.env.FIREBASE_PROJECT_ID;
   const database = process.env.FIRESTORE_DATABASE_ID;
@@ -17,21 +24,8 @@ async function verify() {
   const required = JSON.parse(readFileSync('firestore.indexes.json', 'utf8')).indexes
     .filter(index => index.collectionGroup === 'pos_sale_revision_requests');
   if (required.length !== 2) throw new Error('Expected both tenant and branch revision-ledger indexes.');
-  const token = execFileSync('gcloud', ['auth', 'application-default', 'print-access-token'], { encoding: 'utf8' }).trim();
-  const endpoint = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(project)}/databases/${encodeURIComponent(database)}/collectionGroups/pos_sale_revision_requests/indexes`;
   for (let attempt = 0; attempt < 40; attempt++) {
-    const deployed = [];
-    let pageToken = '';
-    do {
-      const url = new URL(endpoint);
-      url.searchParams.set('pageSize', '100');
-      if (pageToken) url.searchParams.set('pageToken', pageToken);
-      const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30000) });
-      if (!response.ok) throw new Error(`Revision-ledger index verification failed: HTTP ${response.status}.`);
-      const body = await response.json();
-      deployed.push(...(body.indexes || []));
-      pageToken = body.nextPageToken || '';
-    } while (pageToken);
+    const deployed = loadRevisionLedgerIndexes(project, database);
     if (revisionLedgerIndexesReady(required, deployed)) {
       console.log(`Both revision-ledger indexes are READY in named database ${database}.`);
       return;
