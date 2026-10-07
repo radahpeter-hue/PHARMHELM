@@ -13,15 +13,15 @@ interface PosV2ReceiptRevisionProgressProps {
 function statusCopy(status: string): { title: string; detail: string; complete: boolean; failed: boolean } {
   switch (status) {
     case 'PENDING':
-      return { title: 'Revision queued', detail: 'The correction request is waiting for the secure revision worker.', complete: false, failed: false };
+      return { title: 'Revision queued', detail: 'This request was submitted through the earlier revision workflow and has not completed.', complete: false, failed: false };
     case 'PROCESSING':
       return { title: 'Reversing original transaction', detail: 'Inventory, payment and applicable downstream postings are being reversed safely.', complete: false, failed: false };
     case 'REVERSAL_COMPLETE':
       return { title: 'Original reversal complete', detail: 'The original transaction has been compensated and is moving to replacement preparation.', complete: false, failed: false };
     case 'REPLACEMENT_PENDING':
-      return { title: 'Creating corrected receipt', detail: 'The canonical POS V2 engine is preparing the corrected replacement transaction.', complete: false, failed: false };
+      return { title: 'Creating corrected receipt', detail: 'The earlier revision is awaiting replacement linkage or reconciliation.', complete: false, failed: false };
     case 'REPLACEMENT_CREATED':
-      return { title: 'Corrected receipt created', detail: 'The corrected transaction exists and downstream posting is being finalized.', complete: false, failed: false };
+      return { title: 'Corrected receipt created', detail: 'The corrected transaction exists; the earlier revision still needs final posting verification.', complete: false, failed: false };
     case 'COMPLETED':
       return { title: 'Revision complete', detail: 'The original receipt and corrected receipt are now permanently linked.', complete: true, failed: false };
     case 'FAILED':
@@ -57,7 +57,7 @@ export const PosV2ReceiptRevisionProgress: React.FC<PosV2ReceiptRevisionProgress
             <h2 className="text-xl font-black text-zinc-900">{copy.title}</h2>
             <p className="text-xs text-zinc-500 mt-1">{copy.detail}</p>
           </div>
-          {onClose && (copy.complete || copy.failed || manualReview) ? (
+          {onClose ? (
             <button type="button" onClick={onClose} className="p-2 rounded-xl text-zinc-500 hover:bg-zinc-100" aria-label="Close revision progress">
               <X className="w-5 h-5" />
             </button>
@@ -78,6 +78,13 @@ export const PosV2ReceiptRevisionProgress: React.FC<PosV2ReceiptRevisionProgress
               <p className="font-bold text-zinc-800 break-words">{status.replaceAll('_', ' ')}</p>
             </div>
           </div>
+
+          {!copy.complete ? (
+            <p className="text-sm text-zinc-600">
+              You can close this status window and continue using the receipt ledger.
+              Closing does not cancel or restart this revision. This receipt remains locked until its earlier revision is reconciled.
+            </p>
+          ) : null}
 
           {replacementCheckoutRunning ? (
             <div className="rounded-2xl bg-blue-50 border border-blue-200 p-4 text-sm text-blue-800 flex items-center gap-2">
@@ -112,7 +119,7 @@ export const PosV2ReceiptRevisionProgress: React.FC<PosV2ReceiptRevisionProgress
                 <RefreshCcw className="w-4 h-4" /> Retry corrected checkout
               </button>
             ) : null}
-            {onClose && (copy.complete || copy.failed || manualReview) ? (
+            {onClose ? (
               <button type="button" onClick={onClose} className="px-4 py-2.5 rounded-xl border border-zinc-200 bg-white text-sm font-bold text-zinc-700">Close</button>
             ) : null}
           </div>
