@@ -10,6 +10,7 @@ import {
   type PosV2RevisionSubmissionRequest
 } from './posSaleRevisionV2Submission';
 import { assertPosV2RevisionFirestoreSafe } from './posSaleRevisionV2FirestoreSafety';
+import { loadCheckoutV2Authority } from './posCheckoutV2Repository';
 
 export interface SubmitPosV2RevisionInput {
   originalSale: Sale;
@@ -70,6 +71,16 @@ export async function submitPosV2RevisionRequest(
   if (!currentUser) throw new Error('Authentication is required to submit a POS V2 revision.');
   if (clean(currentUser.uid) !== clean(input.actor.uid)) {
     throw new Error('The authenticated user does not match the revision actor.');
+  }
+
+  const originalTenantId = clean((input.originalSale as Sale & { tenantId?: string }).tenantId);
+  const originalBranchId = clean(input.originalSale.branchId);
+  if (!originalTenantId || !originalBranchId) {
+    throw new Error('The original receipt is missing its authoritative tenant or branch identity.');
+  }
+  const authority = await loadCheckoutV2Authority(currentUser.uid, originalBranchId);
+  if (clean(authority.tenantId) !== originalTenantId) {
+    throw new Error('The authenticated operator cannot revise a receipt from another tenant.');
   }
 
   const eligibility = evaluatePosV2RevisionEligibility(input.originalSale as any, input.now ?? new Date());

@@ -50,6 +50,8 @@ test('review confirmation uses only the dedicated immutable revision submission 
   assert.match(source, /watchPosV2RevisionRequest/);
   assert.match(source, /PosV2ReceiptRevisionProgress/);
   assert.match(source, /profile\.uid/);
+  assert.match(source, /if \(!canOperatePos\)/);
+  assert.match(source, /You no longer have permission to revise POS receipts/);
   assert.doesNotMatch(source, /firestoreService/);
   assert.doesNotMatch(source, /reviseSaleInventoryAtomically/);
   assert.doesNotMatch(source, /voidSaleInventoryAtomically/);

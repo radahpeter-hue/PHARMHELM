@@ -4,9 +4,12 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync('src/services/pos-v2/posSaleRevisionV2SubmissionRepository.ts', 'utf8');
 
-test('revision submission repository rechecks authentication and 72-hour eligibility before persistence', () => {
+test('revision submission repository rechecks live POS authority and 72-hour eligibility before persistence', () => {
   assert.match(source, /auth\.currentUser/);
   assert.match(source, /currentUser\.uid/);
+  assert.match(source, /loadCheckoutV2Authority\(currentUser\.uid, originalBranchId\)/);
+  assert.match(source, /authority\.tenantId/);
+  assert.match(source, /originalTenantId/);
   assert.match(source, /evaluatePosV2RevisionEligibility/);
   assert.match(source, /REVISION_WINDOW_EXPIRED/);
 });

@@ -175,8 +175,24 @@ service cloud.firestore {
       );
     }
 
+    function hasActiveStaffProfile() {
+      return isAuthenticated()
+        && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
+        && (
+          (
+            'active' in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data &&
+            get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.active == true
+          ) ||
+          (
+            'status' in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data &&
+            get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.status in ['active', 'Active', 'ACTIVE']
+          )
+        );
+    }
+
     function isPOSOperator() {
       return isAuthenticated()
+        && hasActiveStaffProfile()
         && getUserData().role != 'cashier'
         && getUserData().role != 'Cashier'
         && (

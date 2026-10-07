@@ -30,6 +30,18 @@ test('POS V2 revision requests have a dedicated create-only client boundary', ()
   assert.match(revisionRules, /allow update, delete: if false/);
 });
 
+test('POS operator authority requires a current active authoritative staff record', () => {
+  assert.match(rules, /function hasActiveStaffProfile\(\)/);
+  assert.match(rules, /exists\(\/databases\/\$\(database\)\/documents\/staff\/\$\(request\.auth\.uid\)\)/);
+  assert.match(rules, /'active' in get\([\s\S]*data\.active == true/);
+  assert.match(rules, /'status' in get\([\s\S]*data\.status in \['active', 'Active', 'ACTIVE'\]/);
+
+  const posOperatorStart = rules.indexOf('function isPOSOperator()');
+  const posOperatorEnd = rules.indexOf('function isMarketing()', posOperatorStart);
+  const posOperator = rules.slice(posOperatorStart, posOperatorEnd);
+  assert.match(posOperator, /hasActiveStaffProfile\(\)/);
+});
+
 test('revision request creation is pinned to canonical pending identity and authenticated actor', () => {
   assert.match(revisionRules, /revision\.requestId == requestId/);
   assert.match(revisionRules, /revision\.requestedBy == request\.auth\.uid/);

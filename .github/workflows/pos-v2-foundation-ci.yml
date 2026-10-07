@@ -141,3 +141,15 @@ jobs:
           fi
 
           echo "Hosted Firebase compiler accepted the minimal control and firestore.rules."
+
+      - name: Set up Java 21 for Firestore emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install pinned Firestore rules test runtime
+        run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0 @firebase/rules-unit-testing@5.0.0
+
+      - name: Enforce POS revision RBAC in Firestore emulator
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-pos-v2-revision-rbac "node scripts/pos-v2-revision-rbac-rules-emulator.mjs"

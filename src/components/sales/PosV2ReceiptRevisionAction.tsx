@@ -190,6 +190,12 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
   };
 
   const submitReviewedDraft = async (plan: PosV2RevisionPlan, draft: PosV2ReceiptRevisionDraft) => {
+    if (!canOperatePos) {
+      const message = 'You no longer have permission to revise POS receipts.';
+      setSubmissionError(message);
+      toast.error(message);
+      return;
+    }
     if (!profile?.uid) {
       const message = 'An authenticated staff profile is required to submit this revision.';
       setSubmissionError(message);
