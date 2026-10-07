@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Product, ProductBatch, Staff, SystemSettings } from '../../types';
+import type { BillableService, Product, ProductBatch, Staff, SystemSettings } from '../../types';
 import { firestoreService } from '../../services/firestore';
 import {
   clientRevisionOption,
@@ -10,6 +10,8 @@ import {
 
 export interface PosV2RevisionCatalogData {
   products: Product[];
+  services: BillableService[];
+  servicesReady: boolean;
   batches: ProductBatch[];
   systemSettings: SystemSettings | null;
   clients: PosV2RevisionReferenceOption[];
@@ -27,6 +29,8 @@ export function usePosV2RevisionCatalogData(
   tenantId: string | null | undefined,
   enabled: boolean
 ): PosV2RevisionCatalogData {
+  const [services, setServices] = useState<BillableService[]>([]);
+  const [servicesLoaded, setServicesLoaded] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [batches, setBatches] = useState<ProductBatch[]>([]);
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
@@ -45,6 +49,8 @@ export function usePosV2RevisionCatalogData(
   useEffect(() => {
     if (!enabled || !tenantId) {
       setProducts([]);
+      setServices([]);
+      setServicesLoaded(false);
       setBatches([]);
       setSystemSettings(null);
       setClients([]);
@@ -69,6 +75,8 @@ export function usePosV2RevisionCatalogData(
     setPrescribersLoaded(false);
     setStaffLoaded(false);
 
+    setServicesLoaded(false);
+    const unsubscribeServices = firestoreService.subscribeToCollection<BillableService>('billable_services', tenantId, data => { setServices(data); setServicesLoaded(true); });
     const unsubscribeProducts = firestoreService.subscribeToCollection<Product>(
       'products',
       tenantId,
@@ -107,6 +115,7 @@ export function usePosV2RevisionCatalogData(
     );
 
     return () => {
+      unsubscribeServices();
       unsubscribeProducts();
       unsubscribeBatches();
       unsubscribeSettings();
@@ -130,6 +139,8 @@ export function usePosV2RevisionCatalogData(
     }));
     return {
       products,
+      services,
+      servicesReady: Boolean(enabled && tenantId && servicesLoaded),
       batches,
       systemSettings,
       clients: [...clients, ...staffClients].map(clientRevisionOption).filter(option => option.id),
@@ -139,7 +150,7 @@ export function usePosV2RevisionCatalogData(
       referencesReady: Boolean(enabled && tenantId && clientsLoaded && institutionsLoaded && prescribersLoaded && staffLoaded)
     };
   }, [
-    products, batches, systemSettings, clients, institutions, prescribers, staff,
+    services, servicesLoaded, products, batches, systemSettings, clients, institutions, prescribers, staff,
     enabled, tenantId, productsLoaded, batchesLoaded, settingsLoaded,
     clientsLoaded, institutionsLoaded, prescribersLoaded, staffLoaded
   ]);

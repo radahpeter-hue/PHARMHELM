@@ -110,6 +110,8 @@ export const exportInvoicePdf = ({ receipt, branchName, sellerName, branding }: 
     }
     if (revisionPresentation.revisionId) detailLines.push(`Revision reference: ${revisionPresentation.revisionId}`);
     if (revisionPresentation.revisionRequestId) detailLines.push(`Request reference: ${revisionPresentation.revisionRequestId}`);
+    if (receipt.revisionRecordedAt) detailLines.push(`Edited at: ${new Date(receipt.revisionRecordedAt).toLocaleString('en-GB', { timeZone: 'Africa/Kampala' })}`);
+    if (receipt.originalSellerId) detailLines.push(`Original seller reference: ${receipt.originalSellerId}`);
     if (revisionPresentation.editorName) detailLines.push(`Revision editor: ${revisionPresentation.editorName}`);
     if (revisionPresentation.reason) detailLines.push(`Correction reason: ${revisionPresentation.reason}`);
 

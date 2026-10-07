@@ -1,3 +1,5 @@
+import { commitPosV2ReceiptCorrection } from '../../services/pos-v2/posSaleRevisionV2AtomicRepository';
+import { openReceiptPrintWindow } from '../../utils/receiptPrinting';
 import React, { useEffect, useRef, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
@@ -10,7 +12,6 @@ import {
 import type { PosV2RevisionPlan } from '../../services/pos-v2/posSaleRevisionV2Planner';
 import { posV2RevisionRequestIdForRevision } from '../../services/pos-v2/posSaleRevisionV2Submission';
 import {
-  submitPosV2RevisionRequest,
   watchPosV2RevisionRequest,
   type PosV2RevisionRequestProgress
 } from '../../services/pos-v2/posSaleRevisionV2SubmissionRepository';
@@ -26,7 +27,7 @@ import { usePosV2RevisionCatalogData } from './usePosV2RevisionCatalogData';
 interface PosV2ReceiptRevisionActionProps {
   sale: Sale;
   canOperatePos: boolean;
-  onRevise: (sale: Sale) => void;
+  onRevise: (sale: Sale, receiptWindow?: Window | null) => void;
   compact?: boolean;
   now?: Date;
 }
@@ -210,10 +211,11 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
       return;
     }
 
+    const receiptWindow = openReceiptPrintWindow();
     setIsSubmitting(true);
     setSubmissionError(null);
     try {
-      const result = await submitPosV2RevisionRequest({
+      const result = await commitPosV2ReceiptCorrection({
         originalSale: sale,
         plan,
         revisedItems: draft.items,
@@ -224,14 +226,15 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
         },
         now
       });
-      setRequestId(result.request.requestId);
-      setProgress({ id: result.request.requestId, ...result.request });
+      setRequestId(result.request.id);
+      setProgress(result.request);
       setReviewDraft(null);
       setIsEditorOpen(false);
-      toast.success(result.replayed
-        ? 'Revision request recovered. Continuing the existing safe lifecycle.'
-        : 'Revision request submitted. The original transaction is now entering controlled reversal.');
+      toast.success(result.replayed ? 'Corrected receipt recovered.' : 'Receipt corrected. Stock and accounts updated.');
+      try { _onRevise(result.checkout.sale, receiptWindow); }
+      catch { receiptWindow?.close(); toast.warning('Receipt corrected. Reprint it from the ledger.'); }
     } catch (error) {
+      receiptWindow?.close();
       const message = error instanceof Error ? error.message : 'Revision submission failed safely.';
       setSubmissionError(message);
       toast.error(message);
@@ -255,6 +258,8 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
       onCancel={cancelRevisionFlow}
       onContinue={continueToReview}
       catalogProducts={catalog.products}
+      catalogServices={catalog.services}
+      servicesReady={catalog.servicesReady}
       catalogBatches={catalog.batches}
       catalogSystemSettings={catalog.systemSettings}
       catalogReady={catalog.isReady}
@@ -322,7 +327,7 @@ export const PosV2ReceiptRevisionAction: React.FC<PosV2ReceiptRevisionActionProp
           disabled={!decision.canRevise || isSubmitting}
           title={title}
           className={decision.canRevise
-            ? 'w-full py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors shadow-lg shadow-amber-500/10'
+            ? 'w-full py-3 bg-amber-700 hover:bg-amber-800 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors shadow-lg shadow-amber-500/10'
             : 'w-full py-3 bg-zinc-100 text-zinc-400 rounded-xl font-bold flex items-center justify-center gap-2 cursor-not-allowed'}
         >
           <RotateCcw className="w-4 h-4" />

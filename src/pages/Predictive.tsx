@@ -1,3 +1,4 @@
+import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   query, 
@@ -108,7 +109,7 @@ const Predictive: React.FC = () => {
     if (profile?.tenantId && selectedBranchId) {
       const unsubBatches = firestoreService.subscribeToCollectionGroup('product_batches', profile.tenantId, selectedBranchId, setBatches);
       const unsubSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data: any) => {
-        setSales(data.filter((s: any) => s.branchId === selectedBranchId));
+        setSales(data.filter(isActiveSale).filter((s: any) => s.branchId === selectedBranchId));
       });
       const unsubExpenses = firestoreService.subscribeToCollection('branch_expenses', profile.tenantId, (data: any) => {
         setExpenses(data.filter((e: any) => e.branchId === selectedBranchId));

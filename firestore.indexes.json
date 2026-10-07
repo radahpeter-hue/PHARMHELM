@@ -18,6 +18,23 @@
         { "fieldPath": "productId", "order": "ASCENDING" },
         { "fieldPath": "batchNumber", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "pos_sale_revision_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "originalTimestamp", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "pos_sale_revision_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "branchId", "order": "ASCENDING"},
+        {"fieldPath": "originalTimestamp", "order": "DESCENDING"}
+      ]
     }
   ],
   "fieldOverrides": []

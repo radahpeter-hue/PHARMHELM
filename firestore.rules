@@ -202,6 +202,255 @@ service cloud.firestore {
       );
     }
 
+    // Fresh, append-only correction evidence authorizes only this atomic commit.
+    function isFreshAtomicRevision(requestId) {
+      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(requestId)).data;
+      let staff = getUserData();
+      let operationalRoles = ['Pharmacist', 'pharmacist', 'Dispenser', 'dispenser', 'Branch Manager', 'branch manager'];
+      let globalRoles = ['owner', 'Owner', 'CEO', 'ceo', 'CEO / MD', 'ceo / md'];
+      let roles = staff.get('secondaryRoles', []);
+      return isAuthenticated()
+        && (staff.get('active', false) || staff.get('status', '') in ['active', 'Active', 'ACTIVE'])
+        && !(staff.role in ['cashier', 'Cashier'])
+        && (staff.role in operationalRoles || roles.hasAny(operationalRoles) || staff.role in globalRoles || roles.hasAny(globalRoles) || hasCustomModuleFunctional('sales'))
+        && !exists(/databases/$(database)/documents/pos_sale_revision_requests/$(requestId))
+        && correction.executionMode == 'SPARK_ATOMIC' && correction.status == 'COMPLETED'
+        && correction.createdAt == request.time && correction.requestedBy == request.auth.uid
+        && correction.tenantId == staff.tenantId
+        && (staff.get('assigned_branches', []).hasAny([correction.branchId]) || staff.get('branch_id', '') == correction.branchId || staff.role in globalRoles || roles.hasAny(globalRoles));
+    }
+
+    function isAtomicOriginalUpdate(saleId) {
+      let next = request.resource.data;
+      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(next.revisionRequestId)).data;
+      return isFreshAtomicRevision(next.revisionRequestId)
+        && resource.data.engineVersion == 2 && resource.data.status == 'completed'
+        && resource.data.get('revisionId', '') == '' && !resource.data.get('revisionLocked', false)
+        && resource.data.get('supersededBySaleId', '') == ''
+        && resource.data.createdAt is timestamp
+        && request.time >= resource.data.createdAt
+        && request.time - resource.data.createdAt <= duration.value(72, 'h')
+        && correction.originalSaleId == saleId
+        && correction.tenantId == resource.data.tenantId && correction.branchId == resource.data.branchId
+        && correction.originalTotal == resource.data.totalAmount
+        && correction.originalPaymentId == resource.data.canonicalPaymentId
+        && correction.originalOutboxEventId == resource.data.transactionOutboxEventId
+        && next.revisionId == correction.revisionId
+        && next.revisionLifecycle == 'COMPLETED' && next.revisionLocked == true
+        && next.supersededBySaleId == correction.replacementSaleId
+        && next.supersededByReceiptNumber == correction.replacementReceiptNumber
+        && next.revisionRequestedBy == request.auth.uid
+        && next.revisionReason == correction.reason
+        && next.revisionCompletedAt == request.time
+        && (!correction.originalCreditPosted || atomicCreditCommit(correction))
+        && (!(correction.originalWelfarePosted || correction.welfareAmount > 0) || atomicWelfareCommit(correction, resource.data))
+        && next.diff(resource.data).affectedKeys().hasOnly([
+          'revisionId', 'revisionRequestId', 'revisionLocked', 'revisionLifecycle',
+          'pendingReplacementSaleId', 'supersededBySaleId', 'supersededByReceiptNumber',
+          'revisionReason', 'revisionRequestedBy', 'revisionRequestedByName',
+          'revisionRequestedAt', 'revisionCompletedAt', 'updatedAt',
+          'quotationConversionStatus', 'quotationConversionReversalId', 'quotationConversionReversedAt'
+        ]);
+    }
+
+    function hasAtomicCorrectionChain(requestId) {
+      let correction = request.resource.data;
+      let original = getAfter(/databases/$(database)/documents/sales/$(correction.originalSaleId)).data;
+      let replacement = getAfter(/databases/$(database)/documents/sales/$(correction.replacementSaleId)).data;
+      let reversal = getAfter(/databases/$(database)/documents/pos_payment_reversals/$(correction.paymentReversalId)).data;
+      let audit = getAfter(/databases/$(database)/documents/audit_logs/$(correction.auditId)).data;
+      let outbox = getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(correction.originalOutboxEventId)).data;
+      return correction.requestId == requestId && isFreshAtomicRevision(requestId)
+        && correction.requestType == 'POS_SALE_REVISION_REQUESTED'
+        && correction.engineVersion == 2 && correction.payloadVersion == 1
+        && correction.reason is string && correction.reason.size() >= 8 && correction.reason.size() <= 500
+        && correction.intentFingerprint is string && correction.intentFingerprint.size() > 0
+        && correction.completedAt == request.time
+        && original.revisionRequestId == requestId && original.supersededBySaleId == correction.replacementSaleId
+        && original.tenantId == correction.tenantId && original.branchId == correction.branchId
+        && original.receiptNumber == correction.originalReceiptNumber
+        && correction.originalWelfarePosted == (original.get('welfarePostingStatus', '') == 'posted')
+        && correction.originalCreditPosted == exists(/databases/$(database)/documents/credit_receivables/$(correction.originalSaleId))
+        && replacement.revisionOfSaleId == correction.originalSaleId && replacement.revisionRequestId == requestId
+        && replacement.revisionId == correction.revisionId
+        && replacement.tenantId == correction.tenantId && replacement.branchId == correction.branchId
+        && replacement.canonicalPaymentId == correction.replacementPaymentId
+        && replacement.transactionOutboxEventId == correction.replacementOutboxEventId
+        && replacement.operatorUid == request.auth.uid
+        && replacement.totalAmount == correction.revisedTotal
+        && replacement.total == correction.revisedTotal
+        && replacement.receiptNumber == correction.replacementReceiptNumber
+        && correction.revisedTotal - correction.originalTotal == correction.monetaryDelta
+        && reversal.originalSaleId == correction.originalSaleId && reversal.revisionId == correction.revisionId
+        && reversal.status == 'COMPLETED' && reversal.amountDelta == -correction.originalTotal
+        && audit.userId == request.auth.uid && audit.objectId == correction.originalSaleId
+        && audit.revisionRequestId == requestId && audit.reason == correction.reason && audit.createdAt == request.time
+        && outbox.status == 'SUPERSEDED' && outbox.revisionRequestId == requestId;
+    }
+
+    function atomicPaymentReversal() {
+      let row = request.resource.data;
+      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(row.atomicRevisionRequestId)).data;
+      let payment = get(/databases/$(database)/documents/pos_payments/$(correction.originalPaymentId)).data;
+      return isFreshAtomicRevision(row.atomicRevisionRequestId)
+        && row.reversalId == correction.paymentReversalId
+        && row.originalPaymentId == correction.originalPaymentId
+        && row.originalSaleId == correction.originalSaleId && row.revisionId == correction.revisionId
+        && row.tenantId == correction.tenantId && row.branchId == correction.branchId
+        && row.requestedBy == request.auth.uid && row.reason == correction.reason
+        && row.source == 'POS_REVISION' && row.engineVersion == 2
+        && row.status == 'COMPLETED' && row.completedAt == request.time
+        && row.amountDelta == -payment.amount && row.settledDelta == -payment.settledAmount
+        && row.outstandingDelta == -payment.outstandingAmount;
+    }
+
+    function atomicOutboxSupersession(eventId) {
+      let next = request.resource.data;
+      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(next.revisionRequestId)).data;
+      return isFreshAtomicRevision(next.revisionRequestId)
+        && eventId == correction.originalOutboxEventId
+        && resource.data.saleId == correction.originalSaleId
+        && resource.data.paymentId == correction.originalPaymentId
+        && resource.data.tenantId == correction.tenantId && resource.data.branchId == correction.branchId
+        && resource.data.status != 'SUPERSEDED'
+        && next.status == 'SUPERSEDED' && next.supersededByEventId == correction.replacementOutboxEventId
+        && next.leaseOwner == null && next.leaseExpiresAt == null
+        && next.diff(resource.data).affectedKeys().hasOnly(['status', 'supersededByEventId', 'revisionRequestId', 'leaseOwner', 'leaseExpiresAt', 'updatedAt']);
+    }
+
+    function canReadPosFinancial() {
+      let row = resource.data;
+      let saleId = row.get('saleId', row.get('receipt_id', ''));
+      let sale = get(/databases/$(database)/documents/sales/$(saleId)).data;
+      return isPOSOperator() && sale.engineVersion == 2
+        && sale.tenantId == getUserData().tenantId && row.tenantId == sale.tenantId
+        && isAssignedToBranch(sale.branchId);
+    }
+
+    function atomicCreditCreate(receivableId) {
+      let row = request.resource.data;
+      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(row.atomicRevisionRequestId)).data;
+      let payment = getAfter(/databases/$(database)/documents/pos_payments/$(correction.replacementPaymentId)).data;
+      return isFreshAtomicRevision(row.atomicRevisionRequestId)
+        && receivableId == correction.replacementSaleId && row.receipt_id == receivableId
+        && row.tenantId == correction.tenantId && row.branch_id == correction.branchId
+        && row.paymentId == correction.replacementPaymentId && row.source == 'POS' && row.engineVersion == 2
+        && payment.paymentMethod == 'institutional_credit' && row.amount_ugx == payment.amount
+        && row.outstanding_ugx == row.amount_ugx && row.status == 'outstanding';
+    }
+
+    function atomicCreditUpdate(receivableId) {
+      let row = request.resource.data;
+      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(row.atomicRevisionRequestId)).data;
+      let payment = get(/databases/$(database)/documents/pos_payments/$(correction.originalPaymentId)).data;
+      return isFreshAtomicRevision(row.atomicRevisionRequestId)
+        && receivableId == correction.originalSaleId && resource.data.receipt_id == receivableId
+        && resource.data.tenantId == correction.tenantId && resource.data.branch_id == correction.branchId
+        && payment.paymentMethod == 'institutional_credit'
+        && resource.data.amount_ugx == payment.amount && resource.data.outstanding_ugx == payment.amount
+        && row.outstanding_ugx == 0 && row.status == 'reversed'
+        && row.revisionId == correction.revisionId
+        && row.reversalId == correction.creditReversal.reversalId
+        && getAfter(/databases/$(database)/documents/pos_credit_reversals/$(row.reversalId)).data.amountDelta == -payment.amount
+        && row.diff(resource.data).affectedKeys().hasOnly(['status', 'outstanding_ugx', 'reversalId', 'revisionId', 'reversedAmount', 'reversedAt', 'reversedBy', 'reversedByName', 'reversalReason', 'updatedAt', 'atomicRevisionRequestId']);
+    }
+
+    function atomicWelfareRecord(recordId, collectionName) {
+      let row = request.resource.data;
+      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(row.atomicRevisionRequestId)).data;
+      let replacement = row.saleId == correction.replacementSaleId;
+      let expectedId = replacement
+        ? (collectionName == 'welfare' ? correction.replacementWelfareId : collectionName == 'branch_expenses' ? correction.replacementWelfareExpenseId : correction.replacementWelfareTransferId)
+        : (collectionName == 'welfare' ? correction.welfareReversal.welfareId : collectionName == 'branch_expenses' ? correction.welfareReversal.expenseId : correction.welfareReversal.transferId);
+      let expectedAmount = replacement ? correction.welfareAmount : correction.welfareReversal.amountDelta;
+      return isFreshAtomicRevision(row.atomicRevisionRequestId)
+        && recordId == expectedId && row.tenantId == correction.tenantId
+        && row.saleId in [correction.originalSaleId, correction.replacementSaleId]
+        && row.get('amountDelta', row.amount) == expectedAmount
+        && expectedAmount != 0
+        && (collectionName == 'cashTransfers' || row.branchId == correction.branchId)
+        && (replacement || (row.revisionId == correction.revisionId && row.status == 'reversed'));
+    }
+
+    function atomicWelfareBalance(beneficiaryId) {
+      let next = request.resource.data;
+      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(next.atomicRevisionRequestId)).data;
+      let original = getAfter(/databases/$(database)/documents/sales/$(correction.originalSaleId)).data;
+      let oldPayment = get(/databases/$(database)/documents/pos_payments/$(correction.originalPaymentId)).data;
+      let oldAmount = correction.originalWelfarePosted ? -oldPayment.components[0].amount : 0;
+      let nextSpent = resource.data.get('welfare_spent', 0) + oldAmount + correction.welfareAmount;
+      return isFreshAtomicRevision(next.atomicRevisionRequestId)
+        && resource.data.tenantId == correction.tenantId
+        && beneficiaryId == original.patientId
+        && (correction.welfareAmount == 0 || beneficiaryId == correction.welfareBeneficiaryId)
+        && next.welfare_spent == nextSpent && next.welfare_spent >= 0
+        && next.welfare_used_ytd == resource.data.get('welfare_used_ytd', 0) + oldAmount + correction.welfareAmount
+        && next.welfare_used_ytd >= 0
+        && next.diff(resource.data).affectedKeys().hasOnly(['welfare_spent', 'welfare_used_ytd', 'updatedAt', 'atomicRevisionRequestId']);
+    }
+
+    function atomicFinancialPostingChain() {
+      let payment = request.resource.data;
+      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(payment.revisionRequestId)).data;
+      return isFreshAtomicRevision(payment.revisionRequestId)
+        && (payment.paymentMethod != 'institutional_credit' ||
+          (getAfter(/databases/$(database)/documents/credit_receivables/$(payment.saleId)).data.amount_ugx == payment.amount
+          && getAfter(/databases/$(database)/documents/credit_receivables/$(payment.saleId)).data.outstanding_ugx == payment.amount))
+        && (payment.paymentMethod != 'staff_welfare' ||
+          (correction.welfareAmount == payment.components[0].amount
+          && payment.components[0].method == 'staff_welfare'
+          && getAfter(/databases/$(database)/documents/welfare/$(correction.replacementWelfareId)).data.amount == correction.welfareAmount
+          && getAfter(/databases/$(database)/documents/branch_expenses/$(correction.replacementWelfareExpenseId)).data.amount == correction.welfareAmount
+          && getAfter(/databases/$(database)/documents/cashTransfers/$(correction.replacementWelfareTransferId)).data.amount == correction.welfareAmount));
+    }
+
+    function atomicFinancialReversal(reversalId, collectionName) {
+      let row = request.resource.data;
+      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(row.atomicRevisionRequestId)).data;
+      let payment = get(/databases/$(database)/documents/pos_payments/$(correction.originalPaymentId)).data;
+      let expectedId = collectionName == 'pos_credit_reversals' ? correction.creditReversal.reversalId
+        : collectionName == 'pos_welfare_reversals' ? correction.welfareReversal.reversalId : correction.quotationReversal.reversalId;
+      return isFreshAtomicRevision(row.atomicRevisionRequestId)
+        && reversalId == expectedId && row.revisionId == correction.revisionId
+        && row.tenantId == correction.tenantId && row.branchId == correction.branchId
+        && row.requestedBy == request.auth.uid && row.reason == correction.reason
+        && row.status == 'COMPLETED' && row.completedAt == request.time
+        && (collectionName == 'pos_quotation_reversals' || row.originalSaleId == correction.originalSaleId)
+        && (collectionName != 'pos_credit_reversals' || row.amountDelta == -payment.amount)
+        && (collectionName != 'pos_welfare_reversals' || row.amountDelta == -payment.components[0].amount);
+    }
+
+    function atomicCreditCommit(correction) {
+      let before = get(/databases/$(database)/documents/credit_receivables/$(correction.originalSaleId)).data;
+      let after = getAfter(/databases/$(database)/documents/credit_receivables/$(correction.originalSaleId)).data;
+      let reversal = getAfter(/databases/$(database)/documents/pos_credit_reversals/$(correction.creditReversal.reversalId)).data;
+      return before.tenantId == correction.tenantId && after.tenantId == correction.tenantId
+        && before.outstanding_ugx == before.amount_ugx
+        && after.outstanding_ugx == 0 && after.status == 'reversed'
+        && reversal.originalSaleId == correction.originalSaleId
+        && reversal.amountDelta == -before.amount_ugx;
+    }
+
+    function atomicWelfareCommit(correction, original) {
+      let beneficiaryCollection = original.get('welfareBeneficiaryIsStaff', false) ? 'staff' : 'clients';
+      let beneficiaryId = original.patientId;
+      let before = get(/databases/$(database)/documents/$(beneficiaryCollection)/$(beneficiaryId)).data;
+      let after = getAfter(/databases/$(database)/documents/$(beneficiaryCollection)/$(beneficiaryId)).data;
+      let payment = get(/databases/$(database)/documents/pos_payments/$(correction.originalPaymentId)).data;
+      let oldAmount = correction.originalWelfarePosted ? payment.components[0].amount : 0;
+      return before.tenantId == correction.tenantId && after.tenantId == correction.tenantId
+        && after.welfare_spent == before.get('welfare_spent', 0) - oldAmount + correction.welfareAmount
+        && after.welfare_used_ytd == before.get('welfare_used_ytd', 0) - oldAmount + correction.welfareAmount
+        && after.welfare_spent >= 0 && after.welfare_used_ytd >= 0
+        && (correction.welfareAmount == 0 || correction.welfareBeneficiaryId == beneficiaryId)
+        && (!correction.originalWelfarePosted ||
+          (correction.welfareReversal.amountDelta == -oldAmount
+          && getAfter(/databases/$(database)/documents/welfare/$(correction.welfareReversal.welfareId)).data.amount == -oldAmount
+          && getAfter(/databases/$(database)/documents/branch_expenses/$(correction.welfareReversal.expenseId)).data.amount == -oldAmount
+          && getAfter(/databases/$(database)/documents/cashTransfers/$(correction.welfareReversal.transferId)).data.amountDelta == -oldAmount
+          && getAfter(/databases/$(database)/documents/pos_welfare_reversals/$(correction.welfareReversal.reversalId)).data.amountDelta == -oldAmount));
+    }
+
     function isMarketing() {
       return isAuthenticated() && (
         hasAnyRole(['Marketing Head', 'Marketing Personnel', 'Marketing Manager', 'admin', 'Admin']) ||
@@ -245,7 +494,7 @@ service cloud.firestore {
         'credit_receivables', 'supplier_payables', 'banking_records',
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
         'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
-        'pos_sale_revision_requests'
+        'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
       ];
     }
 
@@ -467,6 +716,7 @@ service cloud.firestore {
       allow create: if isAuthenticated() && (isAdmin() || isIT() || isHR()) && isTenantMember(request.resource.data.tenantId);
       // HR assigns organisational roles and branch placement. IT may perform account
       // activation/support updates but cannot silently change the HR-assigned role realm.
+      allow update: if atomicWelfareBalance(staffId);
       allow update: if isAuthenticated() && (
         isAdmin() || isHR() ||
         (isITPersonnel() &&
@@ -596,7 +846,9 @@ service cloud.firestore {
     }
 
     match /branch_expenses/{expenseId} {
+      allow get: if isAuthenticated() && ((resource == null && isPOSOperator()) || canReadPosFinancial());
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewBranchFinance();
+      allow create: if atomicWelfareRecord(expenseId, 'branch_expenses');
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
       allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
@@ -610,6 +862,9 @@ service cloud.firestore {
     }
 
     match /credit_receivables/{receivableId} {
+      allow get: if isAuthenticated() && ((resource == null && isPOSOperator()) || canReadPosFinancial());
+      allow create: if atomicCreditCreate(receivableId);
+      allow update: if atomicCreditUpdate(receivableId);
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
       allow write: if isFinance();
     }
@@ -1008,8 +1263,7 @@ service cloud.firestore {
       allow update: if isPOSOperator()
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
-        && isLegacySale(resource.data)
-        && isLegacySale(request.resource.data);
+        && ((isLegacySale(resource.data) && isLegacySale(request.resource.data)) || isAtomicOriginalUpdate(saleId));
       // V2 sales are immutable to every client, including tenant administrators.
       // The Batch 4 Admin SDK worker bypasses client rules for its controlled
       // downstream-status fields. Reversal requires a separate durable event.
@@ -1067,7 +1321,9 @@ service cloud.firestore {
         && isAssignedToBranch(request.resource.data.branchId)
         && hasValidPaymentIdentity(paymentId)
         && hasValidPaymentSettlement()
-        && paymentMatchesSale(paymentId);
+        && paymentMatchesSale(paymentId)
+        && (!request.resource.data.get('isRevisionReplacement', false) ||
+          !('executionMode' in getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(request.resource.data.revisionRequestId)).data) || atomicFinancialPostingChain());
       allow update, delete: if false;
     }
 
@@ -1085,7 +1341,7 @@ service cloud.firestore {
           && outbox.saleId is string
           && outbox.paymentId is string
           && outbox.receiptNumber is string
-          && outbox.status == 'PENDING'
+          && (outbox.status == 'PENDING' || (outbox.status == 'PROCESSED' && isFreshAtomicRevision(outbox.revisionRequestId)))
           && outbox.attemptCount == 0
           && outbox.payload.saleId == outbox.saleId
           && outbox.payload.paymentId == outbox.paymentId;
@@ -1122,7 +1378,8 @@ service cloud.firestore {
         && hasValidOutboxEnvelope(eventId)
         && outboxMatchesSale(eventId)
         && outboxMatchesPayment();
-      allow update, delete: if false;
+      allow update: if atomicOutboxSupersession(eventId);
+      allow delete: if false;
     }
 
     match /pos_checkout_attempts/{attemptDocumentId} {
@@ -1167,7 +1424,7 @@ service cloud.firestore {
           && outbox.paymentId == attempt.paymentId
           && outbox.tenantId == attempt.tenantId
           && outbox.branchId == attempt.branchId
-          && outbox.status == 'PENDING';
+          && (outbox.status == 'PENDING' || (outbox.status == 'PROCESSED' && isFreshAtomicRevision(attempt.revisionRequestId)));
       }
 
       allow get: if isPOSOperator() && (resource == null || isTenantMember(resource.data.tenantId));
@@ -1258,9 +1515,51 @@ service cloud.firestore {
       allow create: if isPOSOperator()
         && isTenantMember(request.resource.data.tenantId)
         && isAssignedToBranch(request.resource.data.branchId)
-        && hasValidRevisionRequestEnvelope();
+        && (hasValidRevisionRequestEnvelope() || hasAtomicCorrectionChain(requestId));
       // Revision lifecycle transitions are owned exclusively by the Admin SDK workers.
       allow update, delete: if false;
+    }
+
+    match /pos_payment_reversals/{reversalId} {
+      allow get: if isPOSOperator() && (resource == null || resource.data.tenantId == getUserData().tenantId);
+      allow create: if request.resource.data.reversalId == reversalId && atomicPaymentReversal();
+      allow update, delete: if false;
+    }
+
+    match /welfare/{recordId} {
+      allow create: if atomicWelfareRecord(recordId, 'welfare');
+    }
+    match /cashTransfers/{recordId} {
+      allow create: if atomicWelfareRecord(recordId, 'cashTransfers');
+    }
+    match /clients/{clientId} {
+      allow update: if atomicWelfareBalance(clientId);
+    }
+    match /{collectionName}/{reversalId} {
+      allow get: if collectionName in ['pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals']
+        && isPOSOperator() && (resource == null || resource.data.tenantId == getUserData().tenantId);
+      allow create: if collectionName in ['pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals']
+        && atomicFinancialReversal(reversalId, collectionName);
+    }
+
+    match /audit_logs/{auditId} {
+      allow read: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId;
+      allow create: if isAuthenticated() && request.resource.data.tenantId == getUserData().tenantId
+        && (!('revisionRequestId' in request.resource.data) ||
+          (isFreshAtomicRevision(request.resource.data.revisionRequestId)
+          && request.resource.data.userId == request.auth.uid));
+      allow update: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId
+        && !('revisionRequestId' in resource.data) && !('revisionRequestId' in request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId && !('revisionRequestId' in resource.data);
+    }
+    match /sale_revisions/{revisionId} {
+      allow get: if isAuthenticated() && (resource == null || resource.data.tenantId == getUserData().tenantId);
+      allow list: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId;
+      allow create: if isAuthenticated() && request.resource.data.tenantId == getUserData().tenantId
+        && (!('revisionRequestId' in request.resource.data) || isFreshAtomicRevision(request.resource.data.revisionRequestId));
+      allow update: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId
+        && !('revisionRequestId' in resource.data) && !('revisionRequestId' in request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId && !('revisionRequestId' in resource.data);
     }
 
     match /welfare_records/{recordId} {
@@ -1317,11 +1616,11 @@ service cloud.firestore {
 
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
-      allow get: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if collectionName != 'opening_stock_sessions' && collectionName != 'transfer_invoices' && collectionName != 'transfer_invoice_lines' && collectionName != 'product_batches' && collectionName != 'products' && collectionName != 'sales' && collectionName != 'pos_checkout_attempts' && collectionName != 'pos_payments' && collectionName != 'pos_transaction_outbox' && collectionName != 'role_realms_of_operation' && collectionName != 'hr_roles' && collectionName != 'hiring_applications' && collectionName != 'practical_assessments' && collectionName != 'disciplinary_incidents' && collectionName != 'appraisals' && !isProtectedFinanceCollection(collectionName) && isAdmin() && isTenantMember(resource.data.tenantId);
+      allow get: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals']) && !isProtectedFinanceCollection(collectionName) && isAdmin() && isTenantMember(resource.data.tenantId);
     }
   }
 }

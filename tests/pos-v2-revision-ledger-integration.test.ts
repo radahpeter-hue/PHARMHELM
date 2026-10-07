@@ -20,7 +20,7 @@ test('POS V2 table actions use the revision action while legacy edit controls re
   const tableSection = salesSource.slice(tableStart, detailStart);
   assert.match(tableSection, /sale\.engineVersion === 2 \? \(/);
   assert.match(tableSection, /<PosV2ReceiptRevisionAction/);
-  assert.match(tableSection, /onRevise=\{onReviseV2\}/);
+  assert.match(tableSection, /onRevise=\{\(corrected, receiptWindow\) => \{ setSelectedSale\(corrected\); onReviseV2\(corrected, receiptWindow\); \}\}/);
   assert.match(tableSection, /compact/);
   assert.match(tableSection, /onClick=\{\(\) => onEdit\(sale\)\}/);
   assert.match(tableSection, /onClick=\{\(\) => onEditInPOS\(sale\)\}/);
@@ -54,7 +54,7 @@ test('legacy mutation paths still fail closed for POS V2 receipts', () => {
 
 test('receipt revision action is permission-aware and wired only to the dedicated callback', () => {
   assert.match(salesSource, /canOperatePos=\{canProcessSales\}/);
-  assert.match(salesSource, /onReviseV2=\{\(sale\) => \{/);
+  assert.match(salesSource, /onReviseV2=\{\(sale, receiptWindow\) => \{/);
   assert.doesNotMatch(
     salesSource,
     /onReviseV2=\{(?:onEdit|onEditInPOS)\}/

@@ -1,3 +1,4 @@
+import { isActiveSale } from '../../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
@@ -61,7 +62,7 @@ export const TaxEngine: React.FC = () => {
 
       // 2. Fetch Sales (for output VAT)
       const salesSnap = await getDocs(query(collection(db, 'sales'), where('tenantId', '==', profile.tenantId)));
-      setSales(salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+      setSales(salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })).filter(isActiveSale));
 
       // 3. Fetch GRNs/Invoices (for input VAT and WHT)
       const grnSnap = await getDocs(query(collection(db, 'grn_records'), where('tenantId', '==', profile.tenantId)));

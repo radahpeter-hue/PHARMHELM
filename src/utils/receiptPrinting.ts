@@ -40,6 +40,8 @@ export const buildReceiptRevisionPlainText = (sale: Sale, operatorName: string):
   if (presentation.revisionId) lines.push(`Revision reference: ${presentation.revisionId}`);
   if (presentation.revisionRequestId) lines.push(`Request reference: ${presentation.revisionRequestId}`);
   if (presentation.editorName) lines.push(`Revision editor: ${presentation.editorName}`);
+  if (sale.originalSellerId) lines.push(`Original seller reference: ${sale.originalSellerId}`);
+  if (sale.revisionRecordedAt) lines.push(`Edited at: ${new Date(sale.revisionRecordedAt).toLocaleString('en-GB', { timeZone: 'Africa/Kampala' })}`);
   if (presentation.reason) lines.push(`Correction reason: ${presentation.reason}`);
   return lines.join('\n');
 };
@@ -69,6 +71,8 @@ export const printThermalReceipt = (
       ${revisionPresentation.linkedReceiptNumber && revisionPresentation.linkedReceiptLabel ? `<div class="row"><span>${escapeHtml(revisionPresentation.linkedReceiptLabel)}</span><span class="strong">${escapeHtml(revisionPresentation.linkedReceiptNumber)}</span></div>` : ''}
       ${revisionPresentation.revisionId ? `<div class="row"><span>Revision Ref</span><span>${escapeHtml(revisionPresentation.revisionId)}</span></div>` : ''}
       ${revisionPresentation.revisionRequestId ? `<div class="row"><span>Request Ref</span><span>${escapeHtml(revisionPresentation.revisionRequestId)}</span></div>` : ''}
+      ${sale.originalSellerId ? `<div class="row"><span>Original Seller Ref</span><span>${escapeHtml(sale.originalSellerId)}</span></div>` : ''}
+      ${sale.revisionRecordedAt ? `<div class="row"><span>Edited At</span><span>${escapeHtml(new Date(sale.revisionRecordedAt).toLocaleString('en-GB', { timeZone: 'Africa/Kampala' }))}</span></div>` : ''}
       ${revisionPresentation.editorName ? `<div class="row"><span>Revision Editor</span><span>${escapeHtml(revisionPresentation.editorName)}</span></div>` : ''}
       ${revisionPresentation.reason ? `<div class="revision-reason"><span class="strong">Correction Reason:</span> ${escapeHtml(revisionPresentation.reason)}</div>` : ''}
       <div class="rule"></div>` : '';

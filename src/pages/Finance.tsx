@@ -1,3 +1,4 @@
+import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, 
@@ -141,7 +142,7 @@ const BranchFinance: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId && activeBranchId) {
       const unsubSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data: any[]) => {
-        setSales(data.filter(s => s.branchId === activeBranchId));
+        setSales(data.filter(isActiveSale).filter(s => s.branchId === activeBranchId));
       });
       const unsubExpenses = firestoreService.subscribeToCollection('branch_expenses', profile.tenantId, (data: any[]) => {
         setExpenses(data.filter(e => e.branch_id === activeBranchId));
@@ -265,7 +266,7 @@ const EODReconciliationTab: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId) {
       const unsubSales = firestoreService.subscribeToCollection<Sale>('sales', profile.tenantId, (data) => {
-        setSales(data);
+        setSales(data.filter(isActiveSale));
       });
       return () => unsubSales();
     }
@@ -921,7 +922,7 @@ const BranchCreditView: React.FC = () => {
 
           return s.branchId === activeBranchId && isCreditOrInsurance;
         });
-        setSales(filtered);
+        setSales(filtered.filter(isActiveSale));
       });
 
       // Settlement status is authoritative in credit_receivables, not the immutable POS sale.
@@ -2054,7 +2055,7 @@ const OldProfitabilityLedger: React.FC = () => {
 
   useEffect(() => {
     if (profile?.tenantId) {
-      const unsubSales = firestoreService.subscribeToCollection('sales', profile.tenantId, setSales);
+      const unsubSales = firestoreService.subscribeToCollection('sales', profile.tenantId, data => setSales(data.filter(isActiveSale)));
       const unsubBranch = firestoreService.subscribeToCollection<BranchExpense>('branch_expenses', profile.tenantId, setBranchExpenses);
       const unsubMgmt = firestoreService.subscribeToCollection<ManagementExpense>('management_expenses', profile.tenantId, setMgmtExpenses);
       const unsubQuarantine = firestoreService.subscribeToCollection('quarantine_logs', profile.tenantId, setQuarantineLogs);
@@ -2284,7 +2285,7 @@ const OldTaxManagement: React.FC<{ settings: SystemSettings | null }> = ({ setti
   useEffect(() => {
     if (profile?.tenantId) {
       const unsubSales = firestoreService.subscribeToCollection<Sale>('sales', profile.tenantId, (data) => {
-        setSales(data.filter(s => s.status === 'completed' || s.status === 'active'));
+        setSales(data.filter(isActiveSale).filter(s => s.status === 'completed' || s.status === 'active'));
       });
       const unsubGrns = firestoreService.subscribeToCollection<GRNRecord>('grn_records', profile.tenantId, setGrns);
       const unsubPayroll = firestoreService.subscribeToCollection<any>('payroll', profile.tenantId, setPayroll);
@@ -4386,7 +4387,7 @@ const LegacyCreditLedgerPanel: React.FC = () => {
       const unsubSales = firestoreService.subscribeToCollection<Sale>(
         'sales',
         profile.tenantId,
-        setSales
+        data => setSales(data.filter(isActiveSale))
       );
       const unsubInvoices = firestoreService.subscribeToCollection<any>(
         'procurement_invoices',
@@ -4410,7 +4411,8 @@ const LegacyCreditLedgerPanel: React.FC = () => {
 
   // Dynamically map Credit Sales from POS (Sales with method 'institutional_credit' or 'insurance')
   const dynamicReceivables: CreditReceivable[] = branchFilteredSales
-    .filter(s => s.paymentMethod === 'institutional_credit' || s.paymentMethod === 'insurance')
+    .filter(s => (s.paymentMethod === 'institutional_credit' || s.paymentMethod === 'insurance')
+      && !branchFilteredManualRecs.some((record: any) => record.id === s.id || record.receipt_id === s.id))
     .map(s => ({
       id: 'pos_' + s.id,
       tenantId: s.tenantId,

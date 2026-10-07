@@ -45,8 +45,8 @@ test('eligible ledger action opens the dedicated revision editor and review flow
   assert.match(source, /onConfirm=\{submitReviewedDraft\}/);
 });
 
-test('review confirmation uses only the dedicated immutable revision submission repository', () => {
-  assert.match(source, /submitPosV2RevisionRequest/);
+test('review confirmation commits an immediate atomic correction and monitors its immutable evidence', () => {
+  assert.match(source, /commitPosV2ReceiptCorrection/);
   assert.match(source, /watchPosV2RevisionRequest/);
   assert.match(source, /PosV2ReceiptRevisionProgress/);
   assert.match(source, /profile\.uid/);

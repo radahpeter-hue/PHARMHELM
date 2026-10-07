@@ -2455,8 +2455,9 @@ const Sales: React.FC = () => {
           staff={staff}
           systemSettings={systemSettings}
           canOperatePos={canProcessSales}
-          onReviseV2={(sale) => {
-            toast.info(`Receipt ${sale.receiptNumber} is eligible for safe POS V2 revision. The dedicated revision editor is the next Stage 7 checkpoint.`);
+          onReviseV2={(sale, receiptWindow) => {
+            const opened = printThermalReceipt(sale, { companyName: brandCompanyName, logoUrl: brandLogoUrl, address: activeBranch?.address, phone: activeBranch?.phone, ndaRegistration: brandNdaReg, footer: brandReceiptFooter }, resolveSaleOperatorName(sale, staff), false, receiptWindow?.closed ? null : receiptWindow);
+            if (!opened) toast.warning('Receipt corrected. Open it in the ledger to print; the browser blocked the print window.');
           }}
           onVoid={async (saleId, reason) => {
             const sale = sales.find(s => s.id === saleId);
@@ -2521,6 +2522,7 @@ const Sales: React.FC = () => {
           branchId={activeBranchId}
           actorUid={profile.uid}
           staff={staff}
+          onOpenReceipt={saleId => { setSelectedA4ReceiptId(saleId); setShowA4InvoiceModal(true); }}
         />
       )}
 
@@ -3079,7 +3081,7 @@ interface ReceiptLedgerProps {
   onVoid: (saleId: string, reason: string) => Promise<void>;
   onEdit: (sale: Sale) => void;
   onEditInPOS?: (sale: Sale) => void;
-  onReviseV2: (sale: Sale) => void;
+  onReviseV2: (sale: Sale, receiptWindow?: Window | null) => void;
   canOperatePos: boolean;
   systemSettings: SystemSettings | null;
   onPrintA4: (receiptId: string) => void;
@@ -3270,7 +3272,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                         <PosV2ReceiptRevisionAction
                           sale={sale}
                           canOperatePos={canOperatePos}
-                          onRevise={onReviseV2}
+                          onRevise={(corrected, receiptWindow) => { setSelectedSale(corrected); onReviseV2(corrected, receiptWindow); }}
                           compact
                         />
                       ) : (
@@ -3509,9 +3511,9 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                 <PosV2ReceiptRevisionAction
                   sale={selectedSale}
                   canOperatePos={canOperatePos}
-                  onRevise={(sale) => {
-                    onReviseV2(sale);
-                    setSelectedSale(null);
+                  onRevise={(sale, receiptWindow) => {
+                    onReviseV2(sale, receiptWindow);
+                    setSelectedSale(sale);
                   }}
                 />
               ) : onEditInPOS ? (

@@ -596,6 +596,8 @@ export interface Sale {
   revisionReason?: string;
   revisionRequestedAt?: unknown;
   revisionCompletedAt?: unknown;
+  revisionRecordedAt?: string;
+  originalSellerId?: string;
   pendingReplacementSaleId?: string;
   supersededBySaleId?: string;
   supersededByReceiptNumber?: string;
@@ -1598,6 +1600,7 @@ export interface FridgeTempLogEntry {
 }
 
 export interface BillableService {
+  tenantId?: string;
   id: string;
   name: string;
   price: number;

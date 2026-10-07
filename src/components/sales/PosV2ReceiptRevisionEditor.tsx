@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Minus, Plus, RotateCcw, Trash2, X } from 'lucide-react';
-import type { Product, ProductBatch, Sale, SaleItem, SystemSettings } from '../../types';
+import type { BillableService, Product, ProductBatch, Sale, SaleItem, SystemSettings } from '../../types';
+import { updatePosV2RevisionDraftLine } from '../../services/pos-v2/posSaleRevisionV2DraftLines';
+import { addPosV2RevisionService } from '../../services/pos-v2/posSaleRevisionV2Services';
 import { assertRevisionReason } from '../../services/pos-v2/posSaleRevisionV2Policy';
 import { PosV2ReceiptRevisionCatalogPicker } from './PosV2ReceiptRevisionCatalogPicker';
 import { PosV2RevisionReferenceSelector } from './PosV2RevisionReferenceSelector';
@@ -38,6 +40,8 @@ interface PosV2ReceiptRevisionEditorProps {
   onCancel: () => void;
   onContinue: (draft: PosV2ReceiptRevisionDraft) => void;
   catalogProducts?: Product[];
+  catalogServices?: BillableService[];
+  servicesReady?: boolean;
   catalogBatches?: ProductBatch[];
   catalogSystemSettings?: SystemSettings | null;
   catalogReady?: boolean;
@@ -74,7 +78,7 @@ export function calculatePosV2RevisionDraftTotal(items: SaleItem[], discountPerc
 }
 
 export function buildInitialPosV2RevisionDraft(sale: Sale): PosV2ReceiptRevisionDraft {
-  const items = (sale.items || []).map(item => ({ ...item }));
+  const items = (sale.items || []).map(item => updatePosV2RevisionDraftLine(item));
   const discountPercentage = numberValue(sale.discountPercentage, 0);
   return {
     items,
@@ -128,6 +132,8 @@ export const PosV2ReceiptRevisionEditor: React.FC<PosV2ReceiptRevisionEditorProp
   onCancel,
   onContinue,
   catalogProducts = [],
+  catalogServices = [],
+  servicesReady = false,
   catalogBatches = [],
   catalogSystemSettings = null,
   catalogReady = false,
@@ -138,6 +144,8 @@ export const PosV2ReceiptRevisionEditor: React.FC<PosV2ReceiptRevisionEditorProp
 }) => {
   const [draft, setDraft] = useState<PosV2ReceiptRevisionDraft>(() => buildInitialPosV2RevisionDraft(sale));
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [serviceSearch, setServiceSearch] = useState('');
+  const [isServicePickerOpen, setIsServicePickerOpen] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
 
   const updateItems = (items: SaleItem[]) => {
@@ -151,7 +159,7 @@ export const PosV2ReceiptRevisionEditor: React.FC<PosV2ReceiptRevisionEditorProp
 
   const updateQuantity = (index: number, quantity: number) => {
     const next = draft.items.map((item, itemIndex) => itemIndex === index
-      ? { ...item, quantity: Math.max(1, Math.floor(numberValue(quantity, 1))) }
+      ? updatePosV2RevisionDraftLine(item, Math.max(1, Math.floor(numberValue(quantity, 1))))
       : item);
     updateItems(next);
   };
@@ -159,7 +167,7 @@ export const PosV2ReceiptRevisionEditor: React.FC<PosV2ReceiptRevisionEditorProp
   const updateUnitPrice = (index: number, unitPrice: number) => {
     const nextPrice = Math.max(0, numberValue(unitPrice, 0));
     const next = draft.items.map((item, itemIndex) => itemIndex === index
-      ? { ...item, unitPrice: nextPrice, actualUnitPrice: nextPrice }
+      ? updatePosV2RevisionDraftLine(item, item.quantity, nextPrice)
       : item);
     updateItems(next);
   };
@@ -242,6 +250,26 @@ export const PosV2ReceiptRevisionEditor: React.FC<PosV2ReceiptRevisionEditorProp
                 </button>
               </div>
 
+              <button type="button" disabled={!servicesReady} onClick={() => setIsServicePickerOpen(value => !value)}
+                className="px-3 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white disabled:bg-zinc-100 disabled:text-zinc-500">
+                Add Service
+              </button>
+              {isServicePickerOpen && <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 space-y-3">
+                <label className="block text-xs font-bold text-zinc-800" htmlFor="revision-service-search">Choose an existing POS service</label>
+                <input id="revision-service-search" value={serviceSearch} onChange={event => setServiceSearch(event.target.value)}
+                  placeholder="Search services" className="w-full rounded-xl border border-zinc-300 bg-white p-2 text-sm text-zinc-900" />
+                <select aria-label="POS service" value="" onChange={event => {
+                  const service = catalogServices.find(row => row.id === event.target.value);
+                  if (!service) return;
+                  try { updateItems(addPosV2RevisionService(draft.items, service, catalogTenantId)); setIsServicePickerOpen(false); }
+                  catch (error) { setValidationError(error instanceof Error ? error.message : 'Unable to add service.'); }
+                }} className="w-full rounded-xl border border-zinc-300 bg-white p-2 text-sm text-zinc-900">
+                  <option value="">Select a service</option>
+                  {catalogServices.filter(service => service.tenantId === catalogTenantId && service.name.toLowerCase().includes(serviceSearch.trim().toLowerCase()))
+                    .map(service => <option key={service.id} value={service.id}>{service.name} · UGX {Number(service.defaultFee ?? (service as any).price ?? 0).toLocaleString()}</option>)}
+                </select>
+                {catalogServices.length === 0 && <p className="text-xs text-zinc-700">No services have been created in POS.</p>}
+              </div>}
               <div className="space-y-3">
                 {draft.items.map((item, index) => (
                   <div key={lineKey(item, index)} className="border border-zinc-200 rounded-2xl p-4 grid grid-cols-12 gap-3 items-center">
@@ -378,7 +406,7 @@ export const PosV2ReceiptRevisionEditor: React.FC<PosV2ReceiptRevisionEditorProp
             <p className="text-[10px] text-zinc-500 max-w-xl">No stock, payment, Finance or receipt record is changed at this step. Continue opens the revision review checkpoint only.</p>
             <div className="flex gap-2 justify-end">
               <button type="button" onClick={onCancel} className="px-4 py-2.5 rounded-xl border border-zinc-200 bg-white text-sm font-bold text-zinc-700">Cancel</button>
-              <button type="button" onClick={continueToReview} className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-black">Continue to Review</button>
+              <button type="button" onClick={continueToReview} className="px-5 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-sm font-black">Continue to Review</button>
             </div>
           </div>
         </div>

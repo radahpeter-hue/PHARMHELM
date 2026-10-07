@@ -108,7 +108,7 @@ export const PosV2ReceiptRevisionProgress: React.FC<PosV2ReceiptRevisionProgress
 
           <div className="flex justify-end gap-2">
             {showRetry ? (
-              <button type="button" onClick={onRetryReplacement} className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-black flex items-center gap-2">
+              <button type="button" onClick={onRetryReplacement} className="px-4 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-sm font-black flex items-center gap-2">
                 <RefreshCcw className="w-4 h-4" /> Retry corrected checkout
               </button>
             ) : null}

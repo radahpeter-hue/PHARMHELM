@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createPosV2ConsumerPosters } from './pos-v2-consumer-posting.mjs';
 import { initializeApp, applicationDefault, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import {
@@ -69,7 +70,7 @@ async function claimEvent(ref) {
     if (!snap.exists) return null;
     const event = { id: snap.id, ...snap.data() };
     if (event.eventType !== 'POS_SALE_COMMITTED' || event.engineVersion !== 2) return null;
-    if (event.status === 'PROCESSED') return null;
+    if (event.status === 'PROCESSED' || event.status === 'SUPERSEDED') return null;
     if (event.status === 'PROCESSING' && !isLeaseExpired(event.leaseExpiresAt)) return null;
 
     const leaseExpiresAt = Timestamp.fromMillis(Date.now() + LEASE_SECONDS * 1000);
@@ -132,6 +133,7 @@ async function markConsumerResult(ref, name, error = null) {
     const snap = await tx.get(ref);
     if (!snap.exists) return;
     const event = snap.data();
+    if (event.status === 'SUPERSEDED' || event.leaseOwner !== WORKER_ID) return;
     const previous = event.consumers?.[name] || {};
     const failed = Boolean(error);
     const terminal = failed && Number(previous.attemptCount || 0) >= MAX_CONSUMER_ATTEMPTS;
@@ -177,312 +179,7 @@ async function releaseEvent(ref) {
   });
 }
 
-function isBatchUnexpired(expiryDate, now = new Date()) {
-  if (!expiryDate) return true;
-  const raw = String(expiryDate).trim();
-  if (!raw) return true;
-  let expiry;
-  if (/^\d{4}-\d{2}$/.test(raw)) {
-    const [year, month] = raw.split('-').map(Number);
-    expiry = new Date(year, month, 0, 23, 59, 59, 999);
-  } else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    const [year, month, day] = raw.split('-').map(Number);
-    expiry = new Date(year, month - 1, day, 23, 59, 59, 999);
-  } else {
-    expiry = new Date(raw);
-    if (Number.isNaN(expiry.getTime())) return false;
-  }
-  return expiry.getTime() >= now.getTime();
-}
-
-function productMultiplier(product) {
-  const unit = String(product?.unitOfSell || product?.unit || '').toLowerCase();
-  if (unit === 'pack') return Number(product?.unitsPerPack || 1);
-  if (unit === 'strip') return Number(product?.unitsPerStrip || 1);
-  return 1;
-}
-
-async function postConsumption(sale) {
-  const groups = groupedSaleProducts(sale);
-  for (const [productId, items] of groups) {
-    const batchSnapshot = await db.collection('product_batches').where('productId', '==', productId).get();
-    const batchRefs = batchSnapshot.docs
-      .filter(snap => snap.data().tenantId === sale.tenantId && snap.data().branchId === sale.branchId)
-      .map(snap => snap.ref);
-
-    await db.runTransaction(async tx => {
-      const eventId = movementEventId({ saleId: sale.id, productId });
-      const eventRef = db.collection('inventoryMovementEvents').doc(eventId);
-      const eventSnap = await tx.get(eventRef);
-      if (eventSnap.exists) return;
-
-      const productRef = db.collection('products').doc(productId);
-      const productSnap = await tx.get(productRef);
-      const product = productSnap.exists ? productSnap.data() : null;
-
-      let baseUnits = 0;
-      for (const item of items) {
-        const snapshotted = snapshotBaseQuantityForItem(item);
-        if (snapshotted !== null) baseUnits += snapshotted;
-        else baseUnits += Number(item.quantity || 0) * productMultiplier(product);
-      }
-      if (!(baseUnits >= 0) || !Number.isFinite(baseUnits)) throw new Error(`Invalid base-unit consumption for ${productId}.`);
-
-      let currentUsableStock = 0;
-      for (const batchRef of batchRefs) {
-        const batchSnap = await tx.get(batchRef);
-        if (!batchSnap.exists) continue;
-        const batch = batchSnap.data();
-        if (batch.batch_status === 'active' && isBatchUnexpired(batch.expiryDate)) currentUsableStock += Number(batch.quantity || 0);
-      }
-
-      const effectiveAt = new Date(sale.timestamp || sale.createdAt?.toDate?.() || Date.now());
-      const dateKey = dateKeyForTimezone(effectiveAt);
-      const summaryId = consumptionSummaryId(sale.tenantId, sale.branchId, productId, dateKey);
-      const summaryRef = db.collection('branchConsumptionDaily').doc(summaryId);
-      const summarySnap = await tx.get(summaryRef);
-      const closingUsableStock = currentUsableStock;
-      const openingUsableStock = currentUsableStock + baseUnits;
-      const exceptional = Boolean(sale.isExceptionalConsumption);
-
-      let summary;
-      if (summarySnap.exists) {
-        summary = { ...summarySnap.data() };
-        summary.closingUsableStock = closingUsableStock;
-        summary.aggregationVersion = Number(summary.aggregationVersion || 0) + 1;
-        summary.transactionCount = Number(summary.transactionCount || 0) + 1;
-      } else {
-        summary = {
-          tenantId: sale.tenantId,
-          branchId: sale.branchId,
-          productId,
-          dateKey,
-          baseUnitId: productId,
-          baseUnitName: product?.baseUnit || product?.unit || 'unit',
-          openingUsableStock,
-          closingUsableStock,
-          ordinaryUnitsSold: 0,
-          ordinaryUnitsDispensed: 0,
-          unitsReturnedToStock: 0,
-          unitsTransferredIn: 0,
-          unitsTransferredOut: 0,
-          unitsWrittenOff: 0,
-          positiveAdjustments: 0,
-          negativeAdjustments: 0,
-          exceptionalUnits: 0,
-          validConsumptionUnits: 0,
-          transactionCount: 1,
-          consumptionTransactionCount: 0,
-          operatingMinutes: null,
-          inStockMinutes: null,
-          stockoutMinutes: null,
-          wasStockedAllDay: currentUsableStock > 0,
-          firstStockoutAt: currentUsableStock === 0 ? Timestamp.fromDate(effectiveAt) : null,
-          lastRestockedAt: null,
-          createdAt: FieldValue.serverTimestamp(),
-          aggregationVersion: 1
-        };
-      }
-
-      if (exceptional) summary.exceptionalUnits = Number(summary.exceptionalUnits || 0) + baseUnits;
-      else {
-        summary.ordinaryUnitsSold = Number(summary.ordinaryUnitsSold || 0) + baseUnits;
-        summary.validConsumptionUnits = Number(summary.validConsumptionUnits || 0) + baseUnits;
-        summary.consumptionTransactionCount = Number(summary.consumptionTransactionCount || 0) + 1;
-      }
-      summary.updatedAt = FieldValue.serverTimestamp();
-
-      tx.set(eventRef, {
-        tenantId: sale.tenantId,
-        branchId: sale.branchId,
-        productId,
-        eventId,
-        eventType: 'SALE',
-        quantityDeltaBaseUnits: -baseUnits,
-        consumptionDeltaBaseUnits: baseUnits,
-        isExceptional: exceptional,
-        exceptionalReason: exceptional ? (sale.exceptionalConsumptionReason || 'Exceptional sale') : null,
-        sourceCollection: 'sales',
-        sourceDocumentId: sale.id,
-        sourceLineId: productId,
-        reversalOfEventId: null,
-        effectiveAt: Timestamp.fromDate(effectiveAt),
-        dateKey,
-        createdBy: 'pos-v2-batch4-worker',
-        createdAt: FieldValue.serverTimestamp()
-      });
-      tx.set(summaryRef, summary);
-    });
-  }
-}
-
-async function postWelfare(sale, payment) {
-  const desiredAmount = paymentComponentAmount(payment, 'staff_welfare');
-  if (desiredAmount <= 0) return;
-  const ids = welfarePostingIds(sale.tenantId, sale.id);
-  const saleRef = db.collection('sales').doc(sale.id);
-  const welfareRef = db.collection('welfare').doc(ids.welfareId);
-  const expenseRef = db.collection('branch_expenses').doc(ids.expenseId);
-  const transferRef = db.collection('cashTransfers').doc(ids.transferId);
-
-  await db.runTransaction(async tx => {
-    const [saleSnap, welfareSnap] = await Promise.all([tx.get(saleRef), tx.get(welfareRef)]);
-    if (!saleSnap.exists) throw new Error('The completed sale could not be found for welfare posting.');
-    const liveSale = saleSnap.data();
-    if (liveSale.tenantId !== sale.tenantId) throw new Error('Sale tenant mismatch during welfare posting.');
-    const previous = welfareSnap.exists ? welfareSnap.data() : null;
-    if (previous && previous.tenantId !== sale.tenantId) throw new Error('Welfare posting ID collision across tenants.');
-
-    const beneficiaryId = String(liveSale.patientId || '').trim();
-    const isStaff = Boolean(liveSale.welfareBeneficiaryIsStaff);
-    if (!beneficiaryId) throw new Error('Staff welfare payment has no linked beneficiary.');
-    const beneficiaryRef = db.collection(isStaff ? 'staff' : 'clients').doc(beneficiaryId);
-    const beneficiarySnap = await tx.get(beneficiaryRef);
-    if (!beneficiarySnap.exists) throw new Error('Welfare beneficiary no longer exists.');
-    const beneficiary = beneficiarySnap.data();
-    if (beneficiary.tenantId !== sale.tenantId) throw new Error('Welfare beneficiary tenant mismatch.');
-
-    const previousAmount = Math.max(0, numberValue(previous?.amount));
-    const previousBeneficiaryId = String(previous?.staffId || '').trim();
-    const previousIsStaff = Boolean(previous?.isStaff);
-    if (previousAmount > 0 && (previousBeneficiaryId !== beneficiaryId || previousIsStaff !== isStaff)) {
-      throw new Error('Existing welfare posting conflicts with the canonical POS beneficiary. Manual review required.');
-    }
-    const delta = desiredAmount - previousAmount;
-    const nextSpent = numberValue(beneficiary.welfare_spent) + delta;
-    const nextYtd = numberValue(beneficiary.welfare_used_ytd) + delta;
-    if (nextSpent < 0 || nextYtd < 0) throw new Error('Welfare posting would create a negative welfare balance.');
-    if (delta !== 0) tx.update(beneficiaryRef, { welfare_spent: nextSpent, welfare_used_ytd: nextYtd, updatedAt: FieldValue.serverTimestamp() });
-
-    const date = new Date().toISOString();
-    tx.set(welfareRef, {
-      tenantId: sale.tenantId,
-      saleId: sale.id,
-      staffId: beneficiaryId,
-      isStaff,
-      type: 'medical',
-      amount: desiredAmount,
-      date,
-      status: 'approved',
-      branchId: sale.branchId,
-      receiptNumber: sale.receiptNumber || null,
-      notes: `POS Purchase: ${sale.receiptNumber || sale.id}`,
-      processedBy: WORKER_ID,
-      updatedAt: FieldValue.serverTimestamp(),
-      createdAt: previous?.createdAt || FieldValue.serverTimestamp()
-    }, { merge: true });
-    tx.set(expenseRef, {
-      tenantId: sale.tenantId,
-      saleId: sale.id,
-      branchId: sale.branchId,
-      branch_id: sale.branchId,
-      category: 'Staff Welfare',
-      amount: desiredAmount,
-      date,
-      expense_date: date.slice(0, 10),
-      description: `Staff Welfare Benefit - Receipt ${sale.receiptNumber || sale.id}`,
-      payment_method: 'System Adjustment',
-      status: 'approved',
-      logged_by: 'POS V2 durable worker',
-      updatedAt: FieldValue.serverTimestamp()
-    }, { merge: true });
-    tx.set(transferRef, {
-      tenantId: sale.tenantId,
-      saleId: sale.id,
-      fromPortfolio: 'welfare',
-      toPortfolio: 'banked',
-      amount: desiredAmount,
-      status: 'posted',
-      processedBy: 'POS V2 durable worker',
-      notes: `POS Purchase Staff Welfare: ${sale.receiptNumber || sale.id}`,
-      updatedAt: FieldValue.serverTimestamp()
-    }, { merge: true });
-    tx.update(saleRef, {
-      welfarePostingStatus: 'posted',
-      welfarePostingId: ids.welfareId,
-      welfarePostingAmount: desiredAmount,
-      welfarePostingUpdatedAt: FieldValue.serverTimestamp()
-    });
-  });
-}
-
-async function postInstitutionalCredit(sale, payment) {
-  const amount = paymentComponentAmount(payment, 'institutional_credit');
-  if (amount <= 0) return;
-  const ref = db.collection('credit_receivables').doc(sale.id);
-  await db.runTransaction(async tx => {
-    const snap = await tx.get(ref);
-    if (snap.exists) {
-      const existing = snap.data();
-      if (existing.tenantId !== sale.tenantId || String(existing.receipt_id || sale.id) !== sale.id) {
-        throw new Error('Institutional credit receivable ID collision. Manual review required.');
-      }
-      const original = numberValue(existing.amount_ugx);
-      if (original > 0 && Math.abs(original - amount) > 0.0001) {
-        throw new Error('Existing institutional credit amount conflicts with canonical POS payment. Manual review required.');
-      }
-      tx.set(ref, {
-        paymentId: payment.paymentId,
-        source: 'POS',
-        engineVersion: 2,
-        updatedAt: FieldValue.serverTimestamp()
-      }, { merge: true });
-      return;
-    }
-    const created = sale.timestamp || nowIso();
-    tx.create(ref, {
-      tenantId: sale.tenantId,
-      receipt_id: sale.id,
-      client_id: sale.institutionId || sale.patientId || '',
-      client_name: sale.institutionName || sale.patientName || 'Institutional client',
-      amount_ugx: amount,
-      outstanding_ugx: amount,
-      status: 'outstanding',
-      branch_id: sale.branchId || 'HQ',
-      due_date: created,
-      invoice_number: sale.receiptNumber || 'N/A',
-      created_at: created,
-      paymentId: payment.paymentId,
-      source: 'POS',
-      engineVersion: 2,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp()
-    });
-  });
-}
-
-async function postQuotation(sale) {
-  const quotationId = String(sale.sourceQuotationId || '').trim();
-  if (!quotationId) return;
-  const quotationRef = db.collection('pos_quotations').doc(quotationId);
-  const saleRef = db.collection('sales').doc(sale.id);
-  await db.runTransaction(async tx => {
-    const [quotationSnap, saleSnap] = await Promise.all([tx.get(quotationRef), tx.get(saleRef)]);
-    if (!quotationSnap.exists) throw new Error('The source quotation no longer exists.');
-    if (!saleSnap.exists) throw new Error('The completed sale no longer exists.');
-    const quotation = quotationSnap.data();
-    const liveSale = saleSnap.data();
-    if (quotation.tenantId !== sale.tenantId || liveSale.tenantId !== sale.tenantId) throw new Error('Quotation or sale tenant mismatch.');
-    if (quotation.status === 'Converted' && quotation.convertedReceiptId && quotation.convertedReceiptId !== sale.id) {
-      throw new Error('This quotation has already been converted to another sale.');
-    }
-    const convertedAt = quotation.convertedAt || nowIso();
-    const convertedValue = numberValue(sale.totalAmount ?? sale.total);
-    tx.update(quotationRef, {
-      status: 'Converted',
-      convertedReceiptId: sale.id,
-      convertedAt,
-      convertedValue,
-      updatedAt: FieldValue.serverTimestamp()
-    });
-    tx.update(saleRef, {
-      sourceQuotationId: quotationId,
-      quotationConversionStatus: 'converted',
-      quotationConvertedAt: convertedAt,
-      updatedAt: FieldValue.serverTimestamp()
-    });
-  });
-}
+const { postConsumption, postWelfare, postInstitutionalCredit, postQuotation } = createPosV2ConsumerPosters({ db, FieldValue, workerId: WORKER_ID, requireLease: true });
 
 const processors = {
   consumption: ({ sale }) => postConsumption(sale),
@@ -500,7 +197,10 @@ async function processEvent(ref) {
     await ensureConsumers(ref, canonical.sale, canonical.payment);
   } catch (error) {
     const terminal = Number(claimed.attemptCount || 0) >= MAX_CONSUMER_ATTEMPTS;
-    await db.collection('pos_transaction_outbox').doc(ref.id).set({
+    await db.runTransaction(async tx => {
+      const snapshot = await tx.get(ref);
+      if (!snapshot.exists || snapshot.data().status === 'SUPERSEDED' || snapshot.data().leaseOwner !== WORKER_ID) return;
+      tx.set(ref, {
       status: 'FAILED',
       lastError: structuredError(error).message,
       requiresManualReview: terminal,
@@ -509,6 +209,7 @@ async function processEvent(ref) {
       leaseExpiresAt: null,
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
+    });
     return { failed: true, error };
   }
 

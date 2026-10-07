@@ -1,3 +1,4 @@
+import { isActiveSale } from '../../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
@@ -77,7 +78,7 @@ export const ProfitabilityLedger: React.FC = () => {
         getDocs(query(collection(db, 'logistics_expenses'), where('tenantId', '==', profile.tenantId))),
         getDocs(query(collection(db, 'marketing_expenses'), where('tenantId', '==', profile.tenantId)))
       ]);
-      setSales(salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+      setSales(salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })).filter(isActiveSale));
       setBranchExpenses(bExpSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
       setMgmtExpenses(mExpSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
       setQuarantineLogs(quarSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));

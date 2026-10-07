@@ -16,6 +16,9 @@ on:
       - 'src/utils/salePresentation.ts'
       - 'src/utils/excelExport.ts'
       - 'src/pages/finance/management/**'
+      - 'scripts/pos-v2-consumer-posting.mjs'
+      - 'scripts/pos-v2-spark-*.mjs'
+      - 'scripts/run-pos-v2-spark-emulator.mjs'
       - 'scripts/pos-v2-batch4-core.mjs'
       - 'scripts/process-pos-v2-outbox.mjs'
       - 'scripts/pos-v2-revision-*.mjs'
@@ -65,6 +68,15 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Set up Java for Spark transaction integration tests
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Test Spark corrections against Firestore rules
+        run: node scripts/run-pos-v2-spark-emulator.mjs
 
       - name: Type-check
         run: npm run lint

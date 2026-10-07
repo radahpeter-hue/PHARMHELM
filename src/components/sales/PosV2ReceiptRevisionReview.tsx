@@ -201,7 +201,7 @@ export const PosV2ReceiptRevisionReview: React.FC<PosV2ReceiptRevisionReviewProp
               type="button"
               onClick={() => plan && onConfirm(plan, draft)}
               disabled={!plan || isSubmitting}
-              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-black disabled:bg-zinc-200 disabled:text-zinc-400 flex items-center gap-1.5"
+              className="px-5 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-sm font-black disabled:bg-zinc-200 disabled:text-zinc-400 flex items-center gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />{isSubmitting ? 'Submitting...' : 'Submit Revision'}
             </button>

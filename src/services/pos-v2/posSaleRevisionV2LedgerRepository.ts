@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, where, limit, onSnapshot, orderBy, startAfter, type QueryDocumentSnapshot, type Unsubscribe } from 'firebase/firestore';
 import { auth, db } from '../../firebase';
 import type { Sale, Staff } from '../../types';
 import { normalizeDateValue } from '../../utils/dateValue';
@@ -30,6 +30,53 @@ async function loadSale(saleId: unknown): Promise<Sale | null> {
   if (!normalized) return null;
   const snapshot = await getDoc(doc(db, 'sales', normalized));
   return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } as Sale : null;
+}
+
+export interface PosV2RevisionLedgerPage {
+  entries: PosV2RevisionLedgerEntry[];
+  cursor: QueryDocumentSnapshot | null;
+  hasMore: boolean;
+}
+
+function ledgerQuery(scope: PosV2RevisionLedgerScope, cursor?: QueryDocumentSnapshot) {
+  const constraints: any[] = [where('tenantId', '==', clean(scope.tenantId))];
+  if (scope.kind === 'BRANCH') constraints.push(where('branchId', '==', clean(scope.branchId)));
+  // This field exists on both historical and atomic revision envelopes.
+  constraints.push(orderBy('originalTimestamp', 'desc'));
+  if (cursor) constraints.push(startAfter(cursor));
+  constraints.push(limit(100));
+  return query(collection(db, 'pos_sale_revision_requests'), ...constraints);
+}
+
+async function projectPage(docs: QueryDocumentSnapshot[], staff: Staff[]): Promise<PosV2RevisionLedgerPage> {
+  const entries = await Promise.all(docs.map(async snapshot => {
+    const request = { id: snapshot.id, ...snapshot.data() };
+    const [originalSale, replacementSale] = await Promise.all([
+      loadSale((request as any).originalSaleId), loadSale((request as any).replacementSaleId)
+    ]);
+    return buildPosV2RevisionLedgerEntry({ requestId: snapshot.id, request, originalSale, replacementSale, staff });
+  }));
+  return { entries, cursor: docs.at(-1) || null, hasMore: docs.length === 100 };
+}
+
+export function watchPosV2RevisionLedger(scope: PosV2RevisionLedgerScope, staff: Staff[],
+  onChange: (page: PosV2RevisionLedgerPage) => void, onError: (error: Error) => void): Unsubscribe {
+  assertScope(scope);
+  let active = true;
+  let version = 0;
+  const stop = onSnapshot(ledgerQuery(scope), snapshot => {
+    const current = ++version;
+    void projectPage(snapshot.docs, staff).then(page => {
+      if (active && current === version) onChange(page);
+    }).catch(error => { if (active && current === version) onError(error); });
+  }, error => { if (active) onError(error); });
+  return () => { active = false; stop(); };
+}
+
+export async function loadOlderPosV2RevisionLedger(scope: PosV2RevisionLedgerScope, staff: Staff[], cursor: QueryDocumentSnapshot): Promise<PosV2RevisionLedgerPage> {
+  assertScope(scope);
+  const snapshot = await getDocs(ledgerQuery(scope, cursor));
+  return projectPage(snapshot.docs, staff);
 }
 
 /**
