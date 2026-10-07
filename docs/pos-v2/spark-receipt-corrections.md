@@ -16,7 +16,7 @@ Add Service uses the existing tenant's billable_services catalogue. Quantity and
 
 ## Release and existing pending requests
 
-The deployment workflow deploys rules and indexes and verifies both revision-ledger indexes are READY in the named database before releasing Hosting. Keep the existing outbox worker available for ordinary sales; atomic corrections arrive already processed. The old revision lifecycle remains for previously submitted requests.
+The deployment workflow deploys rules and creates only the two required revision indexes directly through Firestore and verifies both revision-ledger indexes are READY in the named database before releasing Hosting. Keep the existing outbox worker available for ordinary sales; atomic corrections arrive already processed. The old revision lifecycle remains for previously submitted requests.
 
 An existing scheduled revision request deliberately blocks a new atomic correction. Inspect its request, original/replacement sales, outbox leases, stock movements and financial reversals before recovering it. Do not delete the request or replay stock restoration to bypass the block. This change does not recover the live Masaka receipt BR-3QLNF-2026-420818 or alter production records.
 
