@@ -10,6 +10,7 @@ export function revisionLedgerIndexesReady(required, deployed) {
     && index.state === 'READY' && fields(index) === fields(candidate)));
 }
 
+/** @param {(command: string, args: string[], options: {encoding: 'utf8', timeout: number}) => string} [runCommand] */
 export function loadRevisionLedgerIndexes(project, database, runCommand = execFileSync) {
   const output = runCommand('gcloud', ['firestore', 'indexes', 'composite', 'list',
     `--project=${project}`, `--database=${database}`, '--format=json'],
