@@ -1,3 +1,4 @@
+import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect } from 'react';
 import { 
   TrendingUp, 
@@ -49,7 +50,7 @@ const Dashboard: React.FC = () => {
       const unsubSales = firestoreService.subscribeToCollection<Sale>(
         'sales',
         profile.tenantId,
-        setSales
+        data => setSales(data.filter(isActiveSale))
       );
       
       let unsubBatches = () => {};

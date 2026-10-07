@@ -196,6 +196,8 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
                 {revisionPresentation.linkedReceiptNumber && <p className="text-zinc-600">{revisionPresentation.linkedReceiptLabel}: <span className="font-bold text-zinc-900">{revisionPresentation.linkedReceiptNumber}</span></p>}
                 {revisionPresentation.revisionId && <p className="text-zinc-600">Revision reference: <span className="font-mono font-bold text-zinc-900">{revisionPresentation.revisionId}</span></p>}
                 {revisionPresentation.revisionRequestId && <p className="text-zinc-600">Request reference: <span className="font-mono font-bold text-zinc-900">{revisionPresentation.revisionRequestId}</span></p>}
+                {receipt.originalSellerId && <p className="text-zinc-600">Original seller reference: <span className="font-bold text-zinc-900">{receipt.originalSellerId}</span></p>}
+                {receipt.revisionRecordedAt && <p className="text-zinc-600">Edited at: <span className="font-bold text-zinc-900">{new Date(receipt.revisionRecordedAt).toLocaleString("en-GB", { timeZone: "Africa/Kampala" })}</span></p>}
                 {revisionPresentation.editorName && <p className="text-zinc-600">Revision editor: <span className="font-bold text-zinc-900">{revisionPresentation.editorName}</span></p>}
                 {revisionPresentation.reason && <p className="text-zinc-600">Correction reason: <span className="font-medium text-zinc-900">{revisionPresentation.reason}</span></p>}
               </div>

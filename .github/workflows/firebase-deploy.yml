@@ -204,6 +204,13 @@ jobs:
         shell: bash
         run: bash scripts/verify-active-firestore-rules.sh
 
+      - name: Deploy Firestore indexes
+        run: npx firebase-tools deploy --only firestore:indexes --project "$FIREBASE_PROJECT_ID" --non-interactive
+
+      - name: Verify revision-ledger indexes are ready
+        timeout-minutes: 15
+        run: node scripts/verify-pos-v2-revision-indexes.mjs
+
       - name: Deploy Firebase Storage rules
         id: deploy_storage
         continue-on-error: true

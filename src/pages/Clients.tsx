@@ -1,3 +1,4 @@
+import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, 
@@ -1074,7 +1075,7 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
         'sales',
         profile.tenantId,
         (data) => {
-          setSales(data);
+          setSales(data.filter(isActiveSale));
         }
       );
       const unsubLedger = firestoreService.subscribeToCollection<any>(

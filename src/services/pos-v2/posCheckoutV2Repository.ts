@@ -383,6 +383,11 @@ function assertReplacementReplayLinkage(sale: Sale, replacement: ReturnType<type
 }
 
 export async function commitCheckoutV2(request: CheckoutV2Request, prepared: PosCheckoutV2RepositoryPreparation): Promise<PosCheckoutV2CompletedResult> {
+  return runTransaction(db, transaction => writeCheckoutV2Transaction(request, prepared, transaction));
+}
+
+/** Shared canonical checkout operation. The caller must commit every staged write atomically. */
+export async function writeCheckoutV2Transaction(request: CheckoutV2Request, prepared: PosCheckoutV2RepositoryPreparation, transaction: Transaction): Promise<PosCheckoutV2CompletedResult> {
   const replacement = validatePosCheckoutV2RevisionReplacementContract({
     tenantId: prepared.authority.tenantId,
     attemptId: request.attemptId,
@@ -392,7 +397,6 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
     context: request.revisionReplacement
   });
 
-  return runTransaction(db, async (transaction: Transaction) => {
     const attemptSnap = await transaction.get(prepared.attemptRef);
     if (attemptSnap.exists()) {
       const attempt = attemptSnap.data() as PosCheckoutV2AttemptRecord;
@@ -660,5 +664,4 @@ export async function commitCheckoutV2(request: CheckoutV2Request, prepared: Pos
       payment,
       replayed: false
     };
-  });
 }

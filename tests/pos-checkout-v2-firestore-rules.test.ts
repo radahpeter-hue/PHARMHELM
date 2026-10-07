@@ -88,7 +88,7 @@ test('canonical POS payments are immutable, tenant/branch scoped and linked to t
   assert.match(paymentRule, /allow update, delete: if false/);
 });
 
-test('transaction outbox is immutable client-side, starts PENDING and is linked to sale/payment', () => {
+test('transaction outbox starts PENDING, permits only atomic supersession, and remains linked to sale/payment', () => {
   const start = rules.indexOf('match /pos_transaction_outbox/{eventId}');
   const end = rules.indexOf('match /pos_checkout_attempts/{attemptDocumentId}', start);
   assert.ok(start >= 0 && end > start);
@@ -102,7 +102,8 @@ test('transaction outbox is immutable client-side, starts PENDING and is linked 
   assert.match(outboxRule, /hasValidOutboxEnvelope\(eventId\)/);
   assert.match(outboxRule, /outboxMatchesSale\(eventId\)/);
   assert.match(outboxRule, /outboxMatchesPayment\(\)/);
-  assert.match(outboxRule, /allow update, delete: if false/);
+  assert.match(outboxRule, /allow update: if atomicOutboxSupersession\(eventId\)/);
+  assert.match(outboxRule, /allow delete: if false/);
 });
 
 test('checkout attempts have an explicit immutable rule linked to sale, payment and outbox in the same transaction', () => {
@@ -147,9 +148,11 @@ test('POS create allow expressions remain shallow enough for the hosted rules co
 test('generic tenant fallback cannot bypass dedicated POS V2 transaction records', () => {
   const generic = rules.slice(rules.indexOf('match /{collectionName}/{docId}'));
   for (const collectionName of ['pos_checkout_attempts', 'pos_payments', 'pos_transaction_outbox']) {
-    const pattern = new RegExp(`collectionName != '${collectionName}'`, 'g');
-    const occurrences = generic.match(pattern) || [];
-    assert.equal(occurrences.length, 5, `get, list, create, update and delete must all exclude ${collectionName}`);
+    for (const operation of ['get', 'list', 'create', 'update', 'delete']) {
+      const guard = generic.split('\n').find(line => line.includes(`allow ${operation}:`)) || '';
+      assert.match(guard, /!\(collectionName in \[/);
+      assert.ok(guard.includes(`'${collectionName}'`), `${operation} must exclude ${collectionName}`);
+    }
   }
 });
 

@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ChevronDown, ChevronUp, Download, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import type { Staff } from '../../types';
 import type { PosV2RevisionLedgerEntry } from '../../services/pos-v2/posSaleRevisionV2Ledger';
-import { loadPosV2RevisionLedger } from '../../services/pos-v2/posSaleRevisionV2LedgerRepository';
+import { watchPosV2RevisionLedger, loadOlderPosV2RevisionLedger, type PosV2RevisionLedgerPage } from '../../services/pos-v2/posSaleRevisionV2LedgerRepository';
 import { buildPosV2BranchRevisionAnalytics } from '../../services/pos-v2/posSaleRevisionV2Analytics';
 import { buildPosV2RevisionReportCsv, buildPosV2RevisionReportFilename } from '../../services/pos-v2/posSaleRevisionV2ReportExport';
 import { formatDateValue, normalizeDateValue } from '../../utils/dateValue';
@@ -12,6 +12,7 @@ interface PosV2RevisionLedgerProps {
   branchId: string;
   actorUid: string;
   staff: Staff[];
+  onOpenReceipt?: (saleId: string) => void;
 }
 
 const money = (value: number) => `UGX ${Number(value || 0).toLocaleString()}`;
@@ -27,8 +28,14 @@ export const PosV2RevisionLedger: React.FC<PosV2RevisionLedgerProps> = ({
   tenantId,
   branchId,
   actorUid,
-  staff
+  staff,
+  onOpenReceipt
 }) => {
+  const previousLive = useRef<PosV2RevisionLedgerEntry[]>([]);
+  const loadedOlder = useRef(false);
+  const [page, setPage] = useState<PosV2RevisionLedgerPage | null>(null);
+  const [olderPage, setOlderPage] = useState<PosV2RevisionLedgerPage | null>(null);
+  const [older, setOlder] = useState<PosV2RevisionLedgerEntry[]>([]);
   const [entries, setEntries] = useState<PosV2RevisionLedgerEntry[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -40,29 +47,38 @@ export const PosV2RevisionLedger: React.FC<PosV2RevisionLedgerProps> = ({
   const [dateTo, setDateTo] = useState('');
 
   useEffect(() => {
-    let active = true;
     setLoading(true);
     setError(null);
-    loadPosV2RevisionLedger({ kind: 'BRANCH', tenantId, branchId, actorUid }, staff)
-      .then(result => {
-        if (active) setEntries(result);
-      })
-      .catch(reason => {
-        if (active) setError(reason instanceof Error ? reason.message : 'Unable to load the revision ledger.');
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => { active = false; };
+    setOlder([]);
+    setOlderPage(null);
+    setPage(null);
+    previousLive.current = [];
+    loadedOlder.current = false;
+    try {
+      return watchPosV2RevisionLedger({ kind: 'BRANCH', tenantId, branchId, actorUid }, staff,
+        result => {
+          if (loadedOlder.current) {
+            const liveIds = new Set(result.entries.map(entry => entry.requestId));
+            const boundaryEntries = previousLive.current.filter(entry => !liveIds.has(entry.requestId));
+            if (boundaryEntries.length) setOlder(current => [...current, ...boundaryEntries]);
+          }
+          previousLive.current = result.entries;
+          setPage(result); setEntries(result.entries); setLoading(false);
+        },
+        reason => { setError(reason.message); setLoading(false); });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to load revision ledger.'); setLoading(false); }
+
   }, [tenantId, branchId, actorUid, staff, refreshKey]);
 
-  const statuses = useMemo(() => Array.from(new Set(entries.map(entry => entry.lifecycleStatus))).sort(), [entries]);
+  const statuses = useMemo(() => Array.from(new Set([...entries, ...older].map(entry => entry.lifecycleStatus))).sort(), [entries, older]);
   const filteredEntries = useMemo(() => {
     const term = search.trim().toLowerCase();
     const from = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null;
     const to = dateTo ? new Date(`${dateTo}T23:59:59.999`) : null;
 
-    return entries.filter(entry => {
+    const combined = [...new Map([...older, ...entries].map(entry => [entry.requestId, entry])).values()];
+    combined.sort((a, b) => (normalizeDateValue(b.timestamps.originalSaleAt)?.getTime() || 0) - (normalizeDateValue(a.timestamps.originalSaleAt)?.getTime() || 0));
+    return combined.filter(entry => {
       const occurredAt = normalizeDateValue(
         entry.timestamps.completedAt
         || entry.timestamps.updatedAt
@@ -82,7 +98,20 @@ export const PosV2RevisionLedger: React.FC<PosV2RevisionLedgerProps> = ({
         && (!from || (occurredAt !== null && occurredAt >= from))
         && (!to || (occurredAt !== null && occurredAt <= to));
     });
-  }, [dateFrom, dateTo, entries, search, status]);
+  }, [dateFrom, dateTo, entries, older, search, status]);
+
+  const loadOlder = async () => {
+    const cursorPage = olderPage || page;
+    if (!cursorPage?.cursor || !cursorPage.hasMore || loading) return;
+    setLoading(true);
+    try {
+      const result = await loadOlderPosV2RevisionLedger({ kind: 'BRANCH', tenantId, branchId, actorUid }, staff, cursorPage.cursor);
+      setOlder(current => [...current, ...result.entries]);
+      setOlderPage(result);
+      loadedOlder.current = true;
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to load older revisions.'); }
+    finally { setLoading(false); }
+  };
 
   const analytics = useMemo(
     () => buildPosV2BranchRevisionAnalytics(filteredEntries, { tenantId, branchId }),
@@ -111,6 +140,7 @@ export const PosV2RevisionLedger: React.FC<PosV2RevisionLedgerProps> = ({
           <p className="mt-1 text-xs text-zinc-500">Permanent branch evidence. Completed transactions cannot be edited or deleted here.</p>
         </div>
         <div className="flex gap-2">
+          {(olderPage || page)?.hasMore && <button type="button" onClick={() => void loadOlder()} disabled={loading} className="rounded-xl border border-zinc-300 px-3 py-2 text-xs font-bold text-zinc-800">Load older revisions</button>}
           <button type="button" onClick={downloadReport} disabled={loading || filteredEntries.length === 0} className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-200 px-4 py-2 text-xs font-black uppercase tracking-wider text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"><Download className="h-4 w-4" />Export CSV</button>
           <button type="button" onClick={() => setRefreshKey(value => value + 1)} disabled={loading} className="inline-flex items-center justify-center gap-2 rounded-xl border border-zinc-200 px-4 py-2 text-xs font-black uppercase tracking-wider text-zinc-600 hover:bg-zinc-50 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />Refresh</button>
         </div>
@@ -213,6 +243,10 @@ export const PosV2RevisionLedger: React.FC<PosV2RevisionLedgerProps> = ({
 
                 {isOpen && (
                   <div className="border-t border-zinc-100 bg-zinc-50/60 p-5">
+                    {onOpenReceipt && <div className="mb-4 flex gap-3">
+                      <button type="button" onClick={() => onOpenReceipt(entry.originalSaleId)} className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-bold text-zinc-800">View original receipt</button>
+                      {entry.replacementSaleId && <button type="button" onClick={() => onOpenReceipt(entry.replacementSaleId!)} className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-bold text-white">View corrected receipt</button>}
+                    </div>}
                     <div className="grid gap-4 text-xs md:grid-cols-3">
                       <div><p className="font-black uppercase text-zinc-400">Original seller</p><p className="mt-1 font-bold text-zinc-800">{entry.originalSeller.name || entry.originalSeller.id || 'Not recorded'}</p></div>
                       <div><p className="font-black uppercase text-zinc-400">Revision editor</p><p className="mt-1 font-bold text-zinc-800">{entry.revisionEditor.name}{entry.revisionEditor.role ? ` · ${entry.revisionEditor.role}` : ''}</p></div>

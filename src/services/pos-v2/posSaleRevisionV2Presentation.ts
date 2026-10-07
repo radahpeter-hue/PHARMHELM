@@ -46,9 +46,9 @@ export function getPosV2RevisionReceiptPresentation(sale: Sale): PosV2RevisionRe
       revisionId,
       revisionRequestId: clean(sale.revisionRequestId),
       lifecycle,
-      reason: null,
-      editorId: null,
-      editorName: null,
+      reason: clean(sale.revisionReason),
+      editorId: clean(sale.revisionRequestedBy),
+      editorName: clean(sale.revisionRequestedByName),
       linkedSaleId: clean(sale.revisionOfSaleId),
       linkedReceiptNumber: clean(sale.originalReceiptNumber),
       linkedReceiptLabel: 'Original receipt'

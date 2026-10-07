@@ -1,3 +1,4 @@
+import { isActiveSale } from '../../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
@@ -152,6 +153,7 @@ export const CreditLedger: React.FC = () => {
       const salesMap = new Map<string, any>();
       salesSnapshot1.docs.forEach(doc => {
         const d = doc.data();
+        if (!isActiveSale(d)) return;
         salesMap.set(doc.id, {
           id: doc.id,
           ...d,
@@ -160,6 +162,7 @@ export const CreditLedger: React.FC = () => {
       });
       salesSnapshot2.docs.forEach(doc => {
         const d = doc.data();
+        if (!isActiveSale(d)) return;
         salesMap.set(doc.id, {
           id: doc.id,
           ...d,
