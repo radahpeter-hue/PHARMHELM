@@ -19,6 +19,7 @@ import { consumptionSummaryId, movementEventId, welfarePostingIds, paymentCompon
 import { createPosV2ConsumerPosters } from '../../../scripts/pos-v2-consumer-posting.mjs';
 import { clientRevisionOption, institutionRevisionOption, prescriberRevisionOption } from './posSaleRevisionV2ReferenceData';
 import { normalizeDateValue } from '../../utils/dateValue';
+import { receiptItemsMatch } from './posSaleRevisionV2ReceiptComparison';
 import { isV2SellableBatch } from './posCheckoutV2Calculator';
 
 export interface PosV2AtomicRevisionResult {
@@ -88,7 +89,7 @@ export async function commitPosV2ReceiptCorrection(input: SubmitPosV2RevisionInp
       if (!eligibility.allowed || original.revisionLocked) throw new Error(`This receipt cannot be revised (${eligibility.code}).`);
       if (original.tenantId !== submission.tenantId || original.branchId !== submission.branchId
         || original.receiptNumber !== submission.originalReceiptNumber
-        || JSON.stringify(original.items) !== JSON.stringify(input.originalSale.items)
+        || !receiptItemsMatch(original.items, input.originalSale.items)
         || Number(original.totalAmount ?? original.total) !== submission.originalTotal) throw new Error('The original receipt changed. Reload it before revising.');
       const originalPaymentRef = doc(db, 'pos_payments', original.canonicalPaymentId!);
       const originalOutboxRef = doc(db, 'pos_transaction_outbox', original.transactionOutboxEventId!);

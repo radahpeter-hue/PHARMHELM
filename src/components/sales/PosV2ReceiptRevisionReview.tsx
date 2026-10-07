@@ -89,7 +89,7 @@ export const PosV2ReceiptRevisionReview: React.FC<PosV2ReceiptRevisionReviewProp
 
   return (
     <div className="fixed inset-0 z-[126] bg-zinc-950/50 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6">
-      <div className="w-full max-w-6xl max-h-[94vh] overflow-hidden rounded-3xl bg-white shadow-2xl flex flex-col">
+      <div className="w-full max-w-6xl max-h-[94vh] overflow-hidden rounded-3xl bg-white text-zinc-900 shadow-2xl flex flex-col">
         <div className="px-5 sm:px-7 py-5 border-b border-zinc-100 flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-amber-700 mb-1">
@@ -97,7 +97,7 @@ export const PosV2ReceiptRevisionReview: React.FC<PosV2ReceiptRevisionReviewProp
               <span className="text-[10px] font-black uppercase tracking-[0.16em]">POS V2 Revision Review</span>
             </div>
             <h2 className="text-xl font-black text-zinc-900">Review correction for receipt {sale.receiptNumber}</h2>
-            <p className="text-xs text-zinc-500 mt-1">Submitting creates one immutable revision request. The original transaction is reversed only by the controlled revision workers before the corrected receipt is created through POS V2.</p>
+            <p className="text-xs text-zinc-500 mt-1">Confirming saves the corrected receipt and updates stock and accounts together. The original receipt remains linked in revision history.</p>
           </div>
           <button type="button" onClick={onCancel} className="p-2 rounded-xl text-zinc-500 hover:bg-zinc-100" aria-label="Close revision review">
             <X className="w-5 h-5" />
@@ -194,7 +194,7 @@ export const PosV2ReceiptRevisionReview: React.FC<PosV2ReceiptRevisionReviewProp
         </div>
 
         <div className="px-5 sm:px-7 py-4 border-t border-zinc-100 bg-zinc-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <p className="text-[10px] text-zinc-500 max-w-xl">Confirming is irreversible once the worker begins reversal. The original receipt is never overwritten; it remains permanently linked to the corrected replacement receipt.</p>
+          <p className="text-[10px] text-zinc-500 max-w-xl">The corrected receipt is ready to print after saving. The original receipt is preserved and permanently linked to the correction.</p>
           <div className="flex gap-2 justify-end">
             <button type="button" onClick={onBack} disabled={isSubmitting} className="px-4 py-2.5 rounded-xl border border-zinc-200 bg-white text-sm font-bold text-zinc-700 flex items-center gap-1.5 disabled:opacity-50"><ArrowLeft className="w-4 h-4" />Back to Edit</button>
             <button
@@ -203,7 +203,7 @@ export const PosV2ReceiptRevisionReview: React.FC<PosV2ReceiptRevisionReviewProp
               disabled={!plan || isSubmitting}
               className="px-5 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-sm font-black disabled:bg-zinc-200 disabled:text-zinc-400 flex items-center gap-1.5"
             >
-              <CheckCircle2 className="w-4 h-4" />{isSubmitting ? 'Submitting...' : 'Submit Revision'}
+              <CheckCircle2 className="w-4 h-4" />{isSubmitting ? 'Saving...' : 'Save and Print Correction'}
             </button>
           </div>
         </div>
