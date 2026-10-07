@@ -24,6 +24,7 @@ on:
       - 'scripts/pos-v2-revision-*.mjs'
       - 'scripts/process-pos-v2-revision*.mjs'
       - 'scripts/verify-active-firestore-rules.sh'
+      - 'scripts/verify-pos-v2-revision-indexes.mjs'
       - 'tests/pos-checkout-v2-*.test.ts'
       - 'tests/pos-v2-revision-*.test.ts'
       - 'tests/pos-phase1-ui-docs.test.ts'
