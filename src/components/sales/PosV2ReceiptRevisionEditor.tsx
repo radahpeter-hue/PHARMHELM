@@ -217,7 +217,7 @@ export const PosV2ReceiptRevisionEditor: React.FC<PosV2ReceiptRevisionEditorProp
   return (
     <>
       <div className="fixed inset-0 z-[125] bg-zinc-950/45 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6">
-        <div className="w-full max-w-6xl max-h-[94vh] overflow-hidden rounded-3xl bg-white shadow-2xl flex flex-col">
+        <div className="w-full max-w-6xl max-h-[94vh] overflow-hidden rounded-3xl bg-white text-zinc-900 shadow-2xl flex flex-col">
           <div className="px-5 sm:px-7 py-5 border-b border-zinc-100 flex items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-2 text-amber-700 mb-1">

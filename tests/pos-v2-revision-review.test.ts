@@ -103,10 +103,20 @@ test('review screen remains fail-closed and mutation-free', () => {
   assert.doesNotMatch(source, /runTransaction\s*\(/);
 });
 
-test('review confirmation hands the certified plan and draft to controlled durable submission', () => {
+test('review confirmation hands the certified plan and draft to immediate correction', () => {
   assert.match(source, /onConfirm: \(plan: PosV2RevisionPlan, draft: PosV2ReceiptRevisionDraft\) => void/);
   assert.match(source, /onClick=\{\(\) => plan && onConfirm\(plan, draft\)\}/);
-  assert.match(source, /Submit Revision/);
-  assert.match(source, /original receipt is never overwritten/i);
-  assert.match(source, /irreversible once the worker begins reversal/i);
+  assert.match(source, /Save and Print Correction/);
+  assert.match(source, /original receipt is preserved/i);
+  assert.match(source, /ready to print after saving/i);
+});
+
+
+test('light receipt editor and review panels override inherited white text and describe immediate correction', () => {
+  const editor = readFileSync('src/components/sales/PosV2ReceiptRevisionEditor.tsx', 'utf8');
+  assert.match(source, /bg-white text-zinc-900 shadow-2xl/);
+  assert.match(editor, /bg-white text-zinc-900 shadow-2xl/);
+  assert.match(source, /Save and Print Correction/);
+  assert.match(source, /updates stock and accounts together/);
+  assert.doesNotMatch(source, /controlled revision workers|worker begins reversal/);
 });

@@ -31,38 +31,38 @@ const env = await initializeTestEnvironment({ projectId: 'demo-pharmhelm-spark-p
   firestore: { rules: readFileSync('firestore.rules', 'utf8') } });
 let checks = 0;
 
-async function seed({ method = 'cash', posted = false, role = 'Dispenser', quantity = 90, settledCredit = false, multipleBatches = false, productCount = 1 } = {}) {
+async function seed({ method = 'cash', posted = false, role = 'Dispenser', quantity = 90, settledCredit = false, multipleBatches = false, productCount = 1, originalQuantity = 10, unitPrice = 500 } = {}) {
   await env.clearFirestore();
   const timestamp = new Date(Date.now() - 3600000).toISOString();
   const sale = { id: 'original', tenantId: 'tenant-a', branchId: 'branch-a', receiptNumber: 'MSK-2026-420818',
     engineVersion: 2, status: 'completed', timestamp, cashierId: 'seller', servedBy: 'seller',
     canonicalPaymentId: 'old-payment', transactionOutboxEventId: 'old-outbox', paymentMethod: method,
     patientId: method === 'staff_welfare' ? 'beneficiary' : undefined,
-    welfareBeneficiaryIsStaff: method === 'staff_welfare', welfareAmount: method === 'staff_welfare' ? 5000 : undefined,
+    welfareBeneficiaryIsStaff: method === 'staff_welfare', welfareAmount: method === 'staff_welfare' ? (originalQuantity * unitPrice) : undefined,
     welfarePostingStatus: posted && method === 'staff_welfare' ? 'posted' : 'pending',
     welfarePostingId: posted && method === 'staff_welfare' ? 'pos_welfare_tenant-a_original' : undefined,
     context: method === 'institutional_credit' ? 'institutional' : 'walk-in',
     institutionId: method === 'institutional_credit' ? 'institution' : undefined,
-    subtotal: 5000, total: 5000, totalAmount: 5000, discountPercentage: 0,
+    subtotal: (originalQuantity * unitPrice), total: (originalQuantity * unitPrice), totalAmount: (originalQuantity * unitPrice), discountPercentage: 0,
     createdAt: Timestamp.fromDate(new Date(timestamp)),
-    items: [{ productId: 'vitc', productName: 'Vitamin C', name: 'Vitamin C', quantity: 10,
-      commercialQuantity: 10, baseQuantity: 10, unitPrice: 500, actualUnitPrice: 500, costPrice: 100,
-      subtotal: 5000, total: 5000, batchId: 'batch-a', batchNumber: 'VIT-A', expiryDate: '2028-12-31',
-      batchAllocations: [{ batchId: 'batch-a', batchNumber: 'VIT-A', baseQuantity: 10, costPerBaseUnit: 100 }] }] };
+    items: [{ productId: 'vitc', productName: 'Vitamin C', name: 'Vitamin C', quantity: originalQuantity,
+      commercialQuantity: originalQuantity, baseQuantity: originalQuantity, unitPrice, actualUnitPrice: unitPrice, costPrice: 100,
+      subtotal: (originalQuantity * unitPrice), total: (originalQuantity * unitPrice), batchId: 'batch-a', batchNumber: 'VIT-A', expiryDate: '2028-12-31',
+      batchAllocations: [{ batchId: 'batch-a', batchNumber: 'VIT-A', baseQuantity: originalQuantity, costPerBaseUnit: 100 }] }] };
   if (multipleBatches) sale.items[0].batchAllocations = [
     { batchId: 'batch-a', batchNumber: 'VIT-A', baseQuantity: 4, costPerBaseUnit: 100 },
     { batchId: 'batch-b', batchNumber: 'VIT-B', baseQuantity: 6, costPerBaseUnit: 100 }
   ];
   for (let index = 1; index < productCount; index++) sale.items.push({ ...sale.items[0],
     productId: `vitc-${index}`, batchId: `batch-${index}`, batchNumber: `VIT-${index}`,
-    batchAllocations: [{ batchId: `batch-${index}`, batchNumber: `VIT-${index}`, baseQuantity: 10, costPerBaseUnit: 100 }] });
-  sale.total = sale.totalAmount = sale.subtotal = productCount * 5000;
+    batchAllocations: [{ batchId: `batch-${index}`, batchNumber: `VIT-${index}`, baseQuantity: originalQuantity, costPerBaseUnit: 100 }] });
+  sale.total = sale.totalAmount = sale.subtotal = productCount * (originalQuantity * unitPrice);
   const unpaid = method === 'institutional_credit';
   const payment = { paymentId: 'old-payment', saleId: sale.id, tenantId: sale.tenantId, branchId: sale.branchId,
     receiptNumber: sale.receiptNumber, checkoutAttemptId: 'old-attempt', paymentMethod: method, currency: 'UGX',
-    engineVersion: 2, amount: 5000, settledAmount: unpaid ? 0 : 5000, outstandingAmount: unpaid ? 5000 : 0,
-    status: unpaid ? 'unpaid' : 'completed', components: [{ method, amount: 5000,
-      settledAmount: unpaid ? 0 : 5000, outstandingAmount: unpaid ? 5000 : 0, status: unpaid ? 'unpaid' : 'settled' }] };
+    engineVersion: 2, amount: (originalQuantity * unitPrice), settledAmount: unpaid ? 0 : (originalQuantity * unitPrice), outstandingAmount: unpaid ? (originalQuantity * unitPrice) : 0,
+    status: unpaid ? 'unpaid' : 'completed', components: [{ method, amount: (originalQuantity * unitPrice),
+      settledAmount: unpaid ? 0 : (originalQuantity * unitPrice), outstandingAmount: unpaid ? (originalQuantity * unitPrice) : 0, status: unpaid ? 'unpaid' : 'settled' }] };
   payment.amount *= productCount; payment.settledAmount *= productCount; payment.outstandingAmount *= productCount;
   for (const component of payment.components) { component.amount *= productCount; component.settledAmount *= productCount; component.outstandingAmount *= productCount; }
   const clean = value => JSON.parse(JSON.stringify(value));
@@ -70,31 +70,31 @@ async function seed({ method = 'cash', posted = false, role = 'Dispenser', quant
     const db = context.firestore();
     const records = [
       ['staff', 'operator', { tenantId: 'tenant-a', role, status: 'active', active: true, assigned_branches: ['branch-a'], secondaryRoles: [] }],
-      ['staff', 'beneficiary', { tenantId: 'tenant-a', role: 'Dispenser', status: 'active', assigned_branches: ['branch-a'], welfare_spent: posted ? 5000 : 0, welfare_used_ytd: posted ? 5000 : 0, welfare_limit: 50000 }],
+      ['staff', 'beneficiary', { tenantId: 'tenant-a', role: 'Dispenser', status: 'active', assigned_branches: ['branch-a'], welfare_spent: posted ? (originalQuantity * unitPrice) : 0, welfare_used_ytd: posted ? (originalQuantity * unitPrice) : 0, welfare_limit: 50000 }],
       ['branches', 'branch-a', { tenantId: 'tenant-a', status: 'active', branch_code: 'MSK' }],
-      ['products', 'vitc', { tenantId: 'tenant-a', name: 'Vitamin C', stock: quantity, quantityInStock: quantity, unitOfSell: 'unit', sellingPrice: 500, purchasePrice: 100 }],
-      ['product_batches', 'batch-a', { tenantId: 'tenant-a', branchId: 'branch-a', productId: 'vitc', batchNumber: 'VIT-A', quantity: multipleBatches ? 36 : quantity, purchasePrice: 100, sellingPrice: 500, expiryDate: '2028-12-31', batch_status: 'active' }],
+      ['products', 'vitc', { tenantId: 'tenant-a', name: 'Vitamin C', stock: quantity, quantityInStock: quantity, unitOfSell: 'unit', sellingPrice: unitPrice, purchasePrice: 100 }],
+      ['product_batches', 'batch-a', { tenantId: 'tenant-a', branchId: 'branch-a', productId: 'vitc', batchNumber: 'VIT-A', quantity: multipleBatches ? 36 : quantity, purchasePrice: 100, sellingPrice: unitPrice, expiryDate: '2028-12-31', batch_status: 'active' }],
       ['institutions', 'institution', { tenantId: 'tenant-a', name: 'Example Institution', status: 'active' }],
       ['billable_services', 'consultation', { tenantId: 'tenant-a', name: 'Consultation', defaultFee: 2000 }],
       ['sales', sale.id, { ...clean(sale), createdAt: sale.createdAt }],
       ['pos_payments', 'old-payment', payment],
       ['pos_transaction_outbox', 'old-outbox', { tenantId: 'tenant-a', branchId: 'branch-a', saleId: 'original', paymentId: 'old-payment', status: posted ? 'PROCESSED' : 'PENDING', engineVersion: 2, eventType: 'POS_SALE_COMMITTED' }]
     ];
-    if (multipleBatches) records.push(['product_batches', 'batch-b', { tenantId: 'tenant-a', branchId: 'branch-a', productId: 'vitc', batchNumber: 'VIT-B', quantity: 54, purchasePrice: 100, sellingPrice: 500, expiryDate: '2029-12-31', batch_status: 'active' }]);
+    if (multipleBatches) records.push(['product_batches', 'batch-b', { tenantId: 'tenant-a', branchId: 'branch-a', productId: 'vitc', batchNumber: 'VIT-B', quantity: 54, purchasePrice: 100, sellingPrice: unitPrice, expiryDate: '2029-12-31', batch_status: 'active' }]);
     for (let index = 1; index < productCount; index++) records.push(
-      ['products', `vitc-${index}`, { tenantId: 'tenant-a', name: `Product ${index}`, stock: 90, quantityInStock: 90, unitOfSell: 'unit', sellingPrice: 500, purchasePrice: 100 }],
+      ['products', `vitc-${index}`, { tenantId: 'tenant-a', name: `Product ${index}`, stock: 90, quantityInStock: 90, unitOfSell: 'unit', sellingPrice: unitPrice, purchasePrice: 100 }],
       ['product_batches', `batch-${index}`, { tenantId: 'tenant-a', branchId: 'branch-a', productId: `vitc-${index}`, batchNumber: `VIT-${index}`, quantity: 90, purchasePrice: 100, expiryDate: '2028-12-31', batch_status: 'active' }]);
     if (posted) {
       const dateKey = dateKeyForTimezone(new Date(timestamp));
       records.push(
-        ['inventoryMovementEvents', movementEventId({ saleId: 'original', productId: 'vitc' }), { tenantId: 'tenant-a', branchId: 'branch-a', productId: 'vitc', eventType: 'SALE', sourceDocumentId: 'original', consumptionDeltaBaseUnits: 10, quantityDeltaBaseUnits: -10, dateKey, isExceptional: false }],
-        ['branchConsumptionDaily', consumptionSummaryId('tenant-a', 'branch-a', 'vitc', dateKey), { tenantId: 'tenant-a', branchId: 'branch-a', productId: 'vitc', dateKey, ordinaryUnitsSold: 10, validConsumptionUnits: 10, exceptionalUnits: 0, transactionCount: 1, consumptionTransactionCount: 1, closingUsableStock: 90, openingUsableStock: 100, aggregationVersion: 1 }]);
+        ['inventoryMovementEvents', movementEventId({ saleId: 'original', productId: 'vitc' }), { tenantId: 'tenant-a', branchId: 'branch-a', productId: 'vitc', eventType: 'SALE', sourceDocumentId: 'original', consumptionDeltaBaseUnits: originalQuantity, quantityDeltaBaseUnits: -originalQuantity, dateKey, isExceptional: false }],
+        ['branchConsumptionDaily', consumptionSummaryId('tenant-a', 'branch-a', 'vitc', dateKey), { tenantId: 'tenant-a', branchId: 'branch-a', productId: 'vitc', dateKey, ordinaryUnitsSold: originalQuantity, validConsumptionUnits: originalQuantity, exceptionalUnits: 0, transactionCount: 1, consumptionTransactionCount: 1, closingUsableStock: 90, openingUsableStock: 100, aggregationVersion: 1 }]);
     }
-    if (posted && method === 'institutional_credit') records.push(['credit_receivables', 'original', { tenantId: 'tenant-a', receipt_id: 'original', branch_id: 'branch-a', amount_ugx: 5000, outstanding_ugx: settledCredit ? 3000 : 5000, status: 'outstanding', paymentId: 'old-payment' }]);
+    if (posted && method === 'institutional_credit') records.push(['credit_receivables', 'original', { tenantId: 'tenant-a', receipt_id: 'original', branch_id: 'branch-a', amount_ugx: (originalQuantity * unitPrice), outstanding_ugx: settledCredit ? 3000 : (originalQuantity * unitPrice), status: 'outstanding', paymentId: 'old-payment' }]);
     if (posted && method === 'staff_welfare') records.push(
-      ['welfare', 'pos_welfare_tenant-a_original', { tenantId: 'tenant-a', branchId: 'branch-a', saleId: 'original', staffId: 'beneficiary', isStaff: true, amount: 5000, status: 'approved' }],
-      ['branch_expenses', 'pos_welfare_expense_tenant-a_original', { tenantId: 'tenant-a', branchId: 'branch-a', saleId: 'original', amount: 5000, status: 'approved' }],
-      ['cashTransfers', 'pos_welfare_transfer_tenant-a_original', { tenantId: 'tenant-a', saleId: 'original', amount: 5000, status: 'posted' }]);
+      ['welfare', 'pos_welfare_tenant-a_original', { tenantId: 'tenant-a', branchId: 'branch-a', saleId: 'original', staffId: 'beneficiary', isStaff: true, amount: (originalQuantity * unitPrice), status: 'approved' }],
+      ['branch_expenses', 'pos_welfare_expense_tenant-a_original', { tenantId: 'tenant-a', branchId: 'branch-a', saleId: 'original', amount: (originalQuantity * unitPrice), status: 'approved' }],
+      ['cashTransfers', 'pos_welfare_transfer_tenant-a_original', { tenantId: 'tenant-a', saleId: 'original', amount: (originalQuantity * unitPrice), status: 'posted' }]);
     for (const [collection, id, data] of records) await setDoc(doc(db, collection, id), data);
   });
   const db = env.authenticatedContext('operator', { tenantId: 'tenant-a', email: 'operator@example.test' }).firestore();
@@ -104,9 +104,10 @@ async function seed({ method = 'cash', posted = false, role = 'Dispenser', quant
 }
 
 function input(sale, quantity = 30, addService = false, paymentMethod = sale.paymentMethod) {
-  const revisedItems = [{ ...sale.items[0], quantity, commercialQuantity: quantity, subtotal: quantity * 500, total: quantity * 500 }, ...sale.items.slice(1)];
+  const unitPrice = sale.items[0].actualUnitPrice;
+  const revisedItems = [{ ...sale.items[0], quantity, commercialQuantity: quantity, subtotal: quantity * unitPrice, total: quantity * unitPrice }, ...sale.items.slice(1)];
   if (addService) revisedItems.push({ productId: 'consultation', name: 'Consultation', productName: 'Consultation', batchId: 'N/A', quantity: 1, unitPrice: 2000, subtotal: 2000, total: 2000, costPrice: 0, isService: true });
-  const plan = buildPosV2RevisionPlan({ originalSale: sale, revisedItems, revisedTotal: quantity * 500 + (sale.items.length - 1) * 5000 + (addService ? 2000 : 0),
+  const plan = buildPosV2RevisionPlan({ originalSale: sale, revisedItems, revisedTotal: quantity * unitPrice + (sale.items.length - 1) * sale.items[0].total + (addService ? 2000 : 0),
     reason: 'Correct the receipt quantity', paymentMethod, now: new Date() });
   return { originalSale: sale, plan, revisedItems, actor: { uid: 'operator', name: 'Revision Operator', role: 'Dispenser' } };
 }
@@ -213,6 +214,34 @@ try {
       assert.equal((await getDoc(doc(context.firestore(), 'sales', 'original'))).data().revisionId, undefined);
     });
     console.log(`PASS fresh authority and reference validation: ${invalid.label}`);
+  }
+  {
+    const { db, sale, commit } = await seed({ originalQuantity: 20, unitPrice: 100, quantity: 80 });
+    const reordered = { ...sale, items: sale.items.map(item => Object.fromEntries(Object.entries(item).reverse())) };
+    const reviewed = input(reordered, 10);
+    const result = await commit(reviewed);
+    assert.equal(result.request.status, 'COMPLETED');
+    assert.equal(result.checkout.sale.totalAmount, 1000);
+    assert.equal(result.request.originalTotal, 2000);
+    assert.equal((await getDoc(doc(db, 'product_batches', 'batch-a'))).data().quantity, 90);
+    assert.equal((await getDoc(doc(db, 'pos_payments', result.checkout.paymentId))).data().amount, 1000);
+    assert.equal((await getDoc(doc(db, 'pos_transaction_outbox', result.checkout.outboxEventId))).data().status, 'PROCESSED');
+    assert.equal((await commit(reviewed)).replayed, true);
+    assert.equal((await getDoc(doc(db, 'product_batches', 'batch-a'))).data().quantity, 90);
+    console.log('PASS 20 to 10 at UGX 100 with reordered fields; stock +10, accounts 1000, completed history and exact replay');
+  }
+  {
+    const { db, sale, commit } = await seed();
+    const reviewed = input(sale);
+    await env.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), 'sales', 'original'), {
+        items: sale.items.map(item => ({ ...item, quantity: 11 }))
+      }, { merge: true });
+    });
+    await assert.rejects(commit(reviewed), /The original receipt changed/);
+    assert.equal((await getDoc(doc(db, 'product_batches', 'batch-a'))).data().quantity, 90);
+    assert.equal((await getDoc(doc(db, 'sales', 'original'))).data().revisionId, undefined);
+    console.log('PASS genuine concurrent item change rejects correction without stock or revision writes');
   }
   console.log('Spark production-schema emulator checks passed.');
 } finally {
