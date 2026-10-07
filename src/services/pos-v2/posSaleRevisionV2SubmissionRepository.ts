@@ -9,6 +9,8 @@ import {
   posV2RevisionRequestDocumentId,
   type PosV2RevisionSubmissionRequest
 } from './posSaleRevisionV2Submission';
+import { assertPosV2RevisionFirestoreSafe } from './posSaleRevisionV2FirestoreSafety';
+import { loadCheckoutV2Authority } from './posCheckoutV2Repository';
 
 export interface SubmitPosV2RevisionInput {
   originalSale: Sale;
@@ -71,6 +73,16 @@ export async function submitPosV2RevisionRequest(
     throw new Error('The authenticated user does not match the revision actor.');
   }
 
+  const originalTenantId = clean((input.originalSale as Sale & { tenantId?: string }).tenantId);
+  const originalBranchId = clean(input.originalSale.branchId);
+  if (!originalTenantId || !originalBranchId) {
+    throw new Error('The original receipt is missing its authoritative tenant or branch identity.');
+  }
+  const authority = await loadCheckoutV2Authority(currentUser.uid, originalBranchId);
+  if (clean(authority.tenantId) !== originalTenantId) {
+    throw new Error('The authenticated operator cannot revise a receipt from another tenant.');
+  }
+
   const eligibility = evaluatePosV2RevisionEligibility(input.originalSale as any, input.now ?? new Date());
   if (!eligibility.allowed) {
     throw new Error(eligibility.code === 'REVISION_WINDOW_EXPIRED'
@@ -78,7 +90,14 @@ export async function submitPosV2RevisionRequest(
       : `This receipt is no longer eligible for revision (${eligibility.code}).`);
   }
 
-  const request = buildPosV2RevisionSubmissionRequest(input);
+  let request: PosV2RevisionSubmissionRequest;
+  try {
+    request = buildPosV2RevisionSubmissionRequest(input);
+    assertPosV2RevisionFirestoreSafe(request);
+  } catch (error) {
+    console.error('POS V2 revision request failed Firestore safety validation:', error instanceof Error ? error.message : String(error));
+    throw new Error('The revision request contains invalid data and was not submitted. Return to the editor and try again.');
+  }
   const requestId = posV2RevisionRequestDocumentId(request);
   const requestRef = doc(db, 'pos_sale_revision_requests', requestId);
 

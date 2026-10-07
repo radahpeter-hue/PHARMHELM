@@ -35,7 +35,7 @@ function plan() {
       { productId: 'p1', productName: 'Amoxicillin', quantity: 3, unitPrice: 1000, actualUnitPrice: 1000, lineTotal: 3000 }
     ] as any,
     revisedTotal: 3000,
-    paymentMethod: 'mobile_money',
+    paymentMethod: 'mtn_momo',
     reason: 'Quantity and payment method corrected',
     now: new Date('2026-10-01T08:00:00.000Z')
   });

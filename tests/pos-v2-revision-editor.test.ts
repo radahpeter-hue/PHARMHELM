@@ -45,7 +45,7 @@ const sale = {
 
 test('revision editor seeds a local draft from the immutable original receipt', () => {
   const draft = buildInitialPosV2RevisionDraft(sale);
-  assert.equal(draft.paymentMethod, 'Cash');
+  assert.equal(draft.paymentMethod, 'cash');
   assert.equal(draft.context, 'walk-in');
   assert.equal(draft.patientId, 'patient-1');
   assert.equal(draft.discountPercentage, 10);
@@ -66,9 +66,9 @@ test('revision draft total follows line quantities prices and sale-level discoun
 test('editor exposes the agreed revision fields without submitting the transaction', () => {
   assert.match(source, /Payment method/);
   assert.match(source, /Transaction|Context/);
-  assert.match(source, /Patient ID/);
-  assert.match(source, /Institution ID/);
-  assert.match(source, /Prescriber ID/);
+  assert.match(source, /Client \/ patient/);
+  assert.match(source, /label="Institution"/);
+  assert.match(source, /label="Prescriber"/);
   assert.match(source, /Discount %/);
   assert.match(source, /Mandatory revision reason/);
   assert.match(source, /Add Product/);
@@ -95,12 +95,16 @@ test('add-product flow opens the certified picker and inserts its canonical line
 });
 
 test('catalog data bridge is read-only and loads only while an eligible editor is open', () => {
+  assert.match(actionSource, /authenticatedTenantId === saleTenantId/);
   assert.match(actionSource, /usePosV2RevisionCatalogData\(tenantId, isEditorOpen && decision\.canRevise\)/);
   assert.match(actionSource, /catalogProducts=\{catalog\.products\}/);
   assert.match(actionSource, /catalogReady=\{catalog\.isReady\}/);
   assert.match(catalogDataSource, /subscribeToCollection<Product>\(\s*'products'/);
   assert.match(catalogDataSource, /subscribeToCollection<ProductBatch>\(\s*'product_batches'/);
   assert.match(catalogDataSource, /subscribeToCollection<SystemSettings>\(\s*'system_settings'/);
+  assert.match(catalogDataSource, /'clients'/);
+  assert.match(catalogDataSource, /'institutions'/);
+  assert.match(catalogDataSource, /'prescribers'/);
   assert.doesNotMatch(catalogDataSource, /addDocument|updateDocument|deleteDocument|setDoc|updateDoc|deleteDoc|runTransaction/);
 });
 

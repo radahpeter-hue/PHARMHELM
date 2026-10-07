@@ -44,21 +44,29 @@ test('institutional sale with an institution passes', () => {
   assert.deepEqual(validate({ context: 'institutional', hasInstitution: true }), { valid: true });
 });
 
-test('credit without either a patient or institution is rejected, including the legacy internal token', () => {
+test('institutional credit without an institution is rejected, including the legacy internal token', () => {
   const expected = {
     valid: false,
-    code: 'credit_identity_required',
-    message: 'An identifiable client or institution is required for a credit sale.'
+    code: 'credit_institution_required',
+    message: 'Select an eligible institution before using Institutional Credit.'
   };
   assert.deepEqual(validate({ paymentMethod: 'credit' }), expected);
   assert.deepEqual(validate({ paymentMethod: 'institutional_credit' }), expected);
 });
 
-test('credit passes with either a patient/client or institution account', () => {
-  assert.deepEqual(validate({ paymentMethod: 'credit', hasPatient: true }), { valid: true });
+test('institutional credit requires an eligible institution and does not accept a patient alone', () => {
+  assert.deepEqual(validate({ paymentMethod: 'credit', hasPatient: true }), {
+    valid: false,
+    code: 'credit_institution_required',
+    message: 'Select an eligible institution before using Institutional Credit.'
+  });
   assert.deepEqual(validate({ paymentMethod: 'credit', hasInstitution: true }), { valid: true });
-  assert.deepEqual(validate({ paymentMethod: 'institutional_credit', hasPatient: true }), { valid: true });
   assert.deepEqual(validate({ paymentMethod: 'institutional_credit', hasInstitution: true }), { valid: true });
+  assert.deepEqual(validate({ paymentMethod: 'institutional_credit', hasInstitution: true, hasEligibleInstitution: false }), {
+    valid: false,
+    code: 'credit_institution_ineligible',
+    message: 'The selected institution is not eligible for institutional credit.'
+  });
 });
 
 test('Phase 2 validation is wired before checkout attempt locking and POS V2 invocation', () => {
@@ -87,6 +95,9 @@ test('validation helper has no inventory, transaction or outbox side effects', (
 
 test('POS presents a single Credit option while retaining the legacy internal token for downstream compatibility', () => {
   const source = readFileSync('src/pages/Sales.tsx', 'utf8');
-  assert.ok(source.includes("{ id: 'institutional_credit', label: 'Credit', icon: CreditCard }"));
+  const options = readFileSync('src/utils/posPaymentMethods.ts', 'utf8');
+  assert.ok(source.includes('POS_CANONICAL_PAYMENT_METHODS'));
+  assert.ok(options.includes("{ id: 'institutional_credit', label: 'Institutional Credit' }"));
+  assert.ok(options.includes("credit: 'institutional_credit'"));
   assert.equal(source.includes("label: 'Inst. Credit'"), false);
 });

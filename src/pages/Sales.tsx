@@ -35,6 +35,7 @@ import { PosV2RevisionLedger } from '../components/sales/PosV2RevisionLedger';
 import { buildReceiptRevisionPlainText, openReceiptPrintWindow, printThermalReceipt } from '../utils/receiptPrinting';
 import { canOperatePos, formatPosCheckoutError } from '../utils/posAuthorization';
 import { validateSaleCheckoutContext } from '../utils/saleContextValidation';
+import { POS_CANONICAL_PAYMENT_METHODS } from '../utils/posPaymentMethods';
 import { getReceiptLedgerReference, getSaleIdentityLabel, getSaleSystemReference, matchesReceiptLedgerSearch, resolveSaleOperatorName } from '../utils/salePresentation';
 import type { SellingTierCode } from '../types/sellingTier';
 import { resolveSellingTiers } from '../services/sellingTierService';
@@ -2350,15 +2351,14 @@ const Sales: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { id: 'cash', label: 'Cash', icon: Banknote },
-                    { id: 'mtn_momo', label: 'MTN MoMo', icon: Smartphone },
-                    { id: 'airtel_money', label: 'Airtel Money', icon: Smartphone },
-                    { id: 'card', label: 'Card / POS', icon: CreditCard },
-                    { id: 'insurance', label: 'Insurance', icon: ShieldCheck },
-                    { id: 'institutional_credit', label: 'Credit', icon: CreditCard },
-                    { id: 'staff_welfare', label: 'Staff Welfare', icon: User, disabled: !isEmployee }
-                  ].map(method => (
+                  {POS_CANONICAL_PAYMENT_METHODS.map(option => ({
+                    ...option,
+                    icon: option.id === 'cash' ? Banknote
+                      : option.id === 'mtn_momo' || option.id === 'airtel_money' ? Smartphone
+                        : option.id === 'insurance' ? ShieldCheck
+                          : option.id === 'staff_welfare' ? User : CreditCard,
+                    disabled: option.id === 'staff_welfare' && !isEmployee
+                  })).map(method => (
                     <button
                       key={method.id}
                       onClick={() => setPaymentMethod(method.id as PaymentMethodType)}

@@ -1,12 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Product, ProductBatch, SystemSettings } from '../../types';
+import type { Product, ProductBatch, Staff, SystemSettings } from '../../types';
 import { firestoreService } from '../../services/firestore';
+import {
+  clientRevisionOption,
+  institutionRevisionOption,
+  prescriberRevisionOption,
+  type PosV2RevisionReferenceOption
+} from '../../services/pos-v2/posSaleRevisionV2ReferenceData';
 
 export interface PosV2RevisionCatalogData {
   products: Product[];
   batches: ProductBatch[];
   systemSettings: SystemSettings | null;
+  clients: PosV2RevisionReferenceOption[];
+  institutions: PosV2RevisionReferenceOption[];
+  prescribers: PosV2RevisionReferenceOption[];
   isReady: boolean;
+  referencesReady: boolean;
 }
 
 /**
@@ -20,24 +30,44 @@ export function usePosV2RevisionCatalogData(
   const [products, setProducts] = useState<Product[]>([]);
   const [batches, setBatches] = useState<ProductBatch[]>([]);
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
+  const [clients, setClients] = useState<Record<string, unknown>[]>([]);
+  const [institutions, setInstitutions] = useState<Record<string, unknown>[]>([]);
+  const [prescribers, setPrescribers] = useState<Record<string, unknown>[]>([]);
+  const [staff, setStaff] = useState<Staff[]>([]);
   const [productsLoaded, setProductsLoaded] = useState(false);
   const [batchesLoaded, setBatchesLoaded] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [clientsLoaded, setClientsLoaded] = useState(false);
+  const [institutionsLoaded, setInstitutionsLoaded] = useState(false);
+  const [prescribersLoaded, setPrescribersLoaded] = useState(false);
+  const [staffLoaded, setStaffLoaded] = useState(false);
 
   useEffect(() => {
     if (!enabled || !tenantId) {
       setProducts([]);
       setBatches([]);
       setSystemSettings(null);
+      setClients([]);
+      setInstitutions([]);
+      setPrescribers([]);
+      setStaff([]);
       setProductsLoaded(false);
       setBatchesLoaded(false);
       setSettingsLoaded(false);
+      setClientsLoaded(false);
+      setInstitutionsLoaded(false);
+      setPrescribersLoaded(false);
+      setStaffLoaded(false);
       return;
     }
 
     setProductsLoaded(false);
     setBatchesLoaded(false);
     setSettingsLoaded(false);
+    setClientsLoaded(false);
+    setInstitutionsLoaded(false);
+    setPrescribersLoaded(false);
+    setStaffLoaded(false);
 
     const unsubscribeProducts = firestoreService.subscribeToCollection<Product>(
       'products',
@@ -63,18 +93,54 @@ export function usePosV2RevisionCatalogData(
         setSettingsLoaded(true);
       }
     );
+    const unsubscribeClients = firestoreService.subscribeToCollection<Record<string, unknown>>(
+      'clients', tenantId, data => { setClients(data); setClientsLoaded(true); }
+    );
+    const unsubscribeInstitutions = firestoreService.subscribeToCollection<Record<string, unknown>>(
+      'institutions', tenantId, data => { setInstitutions(data); setInstitutionsLoaded(true); }
+    );
+    const unsubscribePrescribers = firestoreService.subscribeToCollection<Record<string, unknown>>(
+      'prescribers', tenantId, data => { setPrescribers(data); setPrescribersLoaded(true); }
+    );
+    const unsubscribeStaff = firestoreService.subscribeToCollection<Staff>(
+      'staff', tenantId, data => { setStaff(data); setStaffLoaded(true); }
+    );
 
     return () => {
       unsubscribeProducts();
       unsubscribeBatches();
       unsubscribeSettings();
+      unsubscribeClients();
+      unsubscribeInstitutions();
+      unsubscribePrescribers();
+      unsubscribeStaff();
     };
   }, [tenantId, enabled]);
 
-  return useMemo(() => ({
-    products,
-    batches,
-    systemSettings,
-    isReady: Boolean(enabled && tenantId && productsLoaded && batchesLoaded && settingsLoaded)
-  }), [products, batches, systemSettings, enabled, tenantId, productsLoaded, batchesLoaded, settingsLoaded]);
+  return useMemo(() => {
+    const staffClients = staff.map(member => ({
+      ...member,
+      id: member.id,
+      full_name: member.full_name || member.username || 'Unknown staff member',
+      phone_number: member.phone_number || '',
+      status: member.status,
+      isStaff: true,
+      labels: ['EMPLOYEE'],
+      billing_type: 'Staff / Welfare'
+    }));
+    return {
+      products,
+      batches,
+      systemSettings,
+      clients: [...clients, ...staffClients].map(clientRevisionOption).filter(option => option.id),
+      institutions: institutions.map(institutionRevisionOption).filter(option => option.id),
+      prescribers: prescribers.map(prescriberRevisionOption).filter(option => option.id),
+      isReady: Boolean(enabled && tenantId && productsLoaded && batchesLoaded && settingsLoaded),
+      referencesReady: Boolean(enabled && tenantId && clientsLoaded && institutionsLoaded && prescribersLoaded && staffLoaded)
+    };
+  }, [
+    products, batches, systemSettings, clients, institutions, prescribers, staff,
+    enabled, tenantId, productsLoaded, batchesLoaded, settingsLoaded,
+    clientsLoaded, institutionsLoaded, prescribersLoaded, staffLoaded
+  ]);
 }

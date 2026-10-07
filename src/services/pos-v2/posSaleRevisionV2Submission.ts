@@ -6,6 +6,10 @@ import {
   type PosV2RevisionEnvelope
 } from './posSaleRevisionV2Envelope';
 import type { PosV2RevisionPlan } from './posSaleRevisionV2Planner';
+import {
+  assertPosV2RevisionFirestoreSafe,
+  normalizePosV2RevisionFirestoreValue
+} from './posSaleRevisionV2FirestoreSafety';
 
 export const POS_V2_REVISION_PAYLOAD_VERSION = 1 as const;
 
@@ -91,7 +95,7 @@ export function buildPosV2RevisionSubmissionRequest(
     throw new Error('Revision submission requires at least one corrected sale item.');
   }
 
-  return {
+  const request: PosV2RevisionSubmissionRequest = {
     requestType: POS_V2_REVISION_EVENT_TYPE,
     engineVersion: 2,
     payloadVersion: POS_V2_REVISION_PAYLOAD_VERSION,
@@ -127,6 +131,9 @@ export function buildPosV2RevisionSubmissionRequest(
     revisedItems: [...input.revisedItems],
     envelope
   };
+  const normalized = normalizePosV2RevisionFirestoreValue(request);
+  assertPosV2RevisionFirestoreSafe(normalized);
+  return normalized;
 }
 
 export function posV2RevisionRequestDocumentId(request: Pick<PosV2RevisionSubmissionRequest, 'requestId'>): string {

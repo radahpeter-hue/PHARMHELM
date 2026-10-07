@@ -1,4 +1,6 @@
 import type { Sale, SaleItem } from '../../types';
+import { validateSaleCheckoutContext } from '../../utils/saleContextValidation';
+import { assertPosPaymentMethod, normalizePosPaymentMethod } from '../../utils/posPaymentMethods';
 import { assertRevisionReason, evaluatePosV2RevisionEligibility, revisionMonetaryDelta } from './posSaleRevisionV2Policy';
 
 export type PosV2RevisionChangeType =
@@ -43,16 +45,24 @@ export interface PosV2RevisionPlan {
     paymentMethod: string;
     context: string | null;
     patientId: string | null;
+    patientName: string | null;
+    customerId: string | null;
     institutionId: string | null;
+    institutionName: string | null;
     prescriberId: string | null;
+    prescriberName: string | null;
     discountPercentage: number;
   };
   after: {
     paymentMethod: string;
     context: string | null;
     patientId: string | null;
+    patientName: string | null;
+    customerId: string | null;
     institutionId: string | null;
+    institutionName: string | null;
     prescriberId: string | null;
+    prescriberName: string | null;
     discountPercentage: number;
   };
 }
@@ -76,8 +86,12 @@ export interface BuildPosV2RevisionPlanInput {
   paymentMethod?: string;
   context?: string | null;
   patientId?: string | null;
+  patientName?: string | null;
   institutionId?: string | null;
+  institutionName?: string | null;
+  institutionBillingEligible?: boolean;
   prescriberId?: string | null;
+  prescriberName?: string | null;
   discountPercentage?: number;
   reason: string;
   now?: Date;
@@ -92,6 +106,21 @@ const cleanId = (value: unknown): string | null => {
   const text = String(value ?? '').trim();
   return text || null;
 };
+
+const cleanName = (value: unknown): string | null => cleanId(value);
+
+const normalizeContext = (value: unknown): 'walk-in' | 'telepharmacy' | 'institutional' => {
+  const normalized = String(value ?? '').trim().toLowerCase() || 'walk-in';
+  if (normalized !== 'walk-in' && normalized !== 'telepharmacy' && normalized !== 'institutional') {
+    throw new Error(`Unsupported sale context: ${normalized}.`);
+  }
+  return normalized;
+};
+
+function optionalTier(item: SaleItem): Pick<PosV2RevisionItemChange, 'tierCode'> {
+  const tierCode = String((item as any).tierCode ?? '').trim();
+  return tierCode ? { tierCode } : {};
+}
 
 const saleTotal = (sale: Sale): number => {
   const explicit = numberValue((sale as any).totalAmount, NaN);
@@ -120,7 +149,7 @@ function compareItems(originalItems: SaleItem[], revisedItems: SaleItem[]) {
         type: 'ITEM_REMOVED',
         productId: before.productId,
         productName: itemName(before),
-        tierCode: (before as any).tierCode,
+        ...optionalTier(before),
         beforeQuantity: itemQuantity(before),
         beforeUnitPrice: itemUnitPrice(before)
       });
@@ -134,7 +163,7 @@ function compareItems(originalItems: SaleItem[], revisedItems: SaleItem[]) {
         type: 'QUANTITY_CHANGED',
         productId: before.productId,
         productName: itemName(before),
-        tierCode: (before as any).tierCode,
+        ...optionalTier(before),
         beforeQuantity: beforeQty,
         afterQuantity: afterQty,
         beforeUnitPrice: itemUnitPrice(before),
@@ -149,7 +178,7 @@ function compareItems(originalItems: SaleItem[], revisedItems: SaleItem[]) {
         type: 'PRICE_CHANGED',
         productId: before.productId,
         productName: itemName(before),
-        tierCode: (before as any).tierCode,
+        ...optionalTier(before),
         beforeQuantity: beforeQty,
         afterQuantity: afterQty,
         beforeUnitPrice: beforePrice,
@@ -164,7 +193,7 @@ function compareItems(originalItems: SaleItem[], revisedItems: SaleItem[]) {
       type: 'ITEM_ADDED',
       productId: after.productId,
       productName: itemName(after),
-      tierCode: (after as any).tierCode,
+      ...optionalTier(after),
       afterQuantity: itemQuantity(after),
       afterUnitPrice: itemUnitPrice(after)
     });
@@ -189,24 +218,75 @@ export function buildPosV2RevisionPlan(input: BuildPosV2RevisionPlanInput): PosV
   if (!Array.isArray(input.revisedItems) || input.revisedItems.length === 0) {
     throw new Error('A revised sale must contain at least one line item.');
   }
+  input.revisedItems.forEach((item, index) => {
+    if (!cleanId(item?.productId)) throw new Error(`Revised item ${index + 1} is missing its required product identity.`);
+    const quantity = Number((item as any).quantity);
+    const unitPrice = Number((item as any).actualUnitPrice ?? (item as any).unitPrice);
+    if (!Number.isFinite(quantity) || quantity <= 0) throw new Error(`Revised item ${index + 1} has an invalid quantity.`);
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error(`Revised item ${index + 1} has an invalid unit price.`);
+  });
 
   const itemChanges = compareItems(input.originalSale.items || [], input.revisedItems);
+  const originalPaymentMethod = assertPosPaymentMethod(input.originalSale.paymentMethod);
+  const revisedPaymentMethod = assertPosPaymentMethod(input.paymentMethod ?? input.originalSale.paymentMethod);
   const before = {
-    paymentMethod: String(input.originalSale.paymentMethod || ''),
-    context: cleanId((input.originalSale as any).context),
-    patientId: cleanId((input.originalSale as any).patientId),
+    paymentMethod: originalPaymentMethod,
+    context: normalizeContext((input.originalSale as any).context),
+    patientId: cleanId((input.originalSale as any).patientId ?? (input.originalSale as any).customerId ?? (input.originalSale as any).clientId),
+    patientName: cleanName((input.originalSale as any).patientName),
+    customerId: cleanId((input.originalSale as any).customerId ?? (input.originalSale as any).clientId ?? (input.originalSale as any).patientId),
     institutionId: cleanId((input.originalSale as any).institutionId),
+    institutionName: cleanName((input.originalSale as any).institutionName),
     prescriberId: cleanId((input.originalSale as any).prescriberId),
+    prescriberName: cleanName((input.originalSale as any).prescriberName),
     discountPercentage: numberValue(input.originalSale.discountPercentage, 0)
   };
+  const nextPatientId = input.patientId === undefined ? before.patientId : cleanId(input.patientId);
+  const nextInstitutionId = input.institutionId === undefined ? before.institutionId : cleanId(input.institutionId);
+  const nextPrescriberId = input.prescriberId === undefined ? before.prescriberId : cleanId(input.prescriberId);
   const after = {
-    paymentMethod: String(input.paymentMethod ?? input.originalSale.paymentMethod ?? ''),
-    context: input.context === undefined ? before.context : cleanId(input.context),
-    patientId: input.patientId === undefined ? before.patientId : cleanId(input.patientId),
-    institutionId: input.institutionId === undefined ? before.institutionId : cleanId(input.institutionId),
-    prescriberId: input.prescriberId === undefined ? before.prescriberId : cleanId(input.prescriberId),
+    paymentMethod: revisedPaymentMethod,
+    context: input.context === undefined ? before.context : normalizeContext(input.context),
+    patientId: nextPatientId,
+    patientName: nextPatientId === before.patientId && input.patientName === undefined ? before.patientName : cleanName(input.patientName),
+    customerId: nextPatientId,
+    institutionId: nextInstitutionId,
+    institutionName: nextInstitutionId === before.institutionId && input.institutionName === undefined ? before.institutionName : cleanName(input.institutionName),
+    prescriberId: nextPrescriberId,
+    prescriberName: nextPrescriberId === before.prescriberId && input.prescriberName === undefined ? before.prescriberName : cleanName(input.prescriberName),
     discountPercentage: numberValue(input.discountPercentage ?? input.originalSale.discountPercentage, 0)
   };
+
+  if (after.patientId && !after.patientName && after.patientId !== before.patientId) {
+    throw new Error('A changed client must include its canonical display-name snapshot.');
+  }
+  if (after.institutionId && !after.institutionName && after.institutionId !== before.institutionId) {
+    throw new Error('A changed institution must include its canonical display-name snapshot.');
+  }
+  if (after.prescriberId && !after.prescriberName && after.prescriberId !== before.prescriberId) {
+    throw new Error('A changed prescriber must include its canonical display-name snapshot.');
+  }
+
+  const contextValidation = validateSaleCheckoutContext({
+    context: after.context,
+    paymentMethod: after.paymentMethod,
+    hasPatient: Boolean(after.patientId),
+    hasInstitution: Boolean(after.institutionId),
+    hasEligibleInstitution: input.institutionBillingEligible ?? (after.institutionId === before.institutionId)
+  });
+  if ('message' in contextValidation) throw new Error(contextValidation.message);
+  if (after.paymentMethod === 'insurance' && !after.patientId && !after.institutionId) {
+    throw new Error('Insurance payment requires a linked client or institution account.');
+  }
+  if (after.paymentMethod === 'staff_welfare') {
+    if (normalizePosPaymentMethod(input.originalSale.paymentMethod) !== 'staff_welfare') {
+      throw new Error('Changing a receipt into Staff Welfare is unavailable because no immutable welfare allocation is present.');
+    }
+    if (!after.patientId) throw new Error('Staff Welfare payment requires the linked employee client.');
+    if (after.patientId !== before.patientId) {
+      throw new Error('Changing the Staff Welfare beneficiary is unavailable because no revised allocation is present.');
+    }
+  }
 
   const changeTypes = new Set<PosV2RevisionChangeType>(itemChanges.map(change => change.type));
   if (before.paymentMethod !== after.paymentMethod) changeTypes.add('PAYMENT_METHOD_CHANGED');
