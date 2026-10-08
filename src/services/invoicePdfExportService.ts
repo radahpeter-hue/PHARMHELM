@@ -1,3 +1,4 @@
+import { getDisplayReference } from '../utils/salePresentation';
 import { jsPDF } from 'jspdf';
 import { describeSaleItemQuantity } from './saleTierHistoryService';
 import { getPosV2RevisionReceiptPresentation } from './pos-v2/posSaleRevisionV2Presentation';
@@ -108,10 +109,10 @@ export const exportInvoicePdf = ({ receipt, branchName, sellerName, branding }: 
     if (revisionPresentation.linkedReceiptNumber && revisionPresentation.linkedReceiptLabel) {
       detailLines.push(`${revisionPresentation.linkedReceiptLabel}: ${revisionPresentation.linkedReceiptNumber}`);
     }
-    if (revisionPresentation.revisionId) detailLines.push(`Revision reference: ${revisionPresentation.revisionId}`);
-    if (revisionPresentation.revisionRequestId) detailLines.push(`Request reference: ${revisionPresentation.revisionRequestId}`);
+    if (revisionPresentation.revisionId) detailLines.push(`Revision reference: ${getDisplayReference(revisionPresentation.revisionId, 'REV')}`);
+    if (revisionPresentation.revisionRequestId) detailLines.push(`Request reference: ${getDisplayReference(revisionPresentation.revisionRequestId, 'REQ')}`);
     if (receipt.revisionRecordedAt) detailLines.push(`Edited at: ${new Date(receipt.revisionRecordedAt).toLocaleString('en-GB', { timeZone: 'Africa/Kampala' })}`);
-    if (receipt.originalSellerId) detailLines.push(`Original seller reference: ${receipt.originalSellerId}`);
+    if (receipt.originalSellerId) detailLines.push(`Original seller reference: ${getDisplayReference(receipt.originalSellerId, 'STAFF')}`);
     if (revisionPresentation.editorName) detailLines.push(`Revision editor: ${revisionPresentation.editorName}`);
     if (revisionPresentation.reason) detailLines.push(`Correction reason: ${revisionPresentation.reason}`);
 
@@ -141,7 +142,7 @@ export const exportInvoicePdf = ({ receipt, branchName, sellerName, branding }: 
     pdf.setFontSize(11);
     pdf.setTextColor(25, 25, 25);
     pdf.text(billedTo, margin, y + 5);
-    const identity = clean(receipt.institutionId || receipt.patientId);
+    const identity = receipt.institutionId || receipt.patientId ? getDisplayReference(receipt.institutionId || receipt.patientId, receipt.institutionId ? 'INST' : 'CLIENT') : '';
     if (identity) {
       pdf.setFont('helvetica', 'normal');
       pdf.setFontSize(8);

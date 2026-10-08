@@ -135,7 +135,7 @@ test('thermal and shared text identify superseded and corrected receipts without
   assert.match(correctedText, /^CORRECTED RECEIPT/m);
   assert.match(correctedText, /Replacement executor: Replacement Operator/);
   assert.match(correctedText, /Original receipt: MSK-2026-000001/);
-  assert.match(correctedText, /Request reference: request-1/);
+  assert.match(correctedText, /Request reference: REQ-EQUEST-1/);
 });
 
 test('reprint preview and thermal printer use the revision presentation contract', () => {

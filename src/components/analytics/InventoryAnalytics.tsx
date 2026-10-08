@@ -1,3 +1,4 @@
+import { isActiveSale } from '../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -29,7 +30,7 @@ export const InventoryAnalytics: React.FC = () => {
       });
       
       const unsubSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
-        setSales(data);
+        setSales(data.filter(isActiveSale));
       });
 
       const unsubTrips = firestoreService.subscribeToCollection('trips', profile.tenantId, (data) => {
@@ -90,7 +91,10 @@ export const InventoryAnalytics: React.FC = () => {
     sales.forEach(s => {
       if (s.items) {
         s.items.forEach((item: any) => {
-          productSalesQty[item.id] = (productSalesQty[item.id] || 0) + (item.quantity || 0);
+          if (item.isService) return;
+          const productId = item.productId || item.id;
+          if (!productId) return;
+          productSalesQty[productId] = (productSalesQty[productId] || 0) + (item.baseQuantity ?? item.quantity ?? 0);
         });
       }
     });

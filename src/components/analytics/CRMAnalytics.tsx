@@ -1,3 +1,4 @@
+import { isActiveSale } from '../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -38,7 +39,7 @@ export const CRMAnalytics: React.FC = () => {
       });
 
       const unsubSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
-        setSales(data);
+        setSales(data.filter(isActiveSale));
         setLoading(false);
       });
 

@@ -1,3 +1,4 @@
+import { isActiveSale } from '../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, TrendingDown, Clock, Award, ShieldAlert, AlertTriangle, Calendar
@@ -24,7 +25,7 @@ export const HRAnalytics: React.FC = () => {
       });
       
       const unsubSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
-        setSales(data);
+        setSales(data.filter(isActiveSale));
       });
 
       const unsubAttendance = firestoreService.subscribeToCollection('attendance_records', profile.tenantId, (data) => {

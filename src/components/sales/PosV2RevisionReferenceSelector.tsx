@@ -45,7 +45,7 @@ export const PosV2RevisionReferenceSelector: React.FC<Props> = ({
         >
           <span className="min-w-0">
             <span className="block text-sm font-bold text-zinc-800 truncate">{selected?.name || selectedName || placeholder}</span>
-            {selectedId && <span className="block text-[10px] text-zinc-400 truncate">{selectedId}{historical ? ' · Historical / unavailable' : selected?.secondary ? ` · ${selected.secondary}` : ''}</span>}
+            {selectedId && <span className="block text-[10px] text-zinc-400 truncate">{historical ? 'Historical / unavailable' : selected?.secondary || selected?.tertiary || 'Registered record'}</span>}
           </span>
           <ChevronDown className="w-4 h-4 shrink-0" />
         </button>
@@ -82,7 +82,7 @@ export const PosV2RevisionReferenceSelector: React.FC<Props> = ({
                 >
                   <span className="min-w-0">
                     <span className="block text-xs font-black text-zinc-800 truncate">{option.name}</span>
-                    <span className="block text-[10px] text-zinc-400 break-words">{option.id}{option.secondary ? ` · ${option.secondary}` : ''}{option.tertiary ? ` · ${option.tertiary}` : ''}</span>
+                    <span className="block text-[10px] text-zinc-400 break-words">{[option.secondary, option.tertiary].filter(Boolean).join(' · ') || 'Registered record'}</span>
                   </span>
                   {selectedId === option.id && <Check className="w-4 h-4 text-emerald-600 shrink-0" />}
                 </button>

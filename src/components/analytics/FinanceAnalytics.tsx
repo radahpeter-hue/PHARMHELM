@@ -1,3 +1,4 @@
+import { isActiveSale } from '../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -43,7 +44,7 @@ export const FinanceAnalytics: React.FC = () => {
     if (profile?.tenantId) {
       setLoading(true);
       const unsubscribeSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
-        setSales(data);
+        setSales(data.filter(isActiveSale));
       });
       const unsubscribeBranch = firestoreService.subscribeToCollection('branch_expenses', profile.tenantId, (data) => {
         setBranchExpenses(data);

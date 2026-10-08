@@ -45,3 +45,9 @@ export const matchesReceiptLedgerSearch = (sale: Sale, searchTerm: string): bool
   ]
     .some(value => String(value || '').toLowerCase().includes(query));
 };
+
+/** Display shorthand only; canonical IDs remain unchanged in records and exports. */
+export const getDisplayReference = (id: string | null | undefined, prefix = 'REF'): string => {
+  const value = String(id || '').trim();
+  return value ? `${prefix}-${value.slice(-8).toUpperCase()}` : 'Not recorded';
+};

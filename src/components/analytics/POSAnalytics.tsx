@@ -1,3 +1,4 @@
+import { isActiveSale } from '../../utils/activeSales';
 import React, { useState, useEffect } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -25,7 +26,7 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
     if (profile?.tenantId) {
       setLoading(true);
       const unsubscribe = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
-        setSales(data);
+        setSales(data.filter(isActiveSale));
         setLoading(false);
       });
       return () => unsubscribe();
