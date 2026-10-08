@@ -51,3 +51,9 @@ export const getDisplayReference = (id: string | null | undefined, prefix = 'REF
   const value = String(id || '').trim();
   return value ? `${prefix}-${value.slice(-8).toUpperCase()}` : 'Not recorded';
 };
+
+/** Use the immutable checkout cost; retain the existing estimate only for older sales without cost history. */
+export const getSaleCostOfGoods = (sale: Partial<Sale> & { total_cost?: number; cost?: number; total_amount?: number; amount?: number }): number => {
+  if (sale.actualSaleCost != null && Number.isFinite(Number(sale.actualSaleCost))) return Number(sale.actualSaleCost);
+  return Number(sale.total_cost || sale.cost || Number(sale.totalAmount ?? sale.total ?? sale.total_amount ?? sale.amount ?? 0) * 0.6);
+};

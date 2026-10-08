@@ -1,3 +1,4 @@
+import { getSaleCostOfGoods } from '../../../utils/salePresentation';
 import { isActiveSale } from '../../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -149,7 +150,7 @@ export const ProfitabilityLedger: React.FC = () => {
   }, [filteredSales]);
 
   const totalCOGS = useMemo(() => {
-    return filteredSales.reduce((sum, s) => sum + (s.total_cost || s.cost || (s.total || s.total_amount || 0) * 0.6), 0);
+    return filteredSales.reduce((sum, s) => sum + getSaleCostOfGoods(s), 0);
   }, [filteredSales]);
 
   const grossProfit = useMemo(() => {

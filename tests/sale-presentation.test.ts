@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import type { Sale, Staff } from '../src/types';
-import { getReceiptLedgerReference, getSaleSystemReference, resolveSaleOperatorName } from '../src/utils/salePresentation';
+import { getReceiptLedgerReference, getSaleSystemReference, resolveSaleOperatorName, getSaleCostOfGoods } from '../src/utils/salePresentation';
 
 const sale = (overrides: Partial<Sale> = {}) => ({ id: 'v2sale_example_c3517282', receiptNumber: 'BR-3QLNF-2026-558545', servedBy: 'kalebu-uid', context: 'walk-in', ...overrides } as Sale);
 const member = (overrides: Partial<Staff> = {}) => ({ id: 'staff-doc', uid: 'kalebu-uid', legacyStaffId: null, tenantId: 't1', full_name: 'Kalebu Francis', username: '@k.francis', ...overrides } as Staff);
@@ -32,4 +32,10 @@ test('presentation consumers use the shared resolver', () => {
   assert.ok(a4.includes(": 'Served By'"));
   assert.ok(pdf.includes("operatorLabel"));
   assert.ok(pdf.includes(": 'Served By'"));
+});
+
+test('receipt corrections use actual checkout cost instead of a revenue-based estimate', () => {
+  assert.equal(getSaleCostOfGoods(sale({ total: 2250, actualSaleCost: 900 })), 900);
+  assert.equal(getSaleCostOfGoods(sale({ total: 2000, actualSaleCost: 0 })), 0);
+  assert.equal(getSaleCostOfGoods(sale({ total: 1000 })), 600);
 });

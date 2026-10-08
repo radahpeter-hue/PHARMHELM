@@ -9,6 +9,10 @@ const tenantId = 'zehqTDcKyrDAOHKK3stJ', branchId = '1agW2eYBOGGqKR9w2V31';
 const db = getFirestore(initializeApp({ credential: applicationDefault(), projectId: 'gen-lang-client-0911422817' }),
   'ai-studio-f7d8654b-e089-425a-a506-38159afe1e75');
 const scoped = row => row && row.tenantId === tenantId && row.branchId === branchId;
+async function optional(collection, id) {
+  const doc = await db.collection(collection).doc(id).get();
+  return doc.exists ? { ...doc.data(), id: doc.id } : null;
+}
 async function read(collection, id) {
   assert.ok(id, collection + ' identity missing');
   const doc = await db.collection(collection).doc(id).get();
@@ -43,16 +47,23 @@ assert.equal(original.items.length, 1); assert.equal(corrected.items.length, 1);
 assert.equal(Number(original.items[0].quantity), 30); assert.equal(Number(corrected.items[0].quantity), 45);
 assert.equal(original.items[0].productId, corrected.items[0].productId);
 const productId = corrected.items[0].productId;
-const oldMovement = await read('inventoryMovementEvents', movementEventId({ saleId: original.id, productId }));
-const restoration = await read('inventoryMovementEvents', revisionInventoryEventId({
+const oldMovement = await optional('inventoryMovementEvents', movementEventId({ saleId: original.id, productId }));
+const restoration = await optional('inventoryMovementEvents', revisionInventoryEventId({
  originalSaleId: original.id, revisionId: corrected.revisionId, productId }));
 const newMovement = await read('inventoryMovementEvents', movementEventId({ saleId: corrected.id, productId }));
-for (const row of [oldMovement, restoration, newMovement]) assert.ok(scoped(row));
-assert.equal(Number(restoration.quantityDeltaBaseUnits), -Number(oldMovement.quantityDeltaBaseUnits));
-assert.equal(Number(restoration.consumptionDeltaBaseUnits), -Number(oldMovement.consumptionDeltaBaseUnits));
+assert.ok(scoped(newMovement));
+if (oldMovement) {
+ assert.ok(scoped(oldMovement)); assert.ok(scoped(restoration));
+ assert.equal(Number(restoration.quantityDeltaBaseUnits), -Number(oldMovement.quantityDeltaBaseUnits));
+ assert.equal(Number(restoration.consumptionDeltaBaseUnits), -Number(oldMovement.consumptionDeltaBaseUnits));
+} else {
+ // Spark can correct an original whose background consumption was never posted.
+ // Physical stock is restored from its immutable batch allocations; no phantom reversal is posted.
+ assert.equal(restoration, null);
+}
 assert.equal(Number(newMovement.consumptionDeltaBaseUnits), Number(corrected.items[0].baseQuantity));
 assert.equal(Number(newMovement.quantityDeltaBaseUnits), -Number(corrected.items[0].baseQuantity));
-assert.equal(newMovement.dateKey, oldMovement.dateKey);
+if (oldMovement) assert.equal(newMovement.dateKey, oldMovement.dateKey);
 assert.equal(corrected.timestamp, original.timestamp);
 const summary = await read('branchConsumptionDaily', consumptionSummaryId(tenantId, branchId, productId, newMovement.dateKey));
 assert.ok(scoped(summary));
@@ -88,10 +99,11 @@ console.log(JSON.stringify({
  corrected: { quantity: corrected.items[0].quantity, total: total(corrected), baseQuantity: corrected.items[0].baseQuantity },
  finance: { originalPayment: originalPayment.amount, reversal: reversal.amountDelta, replacementPayment: payment.amount,
  netReceiptRevenue: Number(originalPayment.amount) + Number(reversal.amountDelta) + Number(payment.amount),
- revenueChange: total(corrected) - total(original) },
- inventory: { originalConsumption: oldMovement.consumptionDeltaBaseUnits, restoredConsumption: restoration.consumptionDeltaBaseUnits,
+ revenueChange: total(corrected) - total(original), actualCost: corrected.actualSaleCost, grossProfit: total(corrected) - Number(corrected.actualSaleCost) },
+ inventory: { originalConsumption: oldMovement?.consumptionDeltaBaseUnits ?? null, restoredConsumption: restoration?.consumptionDeltaBaseUnits ?? null,
+ originalConsumptionPreviouslyPosted: Boolean(oldMovement),
  replacementConsumption: newMovement.consumptionDeltaBaseUnits,
- additionalBaseUnitsConsumed: Number(newMovement.consumptionDeltaBaseUnits) - Number(oldMovement.consumptionDeltaBaseUnits),
+ additionalBaseUnitsConsumed: Number(corrected.items[0].baseQuantity) - Number(original.items[0].baseQuantity),
  globalStock: stock, branchStock: batches.filter(row => row.branchId === branchId).reduce((sum,row) => sum + Number(row.quantity),0),
  dailyConsumption: ordinaryUnits, dailySummary: summary.validConsumptionUnits },
  reporting: { activeReceiptValue: total(corrected), activeReceiptCount: 1, originalExcluded: true,
