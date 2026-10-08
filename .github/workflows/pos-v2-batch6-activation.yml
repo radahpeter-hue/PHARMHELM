@@ -4,21 +4,22 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'Inspect, activate one branch, or roll one branch back to legacy'
+        description: 'Inventory all tenants and branches, inspect one pair, activate one branch, or roll one branch back'
         required: true
         default: inspect
         type: choice
         options:
+          - inventory
           - inspect
           - activate
           - rollback
       tenant_id:
-        description: 'Exact tenant document ID'
-        required: true
+        description: 'Exact tenant document ID; leave blank for inventory'
+        required: false
         type: string
       branch_id:
-        description: 'Exact branch document ID'
-        required: true
+        description: 'Exact branch document ID; leave blank for inventory'
+        required: false
         type: string
       reason:
         description: 'Change reason; required when apply is enabled'
