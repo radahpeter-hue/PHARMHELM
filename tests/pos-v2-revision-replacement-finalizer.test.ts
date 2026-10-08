@@ -15,6 +15,8 @@ function fixture() {
     request: {
       id: requestId,
       requestId,
+      revisedTotal: 15000,
+      revisedItems: [{ productId: 'vitc', quantity: 30, commercialQuantity: 30, unitPrice: 500 }],
       status: 'REPLACEMENT_PENDING',
       revisionId,
       originalSaleId,
@@ -37,6 +39,8 @@ function fixture() {
     },
     replacementSale: {
       id: replacementSaleId,
+      total: 15000, totalAmount: 15000,
+      items: [{ productId: 'vitc', quantity: 30, commercialQuantity: 30, unitPrice: 500 }],
       tenantId: 'tenant-a',
       branchId: 'branch-a',
       receiptNumber: 'MSK-2026-222222',
@@ -51,6 +55,7 @@ function fixture() {
       transactionOutboxEventId: replacementOutboxEventId
     },
     payment: {
+      amount: 15000,
       paymentId: replacementPaymentId,
       saleId: replacementSaleId,
       engineVersion: 2,

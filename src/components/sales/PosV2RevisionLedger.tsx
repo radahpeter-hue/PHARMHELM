@@ -162,6 +162,8 @@ export const PosV2RevisionLedger: React.FC<PosV2RevisionLedgerProps> = ({
         ))}
       </div>
 
+      {filteredEntries.some(entry => entry.evidenceIssues?.length) && <div className="mx-5 mb-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800">A corrected receipt differs from its reviewed revision. It requires reconciliation and is excluded from the monetary totals above.</div>}
+
       <div className="mx-5 mb-5 grid gap-3 rounded-2xl border border-zinc-100 bg-zinc-50 p-4 md:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
         <label className="relative">
           <span className="sr-only">Search revision report</span>
@@ -252,7 +254,7 @@ export const PosV2RevisionLedger: React.FC<PosV2RevisionLedgerProps> = ({
                       <div><p className="font-black uppercase text-zinc-400">Revision editor</p><p className="mt-1 font-bold text-zinc-800">{entry.revisionEditor.name}{entry.revisionEditor.role ? ` · ${entry.revisionEditor.role}` : ''}</p></div>
                       <div><p className="font-black uppercase text-zinc-400">Replacement executor</p><p className="mt-1 font-bold text-zinc-800">{entry.replacementExecutor.name || entry.replacementExecutor.id || 'Not yet available'}</p></div>
                       <div><p className="font-black uppercase text-zinc-400">Original value</p><p className="mt-1 font-bold text-zinc-800">{money(entry.originalTotal)}</p></div>
-                      <div><p className="font-black uppercase text-zinc-400">Corrected value</p><p className="mt-1 font-bold text-zinc-800">{money(entry.correctedTotal)}</p></div>
+                      <div><p className="font-black uppercase text-zinc-400">Reviewed corrected value</p><p className="mt-1 font-bold text-zinc-800">{money(entry.correctedTotal)}</p>{Boolean(entry.evidenceIssues?.length) && <p className="mt-1 font-bold text-rose-800">Actual receipt: {entry.actualCorrectedTotal == null ? 'Unavailable' : money(entry.actualCorrectedTotal)}</p>}</div>
                       <div><p className="font-black uppercase text-zinc-400">Completed</p><p className="mt-1 font-bold text-zinc-800">{date(entry.timestamps.completedAt)}</p></div>
                     </div>
 

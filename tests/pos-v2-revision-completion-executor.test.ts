@@ -27,6 +27,8 @@ function fixture() {
     request: {
       id: requestId,
       requestId,
+      revisedTotal: 15000,
+      revisedItems: [{ productId: 'vitc', quantity: 30, commercialQuantity: 30, unitPrice: 500 }],
       status: 'REPLACEMENT_CREATED',
       replacementLifecycle: 'REPLACEMENT_CREATED',
       reversalState: 'REVERSAL_COMPLETE',
@@ -55,6 +57,8 @@ function fixture() {
     },
     replacementSale: {
       id: replacementSaleId,
+      total: 15000, totalAmount: 15000,
+      items: [{ productId: 'vitc', quantity: 30, commercialQuantity: 30, unitPrice: 500 }],
       tenantId: 'tenant-a',
       branchId: 'branch-a',
       receiptNumber: receipt,
@@ -68,6 +72,7 @@ function fixture() {
       transactionOutboxEventId: outboxId
     },
     payment: {
+      amount: 15000,
       paymentId,
       saleId: replacementSaleId,
       engineVersion: 2,
@@ -145,6 +150,15 @@ test('completed revision replay revalidates the same durable chain', () => {
     ...base,
     originalSale: { ...base.originalSale, revisionLifecycle: 'REPLACEMENT_CREATED' }
   }), /completed revision lifecycle is inconsistent/i);
+});
+
+test('legacy completion and replay reject the exact 30 requested versus 10 committed mismatch', () => {
+  for (const base of [fixture(), completedFixture()]) {
+    assert.throws(() => assertCompletionChain({ ...base,
+      replacementSale: { ...base.replacementSale, total: 5000, totalAmount: 5000,
+        items: [{ productId: 'vitc', quantity: 10, commercialQuantity: 10, unitPrice: 500 }] },
+      payment: { ...base.payment, amount: 5000 } }), /commercial evidence mismatch/);
+  }
 });
 
 test('completion changes lifecycle metadata only and preserves immutable transaction records', () => {

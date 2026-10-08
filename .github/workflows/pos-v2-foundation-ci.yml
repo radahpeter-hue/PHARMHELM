@@ -77,7 +77,9 @@ jobs:
           java-version: '17'
 
       - name: Test Spark corrections against Firestore rules
-        run: node scripts/run-pos-v2-spark-emulator.mjs
+        run: |
+          npm install --no-save --ignore-scripts firebase-admin
+          node scripts/run-pos-v2-spark-emulator.mjs
 
       - name: Type-check
         run: npm run lint

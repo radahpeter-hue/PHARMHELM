@@ -20,6 +20,7 @@ import { createPosV2ConsumerPosters } from '../../../scripts/pos-v2-consumer-pos
 import { clientRevisionOption, institutionRevisionOption, prescriberRevisionOption } from './posSaleRevisionV2ReferenceData';
 import { normalizeDateValue } from '../../utils/dateValue';
 import { receiptItemsMatch } from './posSaleRevisionV2ReceiptComparison';
+import { assertRevisionCommercialEvidence } from '../../../scripts/pos-v2-revision-commercial-evidence.mjs';
 import { isV2SellableBatch } from './posCheckoutV2Calculator';
 
 export interface PosV2AtomicRevisionResult {
@@ -68,6 +69,7 @@ export async function commitPosV2ReceiptCorrection(input: SubmitPosV2RevisionInp
       || paymentSnap.data().saleId !== prepared.saleId || outboxSnap.data().status !== 'PROCESSED'
       || attemptSnap.data().fingerprint !== prepared.fingerprint) throw new Error('The committed correction record chain is incomplete.');
     const sale = { id: saleSnap.id, ...saleSnap.data() } as Sale;
+    assertRevisionCommercialEvidence({ request, replacementSale: sale, payment: paymentSnap.data() });
     return { request, replayed: true, checkout: { saleId: sale.id, receiptNumber: sale.receiptNumber,
       paymentId: prepared.paymentId, outboxEventId: prepared.outboxEventId,
       attemptId: replacement.attemptId, sale, payment: paymentSnap.data() as any, replayed: true } };
@@ -188,6 +190,7 @@ export async function commitPosV2ReceiptCorrection(input: SubmitPosV2RevisionInp
         revisionCompletedAt: serverTimestamp(), revisionRequestId: submission.requestId,
         originalSellerId: original.servedBy || original.cashierId, revisionLifecycle: 'COMPLETED' });
       const corrected = { ...(await stage.get(prepared.saleRef)).data(), id: prepared.saleId } as Sale;
+      assertRevisionCommercialEvidence({ request: submission, replacementSale: corrected, payment: checkout.payment });
       const posters = createPosV2ConsumerPosters({ db: executorDb, FieldValue: { serverTimestamp }, workerId: uid,
         batchRefsByProduct: new Map([...prepared.batchRefsByProduct].map(([id, rows]) => [id, rows.map(row => row.ref)])) });
       await posters.postConsumption(corrected);

@@ -1,5 +1,6 @@
 import type { CheckoutV2Request } from './posCheckoutV2Types';
 import type { PosV2RevisionEnvelope } from './posSaleRevisionV2Envelope';
+import { assertRevisionDraftCommercialFields } from '../../../scripts/pos-v2-revision-commercial-evidence.mjs';
 
 export interface PosV2ReplacementCheckoutSnapshots {
   customerId?: string;
@@ -72,6 +73,7 @@ export function buildPosV2ReplacementCheckoutRequest(
   input: BuildPosV2ReplacementCheckoutRequestInput
 ): CheckoutV2Request {
   assertEnvelopeIdentity(input);
+  assertRevisionDraftCommercialFields(input.envelope.replacementSaleSeed.items);
 
   const { envelope } = input;
   const snapshots = input.snapshots || {};

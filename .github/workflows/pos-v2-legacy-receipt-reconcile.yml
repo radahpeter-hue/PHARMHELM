@@ -1,0 +1,49 @@
+name: POS V2 Scoped Legacy Receipt Reconciliation
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/pos-v2-legacy-receipt-repair-core.mjs'
+      - 'scripts/reconcile-pos-v2-legacy-receipt.mjs'
+      - '.github/workflows/pos-v2-legacy-receipt-reconcile.yml'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Apply the exact audited repair for receipt 340820'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: pos-v2-legacy-receipt-340820
+  cancel-in-progress: false
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: npm install --no-save --ignore-scripts firebase-admin
+      - run: node scripts/run-pos-v2-spark-emulator.mjs
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - name: Apply the reviewed single-receipt migration and verify idempotent replay
+        if: github.event_name == 'push' || inputs.apply
+        run: node scripts/reconcile-pos-v2-legacy-receipt.mjs --apply
+      - name: Read-only diagnosis
+        if: github.event_name == 'workflow_dispatch' && !inputs.apply
+        run: node scripts/reconcile-pos-v2-legacy-receipt.mjs
+      - name: Verify canonical receipt, payment and consumption evidence
+        run: node scripts/audit-pos-v2-legacy-receipt.mjs

@@ -20,6 +20,7 @@ const original: Sale = {
 const replacement: Sale = {
   ...original,
   id: 'sale-replacement', receiptNumber: 'MSK-002', total: 12000, totalAmount: 12000,
+  paymentMethod: 'card', context: 'walk-in',
   cashierId: 'executor-1', servedBy: 'executor-1', isRevisionReplacement: true,
   revisionId: 'revision-1', revisionRequestId: 'request-1', revisionOfSaleId: original.id,
   originalReceiptNumber: original.receiptNumber
@@ -42,6 +43,20 @@ const request: Record<string, unknown> = {
   status: 'COMPLETED', replacementLifecycle: 'COMPLETED', createdAt: '2026-10-01T09:00:00.000Z',
   replacementCreatedAt: '2026-10-01T09:05:00.000Z', completedAt: '2026-10-01T09:10:00.000Z'
 };
+
+test('a completed legacy total mismatch is visible and excluded from correction totals', () => {
+  const ledger = buildPosV2RevisionLedgerEntry({ request, originalSale: original,
+    replacementSale: { ...replacement, total: 10000, totalAmount: 10000 }, staff });
+  assert.equal(ledger.lifecycleStatus, 'RECONCILIATION_REQUIRED');
+  assert.equal(ledger.correctedTotal, 12000);
+  assert.equal(ledger.actualCorrectedTotal, 10000);
+  assert.equal(ledger.failure?.requiresManualReview, true);
+  const analytics = buildPosV2BranchRevisionAnalytics([ledger], { tenantId: 'tenant-1', branchId: 'branch-1' });
+  assert.equal(analytics.completedRevisionCount, 0);
+  assert.equal(analytics.correctedValue, 0);
+  assert.equal(analytics.netChange, 0);
+  assert.match(buildPosV2RevisionReportCsv([ledger], { kind: 'BRANCH', tenantId: 'tenant-1', branchId: 'branch-1' }), /Actual Corrected Total/);
+});
 
 test('ledger projection preserves every permanent revision identity and monetary field', () => {
   const ledger = buildPosV2RevisionLedgerEntry({ request, originalSale: original, replacementSale: replacement, staff });
