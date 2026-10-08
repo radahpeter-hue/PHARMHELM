@@ -72,6 +72,13 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile?.tenantId || isSaving) return;
+    if (
+      formData.dosageForm === 'Lyophilized Powder (Requires Reconstitution)' &&
+      !formData.releaseHandlingDetails?.trim()
+    ) {
+      toast.error('Add the specific diluent and reconstitution instructions for this lyophilized product.');
+      return;
+    }
 
     const tierDraft: Partial<Product> = {
       ...formData,
@@ -182,7 +189,10 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
         <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider">Release / Handling Details</label>
         <textarea
           rows={2}
-          placeholder="Optional: e.g. extended release, protect from light, or reconstitute with sterile water before use."
+          required={formData.dosageForm === 'Lyophilized Powder (Requires Reconstitution)'}
+          placeholder={formData.dosageForm === 'Lyophilized Powder (Requires Reconstitution)'
+            ? 'Required: specify the diluent and exact reconstitution instructions.'
+            : 'Optional: e.g. extended release, protect from light, or other handling instructions.'}
           className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm"
           value={formData.releaseHandlingDetails || ''}
           onChange={e => setFormData({ ...formData, releaseHandlingDetails: e.target.value })}
