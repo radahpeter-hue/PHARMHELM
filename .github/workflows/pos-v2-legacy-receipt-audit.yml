@@ -1,0 +1,25 @@
+name: POS V2 Scoped Legacy Receipt Audit
+on:
+  push:
+    branches: ['fix/legacy-receipt-evidence']
+    paths:
+      - 'scripts/audit-pos-v2-legacy-receipt.mjs'
+      - '.github/workflows/pos-v2-legacy-receipt-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-save --ignore-scripts firebase-admin
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - name: Read the reported receipt and its canonical posting chain
+        run: node scripts/audit-pos-v2-legacy-receipt.mjs
