@@ -73,10 +73,6 @@ export const ROUTE_LABELS: Record<string, string> = {
   nasal: 'Nasal (legacy)'
 };
 
-export const ROUTES_OF_ADMINISTRATION = [
-  'oral', 'iv', 'im', 'ophthalmic', 'intrathecal', 'intradermal', 'subcutaneous', 'topical'
-];
-
 export const PRESCRIPTION_CATEGORIES = [
   'OTC', 'prescription only', 'controlled'
 ];
