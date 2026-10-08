@@ -170,3 +170,7 @@ export function structuredError(error) {
     name: error instanceof Error ? error.name : 'Error'
   };
 }
+
+export function isTerminallySupersededOutbox(event) {
+  return String(event?.status || '').trim().toUpperCase() === 'SUPERSEDED';
+}

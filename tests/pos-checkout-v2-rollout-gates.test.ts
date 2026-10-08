@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { isTerminallySupersededOutbox as isBatch4TerminallySupersededOutbox } from '../scripts/pos-v2-batch4-core.mjs';
 import assert from 'node:assert/strict';
 import {
   buildPosV2ActivationPlan,
@@ -93,4 +94,10 @@ test('superseded outbox events are recognized as terminal, not processable pendi
   assert.equal(isTerminallySupersededOutbox({ status: 'SUPERSEDED' }), true);
   assert.equal(isTerminallySupersededOutbox({ status: 'PROCESSED' }), false);
   assert.equal(isTerminallySupersededOutbox({ status: 'PENDING' }), false);
+});
+
+test('Batch 4 worker imports the terminal superseded helper from its core module', () => {
+  assert.equal(isBatch4TerminallySupersededOutbox({ status: 'SUPERSEDED' }), true);
+  assert.equal(isBatch4TerminallySupersededOutbox({ status: 'PROCESSED' }), false);
+  assert.equal(isBatch4TerminallySupersededOutbox({ status: 'PENDING' }), false);
 });
