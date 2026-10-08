@@ -6,8 +6,10 @@ import { getMultiTierEligibility, getTierMultiplier } from '../../services/selli
 import { applyLegacySellingTierMirror, normaliseSellingTiers, SELLING_TIER_CODES, SELLING_TIER_LABELS, validateSellingTierConfiguration } from '../../services/sellingTierConfigurationService';
 import { 
   PRODUCT_CATEGORIES, 
-  DOSAGE_FORMS, 
-  ROUTES_OF_ADMINISTRATION, 
+  THERAPEUTIC_CLASSES,
+  DOSAGE_FORMS,
+  ROUTES_OF_ADMINISTRATION,
+  ROUTE_LABELS, 
   PRESCRIPTION_CATEGORIES, 
   VOLUME_WEIGHT_UNITS 
 } from '../../constants';
@@ -70,6 +72,13 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile?.tenantId || isSaving) return;
+    if (
+      formData.dosageForm === 'Lyophilized Powder (Requires Reconstitution)' &&
+      !formData.releaseHandlingDetails?.trim()
+    ) {
+      toast.error('Add the specific diluent and reconstitution instructions for this lyophilized product.');
+      return;
+    }
 
     const tierDraft: Partial<Product> = {
       ...formData,
@@ -135,6 +144,17 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
         />
       </div>
       <div className="space-y-1">
+        <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider">Therapeutic Class</label>
+        <select
+          className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm"
+          value={formData.therapeuticClass || ''}
+          onChange={e => setFormData({ ...formData, therapeuticClass: e.target.value })}
+        >
+          <option value="">Select Therapeutic Class</option>
+          {THERAPEUTIC_CLASSES.map(value => <option key={value} value={value}>{value}</option>)}
+        </select>
+      </div>
+      <div className="space-y-1">
         <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider">Dosage Form</label>
         <select
           className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm"
@@ -162,8 +182,21 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
           onChange={e => setFormData({ ...formData, routeOfAdministration: e.target.value })}
         >
           <option value="">Select Route</option>
-          {ROUTES_OF_ADMINISTRATION.map(r => <option key={r} value={r}>{r}</option>)}
+          {ROUTES_OF_ADMINISTRATION.map(r => <option key={r} value={r}>{ROUTE_LABELS[r] || r}</option>)}
         </select>
+      </div>
+      <div className="space-y-1 md:col-span-3">
+        <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider">Release / Handling Details</label>
+        <textarea
+          rows={2}
+          required={formData.dosageForm === 'Lyophilized Powder (Requires Reconstitution)'}
+          placeholder={formData.dosageForm === 'Lyophilized Powder (Requires Reconstitution)'
+            ? 'Required: specify the diluent and exact reconstitution instructions.'
+            : 'Optional: e.g. extended release, protect from light, or other handling instructions.'}
+          className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm"
+          value={formData.releaseHandlingDetails || ''}
+          onChange={e => setFormData({ ...formData, releaseHandlingDetails: e.target.value })}
+        />
       </div>
       <div className="space-y-1">
         <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider">Prescription Category</label>
