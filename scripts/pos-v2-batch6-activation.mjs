@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { applicationDefault, cert, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
-import { buildPosV2ActivationPlan, stableActivationAuditId } from './pos-v2-batch6-activation-core.mjs';
+import { buildPosV2ActivationPlan, buildPosV2Inventory, stableActivationAuditId } from './pos-v2-batch6-activation-core.mjs';
 
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0911422817';
 const DATABASE_ID = process.env.FIRESTORE_DATABASE_ID || 'ai-studio-f7d8654b-e089-425a-a506-38159afe1e75';
@@ -35,11 +35,30 @@ async function readConfiguration(db) {
 }
 
 async function main() {
+  const db = getFirestore(initializeAdmin(), DATABASE_ID);
+  if (operation === 'inventory') {
+    if (applyRequested) throw new Error('Inventory mode is read-only and cannot be applied.');
+    const [tenantSnapshot, branchSnapshot] = await Promise.all([
+      db.collection('tenants').get(),
+      db.collection('branches').get()
+    ]);
+    const inventory = buildPosV2Inventory({
+      tenants: tenantSnapshot.docs.map(snapshot => ({ id: snapshot.id, ...snapshot.data() })),
+      branches: branchSnapshot.docs.map(snapshot => ({ id: snapshot.id, ...snapshot.data() }))
+    });
+    console.log(JSON.stringify({
+      mode: 'inventory',
+      projectId: PROJECT_ID,
+      databaseId: DATABASE_ID,
+      githubRunId: runId,
+      inventory
+    }, null, 2));
+    return;
+  }
   if (!tenantId || !branchId) throw new Error('POS_V2_TENANT_ID and POS_V2_BRANCH_ID are required.');
   if (applyRequested && operation === 'inspect') throw new Error('Inspect mode cannot be applied.');
   if (applyRequested && !reason) throw new Error('A non-empty POS_V2_REASON is required for an applied change.');
 
-  const db = getFirestore(initializeAdmin(), DATABASE_ID);
   const initial = await readConfiguration(db);
   const plan = buildPosV2ActivationPlan({ operation, tenantId, branchId, ...initial });
   console.log(JSON.stringify({ mode: applyRequested ? 'apply' : 'dry-run', projectId: PROJECT_ID, databaseId: DATABASE_ID, plan }, null, 2));
