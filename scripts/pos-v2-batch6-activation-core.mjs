@@ -59,3 +59,68 @@ export function stableActivationAuditId({ runId, operation, tenantId, branchId }
   const raw = `pos_v2_batch6_${runId}_${operation}_${tenantId}_${branchId}`;
   return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 240);
 }
+
+export function isTerminallySupersededOutbox(event) {
+  return String(event?.status || '').trim().toUpperCase() === 'SUPERSEDED';
+}
+
+export function buildPosV2Inventory({ tenants = [], branches = [] }) {
+  const tenantById = new Map(tenants.map(row => [String(row.id), row]));
+  const tenantRows = tenants.map(row => {
+    const tenantId = String(row.id);
+    const tenantEnabled = row.features?.posCheckoutV2Enabled === true;
+    const tenantEngine = checkoutMode(row.posCheckoutEngine);
+    return {
+      tenantId,
+      name: String(row.name || row.tenantName || row.displayName || row.legalName || ''),
+      tenantFeatureEnabled: tenantEnabled,
+      tenantEngine,
+      currentDefaultMode: !tenantEnabled ? 'legacy' : (tenantEngine || 'shadow')
+    };
+  });
+  const eligiblePairs = [];
+  const excludedBranches = [];
+  const activeBranches = [];
+  for (const row of branches) {
+    const branchId = String(row.id);
+    const tenantId = String(row.tenantId || '');
+    const tenant = tenantById.get(tenantId);
+    const active = String(row.status || '').trim().toLowerCase() === 'active';
+    const branchEngine = checkoutMode(row.posCheckoutEngine);
+    const tenantEnabled = tenant?.features?.posCheckoutV2Enabled === true;
+    const tenantEngine = checkoutMode(tenant?.posCheckoutEngine);
+    const effectiveMode = !tenantEnabled ? 'legacy' : (branchEngine || tenantEngine || 'shadow');
+    const branchRecord = {
+      tenantId,
+      branchId,
+      name: String(row.name || row.branchName || row.branch_name || row.branch_code || ''),
+      status: String(row.status || ''),
+      active,
+      ownerTenantExists: Boolean(tenant),
+      tenantFeatureEnabled: tenantEnabled,
+      tenantEngine,
+      branchEngine,
+      effectiveMode
+    };
+    if (!tenant || !tenantId) {
+      excludedBranches.push({ ...branchRecord, exclusion: 'missing-tenant-owner' });
+    } else if (active) {
+      activeBranches.push(branchRecord);
+      eligiblePairs.push({ tenantId, branchId });
+    } else {
+      excludedBranches.push({ ...branchRecord, exclusion: 'branch-not-active' });
+    }
+  }
+  return {
+    tenants: tenantRows,
+    activeBranches,
+    eligiblePairs,
+    excludedBranches,
+    counts: {
+      tenants: tenantRows.length,
+      activeBranches: activeBranches.length,
+      eligiblePairs: eligiblePairs.length,
+      excludedBranches: excludedBranches.length
+    }
+  };
+}
