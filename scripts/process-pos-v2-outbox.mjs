@@ -11,6 +11,7 @@ import {
   deriveGlobalStatus,
   groupedSaleProducts,
   initializeConsumers,
+  isTerminallySupersededOutbox,
   movementEventId,
   numberValue,
   paymentComponentAmount,
@@ -259,6 +260,7 @@ async function reconciliationReport() {
     failed: 0,
     manualReview: 0,
     expiredLeases: 0,
+    superseded: 0,
     consumers: Object.fromEntries(BATCH4_CONSUMERS.map(name => [name, {
       pending: 0,
       processing: 0,
@@ -274,6 +276,25 @@ async function reconciliationReport() {
     if (event.engineVersion !== 2) continue;
     report.checked += 1;
     const globalStatus = String(event.status || 'PENDING').toUpperCase();
+    if (isTerminallySupersededOutbox(event)) {
+      report.superseded += 1;
+      try {
+        await loadCanonical(event);
+        report.healthy += 1;
+      } catch (error) {
+        report.inconsistent += 1;
+        if (report.problemEvents.length < 25) {
+          report.problemEvents.push({
+            eventId: event.id,
+            status: globalStatus,
+            requiresManualReview: event.requiresManualReview === true,
+            error: structuredError(error).message
+          });
+        }
+        console.error(`[Batch4 reconcile] ${event.id}:`, error);
+      }
+      continue;
+    }
     if (globalStatus === 'PENDING') report.pending += 1;
     else if (globalStatus === 'PROCESSING') report.processing += 1;
     else if (globalStatus === 'FAILED') report.failed += 1;
