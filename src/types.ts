@@ -291,7 +291,9 @@ export interface Product {
   genericName?: string;
   dosageForm?: string;
   strength?: string;
+  therapeuticClass?: string;
   routeOfAdministration?: string;
+  releaseHandlingDetails?: string;
   prescriptionCategory?: string;
   countryOfManufacture?: string;
   ndaRegistrationNumber?: string;
