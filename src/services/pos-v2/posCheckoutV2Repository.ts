@@ -456,6 +456,16 @@ export async function writeCheckoutV2Transaction(request: CheckoutV2Request, pre
       });
     }
 
+    const sourceQuotationRef = request.sourceQuotationId ? doc(db, 'pos_quotations', request.sourceQuotationId) : null;
+    const sourceQuotationSnap = sourceQuotationRef ? await transaction.get(sourceQuotationRef) : null;
+    if (sourceQuotationSnap) {
+      if (!sourceQuotationSnap.exists()) throw new PosCheckoutV2Error('TRANSACTION_CONFLICT', 'The source quotation no longer exists.');
+      const quotation = sourceQuotationSnap.data();
+      if (quotation.tenantId !== prepared.authority.tenantId) throw new PosCheckoutV2Error('TENANT_MISMATCH', 'The source quotation belongs to a different tenant.');
+      if (quotation.branchId !== prepared.authority.branch.id) throw new PosCheckoutV2Error('BRANCH_NOT_AUTHORIZED', 'The source quotation belongs to a different branch.');
+      if (quotation.status !== 'Draft') throw new PosCheckoutV2Error('IDEMPOTENCY_CONFLICT', 'This quotation is no longer a draft and cannot create another sale.');
+    }
+
     const liveProducts = new Map<string, Product>();
     for (const [productId, productRef] of prepared.productRefs.entries()) {
       const snap = await transaction.get(productRef);
@@ -529,6 +539,7 @@ export async function writeCheckoutV2Transaction(request: CheckoutV2Request, pre
       tenantId: prepared.authority.tenantId,
       branchId: prepared.authority.branch.id
     });
+    const quotationConvertedAt = request.sourceQuotationId ? new Date().toISOString() : undefined;
 
     for (const [productId, deductions] of calculation.batchDeductions.entries()) {
       const rows = rawBatchesByProduct.get(productId) || [];
@@ -577,7 +588,8 @@ export async function writeCheckoutV2Transaction(request: CheckoutV2Request, pre
       welfareBeneficiaryIsStaff: request.welfareBeneficiaryIsStaff,
       welfarePostingStatus: request.paymentMethod === 'staff_welfare' ? 'pending' : 'not_applicable',
       sourceQuotationId: request.sourceQuotationId,
-      quotationConversionStatus: request.sourceQuotationId ? 'pending' : 'not_applicable',
+      quotationConversionStatus: request.sourceQuotationId ? 'converted' : 'not_applicable',
+      quotationConvertedAt,
       cashierId: prepared.authority.uid,
       clientId: request.customerId,
       patientId: request.patientId,
@@ -653,6 +665,16 @@ export async function writeCheckoutV2Transaction(request: CheckoutV2Request, pre
       completedAt: serverTimestamp()
     };
     transaction.set(prepared.attemptRef, omitUndefinedDeep({ ...attempt, ...revisionLinkage }));
+
+    if (sourceQuotationRef) {
+      transaction.update(sourceQuotationRef, {
+        status: 'Converted',
+        convertedReceiptId: prepared.saleId,
+        convertedAt: quotationConvertedAt,
+        convertedValue: calculation.netTotal,
+        updatedAt: serverTimestamp()
+      });
+    }
 
     return {
       saleId: prepared.saleId,

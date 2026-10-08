@@ -5,8 +5,10 @@ import {
   buildQuotationLineSnapshot,
   buildResumedQuotationProductLine,
   buildResumedServiceLine,
+  getCombinedQuotationStockWarnings,
   quotationQuantityText
 } from '../src/services/quotationTierService';
+import { resizeCommercialCartLine, repriceQuotationCartLine } from '../src/services/posTierCartService';
 
 const settings = { features: { multiTierSellingEnabled: true } };
 const product = (overrides: Partial<Product> = {}): Product => ({
@@ -46,6 +48,7 @@ test('quotation snapshot preserves full commercial tier meaning', () => {
   assert.equal(snapshot.actualUnitPrice, 2500);
   assert.equal(snapshot.lineTotal, 5000);
   assert.equal(quotationQuantityText(snapshot), '2 Strips (20 base units)');
+  assert.equal(Object.values(snapshot).some(value => value === undefined), false, 'Firestore quotation snapshots must not contain undefined fields');
 });
 
 test('resuming unchanged tier quotation preserves quoted tier and quantity', () => {
@@ -101,6 +104,32 @@ test('service quotation lines resume without inventory lookup', () => {
   assert.equal(resumed.isService, true);
   assert.equal(resumed.productId, 'svc1');
   assert.equal(resumed.total, 5000);
+});
+
+test('combined demand across two quotation lines blocks resume when total exceeds branch stock', () => {
+  const stock = [batch({ quantity: 109 })];
+  const strip = buildResumedQuotationProductLine({ line: buildQuotationLineSnapshot(tierItem({ quantity: 1, commercialQuantity: 1, baseQuantity: 10, total: 2500, subtotal: 2500, lineTotal: 2500 })), product: product(), batches: stock, settings, tenantId: 't1', branchId: 'br1' });
+  const pack = buildResumedQuotationProductLine({ line: buildQuotationLineSnapshot(tierItem({ lineId: 'line-2', tierCode: 'pack', tierLabel: 'Pack', tierMultiplier: 100, quantity: 1, commercialQuantity: 1, baseQuantity: 100, unitPrice: 22000, actualUnitPrice: 22000, configuredPrice: 22000, total: 22000, subtotal: 22000, lineTotal: 22000 })), product: product(), batches: stock, settings, tenantId: 't1', branchId: 'br1' });
+  assert.equal(strip.blocking, false);
+  assert.equal(pack.blocking, false);
+  assert.match(getCombinedQuotationStockWarnings([strip.item!, pack.item!], stock)[0], /Combined quotation demand.*110 base units.*109/);
+});
+
+test('resumed quotation quantity and price edits keep commercial snapshot totals aligned', () => {
+  const line = buildResumedQuotationProductLine({ line: buildQuotationLineSnapshot(tierItem()), product: product(), batches: [batch()], settings, tenantId: 't1', branchId: 'br1' }).item!;
+  const resized = resizeCommercialCartLine(line, 3);
+  assert.equal(resized.commercialQuantity, 3);
+  assert.equal(resized.baseQuantity, 30);
+  assert.equal(resized.lineTotal, 7500);
+  const repriced = repriceQuotationCartLine(resized, 2400);
+  assert.equal(repriced.actualUnitPrice, 2400);
+  assert.equal(repriced.priceSource, 'manual-override');
+  assert.equal(repriced.lineTotal, 7200);
+  const saved = buildQuotationLineSnapshot(repriced);
+  assert.equal(saved.commercialQuantity, 3);
+  assert.equal(saved.baseQuantity, 30);
+  assert.equal(saved.actualUnitPrice, 2400);
+  assert.equal(saved.lineTotal, 7200);
 });
 
 test('legacy quotation resume checks base-unit stock using the live legacy multiplier', () => {

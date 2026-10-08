@@ -172,6 +172,7 @@ export interface SystemSettings {
   taxEngineEnabled: boolean;
   deploymentMode: 'Cloud' | 'On-Premise';
   currency: string;
+  features?: { multiTierSellingEnabled?: boolean; [key: string]: boolean | undefined };
   updatedAt: string;
   updatedBy: string;
   tin?: string;
@@ -611,6 +612,7 @@ export interface Sale {
 }
 
 export interface SaleItem {
+  lineId?: string;
   productId: string;
   batchId: string;
   name: string;
@@ -623,6 +625,20 @@ export interface SaleItem {
   isService?: boolean;
   batchNumber?: string;
   expiryDate?: string;
+  tierCode?: 'unit' | 'strip' | 'pack';
+  tierLabel?: string;
+  tierMultiplier?: number;
+  commercialQuantity?: number;
+  baseQuantity?: number;
+  configuredPrice?: number;
+  actualUnitPrice?: number;
+  priceSource?: string;
+  discountStatus?: string;
+  taxStatus?: string;
+  actualLineCost?: number;
+  lineTotal?: number;
+  dosageFormSnapshot?: string;
+  sourceQuotationLineId?: string;
   batchAllocations?: Array<{ batchId: string; batchNumber: string; expiryDate?: string; baseQuantity: number; costPerBaseUnit: number }>;
 }
 
