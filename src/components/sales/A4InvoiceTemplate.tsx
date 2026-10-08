@@ -1,3 +1,4 @@
+import { getDisplayReference } from '../../utils/salePresentation';
 import React, { useEffect, useState } from 'react';
 import { X, Download, Printer } from 'lucide-react';
 import { toast } from 'sonner';
@@ -194,9 +195,9 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
               <div className={`p-4 rounded-xl border text-[10px] space-y-1.5 ${revisionPanelClass}`}>
                 <p className="font-extrabold uppercase tracking-wider text-zinc-800">Revision Linkage</p>
                 {revisionPresentation.linkedReceiptNumber && <p className="text-zinc-600">{revisionPresentation.linkedReceiptLabel}: <span className="font-bold text-zinc-900">{revisionPresentation.linkedReceiptNumber}</span></p>}
-                {revisionPresentation.revisionId && <p className="text-zinc-600">Revision reference: <span className="font-mono font-bold text-zinc-900">{revisionPresentation.revisionId}</span></p>}
-                {revisionPresentation.revisionRequestId && <p className="text-zinc-600">Request reference: <span className="font-mono font-bold text-zinc-900">{revisionPresentation.revisionRequestId}</span></p>}
-                {receipt.originalSellerId && <p className="text-zinc-600">Original seller reference: <span className="font-bold text-zinc-900">{receipt.originalSellerId}</span></p>}
+                {revisionPresentation.revisionId && <p className="text-zinc-600">Revision reference: <span className="font-mono font-bold text-zinc-900">{getDisplayReference(revisionPresentation.revisionId, 'REV')}</span></p>}
+                {revisionPresentation.revisionRequestId && <p className="text-zinc-600">Request reference: <span className="font-mono font-bold text-zinc-900">{getDisplayReference(revisionPresentation.revisionRequestId, 'REQ')}</span></p>}
+                {receipt.originalSellerId && <p className="text-zinc-600">Original seller reference: <span className="font-bold text-zinc-900">{getDisplayReference(receipt.originalSellerId, 'STAFF')}</span></p>}
                 {receipt.revisionRecordedAt && <p className="text-zinc-600">Edited at: <span className="font-bold text-zinc-900">{new Date(receipt.revisionRecordedAt).toLocaleString("en-GB", { timeZone: "Africa/Kampala" })}</span></p>}
                 {revisionPresentation.editorName && <p className="text-zinc-600">Revision editor: <span className="font-bold text-zinc-900">{revisionPresentation.editorName}</span></p>}
                 {revisionPresentation.reason && <p className="text-zinc-600">Correction reason: <span className="font-medium text-zinc-900">{revisionPresentation.reason}</span></p>}
@@ -204,7 +205,7 @@ export const A4InvoiceTemplate: React.FC<A4InvoiceTemplateProps> = ({
             )}
 
             <div className="p-4 bg-zinc-50 rounded-xl border border-zinc-150 grid grid-cols-2 gap-4">
-              {receipt.patientName && <div><span className="text-[10px] text-zinc-400 font-bold block uppercase tracking-wider">Bill To Client</span><p className="text-zinc-900 font-bold text-sm mt-0.5">{receipt.patientName}</p>{receipt.patientId && <p className="text-zinc-500 text-[10px] font-semibold mt-0.5">ID: {receipt.patientId}</p>}</div>}
+              {receipt.patientName && <div><span className="text-[10px] text-zinc-400 font-bold block uppercase tracking-wider">Bill To Client</span><p className="text-zinc-900 font-bold text-sm mt-0.5">{receipt.patientName}</p>{receipt.patientId && <p className="text-zinc-500 text-[10px] font-semibold mt-0.5">ID: {getDisplayReference(receipt.patientId, 'CLIENT')}</p>}</div>}
               {receipt.institutionName && <div><span className="text-[10px] text-zinc-400 font-bold block uppercase tracking-wider">Bill To Institution</span><p className="text-zinc-900 font-bold text-sm mt-0.5">{receipt.institutionName}</p>{receipt.institutionId && <p className="text-zinc-500 text-[10px] font-semibold mt-0.5">ID: {receipt.institutionId}</p>}</div>}
             </div>
 

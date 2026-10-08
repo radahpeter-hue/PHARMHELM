@@ -1,3 +1,5 @@
+import { getSaleCostOfGoods } from '../../utils/salePresentation';
+import { isActiveSale } from '../../utils/activeSales';
 import React, { useState, useEffect } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -25,7 +27,7 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
     if (profile?.tenantId) {
       setLoading(true);
       const unsubscribe = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
-        setSales(data);
+        setSales(data.filter(isActiveSale));
         setLoading(false);
       });
       return () => unsubscribe();
@@ -56,7 +58,7 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
   const isFallbackAllTime = salesToday.length === 0;
 
   const totalSalesVal = sourceList.reduce((sum, s) => sum + (s.total || s.total_amount || s.amount || 0), 0);
-  const totalCogsVal = sourceList.reduce((sum, s) => sum + (s.total_cost || s.cost || (s.total || s.total_amount || 0) * 0.6), 0);
+  const totalCogsVal = sourceList.reduce((sum, s) => sum + getSaleCostOfGoods(s), 0);
   const totalProfitVal = totalSalesVal - totalCogsVal;
   const transactionCount = sourceList.length;
   const avgBasketVal = transactionCount > 0 ? Math.round(totalSalesVal / transactionCount) : 0;

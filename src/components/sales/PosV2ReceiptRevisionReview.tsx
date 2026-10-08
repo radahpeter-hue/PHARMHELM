@@ -1,3 +1,4 @@
+import { getDisplayReference } from '../../utils/salePresentation';
 import React, { useMemo } from 'react';
 import { ArrowLeft, CheckCircle2, RotateCcw, X } from 'lucide-react';
 import type { Sale } from '../../types';
@@ -29,7 +30,7 @@ const contextLabel = (value: string | null | undefined) => ({
 const identity = (name: string | null | undefined, id: string | null | undefined) => (
   <>
     <p className="font-bold">{text(name)}</p>
-    {id && <p className="text-[10px] text-zinc-400 break-all">{id}</p>}
+    {id && <p className="text-[10px] text-zinc-400 break-all">{getDisplayReference(id)}</p>}
   </>
 );
 

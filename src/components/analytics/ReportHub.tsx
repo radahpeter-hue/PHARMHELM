@@ -1,3 +1,4 @@
+import { isActiveSale } from '../../utils/activeSales';
 import React, { useState, useEffect } from 'react';
 import { 
   Download, FileText, Search, Filter, 
@@ -60,7 +61,7 @@ export const ReportHub: React.FC = () => {
     if (profile?.tenantId) {
       setLoading(true);
       const unsubSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
-        setSales(data);
+        setSales(data.filter(isActiveSale));
       });
       const unsubBranch = firestoreService.subscribeToCollection('branch_expenses', profile.tenantId, (data) => {
         setBranchExpenses(data);

@@ -1,3 +1,4 @@
+import { isActiveSale } from '../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Line, ComposedChart } from 'recharts';
 import { Clock, ArrowRightLeft, ShieldCheck, User, DollarSign } from 'lucide-react';
@@ -32,7 +33,7 @@ export const LogisticsAnalytics: React.FC = () => {
         firestoreService.subscribeToCollection('maintenance_logs', profile.tenantId, setMaintenanceLogs),
         firestoreService.subscribeToCollection('traffic_fine_logs', profile.tenantId, setFineLogs),
         firestoreService.subscribeToCollection('logistics_expenses', profile.tenantId, setGeneralExpenses),
-        firestoreService.subscribeToCollection('sales', profile.tenantId, setSales),
+        firestoreService.subscribeToCollection('sales', profile.tenantId, data => setSales(data.filter(isActiveSale))),
         firestoreService.subscribeToCollection('staff', profile.tenantId, setStaff)
       ];
       return () => unsubscribers.forEach(unsubscribe => unsubscribe());

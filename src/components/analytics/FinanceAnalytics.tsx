@@ -1,3 +1,5 @@
+import { getSaleCostOfGoods } from '../../utils/salePresentation';
+import { isActiveSale } from '../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -43,7 +45,7 @@ export const FinanceAnalytics: React.FC = () => {
     if (profile?.tenantId) {
       setLoading(true);
       const unsubscribeSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
-        setSales(data);
+        setSales(data.filter(isActiveSale));
       });
       const unsubscribeBranch = firestoreService.subscribeToCollection('branch_expenses', profile.tenantId, (data) => {
         setBranchExpenses(data);
@@ -66,7 +68,7 @@ export const FinanceAnalytics: React.FC = () => {
 
   const metrics = useMemo(() => {
     const totalRevenue = sales.reduce((sum, s) => sum + (s.total || s.totalAmount || 0), 0);
-    const totalCogs = sales.reduce((sum, s) => sum + (s.total_cost || s.cost || (s.total || s.totalAmount || 0) * 0.6), 0);
+    const totalCogs = sales.reduce((sum, s) => sum + getSaleCostOfGoods(s), 0);
     
     // Compute dynamic OpEx from real expenses database
     const totalBranchOpex = branchExpenses.reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);

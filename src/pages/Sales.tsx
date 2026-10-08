@@ -1,3 +1,4 @@
+import { getDisplayReference } from '../utils/salePresentation';
 import React, { useState, useEffect } from 'react';
 import { 
   Search, ShoppingCart, Plus, Minus, Trash2, CreditCard, Banknote, 
@@ -3416,10 +3417,10 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                   </div>
                   <dl className="space-y-1.5 text-xs">
                     {selectedRevisionPresentation.revisionId && (
-                      <div className="flex justify-between gap-3"><dt className="text-zinc-500">Revision reference</dt><dd className="font-mono font-bold text-zinc-800 text-right break-all">{selectedRevisionPresentation.revisionId}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-zinc-500">Revision reference</dt><dd className="font-mono font-bold text-zinc-800 text-right break-all">{getDisplayReference(selectedRevisionPresentation.revisionId, 'REV')}</dd></div>
                     )}
                     {selectedRevisionPresentation.revisionRequestId && (
-                      <div className="flex justify-between gap-3"><dt className="text-zinc-500">Request reference</dt><dd className="font-mono font-bold text-zinc-800 text-right break-all">{selectedRevisionPresentation.revisionRequestId}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-zinc-500">Request reference</dt><dd className="font-mono font-bold text-zinc-800 text-right break-all">{getDisplayReference(selectedRevisionPresentation.revisionRequestId, 'REQ')}</dd></div>
                     )}
                     <div className="flex justify-between gap-3"><dt className="text-zinc-500">Lifecycle</dt><dd className="font-bold text-zinc-800 text-right">{selectedRevisionPresentation.lifecycle?.replaceAll('_', ' ') || 'CORRECTED REPLACEMENT'}</dd></div>
                     {selectedRevisionPresentation.editorName && (
@@ -3673,7 +3674,7 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                       {selectedRevisionPresentation.linkedReceiptNumber && (
                         <p className="text-[8px] mt-1">{selectedRevisionPresentation.linkedReceiptLabel}: <span className="font-bold">{selectedRevisionPresentation.linkedReceiptNumber}</span></p>
                       )}
-                      {selectedRevisionPresentation.revisionId && <p className="text-[7px] mt-1 break-all">Revision: {selectedRevisionPresentation.revisionId}</p>}
+                      {selectedRevisionPresentation.revisionId && <p className="text-[7px] mt-1 break-all">Revision: {getDisplayReference(selectedRevisionPresentation.revisionId, 'REV')}</p>}
                       {selectedRevisionPresentation.editorName && <p className="text-[8px] mt-1">Revision editor: {selectedRevisionPresentation.editorName}</p>}
                       {selectedRevisionPresentation.reason && <p className="text-[8px] mt-1 text-left"><span className="font-bold">Reason:</span> {selectedRevisionPresentation.reason}</p>}
                     </div>

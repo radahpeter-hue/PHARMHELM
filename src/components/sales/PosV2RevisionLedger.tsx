@@ -1,3 +1,4 @@
+import { getDisplayReference } from '../../utils/salePresentation';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ChevronDown, ChevronUp, Download, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import type { Staff } from '../../types';
@@ -228,7 +229,7 @@ export const PosV2RevisionLedger: React.FC<PosV2RevisionLedgerProps> = ({
                       <span className="text-zinc-300">→</span>
                       <span className="font-black text-indigo-700">{entry.replacementReceiptNumber || 'Replacement pending'}</span>
                     </div>
-                    <p className="mt-1 text-[10px] font-mono text-zinc-400">Revision {entry.revisionId}</p>
+                    <p className="mt-1 text-[10px] font-mono text-zinc-400">Revision {getDisplayReference(entry.revisionId, 'REV')}</p>
                     <p className="mt-1 text-[10px] font-semibold text-zinc-500">{date(entry.timestamps.completedAt || entry.timestamps.updatedAt || entry.timestamps.firstAttemptAt || entry.timestamps.originalSaleAt)}</p>
                   </div>
                   <div>
@@ -295,10 +296,10 @@ export const PosV2RevisionLedger: React.FC<PosV2RevisionLedgerProps> = ({
                       </div>
                     )}
 
-                    <div className="mt-5 grid gap-2 font-mono text-[9px] text-zinc-400 md:grid-cols-2">
+                    <details className="mt-5 text-xs text-zinc-500"><summary className="cursor-pointer font-bold">Technical audit identifiers</summary><div className="mt-2 grid gap-2 break-all font-mono text-[9px] md:grid-cols-2">
                       <p>Request: {entry.requestId}</p><p>Revision: {entry.revisionId}</p>
                       <p>Original sale: {entry.originalSaleId}</p><p>Replacement sale: {entry.replacementSaleId || 'Pending'}</p>
-                    </div>
+                    </div></details>
                   </div>
                 )}
               </article>
