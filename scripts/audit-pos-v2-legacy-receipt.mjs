@@ -1,6 +1,7 @@
 // Read-only diagnosis of the specific legacy receipt reported by the operator.
 import { initializeApp, applicationDefault } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { reconcileLegacyReceipt } from './pos-v2-legacy-receipt-repair-core.mjs';
 const app = initializeApp({ credential: applicationDefault(), projectId: 'gen-lang-client-0911422817' });
 const db = getFirestore(app, 'ai-studio-f7d8654b-e089-425a-a506-38159afe1e75');
 const originalId = 'v2sale_zehqTDcKyrDAOHKK3stJ__17c3f19b-a342-4707-8226-f0ea96215727_f1111731';
@@ -45,3 +46,4 @@ console.log(JSON.stringify({ mode: 'READ_ONLY_LEGACY_RECEIPT_AUDIT', requestId,
     productId: row.productId, branchId: row.branchId, consumptionDeltaBaseUnits: row.consumptionDeltaBaseUnits,
     dateKey: row.dateKey, eventType: row.eventType }; })
 }, null, 2));
+console.log(JSON.stringify(await reconcileLegacyReceipt({ db, FieldValue, apply: false }), null, 2));
