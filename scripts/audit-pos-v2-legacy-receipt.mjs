@@ -30,7 +30,7 @@ if (!replacement || replacement.receiptNumber !== 'BR-3QLNF-2026-340820'
   || replacement.revisionId !== revisionId) throw new Error('Scoped replacement identity mismatch.');
 const payment = await read('pos_payments', replacement.canonicalPaymentId);
 const outbox = await read('pos_transaction_outbox', replacement.transactionOutboxEventId);
-const reversal = await read('pos_payments', request.paymentReversalId);
+const reversal = await read('pos_payment_reversals', request.paymentReversalId);
 const movements = await db.collection('inventoryMovementEvents').where('tenantId', '==', original.tenantId)
   .where('sourceDocumentId', '==', replacement.id).get();
 console.log(JSON.stringify({ mode: 'READ_ONLY_LEGACY_RECEIPT_AUDIT', requestId,
@@ -39,7 +39,7 @@ console.log(JSON.stringify({ mode: 'READ_ONLY_LEGACY_RECEIPT_AUDIT', requestId,
     reversalConsumers: request.reversalConsumers, paymentReversalId: request.paymentReversalId },
   original: saleView(original), replacement: saleView(replacement),
   payment: payment && { amount: payment.amount, saleId: payment.saleId, components: payment.components },
-  reversal: reversal && { amount: reversal.amount, saleId: reversal.saleId },
+  reversal: reversal && { amountDelta: reversal.amountDelta, originalSaleId: reversal.originalSaleId },
   outbox: outbox && { status: outbox.status, consumers: outbox.consumers },
   movements: movements.docs.map(doc => { const row = doc.data(); return { id: doc.id,
     productId: row.productId, branchId: row.branchId, consumptionDeltaBaseUnits: row.consumptionDeltaBaseUnits,

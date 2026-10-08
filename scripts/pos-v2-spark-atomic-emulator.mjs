@@ -243,6 +243,15 @@ try {
     assert.equal((await getDoc(doc(db, 'sales', 'original'))).data().revisionId, undefined);
     console.log('PASS genuine concurrent item change rejects correction without stock or revision writes');
   }
+  {
+    const { db, sale, commit } = await seed();
+    const reviewed = input(sale);
+    reviewed.revisedItems[0].commercialQuantity = 10;
+    await assert.rejects(commit(reviewed), /checkout quantity/);
+    assert.equal((await getDoc(doc(db, 'product_batches', 'batch-a'))).data().quantity, 90);
+    assert.equal((await getDoc(doc(db, 'sales', 'original'))).data().revisionId, undefined);
+    console.log('PASS stale hidden checkout quantity rejects the correction before stock, payment or history writes');
+  }
   console.log('Spark production-schema emulator checks passed.');
 } finally {
   await env.cleanup();

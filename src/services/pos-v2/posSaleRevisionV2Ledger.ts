@@ -1,5 +1,6 @@
 import type { Sale, Staff } from '../../types';
 import type { PosV2RevisionItemChange } from './posSaleRevisionV2Planner';
+import { revisionCommercialEvidenceIssues } from '../../../scripts/pos-v2-revision-commercial-evidence.mjs';
 
 export const POS_V2_REVISION_LEDGER_VERSION = 1 as const;
 
@@ -36,6 +37,8 @@ export interface PosV2RevisionLedgerEntry {
   };
   originalTotal: number;
   correctedTotal: number;
+  actualCorrectedTotal?: number | null;
+  evidenceIssues?: string[];
   monetaryDelta: number;
   adjustmentDirection: PosV2RevisionLedgerDirection;
   itemChanges: PosV2RevisionItemChange[];
@@ -170,6 +173,8 @@ export function buildPosV2RevisionLedgerEntry(
     : [];
   const errorMessage = optional(request.lastError);
   const requiresManualReview = request.requiresManualReview === true;
+  const evidenceIssues = input.replacementSale
+    ? revisionCommercialEvidenceIssues({ request, replacementSale: input.replacementSale }) : [];
 
   return {
     ledgerVersion: POS_V2_REVISION_LEDGER_VERSION,
@@ -206,13 +211,15 @@ export function buildPosV2RevisionLedgerEntry(
     },
     originalTotal,
     correctedTotal,
+    actualCorrectedTotal: input.replacementSale ? Number(input.replacementSale.totalAmount ?? input.replacementSale.total) : null,
+    evidenceIssues,
     monetaryDelta,
     adjustmentDirection: direction,
     itemChanges: [...itemChanges],
     contextualChanges: contextChanges(request),
-    lifecycleStatus: lifecycleStatus(request),
-    failure: errorMessage || requiresManualReview
-      ? { message: errorMessage || 'Manual review required.', requiresManualReview }
+    lifecycleStatus: evidenceIssues.length ? 'RECONCILIATION_REQUIRED' : lifecycleStatus(request),
+    failure: errorMessage || requiresManualReview || evidenceIssues.length
+      ? { message: evidenceIssues.join(' ') || errorMessage || 'Manual review required.', requiresManualReview: requiresManualReview || evidenceIssues.length > 0 }
       : null
   };
 }

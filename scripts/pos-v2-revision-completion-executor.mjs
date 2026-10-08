@@ -1,4 +1,5 @@
 import { allReversalConsumersComplete } from './pos-v2-revision-lifecycle-executor.mjs';
+import { assertRevisionCommercialEvidence } from './pos-v2-revision-commercial-evidence.mjs';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -69,6 +70,8 @@ function assertCompletionChain({ request, originalSale, replacementSale, payment
   if (clean(outbox.status) !== 'PROCESSED') {
     throw new Error('Replacement POS V2 downstream posting is not fully processed yet.');
   }
+
+  assertRevisionCommercialEvidence({ request, replacementSale, payment });
 
   if (replay) {
     if (clean(request.replacementLifecycle) !== 'COMPLETED' || clean(originalSale.revisionLifecycle) !== 'COMPLETED') {

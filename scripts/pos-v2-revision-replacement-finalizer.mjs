@@ -1,3 +1,5 @@
+import { assertRevisionCommercialEvidence } from './pos-v2-revision-commercial-evidence.mjs';
+
 function clean(value) {
   return String(value ?? '').trim();
 }
@@ -84,6 +86,7 @@ function assertReplacementChain({ request, originalSale, replacementSale, paymen
     throw new Error('Replacement POS V2 outbox revision linkage mismatch.');
   }
 
+  assertRevisionCommercialEvidence({ request, replacementSale, payment });
   return replay ? 'REPLAY' : 'READY';
 }
 

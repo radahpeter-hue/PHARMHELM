@@ -83,6 +83,10 @@ export function buildPosV2BranchRevisionAnalytics(
     analytics.revisedReceiptCount += 1;
     analytics.completedRevisionCount += row.lifecycleStatus === 'COMPLETED' ? 1 : 0;
     analytics.failedRevisionCount += row.lifecycleStatus === 'FAILED' ? 1 : 0;
+    if (row.lifecycleStatus === 'RECONCILIATION_REQUIRED') {
+      analytics.rows.push(row);
+      return analytics;
+    }
     analytics.originalValue += row.originalTotal;
     analytics.correctedValue += row.correctedTotal;
     analytics.additions += row.monetaryDelta > 0 ? row.monetaryDelta : 0;

@@ -18,7 +18,7 @@ const HEADERS = [
   'Replacement Executor ID', 'Replacement Executor Name', 'Reason', 'Lifecycle Status',
   'Original Total', 'Corrected Total', 'Monetary Delta', 'Adjustment Direction',
   'Original Sale At', 'Requested At', 'First Attempt At', 'Replacement Created At', 'Completed At', 'Updated At', 'Manual Review At',
-  'Item Changes', 'Contextual Changes', 'Failure Message', 'Manual Review Required'
+  'Item Changes', 'Contextual Changes', 'Failure Message', 'Manual Review Required', 'Actual Corrected Total', 'Evidence Issues'
 ] as const;
 
 export function buildPosV2RevisionReportCsv(
@@ -51,7 +51,7 @@ export function buildPosV2RevisionReportCsv(
     iso(entry.timestamps.originalSaleAt), iso(entry.timestamps.requestedAt), iso(entry.timestamps.firstAttemptAt),
     iso(entry.timestamps.replacementCreatedAt), iso(entry.timestamps.completedAt), iso(entry.timestamps.updatedAt), iso(entry.timestamps.manualReviewAt),
     JSON.stringify(entry.itemChanges), JSON.stringify(entry.contextualChanges), entry.failure?.message || '',
-    entry.failure?.requiresManualReview ? 'YES' : 'NO'
+    entry.failure?.requiresManualReview ? 'YES' : 'NO', entry.actualCorrectedTotal ?? '', (entry.evidenceIssues || []).join(' ')
   ]);
 
   return `\uFEFF${[HEADERS, ...rows].map(row => row.map(csv).join(',')).join('\r\n')}`;

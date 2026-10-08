@@ -33,7 +33,7 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   if (!ready) throw new Error('Firestore emulator did not start.');
-  for (const script of ['scripts/pos-v2-spark-atomic-emulator.mjs', 'scripts/pos-v2-revision-rbac-rules-emulator.mjs']) {
+  for (const script of ['scripts/pos-v2-spark-atomic-emulator.mjs', 'scripts/pos-v2-revision-rbac-rules-emulator.mjs', 'scripts/pos-v2-legacy-receipt-repair-emulator.mjs']) {
     const code = await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [script], { stdio: 'inherit',
         env: { ...process.env, FIRESTORE_EMULATOR_HOST: `127.0.0.1:${port}` } });
