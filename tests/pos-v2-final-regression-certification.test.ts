@@ -42,8 +42,11 @@ const certificationMatrix: CertificationRequirement[] = [
     evidence: [{ file: 'tests/pos-checkout-v2-payment-outbox.test.ts', markers: [/institutional credit is represented as unpaid and never as cash received/] }]
   },
   {
-    requirement: 'quotation conversion unchanged',
-    evidence: [{ file: 'tests/pos-v2-revision-quotation-executor.test.ts', markers: [/preserves prior conversion evidence while restoring Draft/] }]
+    requirement: 'atomic quotation conversion and safe revision reversal',
+    evidence: [
+      { file: 'tests/pos-quotation-conversion.test.ts', markers: [/converts the quotation in the same inventory and sale transaction/, /does not schedule a later conversion/] },
+      { file: 'tests/pos-v2-revision-quotation-executor.test.ts', markers: [/preserves prior conversion evidence while restoring Draft/] }
+    ]
   },
   {
     requirement: 'original seller identity unchanged',

@@ -39,11 +39,11 @@ import { validateSaleCheckoutContext } from '../utils/saleContextValidation';
 import { POS_CANONICAL_PAYMENT_METHODS } from '../utils/posPaymentMethods';
 import { getReceiptLedgerReference, getSaleIdentityLabel, getSaleSystemReference, matchesReceiptLedgerSearch, resolveSaleOperatorName } from '../utils/salePresentation';
 import type { SellingTierCode } from '../types/sellingTier';
-import { resolveSellingTiers } from '../services/sellingTierService';
-import { buildTierCartItem, capRequestedCommercialQuantity, getCartLineIdentity, getProductEligibleBatches, getProductUsableBaseStock, getReservedBaseQuantityForProduct, isProductBatchEligibleForPos, mergeTierCartItem, replaceTierCartPrice, replaceTierCartQuantity } from '../services/posTierCartService';
+import { resolveSellingTierPrice, resolveSellingTiers } from '../services/sellingTierService';
+import { buildTierCartItem, capRequestedCommercialQuantity, getCartLineIdentity, getProductEligibleBatches, getProductUsableBaseStock, getReservedBaseQuantityForProduct, isProductBatchEligibleForPos, mergeTierCartItem, replaceTierCartPrice, replaceTierCartQuantity, resizeCommercialCartLine, repriceQuotationCartLine } from '../services/posTierCartService';
 import { allocateFefoCheckoutLines, assertCheckoutLineCostFloors, buildCheckoutLineDemands, finalizeCheckoutSaleItems, getCheckoutBatchDeductions, getCheckoutProductDeductions } from '../services/posCheckoutTierService';
 import { reviseSaleInventoryAtomically, voidSaleInventoryAtomically } from '../services/saleInventoryIntegrityService';
-import { convertQuotationToSale, reconcilePendingPosFinancials, reconcilePosWelfarePosting } from '../services/posFinancialPostingService';
+import { reconcilePendingPosFinancials, reconcilePosWelfarePosting } from '../services/posFinancialPostingService';
 import { executeCheckoutV2, recoverCheckoutV2Attempt } from '../services/pos-v2/posCheckoutV2Service';
 import { findLinkedPosV2RevisionSale, getPosV2RevisionReceiptPresentation } from '../services/pos-v2/posSaleRevisionV2Presentation';
 import { loadPosCheckoutV2Mode } from '../services/pos-v2/posCheckoutV2FeatureService';
@@ -392,8 +392,7 @@ const Sales: React.FC = () => {
         return;
       }
 
-      const multiplier = product.unitOfSell === 'pack' ? (product.unitsPerPack || 1) :
-                        product.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
+      const multiplier = resolveSellingTiers(product, systemSettings).defaultTier.multiplier;
       const productBatches = getProductEligibleBatches(batches, product.id)
         .filter(batch => Number(batch.quantity || 0) >= multiplier);
       if (productBatches.length === 0) {
@@ -510,14 +509,13 @@ const Sales: React.FC = () => {
 
     const batchNumber = currentCartItem.batchNumber;
     const product = products.find(p => p.id === productId);
-    const multiplier = product?.unitOfSell === 'pack' ? (product.unitsPerPack || 1) :
-                      product?.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
+    const multiplier = Number(currentCartItem.tierMultiplier || (product ? resolveSellingTiers(product, systemSettings).defaultTier.multiplier : 1));
 
     if (currentCartItem.isService) {
       setCart(cart.map(item => {
         if (getCartLineIdentity(item) === lineIdentity) {
           const newQty = Math.max(0, item.quantity + delta);
-          return { ...item, quantity: newQty, subtotal: newQty * item.unitPrice };
+          return resizeCommercialCartLine(item, newQty);
         }
         return item;
       }));
@@ -533,7 +531,7 @@ const Sales: React.FC = () => {
 
     if (newQty <= currentBatchMaxQty) {
       setCart(cart.map(item => getCartLineIdentity(item) === lineIdentity
-        ? { ...item, quantity: newQty, subtotal: newQty * item.unitPrice }
+        ? resizeCommercialCartLine(item, newQty, multiplier)
         : item
       ));
     } else {
@@ -545,7 +543,7 @@ const Sales: React.FC = () => {
       if (otherBatches.length === 0) {
         toast.error(`Insufficient stock! Only ${currentBatchMaxQty} available in this batch.`);
         setCart(cart.map(item => getCartLineIdentity(item) === lineIdentity
-          ? { ...item, quantity: currentBatchMaxQty, subtotal: currentBatchMaxQty * item.unitPrice }
+          ? resizeCommercialCartLine(item, currentBatchMaxQty, multiplier)
           : item
         ));
         return;
@@ -559,8 +557,11 @@ const Sales: React.FC = () => {
         if (maxAvail <= 0) continue;
         const qtyToTake = Math.min(remainingBalance, maxAvail);
         remainingBalance -= qtyToTake;
-        const unitPrice = batch.sellingPrice * multiplier;
+        const unitPrice = currentCartItem.sourceQuotationLineId
+          ? Number(currentCartItem.unitPrice || 0)
+          : batch.sellingPrice * multiplier;
         additionalCartItems.push({
+          lineId: generateUUID(),
           productId,
           batchId: batch.id,
           name: currentCartItem.productName || currentCartItem.name || productId,
@@ -569,7 +570,15 @@ const Sales: React.FC = () => {
           batchNumber: batch.batchNumber,
           expiryDate: batch.expiryDate,
           quantity: qtyToTake,
+          commercialQuantity: currentCartItem.sourceQuotationLineId ? qtyToTake : undefined,
+          baseQuantity: currentCartItem.sourceQuotationLineId ? qtyToTake * multiplier : undefined,
+          tierMultiplier: currentCartItem.sourceQuotationLineId ? multiplier : undefined,
           unitPrice,
+          actualUnitPrice: currentCartItem.sourceQuotationLineId ? unitPrice : undefined,
+          configuredPrice: currentCartItem.sourceQuotationLineId ? currentCartItem.configuredPrice : undefined,
+          priceSource: currentCartItem.sourceQuotationLineId ? currentCartItem.priceSource : undefined,
+          sourceQuotationLineId: currentCartItem.sourceQuotationLineId,
+          lineTotal: qtyToTake * unitPrice,
           total: qtyToTake * unitPrice,
           costPrice: batch.purchasePrice * multiplier,
           subtotal: qtyToTake * unitPrice,
@@ -579,7 +588,7 @@ const Sales: React.FC = () => {
       if (remainingBalance > 0) toast.warning(`Insufficient total stock. Missing ${remainingBalance} commercial units.`);
       setCart(prevCart => {
         let nextCart = prevCart.map(item => getCartLineIdentity(item) === lineIdentity
-          ? { ...item, quantity: currentBatchQtyToSet, subtotal: currentBatchQtyToSet * item.unitPrice }
+          ? resizeCommercialCartLine(item, currentBatchQtyToSet, multiplier)
           : item
         );
         for (const add of additionalCartItems) {
@@ -587,7 +596,7 @@ const Sales: React.FC = () => {
           if (existingIdx != -1) {
             const existingItem = nextCart[existingIdx];
             const updatedQty = Math.min(existingItem.quantity + add.quantity, Math.floor((batches.find(b => b.productId === productId && b.batchNumber === add.batchNumber)?.quantity || 0) / multiplier));
-            nextCart[existingIdx] = { ...existingItem, quantity: updatedQty, subtotal: updatedQty * existingItem.unitPrice };
+            nextCart[existingIdx] = resizeCommercialCartLine(existingItem, updatedQty, multiplier);
           } else {
             nextCart = [add, ...nextCart];
           }
@@ -605,10 +614,20 @@ const Sales: React.FC = () => {
       setCart(current => replaceTierCartPrice({ cart: current, targetIdentity: lineIdentity, actualUnitPrice: Math.max(0, newPrice) }));
       return;
     }
-    setCart(cart.map(item => getCartLineIdentity(item) === lineIdentity
-      ? { ...item, unitPrice: Math.max(0, newPrice), subtotal: item.quantity * Math.max(0, newPrice) }
-      : item
-    ));
+    setCart(cart.map(item => {
+      if (getCartLineIdentity(item) !== lineIdentity) return item;
+      const actualUnitPrice = Math.max(0, newPrice);
+      const lineTotal = Number(item.commercialQuantity ?? item.quantity) * actualUnitPrice;
+      const repriced = repriceQuotationCartLine(item, actualUnitPrice);
+      return {
+        ...item,
+        unitPrice: actualUnitPrice,
+        ...(item.sourceQuotationLineId ? { actualUnitPrice: repriced.actualUnitPrice, priceSource: repriced.priceSource } : {}),
+        subtotal: lineTotal,
+        total: lineTotal,
+        lineTotal
+      };
+    }));
   };
 
   const removeFromCart = (lineIdentity: string) => {
@@ -929,7 +948,8 @@ const Sales: React.FC = () => {
           welfarePostingStatus: paymentMethod === 'staff_welfare' ? 'pending' : 'not_applicable',
           secondaryAmount: isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
           sourceQuotationId: resumedQuotationId || undefined,
-          quotationConversionStatus: resumedQuotationId ? 'pending' : 'not_applicable',
+          quotationConversionStatus: resumedQuotationId ? 'converted' : 'not_applicable',
+          quotationConvertedAt: resumedQuotationId ? new Date().toISOString() : undefined,
           timestamp: new Date().toISOString(),
           status: 'completed',
           receiptNumber,
@@ -961,6 +981,16 @@ const Sales: React.FC = () => {
           if (existingSale.exists()) {
             finalizedSaleItems = ((existingSale.data() as Sale).items || saleData.items);
             return;
+          }
+
+          const quotationRef = resumedQuotationId ? doc(db, 'pos_quotations', resumedQuotationId) : null;
+          const quotationSnap = quotationRef ? await transaction.get(quotationRef) : null;
+          if (quotationSnap) {
+            if (!quotationSnap.exists()) throw new Error('The source quotation no longer exists.');
+            const quotation = quotationSnap.data();
+            if (quotation.tenantId !== profile.tenantId) throw new Error('The source quotation belongs to a different tenant.');
+            if (quotation.branchId !== activeBranchId) throw new Error('The source quotation belongs to a different branch.');
+            if (quotation.status !== 'Draft') throw new Error('This quotation has already been converted or is no longer available for sale.');
           }
 
           const productSnapshots = new Map<string, any>();
@@ -1066,6 +1096,15 @@ const Sales: React.FC = () => {
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
           });
+          if (quotationRef) {
+            transaction.update(quotationRef, {
+              status: 'Converted',
+              convertedReceiptId: saleDocumentId,
+              convertedAt: saleData.quotationConvertedAt,
+              convertedValue: finalTotal,
+              updatedAt: serverTimestamp()
+            });
+          }
         }, 'sales/product_batches/products');
 
         finalReceiptId = saleDocumentId;
@@ -1112,14 +1151,6 @@ const Sales: React.FC = () => {
         }
       }
 
-      if (resumedQuotationId && finalReceiptId && checkoutEngine === 'legacy') {
-        try {
-          await convertQuotationToSale({ tenantId: profile.tenantId, quotationId: resumedQuotationId, saleId: finalReceiptId, convertedValue: finalTotal });
-        } catch (quotationError) {
-          console.warn('Sale completed, but quotation conversion remains pending:', quotationError);
-          toast.warning('Sale completed. The quotation link needs reconciliation, but no second sale was created.');
-        }
-      }
       if (resumedQuotationId && finalReceiptId) setResumedQuotationId(null);
 
       if (completedSale) {
@@ -1814,8 +1845,7 @@ const Sales: React.FC = () => {
                   <button 
                     type="button"
                     onClick={() => setShowQuotationModal(true)}
-                    disabled={cart.length === 0 || cart.some(item => !item.isService && Boolean(item.tierCode))}
-                    title={cart.some(item => !item.isService && Boolean(item.tierCode)) ? 'Multi-tier quotations will be enabled in the quotation integration phase.' : undefined}
+                    disabled={cart.length === 0}
                     className="w-full sm:w-auto px-6 py-4 bg-zinc-100 hover:bg-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 text-zinc-700 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                   >
                     <FileText size={16} strokeWidth={3} />
@@ -2111,10 +2141,14 @@ const Sales: React.FC = () => {
                     const totalBaseStock = isProduct && product ? getProductUsableBaseStock(batches, product.id) : 0;
                     const resolution = isProduct && product ? resolveSellingTiers(product, systemSettings) : null;
                     const isMultiTier = resolution?.mode === 'multi-tier';
-                    const defaultTier = isMultiTier ? resolution.defaultTier : null;
+                    const defaultTier = resolution?.defaultTier || null;
                     const legacyMultiplier = product?.unitOfSell === 'pack' ? (product.unitsPerPack || 1) : product?.unitOfSell === 'strip' ? (product.unitsPerStrip || 1) : 1;
                     const displayMultiplier = defaultTier?.multiplier || legacyMultiplier;
-                    const price = isProduct ? (defaultTier?.configuredPrice ?? productBatches[0]?.sellingPrice ?? product?.sellingPricePerUnit ?? 0) : (service?.defaultFee || 0);
+                    const eligiblePriceBatch = isProduct && product ? getProductEligibleBatches(batches, product.id)[0] : undefined;
+                    const baseSellingPrice = Number(eligiblePriceBatch?.sellingPrice ?? product?.sellingPricePerUnit ?? 0);
+                    const price = isProduct
+                      ? (defaultTier ? resolveSellingTierPrice(defaultTier, baseSellingPrice) : baseSellingPrice * displayMultiplier)
+                      : (service?.defaultFee || 0);
                     const defaultHasStock = !isProduct || totalBaseStock >= Math.max(1, displayMultiplier);
 
                     return (
@@ -2148,7 +2182,7 @@ const Sales: React.FC = () => {
                               {isProduct ? (
                                 <>
                                   <span className={cn("px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider block border", totalBaseStock > 50 ? "bg-emerald-50 text-emerald-600 border-emerald-100" : totalBaseStock > 0 ? "bg-amber-50 text-amber-600 border-amber-100" : "bg-rose-50 text-rose-600 border-rose-100")}>{totalBaseStock} {product?.baseUnit || product?.unit || 'base units'}</span>
-                                  {isMultiTier && <span className="text-[8px] font-black uppercase text-emerald-700">Default: {defaultTier?.label}</span>}
+                                  <span className="text-[8px] font-black uppercase text-emerald-700">Default: {defaultTier?.label || 'Unit'}</span>
                                 </>
                               ) : (
                                 <span className="bg-blue-50 text-blue-650 border border-blue-100 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider">Fee Service</span>
@@ -2159,7 +2193,7 @@ const Sales: React.FC = () => {
                         </div>
 
                         <div className="text-right shrink-0 min-w-[118px]">
-                          <p className="font-black text-zinc-850 text-xs tracking-tight leading-none">UGX {(price || 0).toLocaleString()}</p>
+                          <p className="font-black text-zinc-850 text-xs tracking-tight leading-none">UGX {(price || 0).toLocaleString()} / {isProduct ? (defaultTier?.label || 'Unit').toLowerCase() : 'service'}</p>
                           {isProduct && !defaultHasStock ? (
                             <span className="text-[9px] font-black text-rose-500 uppercase tracking-widest mt-1 block">OUT</span>
                           ) : (
@@ -2180,7 +2214,7 @@ const Sales: React.FC = () => {
                                     }}
                                     className="px-2 py-1 rounded-lg border border-emerald-100 bg-white text-[8px] font-black uppercase text-emerald-700 disabled:opacity-30"
                                   >
-                                    {tier.label} {Number(tier.configuredPrice || 0).toLocaleString()}
+                                    {tier.label} • UGX {Number(tier.configuredPrice || 0).toLocaleString()} / {tier.label.toLowerCase()}
                                   </button>
                                 );
                               })}

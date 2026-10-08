@@ -8,6 +8,7 @@ import {
   replaceTierCartPrice
 } from './posTierCartService';
 import { createSaleLineId } from './saleTierHistoryService';
+import { omitUndefinedDeep } from '../utils/firestoreData';
 
 export interface QuotationLineSnapshot {
   lineId: string;
@@ -43,7 +44,7 @@ export function buildQuotationLineSnapshot(item: SaleItem): QuotationLineSnapsho
   const commercialQuantity = Number(item.commercialQuantity ?? item.quantity ?? 0);
   const actualUnitPrice = Number(item.actualUnitPrice ?? item.unitPrice ?? 0);
   const lineTotal = Number(item.lineTotal ?? item.subtotal ?? item.total ?? commercialQuantity * actualUnitPrice);
-  return {
+  return omitUndefinedDeep({
     lineId: item.lineId || createSaleLineId(item.isService ? 'service-quote-line' : 'quote-line'),
     productId: item.productId,
     productName: item.productName || item.name,
@@ -63,7 +64,7 @@ export function buildQuotationLineSnapshot(item: SaleItem): QuotationLineSnapsho
     priceSource: item.priceSource,
     discountStatus: item.discountStatus,
     taxStatus: item.taxStatus
-  };
+  });
 }
 
 export function quotationQuantityText(line: Partial<QuotationLineSnapshot>): string {
@@ -92,8 +93,26 @@ export function buildResumedServiceLine(line: QuotationLineSnapshot): SaleItem {
     total: quantity * unitPrice,
     subtotal: quantity * unitPrice,
     lineTotal: quantity * unitPrice,
+    actualLineCost: 0,
+    sourceQuotationLineId: line.lineId,
     isService: true
   } as SaleItem;
+}
+
+export function getCombinedQuotationStockWarnings(items: SaleItem[], batches: ProductBatch[]): string[] {
+  const demandByProduct = new Map<string, number>();
+  for (const item of items) {
+    if (item.isService) continue;
+    const quantity = Number(item.baseQuantity ?? (Number(item.commercialQuantity ?? item.quantity ?? 0) * Number(item.tierMultiplier || 1)));
+    if (!Number.isFinite(quantity) || quantity < 0) continue;
+    demandByProduct.set(item.productId, (demandByProduct.get(item.productId) || 0) + quantity);
+  }
+  return [...demandByProduct.entries()].flatMap(([productId, requested]) => {
+    const available = getProductUsableBaseStock(batches, productId);
+    if (requested <= available) return [];
+    const name = items.find(item => item.productId === productId)?.productName || productId;
+    return [`Combined quotation demand for ${name} is ${requested} base units, but only ${available} eligible base units are available.`];
+  });
 }
 
 export function buildResumedQuotationProductLine(params: {
@@ -150,7 +169,7 @@ export function buildResumedQuotationProductLine(params: {
         Number(item.configuredPrice ?? 0), item.priceSource || 'configured-tier', item.taxStatus || 'pending', item.discountStatus || 'none'
       ].join(':') : '', actualUnitPrice: quotedPrice })[0];
     }
-    item = { ...item, lineId: line.lineId || item.lineId || createSaleLineId() };
+    item = { ...item, lineId: line.lineId || item.lineId || createSaleLineId(), sourceQuotationLineId: line.lineId };
     return { item, warnings, blocking: false };
   }
 
@@ -206,6 +225,7 @@ export function buildResumedQuotationProductLine(params: {
       lineTotal,
       costPrice: quantity > 0 ? cost.actualLineCost / quantity : cost.actualLineCost,
       actualLineCost: cost.actualLineCost,
+      sourceQuotationLineId: line.lineId,
       batchNumber: 'FEFO-PENDING',
       expiryDate: 'Allocated at checkout',
       isService: false

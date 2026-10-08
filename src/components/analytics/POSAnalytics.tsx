@@ -37,16 +37,17 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
   const [quotations, setQuotations] = useState<any[]>([]);
 
   useEffect(() => {
-    if (profile?.tenantId) {
+    if (profile?.tenantId && (isGlobalView || activeBranch?.id)) {
       const q = query(
         collection(db, 'pos_quotations'),
-        where('tenantId', '==', profile.tenantId)
+        where('tenantId', '==', profile.tenantId),
+        ...(isGlobalView ? [] : [where('branchId', '==', activeBranch!.id)])
       );
       getDocs(q).then((snap) => {
         setQuotations(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       }).catch(err => console.warn('Failed to load quotations for analytics:', err));
     }
-  }, [profile?.tenantId]);
+  }, [profile?.tenantId, activeBranch?.id, isGlobalView]);
 
   // Aggregate stats
   // Check daily vs cumulative

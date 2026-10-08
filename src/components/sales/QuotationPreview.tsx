@@ -2,17 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { X, Download, Share2, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { 
-  collection, 
-  addDoc, 
-  Timestamp, 
-  doc, 
-  setDoc,
-  getDocs,
-  query,
-  where
+  Timestamp
 } from 'firebase/firestore';
-import { db } from '../../firebase';
-import { getNextQuotationId } from '../../services/quotationService';
+import { createQuotationDraft, getNextQuotationId } from '../../services/quotationService';
 import { buildQuotationLineSnapshot, quotationQuantityText } from '../../services/quotationTierService';
 import { jsPDF } from 'jspdf';
 
@@ -50,6 +42,7 @@ export const QuotationPreview: React.FC<QuotationPreviewProps> = ({
   onSuccess
 }) => {
   const [quotationId, setQuotationId] = useState('');
+  const [saveRequestId, setSaveRequestId] = useState('');
   const [saving, setSaving] = useState(false);
 
   const branchCode = activeBranch?.branch_code || 'KLA';
@@ -68,11 +61,15 @@ export const QuotationPreview: React.FC<QuotationPreviewProps> = ({
   useEffect(() => {
     if (isOpen && tenantId) {
       // Pre-generate quotation ID
-      getNextQuotationId(tenantId, branchCode, systemSettings)
-        .then(id => setQuotationId(id))
+      getNextQuotationId(tenantId, branchId, branchCode, systemSettings)
+        .then(id => {
+          setQuotationId(id);
+          setSaveRequestId(globalThis.crypto?.randomUUID?.() || `quote-save-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+        })
         .catch(err => {
           console.error(err);
           setQuotationId(`QUO-${branchCode}-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
+          setSaveRequestId(globalThis.crypto?.randomUUID?.() || `quote-save-${Date.now()}-${Math.random().toString(36).slice(2)}`);
         });
     }
   }, [isOpen, tenantId, branchCode, systemSettings]);
@@ -92,6 +89,7 @@ export const QuotationPreview: React.FC<QuotationPreviewProps> = ({
         branchName: activeBranch?.name || 'Main Branch',
         createdBy: profile.uid,
         createdByName: profile.full_name || 'Staff Member',
+        saveRequestId,
         createdAt: Timestamp.fromDate(createdAtDate),
         clientId: selectedPatient?.id || null,
         clientName: selectedPatient?.full_name || null,
@@ -108,7 +106,9 @@ export const QuotationPreview: React.FC<QuotationPreviewProps> = ({
         convertedValue: null
       };
 
-      await setDoc(doc(db, 'pos_quotations', quotationId), newQuotation);
+      if (!profile?.uid || profile.tenantId !== tenantId) throw new Error('The active user is not authorised for this tenant.');
+      if (!saveRequestId) throw new Error('The quotation save request is not ready. Reopen the preview and try again.');
+      await createQuotationDraft({ tenantId, branchId, quotationId, actorUid: profile.uid, data: newQuotation });
       toast.success(`Quotation ${quotationId} saved.`);
       onSuccess();
       onClose();

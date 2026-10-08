@@ -7,7 +7,8 @@ import {
   getMultiTierEligibility,
   isMultiTierSellingEnabled,
   resolveRequestedSellingTier,
-  resolveSellingTiers
+  resolveSellingTiers,
+  resolveSellingTierPrice
 } from '../src/services/sellingTierService';
 
 const product = (overrides: Partial<Product> = {}) => ({
@@ -112,6 +113,14 @@ test('valid configured tiers resolve with explicit prices and the configured def
     ['pack', 100, 22000]
   ]);
   assert.equal(result.defaultTier.code, 'strip');
+  assert.equal(resolveSellingTierPrice(result.defaultTier, 50), 2500);
+  assert.equal(resolveSellingTierPrice(result.tiers.find(tier => tier.code === 'pack')!, 50), 22000);
+  assert.equal(resolveSellingTierPrice(result.tiers.find(tier => tier.code === 'unit')!, 50), 300);
+});
+
+test('legacy catalogue pricing multiplies the base-unit price by the default commercial tier', () => {
+  const legacy = resolveSellingTiers(product({ unitOfSell: 'strip', unitsPerStrip: 10 }), null);
+  assert.equal(resolveSellingTierPrice(legacy.defaultTier, 50), 500);
 });
 
 test('disabled tiers are omitted and invalid prices are never invented', () => {

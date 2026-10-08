@@ -23,7 +23,7 @@ import {
 import { db } from '../../firebase';
 import { format } from 'date-fns';
 import { QuotationPreview } from './QuotationPreview';
-import { buildResumedQuotationProductLine, buildResumedServiceLine } from '../../services/quotationTierService';
+import { buildResumedQuotationProductLine, buildResumedServiceLine, getCombinedQuotationStockWarnings } from '../../services/quotationTierService';
 
 interface QuotationsLogProps {
   activeBranchId: string;
@@ -163,6 +163,7 @@ export const QuotationsLog: React.FC<QuotationsLogProps> = ({
     setLoading(true);
     const itemWarnings: string[] = [];
     const basketItems: any[] = [];
+    const branchBatchesById = new Map<string, any>();
 
     try {
       let blockingFound = false;
@@ -189,6 +190,7 @@ export const QuotationsLog: React.FC<QuotationsLogProps> = ({
           )
         );
         const batchesList = batchesSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
+        for (const batch of batchesList) branchBatchesById.set(batch.id, batch);
         const result = buildResumedQuotationProductLine({
           line, product, batches: batchesList, systemSettings, settings: systemSettings,
           tenantId: profile.tenantId, branchId: activeBranchId
@@ -199,6 +201,12 @@ export const QuotationsLog: React.FC<QuotationsLogProps> = ({
           continue;
         }
         basketItems.push(result.item);
+      }
+
+      const combinedStockWarnings = getCombinedQuotationStockWarnings(basketItems, [...branchBatchesById.values()]);
+      if (combinedStockWarnings.length > 0) {
+        itemWarnings.push(...combinedStockWarnings);
+        blockingFound = true;
       }
 
       setRefetchedItems(basketItems);

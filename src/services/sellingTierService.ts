@@ -204,6 +204,12 @@ export function resolveRequestedSellingTier(
   return tier;
 }
 
+export function resolveSellingTierPrice(tier: ResolvedSellingTier, legacyBaseUnitPrice: number): number {
+  if (tier.configuredPrice !== null) return tier.configuredPrice;
+  const baseUnitPrice = Number(legacyBaseUnitPrice);
+  return Number.isFinite(baseUnitPrice) && baseUnitPrice >= 0 ? baseUnitPrice * tier.multiplier : 0;
+}
+
 export function calculateBaseQuantity(commercialQuantity: number, tierMultiplier: number): number {
   if (!Number.isFinite(commercialQuantity) || commercialQuantity <= 0 || !Number.isInteger(commercialQuantity)) {
     throw new Error('Commercial quantity must be a positive whole number.');

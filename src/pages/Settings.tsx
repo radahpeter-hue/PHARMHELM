@@ -75,6 +75,8 @@ const Settings = () => {
   if (!hasPermission('settings', 'view')) {
     return <div className="p-8">Access denied.</div>;
   }
+  const canManageSettings = hasPermission('settings', 'all');
+  const canEditSettings = hasPermission('settings', 'operate') || canManageSettings;
   const { tenant } = useTenant();
   const [activeTab, setActiveTab] = useState('system');
   const [settings, setSettings] = useState<SystemSettings | null>(null);
@@ -413,6 +415,10 @@ const Settings = () => {
 
   const handleSaveSettings = async () => {
     if (!settings) return;
+    if (!canEditSettings) {
+      toast.error('Settings edit access is required to save system changes.');
+      return;
+    }
     setSaving(true);
     try {
       await firestoreService.updateDocument('system_settings', settings.id, settings);
@@ -464,6 +470,19 @@ const Settings = () => {
         ...settings.featureToggles,
         [key]: !settings.featureToggles[key as keyof typeof settings.featureToggles]
       }
+    });
+  };
+
+  const toggleMultiTierSelling = () => {
+    if (!settings || !canManageSettings) return;
+    setSettings({
+      ...settings,
+      features: {
+        ...settings.features,
+        multiTierSellingEnabled: settings.features?.multiTierSellingEnabled !== true
+      },
+      updatedAt: new Date().toISOString(),
+      updatedBy: profile?.uid || settings.updatedBy
     });
   };
 
@@ -677,7 +696,8 @@ const Settings = () => {
           </button>
           <button 
             onClick={handleSaveSettings}
-            disabled={saving}
+            disabled={saving || !canEditSettings}
+            title={!canEditSettings ? 'Settings edit access is required to save system changes.' : undefined}
             className="flex items-center gap-2 px-6 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all disabled:opacity-50"
           >
             {saving ? <RefreshCw className="animate-spin" size={18} /> : <Save size={18} />}
@@ -718,6 +738,23 @@ const Settings = () => {
               </div>
               
               <div className="space-y-3">
+                <div className="flex items-center justify-between gap-4 p-3 bg-emerald-50 rounded-2xl border border-emerald-100">
+                  <div>
+                    <p className="text-sm font-bold text-zinc-900">POS Multi-Tier Selling</p>
+                    <p className="text-[10px] text-zinc-600 mt-1">{settings.features?.multiTierSellingEnabled === true ? 'Active for configured eligible products' : 'Off. Product tier settings are saved but unavailable in POS.'}</p>
+                    {!canManageSettings && <p className="text-[10px] text-amber-700 mt-1">Full Settings access is required to change this tenant setting.</p>}
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={settings.features?.multiTierSellingEnabled === true}
+                    disabled={!canManageSettings}
+                    onClick={toggleMultiTierSelling}
+                    className={cn('w-11 h-6 rounded-full transition-all relative shrink-0 disabled:opacity-50', settings.features?.multiTierSellingEnabled === true ? 'bg-emerald-500' : 'bg-zinc-300')}
+                  >
+                    <span className={cn('absolute top-1 h-4 w-4 bg-white rounded-full transition-all', settings.features?.multiTierSellingEnabled === true ? 'left-6' : 'left-1')} />
+                  </button>
+                </div>
                 <div className="flex items-center justify-between p-3 bg-zinc-50 rounded-2xl border border-zinc-100">
                   <div>
                     <p className="text-sm font-bold text-zinc-900">Multi-Branch Mode</p>

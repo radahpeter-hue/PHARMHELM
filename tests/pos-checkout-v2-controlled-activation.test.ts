@@ -86,7 +86,7 @@ test('browser reconciliation excludes V2 sales because Batch 4 owns durable down
   assert.match(consumptionSource, /engineVersion \|\| 0\) !== 2/);
   assert.match(financialSource, /engineVersion \|\| 0\) !== 2/);
   assert.match(salesSource, /finalReceiptId && checkoutEngine === 'legacy'/);
-  assert.match(salesSource, /resumedQuotationId && finalReceiptId && checkoutEngine === 'legacy'/);
+  assert.match(salesSource, /transaction\.update\(quotationRef,[\s\S]{0,220}status: 'Converted'/);
 });
 
 test('legacy mutation paths cannot edit or void immutable V2 receipts', () => {

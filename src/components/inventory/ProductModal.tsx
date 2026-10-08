@@ -357,6 +357,7 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
           <div>
             <h3 className="text-xs font-black text-emerald-900 uppercase tracking-widest">Multi-tier Selling Configuration</h3>
             <p className="text-[10px] text-emerald-700 mt-1">Configure only the commercial tiers this product can actually be sold in. Prices are explicit and are never generated from another tier.</p>
+            {!featureEnabled && <p className="text-[10px] text-amber-800 mt-2">Product tiers are saved, but POS choices stay off until an authorised user enables POS Multi-Tier Selling in Settings → System Config.</p>}
           </div>
           <span className={featureEnabled ? 'px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border bg-emerald-600 text-white border-emerald-600' : 'px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border bg-white text-amber-700 border-amber-200'}>
             {featureEnabled ? 'POS feature active' : 'POS feature off'}

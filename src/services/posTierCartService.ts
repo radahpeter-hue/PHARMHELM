@@ -117,6 +117,37 @@ export function getSaleItemBaseQuantity(item: SaleItem): number {
   return 0;
 }
 
+export function resizeCommercialCartLine(item: SaleItem, quantity: number, fallbackMultiplier = 1): SaleItem {
+  const lineTotal = quantity * Number(item.unitPrice || 0);
+  const keepsQuotationSnapshot = Boolean(item.sourceQuotationLineId);
+  const multiplier = Number(item.tierMultiplier || fallbackMultiplier || 1);
+  return {
+    ...item,
+    quantity,
+    ...(item.commercialQuantity !== undefined || keepsQuotationSnapshot ? { commercialQuantity: quantity } : {}),
+    ...(item.baseQuantity !== undefined || keepsQuotationSnapshot ? { baseQuantity: quantity * multiplier } : {}),
+    ...(item.tierMultiplier !== undefined || keepsQuotationSnapshot ? { tierMultiplier: multiplier } : {}),
+    subtotal: lineTotal,
+    total: lineTotal,
+    lineTotal
+  };
+}
+
+export function repriceQuotationCartLine(item: SaleItem, actualUnitPrice: number): SaleItem {
+  if (!item.sourceQuotationLineId) return item;
+  const quantity = Number(item.commercialQuantity ?? item.quantity ?? 0);
+  const lineTotal = quantity * actualUnitPrice;
+  return {
+    ...item,
+    unitPrice: actualUnitPrice,
+    actualUnitPrice,
+    priceSource: actualUnitPrice === Number(item.configuredPrice) ? 'configured-tier' : 'manual-override',
+    subtotal: lineTotal,
+    total: lineTotal,
+    lineTotal
+  };
+}
+
 export function getReservedBaseQuantityForProduct(cart: SaleItem[], productId: string): number {
   return cart
     .filter(item => !item.isService && item.productId === productId)

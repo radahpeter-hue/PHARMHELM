@@ -37,10 +37,10 @@ function mapRepositoryError(error: unknown): PosCheckoutV2Error {
 /**
  * POS Transaction Engine V2 orchestration entrypoint.
  *
- * This function intentionally performs no printing, React state manipulation,
- * consumption posting, welfare posting, quotation conversion, loyalty work or
- * navigation. Batch 3 extends the repository transaction with payment/outbox
- * writes without changing this service boundary.
+ * The repository commits the sale, inventory, quotation conversion and canonical
+ * payment/outbox atomically. This orchestration layer performs no printing,
+ * React state manipulation, consumption posting, welfare posting, loyalty work
+ * or navigation.
  */
 export async function executeCheckoutV2(request: CheckoutV2Request): Promise<PosCheckoutV2CompletedResult> {
   try {
