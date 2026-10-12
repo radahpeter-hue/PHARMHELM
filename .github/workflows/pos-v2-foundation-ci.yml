@@ -121,10 +121,12 @@ jobs:
           test_rules_file() {
             local label="$1"
             local file="$2"
-            local body response_file http_status errors
+            local body_file response_file http_status errors
             response_file=$(mktemp)
-            body=$(jq -n --rawfile rules "$file" \
-              '{source: {files: [{name: "firestore.rules", content: $rules}]}}')
+            body_file=$(mktemp)
+            jq -n --rawfile rules "$file" \
+              '{source: {files: [{name: "firestore.rules", content: $rules}]}}' \
+              > "$body_file"
 
             http_status=$(curl --silent --show-error \
               -o "$response_file" \
@@ -132,7 +134,7 @@ jobs:
               -X POST \
               -H "Authorization: Bearer ${access_token}" \
               -H "Content-Type: application/json" \
-              --data "$body" \
+              --data-binary "@${body_file}" \
               "https://firebaserules.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}:test")
 
             compiler_status="$http_status"
