@@ -4,10 +4,12 @@ import { pathToFileURL } from 'node:url';
 
 const normalizedFields = index => (index.fields || []).filter(field => field.fieldPath !== '__name__')
   .map(field => `${field.fieldPath}:${field.order || field.arrayConfig}`).join('|');
+const collectionGroup = index => index.collectionGroup
+  || index.name?.match(/\/collectionGroups\/([^/]+)\/indexes\//)?.[1];
 
 export function operationalIndexesReady(required, deployed) {
   return required.every(candidate => deployed.some(index => index.queryScope === candidate.queryScope
-    && index.state === 'READY' && index.collectionGroup === candidate.collectionGroup
+    && index.state === 'READY' && collectionGroup(index) === candidate.collectionGroup
     && normalizedFields(index) === normalizedFields(candidate)));
 }
 
@@ -33,7 +35,7 @@ async function verify() {
       return;
     }
     if (deployed.some(index => index.state === 'NEEDS_REPAIR' && required.some(candidate =>
-      candidate.collectionGroup === index.collectionGroup && normalizedFields(candidate) === normalizedFields(index)))) {
+      candidate.collectionGroup === collectionGroup(index) && normalizedFields(candidate) === normalizedFields(index)))) {
       throw new Error('An Operational Inventory composite index needs repair. The workflow cannot report success.');
     }
     console.log(`Waiting for Operational Inventory indexes to become READY (${attempt + 1}/40).`);

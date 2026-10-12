@@ -17,7 +17,9 @@ test('deployment manifest contains all eight Operational Inventory composite ind
 
 test('operational index verifier requires every exact manifest index to be READY', () => {
   const deployed = operational.map((index: { collectionGroup: string; queryScope: string; fields: Array<{ fieldPath: string; order: string }> }) => ({
-    ...index,
+    name: `projects/p/databases/d/collectionGroups/${index.collectionGroup}/indexes/example`,
+    queryScope: index.queryScope,
+    fields: [...index.fields, { fieldPath: '__name__', order: 'ASCENDING' }],
     state: 'READY'
   }));
   assert.equal(operationalIndexesReady(operational, deployed), true);
