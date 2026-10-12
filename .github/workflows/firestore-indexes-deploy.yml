@@ -8,6 +8,8 @@ on:
       - firestore.indexes.json
       - firebase.json
       - .github/workflows/firestore-indexes-deploy.yml
+      - scripts/deploy-firestore-indexes.mjs
+      - scripts/verify-operational-inventory-indexes.mjs
   workflow_dispatch:
 
 jobs:
