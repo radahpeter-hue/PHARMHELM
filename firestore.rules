@@ -40,6 +40,32 @@ service cloud.firestore {
       );
     }
 
+    // The tenant-scoped settings document is the authoritative operational
+    // inventory feature gate. Missing or malformed settings fail closed.
+    function isOperationalInventoryEnabled(tenantId) {
+      let settingsPath = /databases/$(database)/documents/system_settings/$(tenantId);
+      return exists(settingsPath)
+        && get(settingsPath).data.tenantId == tenantId
+        && ('featureToggles' in get(settingsPath).data)
+        && get(settingsPath).data.featureToggles is map
+        && ('enableOperationalInventory' in get(settingsPath).data.featureToggles)
+        && get(settingsPath).data.featureToggles.enableOperationalInventory == true;
+    }
+
+    function isOperationalInventoryClass(data) {
+      return ('inventoryClass' in data) && data.inventoryClass == 'OPERATIONAL';
+    }
+
+    function isOperationalOrderData(data) {
+      return data.category == 'non_sellable' || isOperationalInventoryClass(data);
+    }
+
+    function canOperateOperationalLocation(branchId) {
+      return branchId == 'HQ'
+        ? (isProcurement() || isAssignedToBranch('HQ'))
+        : isAssignedToBranch(branchId);
+    }
+
     function isAdmin() {
       return isAuthenticated() && (
         request.auth.token.email == "peterssentongo61@gmail.com" ||
@@ -819,11 +845,88 @@ service cloud.firestore {
       allow write: if isFinance() && isTenantMember(request.resource.data.tenantId);
     }
 
+    // Immutable handoff from finalized Operational GRNs to the future Finance V2 consumer.
+    match /operational_finance_events/{eventId} {
+      function sourceGrnPath() {
+        return /databases/$(database)/documents/grn_records/$(request.resource.data.sourceId);
+      }
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
+      allow create: if isAuthenticated()
+        && isProcurement()
+        && isTenantMember(request.resource.data.tenantId)
+        && isOperationalInventoryEnabled(request.resource.data.tenantId)
+        && request.resource.data.inventoryClass == 'OPERATIONAL'
+        && request.resource.data.eventKind in ['OPERATIONAL_CONSUMABLE_OPEX', 'FIXED_ASSET_ACQUISITION']
+        && request.resource.data.operationalType in ['CONSUMABLE_OPERATIONAL', 'FIXED_ASSET']
+        && request.resource.data.eventKind == (request.resource.data.operationalType == 'FIXED_ASSET' ? 'FIXED_ASSET_ACQUISITION' : 'OPERATIONAL_CONSUMABLE_OPEX')
+        && request.resource.data.status == 'READY_FOR_FINANCE'
+        && request.resource.data.amountUGX is number
+        && request.resource.data.amountUGX >= 0
+        && request.resource.data.sourceType == 'OPERATIONAL_GRN'
+        && request.resource.data.destinationStoreId == 'HQ_OPERATIONAL'
+        && existsAfter(sourceGrnPath())
+        && getAfter(sourceGrnPath()).data.tenantId == request.resource.data.tenantId
+        && getAfter(sourceGrnPath()).data.inventoryClass == 'OPERATIONAL'
+        && getAfter(sourceGrnPath()).data.financial_posting_status == 'event_created'
+        && getAfter(sourceGrnPath()).data.total_value_ugx >= request.resource.data.amountUGX;
+      allow update, delete: if false;
+    }
+
+    match /operational_inventory_migration_audit/{auditId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && (isInventoryOperator() || isProcurement() || isITPersonnel() || isAdmin());
+      allow create, update, delete: if false;
+    }
+
     // Deterministic procurement posting IDs require an existence check before
     // creation. A missing document exposes no tenant data; existing documents
     // remain tenant-scoped by the second clause and by the collection rules.
     match /grn_records/{recordId} {
+      function hasOperationalSourceOrder(data) {
+        return ('order_id' in data)
+          && exists(/databases/$(database)/documents/stock_orders/$(data.order_id))
+          && get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.tenantId == data.tenantId
+          && isOperationalOrderData(get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data);
+      }
+      function validGrnInventoryClass(data) {
+        return (('inventoryClass' in data)
+            && data.inventoryClass == 'OPERATIONAL'
+            && hasOperationalSourceOrder(data)
+            && data.destination_store_id == 'HQ_OPERATIONAL'
+            && data.grn_status == 'completed'
+            && data.status == 'completed'
+            && !('items' in data)
+            && data.itemCount is number
+            && data.itemCount > 0
+            && data.itemCount <= 150
+            && data.receivedBy == request.auth.uid
+            && isOperationalInventoryEnabled(data.tenantId))
+          || (('inventoryClass' in data)
+            && data.inventoryClass == 'SELLABLE'
+            && !hasOperationalSourceOrder(data))
+          || (!('inventoryClass' in data)
+            && !('operationalType' in data)
+            && !hasOperationalSourceOrder(data));
+      }
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated()
+        && isTenantMember(request.resource.data.tenantId)
+        && (!('inventoryClass' in request.resource.data)
+          || request.resource.data.inventoryClass != 'OPERATIONAL'
+          || isProcurement())
+        && validGrnInventoryClass(request.resource.data);
+      allow update: if isAuthenticated()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && !hasOperationalSourceOrder(resource.data)
+        && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
+        && resource.data.inventoryClass != 'OPERATIONAL'
+        && validGrnInventoryClass(request.resource.data);
+      allow delete: if resource.data.inventoryClass != 'OPERATIONAL'
+        && !hasOperationalSourceOrder(resource.data)
+        && isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /invoices/{invoiceId} {
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
@@ -1053,11 +1156,577 @@ service cloud.firestore {
       allow delete: if isQA() || isHR() || isAdmin();
     }
 
+    match /operational_inventory_masters/{masterItemId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated()
+        && isInventoryOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && isOperationalInventoryEnabled(request.resource.data.tenantId)
+        && request.resource.data.inventoryClass == 'OPERATIONAL'
+        && request.resource.data.operationalType in ['CONSUMABLE_OPERATIONAL', 'FIXED_ASSET']
+        && request.resource.data.type in ['fixed', 'non-fixed']
+        && ((request.resource.data.type == 'fixed' && request.resource.data.operationalType == 'FIXED_ASSET')
+          || (request.resource.data.type == 'non-fixed' && request.resource.data.operationalType == 'CONSUMABLE_OPERATIONAL'));
+      allow update: if isAuthenticated()
+        && isInventoryOperator()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && isOperationalInventoryEnabled(resource.data.tenantId)
+        && request.resource.data.inventoryClass == resource.data.inventoryClass
+        && request.resource.data.operationalType == resource.data.operationalType
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.inventoryClass == 'OPERATIONAL'
+        && request.resource.data.operationalType in ['CONSUMABLE_OPERATIONAL', 'FIXED_ASSET']
+        && request.resource.data.type in ['fixed', 'non-fixed'];
+      allow delete: if false;
+    }
+
+    match /operational_inventory/{itemId} {
+      function hasOperationalMaster() {
+        let masterPath = /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.masterItemId);
+        return request.resource.data.masterItemId is string
+          && existsAfter(masterPath)
+          && getAfter(masterPath).data.tenantId == request.resource.data.tenantId
+          && getAfter(masterPath).data.inventoryClass == 'OPERATIONAL'
+          && getAfter(masterPath).data.operationalType == request.resource.data.operationalType;
+      }
+      function hasMatchingOperationalMovement() {
+        let movementId = request.resource.data.lastMovementId;
+        let movementPath = /databases/$(database)/documents/operational_inventory_movements/$(movementId);
+        return movementId is string
+          && existsAfter(movementPath)
+          && getAfter(movementPath).data.tenantId == resource.data.tenantId
+          && getAfter(movementPath).data.inventoryClass == 'OPERATIONAL'
+          && getAfter(movementPath).data.itemId == itemId
+          && getAfter(movementPath).data.locationId == (resource.data.branchId == 'HQ' ? 'HQ_OPERATIONAL' : 'BRANCH_' + resource.data.branchId)
+          && getAfter(movementPath).data.balanceBefore == resource.data.quantityInStock
+          && getAfter(movementPath).data.balanceAfter == request.resource.data.quantityInStock
+          && getAfter(movementPath).data.quantityDelta == request.resource.data.quantityInStock - resource.data.quantityInStock;
+      }
+      function hasOpeningOperationalMovement() {
+        let movementId = request.resource.data.lastMovementId;
+        let movementPath = /databases/$(database)/documents/operational_inventory_movements/$(movementId);
+        return request.resource.data.quantityInStock == 0
+          || (movementId is string
+            && existsAfter(movementPath)
+            && getAfter(movementPath).data.tenantId == request.resource.data.tenantId
+            && getAfter(movementPath).data.inventoryClass == 'OPERATIONAL'
+            && getAfter(movementPath).data.itemId == itemId
+            && getAfter(movementPath).data.movementType == 'ADJUSTMENT'
+            && getAfter(movementPath).data.balanceBefore == 0
+            && getAfter(movementPath).data.balanceAfter == request.resource.data.quantityInStock
+            && getAfter(movementPath).data.quantityDelta == request.resource.data.quantityInStock
+            && getAfter(movementPath).data.actorId == request.auth.uid);
+      }
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && canOperateOperationalLocation(resource.data.branchId);
+      allow create: if isAuthenticated()
+        && isInventoryOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && canOperateOperationalLocation(request.resource.data.branchId)
+        && isOperationalInventoryEnabled(request.resource.data.tenantId)
+        && request.resource.data.inventoryClass == 'OPERATIONAL'
+        && request.resource.data.operationalType in ['CONSUMABLE_OPERATIONAL', 'FIXED_ASSET']
+        && hasOperationalMaster()
+        && hasOpeningOperationalMovement()
+        && request.resource.data.type in ['fixed', 'non-fixed'];
+      allow update: if isAuthenticated()
+        && ((isInventoryOperator() && canOperateOperationalLocation(resource.data.branchId)) || (isProcurement()
+          && resource.data.branchId == 'HQ'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantityInStock', 'lastMovementId', 'updatedAt'])))
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && request.resource.data.branchId == resource.data.branchId
+        && isOperationalInventoryEnabled(resource.data.tenantId)
+        && request.resource.data.inventoryClass == 'OPERATIONAL'
+        && request.resource.data.operationalType in ['CONSUMABLE_OPERATIONAL', 'FIXED_ASSET']
+        && (!('masterItemId' in resource.data) || request.resource.data.masterItemId == resource.data.masterItemId)
+        && (!('masterItemId' in request.resource.data) || hasOperationalMaster())
+        && request.resource.data.type == resource.data.type
+        && (!('operationalType' in resource.data) || request.resource.data.operationalType == resource.data.operationalType)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['quantityInStock'])
+          || hasMatchingOperationalMovement());
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId) && isOperationalInventoryEnabled(resource.data.tenantId);
+    }
+
+    match /operational_inventory_movements/{movementId} {
+      function itemPath() {
+        return /databases/$(database)/documents/operational_inventory/$(request.resource.data.itemId);
+      }
+      function masterPath() {
+        return /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.get('masterItemId', ''));
+      }
+      function transferPath() {
+        return /databases/$(database)/documents/operational_transfers/$(request.resource.data.get('sourceTransactionId', ''));
+      }
+      function transferLinePath() {
+        return /databases/$(database)/documents/operational_transfer_lines/$(request.resource.data.get('sourceLineId', ''));
+      }
+      function usagePath() {
+        return /databases/$(database)/documents/operational_inventory_usage/$(request.resource.data.get('sourceTransactionId', ''));
+      }
+      function validUsageMovement(item) {
+        let usage = getAfter(usagePath()).data;
+        return request.resource.data.movementType == 'USAGE'
+          && request.resource.data.quantityDelta < 0
+          && request.resource.data.sourceTransactionId is string
+          && request.resource.data.sourceLineId == request.resource.data.sourceTransactionId
+          && existsAfter(usagePath())
+          && usage.tenantId == request.resource.data.tenantId
+          && usage.inventoryClass == 'OPERATIONAL'
+          && usage.operationalType == 'CONSUMABLE_OPERATIONAL'
+          && usage.inventoryId == request.resource.data.itemId
+          && usage.branchId == item.branchId
+          && usage.movementId == 'opm_' + request.resource.data.idempotencyKey
+          && usage.issuedAmount == -request.resource.data.quantityDelta
+          && usage.staffId == request.resource.data.actorId
+          && usage.reference == request.resource.data.reference;
+      }
+      function validTransferMovement(item) {
+        let transferPathValue = transferPath();
+        let transferLinePathValue = transferLinePath();
+        return request.resource.data.sourceTransactionId is string
+          && request.resource.data.sourceLineId is string
+          && existsAfter(transferPathValue)
+          && getAfter(transferPathValue).data.tenantId == request.resource.data.tenantId
+          && getAfter(transferPathValue).data.inventoryClass == 'OPERATIONAL'
+          && existsAfter(transferLinePathValue)
+          && getAfter(transferLinePathValue).data.tenantId == request.resource.data.tenantId
+          && getAfter(transferLinePathValue).data.transferId == request.resource.data.sourceTransactionId
+          && getAfter(transferLinePathValue).data.masterItemId == request.resource.data.masterItemId
+          && ((request.resource.data.movementType == 'TRANSFER_OUT'
+              && item.branchId == 'HQ'
+              && getAfter(transferPathValue).data.sourceLocationId == 'HQ_OPERATIONAL'
+              && getAfter(transferLinePathValue).data.sourceItemId == request.resource.data.itemId)
+            || (request.resource.data.movementType == 'TRANSFER_OUT'
+              && getAfter(transferPathValue).data.transferType == 'BRANCH_RETURN'
+              && item.branchId == getAfter(transferPathValue).data.sourceBranchId
+              && getAfter(transferPathValue).data.sourceLocationId == 'BRANCH_' + item.branchId
+              && getAfter(transferLinePathValue).data.sourceItemId == request.resource.data.itemId)
+            || (request.resource.data.movementType == 'TRANSFER_IN'
+              && getAfter(transferPathValue).data.transferType == 'BRANCH_RETURN'
+              && item.branchId == 'HQ'
+              && getAfter(transferPathValue).data.destinationBranchId == 'HQ'
+              && getAfter(transferLinePathValue).data.destinationItemId == request.resource.data.itemId)
+            || (request.resource.data.movementType == 'TRANSFER_IN'
+              && item.branchId != 'HQ'
+              && getAfter(transferPathValue).data.destinationBranchId == item.branchId
+              && getAfter(transferLinePathValue).data.destinationItemId == request.resource.data.itemId));
+      }
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && canOperateOperationalLocation(resource.data.branchId);
+      allow create: if isAuthenticated()
+        && isTenantMember(request.resource.data.tenantId)
+        && isOperationalInventoryEnabled(request.resource.data.tenantId)
+        && request.resource.data.inventoryClass == 'OPERATIONAL'
+        && (isInventoryOperator() || isProcurement())
+        && request.resource.data.movementType in ['RECEIPT', 'DISPATCH', 'RETURN', 'TRANSFER_IN', 'TRANSFER_OUT', 'USAGE', 'ADJUSTMENT', 'WRITE_OFF']
+        && request.resource.data.quantityDelta is number
+        && request.resource.data.quantityDelta != 0
+        && request.resource.data.balanceBefore is number
+        && request.resource.data.balanceAfter is number
+        && request.resource.data.balanceBefore >= 0
+        && request.resource.data.balanceAfter >= 0
+        && request.resource.data.balanceAfter == request.resource.data.balanceBefore + request.resource.data.quantityDelta
+        && request.resource.data.reference is string
+        && request.resource.data.reference.size() > 0
+        && request.resource.data.idempotencyKey is string
+        && request.resource.data.idempotencyKey.matches('^[A-Za-z0-9_-]{1,190}$')
+        && movementId == 'opm_' + request.resource.data.idempotencyKey
+        && request.resource.data.actorId == request.auth.uid
+        && existsAfter(itemPath())
+        && getAfter(itemPath()).data.tenantId == request.resource.data.tenantId
+        && getAfter(itemPath()).data.inventoryClass == 'OPERATIONAL'
+        && request.resource.data.branchId == getAfter(itemPath()).data.branchId
+        && request.resource.data.locationId == (getAfter(itemPath()).data.branchId == 'HQ' ? 'HQ_OPERATIONAL' : 'BRANCH_' + getAfter(itemPath()).data.branchId)
+        && ((getAfter(itemPath()).data.branchId == 'HQ' && (isProcurement() || (isInventoryOperator() && isAssignedToBranch('HQ'))))
+          || (getAfter(itemPath()).data.branchId != 'HQ' && isInventoryOperator() && isAssignedToBranch(getAfter(itemPath()).data.branchId)))
+        && request.resource.data.masterItemId is string
+        && existsAfter(masterPath())
+        && getAfter(masterPath()).data.tenantId == request.resource.data.tenantId
+        && getAfter(masterPath()).data.inventoryClass == 'OPERATIONAL'
+        && request.resource.data.masterItemId == getAfter(itemPath()).data.get('masterItemId', request.resource.data.itemId)
+        && getAfter(itemPath()).data.quantityInStock == request.resource.data.balanceAfter
+        && getAfter(itemPath()).data.lastMovementId == movementId
+        && (exists(itemPath())
+          ? get(itemPath()).data.quantityInStock == request.resource.data.balanceBefore
+            && get(itemPath()).data.tenantId == request.resource.data.tenantId
+            && get(itemPath()).data.branchId == getAfter(itemPath()).data.branchId
+            && (request.resource.data.movementType in ['TRANSFER_IN', 'TRANSFER_OUT'] ? validTransferMovement(get(itemPath()).data) : true)
+            && (request.resource.data.movementType == 'USAGE' ? validUsageMovement(get(itemPath()).data) : true)
+          : request.resource.data.movementType == 'ADJUSTMENT'
+            && request.resource.data.balanceBefore == 0
+            && request.resource.data.reason is string
+            && request.resource.data.reason.size() > 0);
+      allow update, delete: if false;
+    }
+
+    match /operational_grn_lines/{grnLineId} {
+      function grnPath() {
+        return /databases/$(database)/documents/grn_records/$(request.resource.data.grnId);
+      }
+      function orderPath() {
+        return /databases/$(database)/documents/stock_orders/$(request.resource.data.orderId);
+      }
+      function sourceLinePath() {
+        return /databases/$(database)/documents/stock_order_lines/$(request.resource.data.orderLineId);
+      }
+      function itemPath() {
+        return /databases/$(database)/documents/operational_inventory/$(request.resource.data.itemId);
+      }
+      function masterPath() {
+        return /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.masterItemId);
+      }
+      function movementPath() {
+        return /databases/$(database)/documents/operational_inventory_movements/$(request.resource.data.movementId);
+      }
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isProcurement();
+      allow create: if isAuthenticated()
+        && isProcurement()
+        && isTenantMember(request.resource.data.tenantId)
+        && isOperationalInventoryEnabled(request.resource.data.tenantId)
+        && request.resource.data.inventoryClass == 'OPERATIONAL'
+        && request.resource.data.qtyReceived is number
+        && request.resource.data.qtyReceived > 0
+        && request.resource.data.qtyReceivedUnits is number
+        && request.resource.data.qtyReceivedUnits > 0
+        && request.resource.data.unitCostUGX is number
+        && request.resource.data.unitCostUGX >= 0
+        && request.resource.data.totalValueUGX is number
+        && request.resource.data.totalValueUGX >= 0
+        && request.resource.data.receivedBy == request.auth.uid
+        && existsAfter(grnPath())
+        && getAfter(grnPath()).data.tenantId == request.resource.data.tenantId
+        && getAfter(grnPath()).data.inventoryClass == 'OPERATIONAL'
+        && getAfter(grnPath()).data.order_id == request.resource.data.orderId
+        && getAfter(grnPath()).data.receivedBy == request.auth.uid
+        && exists(orderPath())
+        && get(orderPath()).data.tenantId == request.resource.data.tenantId
+        && isOperationalOrderData(get(orderPath()).data)
+        && exists(sourceLinePath())
+        && get(sourceLinePath()).data.tenantId == request.resource.data.tenantId
+        && get(sourceLinePath()).data.order_id == request.resource.data.orderId
+        && get(sourceLinePath()).data.inventoryClass == 'OPERATIONAL'
+        && get(sourceLinePath()).data.masterItemId == request.resource.data.masterItemId
+        && exists(itemPath())
+        && get(itemPath()).data.tenantId == request.resource.data.tenantId
+        && get(itemPath()).data.branchId == 'HQ'
+        && get(itemPath()).data.inventoryClass == 'OPERATIONAL'
+        && get(itemPath()).data.masterItemId == request.resource.data.masterItemId
+        && exists(masterPath())
+        && get(masterPath()).data.tenantId == request.resource.data.tenantId
+        && get(masterPath()).data.inventoryClass == 'OPERATIONAL'
+        && existsAfter(movementPath())
+        && getAfter(movementPath()).data.tenantId == request.resource.data.tenantId
+        && getAfter(movementPath()).data.itemId == request.resource.data.itemId
+        && getAfter(movementPath()).data.masterItemId == request.resource.data.masterItemId
+        && getAfter(movementPath()).data.sourceTransactionId == request.resource.data.grnId;
+      allow update, delete: if false;
+    }
+
+    match /operational_transfers/{transferId} {
+      function sourceOrderPath() {
+        return /databases/$(database)/documents/stock_orders/$(request.resource.data.sourceOrderId);
+      }
+      function validOperationalTransfer(data) {
+        return data.inventoryClass == 'OPERATIONAL'
+          && data.fulfillmentSource in ['HQ_OPERATIONAL', 'EXTERNAL_SUPPLIER', 'HQ_DIRECT', 'BRANCH_RETURN']
+          && ((data.get('transferType', '') == 'BRANCH_RETURN'
+              && data.fulfillmentSource == 'BRANCH_RETURN'
+              && data.sourceBranchId != 'HQ'
+              && data.sourceLocationId == 'BRANCH_' + data.sourceBranchId
+              && data.destinationBranchId == 'HQ')
+            || (data.get('transferType', '') != 'BRANCH_RETURN'
+              && data.sourceLocationId == 'HQ_OPERATIONAL'
+              && data.sourceBranchId == 'HQ'
+              && data.destinationBranchId is string
+              && data.destinationBranchId.size() > 0
+              && data.destinationBranchId != 'HQ'))
+          && data.expectedLineCount is number
+          && data.expectedLineCount > 0
+          && data.expectedLineCount <= 12
+          && data.remainingExternalPacks is number
+          && data.remainingExternalPacks >= 0
+          && ((data.fulfillmentSource in ['HQ_DIRECT', 'BRANCH_RETURN']
+              && !('sourceOrderId' in data))
+            || (data.fulfillmentSource in ['HQ_OPERATIONAL', 'EXTERNAL_SUPPLIER']
+              && ('sourceOrderId' in data)
+              && exists(/databases/$(database)/documents/stock_orders/$(data.sourceOrderId))
+              && get(/databases/$(database)/documents/stock_orders/$(data.sourceOrderId)).data.tenantId == data.tenantId
+              && isOperationalOrderData(get(/databases/$(database)/documents/stock_orders/$(data.sourceOrderId)).data)
+              && get(/databases/$(database)/documents/stock_orders/$(data.sourceOrderId)).data.requesting_branch_id == data.destinationBranchId));
+      }
+      allow get: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && (isProcurement() || isAssignedToBranch(resource.data.destinationBranchId) || (resource.data.get('transferType', '') == 'BRANCH_RETURN' && isAssignedToBranch(resource.data.sourceBranchId)));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && (isProcurement() || isAssignedToBranch(resource.data.destinationBranchId) || (resource.data.get('transferType', '') == 'BRANCH_RETURN' && isAssignedToBranch(resource.data.sourceBranchId)));
+      allow create: if isAuthenticated()
+        && (isProcurement() || (request.resource.data.get('transferType', '') == 'BRANCH_RETURN' && isInventoryOperator() && isAssignedToBranch(request.resource.data.sourceBranchId)))
+        && isTenantMember(request.resource.data.tenantId)
+        && isOperationalInventoryEnabled(request.resource.data.tenantId)
+        && validOperationalTransfer(request.resource.data)
+        && ((request.resource.data.get('transferType', '') == 'BRANCH_RETURN' && request.resource.data.status == 'dispatched')
+          || (request.resource.data.get('transferType', '') != 'BRANCH_RETURN' && request.resource.data.status == 'draft'))
+        && request.resource.data.dispatchedBy == request.auth.uid;
+      allow update: if isAuthenticated()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && request.resource.data.inventoryClass == resource.data.inventoryClass
+        && request.resource.data.sourceLocationId == resource.data.sourceLocationId
+        && request.resource.data.sourceBranchId == resource.data.sourceBranchId
+        && request.resource.data.destinationBranchId == resource.data.destinationBranchId
+        && request.resource.data.get('sourceOrderId', '') == resource.data.get('sourceOrderId', '')
+        && request.resource.data.get('requestPayloadKey', '') == resource.data.get('requestPayloadKey', '')
+        && request.resource.data.get('transferType', '') == resource.data.get('transferType', '')
+        && request.resource.data.get('receiptMovementId', '') == resource.data.get('receiptMovementId', '')
+          && request.resource.data.fulfillmentSource == resource.data.fulfillmentSource
+          && request.resource.data.remainingExternalPacks == resource.data.remainingExternalPacks
+        && isOperationalInventoryEnabled(resource.data.tenantId)
+        && ((isProcurement()
+            && resource.data.status in ['draft', 'dispatching']
+            && request.resource.data.status in ['dispatching', 'dispatched'])
+          || (isProcurement()
+            && resource.data.transferType == 'BRANCH_RETURN'
+            && resource.data.status == 'dispatched'
+            && request.resource.data.status == 'received'
+            && request.resource.data.receivedBy == request.auth.uid
+            && existsAfter(/databases/$(database)/documents/operational_inventory_movements/$(resource.data.receiptMovementId))
+            && getAfter(/databases/$(database)/documents/operational_inventory_movements/$(resource.data.receiptMovementId)).data.sourceTransactionId == transferId
+            && getAfter(/databases/$(database)/documents/operational_inventory_movements/$(resource.data.receiptMovementId)).data.movementType == 'TRANSFER_IN')
+          || (isInventoryOperator()
+            && isAssignedToBranch(resource.data.destinationBranchId)
+            && resource.data.status in ['dispatched', 'partially_received']
+            && request.resource.data.status in ['partially_received', 'received', 'queried']
+            && (request.resource.data.status == 'partially_received' || request.resource.data.receivedBy == request.auth.uid)));
+
+      allow delete: if false;
+    }
+
+    match /operational_transfer_lines/{transferLineId} {
+      function transferPath() {
+        return /databases/$(database)/documents/operational_transfers/$(request.resource.data.transferId);
+      }
+      function sourceItemPath() {
+        return /databases/$(database)/documents/operational_inventory/$(request.resource.data.sourceItemId);
+      }
+      function destinationItemPath() {
+        return /databases/$(database)/documents/operational_inventory/$(request.resource.data.destinationItemId);
+      }
+      function masterPath() {
+        return /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.masterItemId);
+      }
+      function sourceOrderLinePath() {
+        return /databases/$(database)/documents/stock_order_lines/$(request.resource.data.sourceOrderLineId);
+      }
+      function validPreparedOperationalTransferLine() {
+        return request.resource.data.inventoryClass == 'OPERATIONAL'
+          && request.resource.data.status == 'prepared'
+          && request.resource.data.quantityDispatched is number
+          && request.resource.data.quantityDispatched > 0
+          && request.resource.data.unitCostUGX is number
+          && request.resource.data.unitCostUGX >= 0
+          && existsAfter(transferPath())
+          && getAfter(transferPath()).data.tenantId == request.resource.data.tenantId
+          && getAfter(transferPath()).data.inventoryClass == 'OPERATIONAL'
+          && isOperationalInventoryEnabled(request.resource.data.tenantId)
+          && exists(sourceItemPath())
+          && get(sourceItemPath()).data.tenantId == request.resource.data.tenantId
+          && get(sourceItemPath()).data.branchId == 'HQ'
+          && get(sourceItemPath()).data.inventoryClass == 'OPERATIONAL'
+          && get(sourceItemPath()).data.masterItemId == request.resource.data.masterItemId
+          && exists(destinationItemPath())
+          && get(destinationItemPath()).data.tenantId == request.resource.data.tenantId
+          && get(destinationItemPath()).data.branchId == getAfter(transferPath()).data.destinationBranchId
+          && get(destinationItemPath()).data.inventoryClass == 'OPERATIONAL'
+          && get(destinationItemPath()).data.masterItemId == request.resource.data.masterItemId
+          && exists(masterPath())
+          && get(masterPath()).data.tenantId == request.resource.data.tenantId
+          && get(masterPath()).data.inventoryClass == 'OPERATIONAL'
+          && get(masterPath()).data.hqLocationItemId == request.resource.data.sourceItemId
+          && (
+            (getAfter(transferPath()).data.fulfillmentSource == 'HQ_DIRECT'
+              && !('sourceOrderLineId' in request.resource.data))
+            || (getAfter(transferPath()).data.fulfillmentSource == 'HQ_OPERATIONAL'
+              && exists(sourceOrderLinePath())
+              && get(sourceOrderLinePath()).data.tenantId == request.resource.data.tenantId
+              && get(sourceOrderLinePath()).data.order_id == getAfter(transferPath()).data.sourceOrderId
+              && get(sourceOrderLinePath()).data.inventoryClass == 'OPERATIONAL'
+              && get(sourceOrderLinePath()).data.masterItemId == request.resource.data.masterItemId
+              && get(sourceOrderLinePath()).data.line_status == 'sourcing'
+              && !('supplier_type' in get(sourceOrderLinePath()).data)
+              && request.resource.data.quantityDispatched <= get(sourceOrderLinePath()).data.qty_ordered * get(masterPath()).data.unitPerPack)
+            || (getAfter(transferPath()).data.fulfillmentSource == 'EXTERNAL_SUPPLIER'
+              && exists(sourceOrderLinePath())
+              && get(sourceOrderLinePath()).data.tenantId == request.resource.data.tenantId
+              && get(sourceOrderLinePath()).data.order_id == getAfter(transferPath()).data.sourceOrderId
+              && get(sourceOrderLinePath()).data.inventoryClass == 'OPERATIONAL'
+              && get(sourceOrderLinePath()).data.masterItemId == request.resource.data.masterItemId
+              && get(sourceOrderLinePath()).data.supplier_type == 'external'
+              && get(sourceOrderLinePath()).data.line_status == 'received'
+              && request.resource.data.quantityDispatched == get(sourceOrderLinePath()).data.qty_received * get(masterPath()).data.unitPerPack)
+          );
+      }
+      function validBranchReturnLine() {
+        let transfer = getAfter(transferPath()).data;
+        let src = get(sourceItemPath()).data;
+        let dest = get(destinationItemPath()).data;
+        let master = get(masterPath()).data;
+        return transfer.transferType == 'BRANCH_RETURN'
+          && request.resource.data.inventoryClass == 'OPERATIONAL'
+          && request.resource.data.status == 'dispatched'
+          && request.resource.data.quantityDispatched is number
+          && request.resource.data.quantityDispatched > 0
+          && request.resource.data.unitCostUGX is number
+          && request.resource.data.unitCostUGX >= 0
+          && request.resource.data.destinationBranchId == transfer.destinationBranchId
+          && request.resource.data.tenantId == transfer.tenantId
+          && transfer.tenantId == src.tenantId && src.tenantId == dest.tenantId && dest.tenantId == master.tenantId
+          && src.branchId == transfer.sourceBranchId
+          && dest.branchId == 'HQ'
+          && src.inventoryClass == 'OPERATIONAL' && dest.inventoryClass == 'OPERATIONAL'
+          && src.masterItemId == request.resource.data.masterItemId
+          && dest.masterItemId == request.resource.data.masterItemId
+          && master.inventoryClass == 'OPERATIONAL'
+          && master.hqLocationItemId == request.resource.data.destinationItemId
+          && existsAfter(transferPath()) && exists(sourceItemPath()) && exists(destinationItemPath()) && exists(masterPath())
+          && existsAfter(dispatchMovementPath())
+          && getAfter(dispatchMovementPath()).data.itemId == request.resource.data.sourceItemId
+          && getAfter(dispatchMovementPath()).data.sourceTransactionId == request.resource.data.transferId
+          && getAfter(dispatchMovementPath()).data.sourceLineId == request.resource.data.id
+          && getAfter(dispatchMovementPath()).data.movementType == 'TRANSFER_OUT'
+          && getAfter(dispatchMovementPath()).data.quantityDelta == -request.resource.data.quantityDispatched;
+      }
+      function dispatchMovementPath() {
+        return /databases/$(database)/documents/operational_inventory_movements/$(request.resource.data.dispatchMovementId);
+      }
+      function receiptMovementPath() {
+        return /databases/$(database)/documents/operational_inventory_movements/$(request.resource.data.receiptMovementId);
+      }
+      allow get: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && (isProcurement() || isAssignedToBranch(resource.data.destinationBranchId) || (resource.data.get('transferType', '') == 'BRANCH_RETURN' && isAssignedToBranch(resource.data.sourceBranchId)));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && (isProcurement() || isAssignedToBranch(resource.data.destinationBranchId) || (resource.data.get('transferType', '') == 'BRANCH_RETURN' && isAssignedToBranch(resource.data.sourceBranchId)));
+      allow create: if isAuthenticated()
+        && (isProcurement() || (request.resource.data.status == 'dispatched' && isInventoryOperator() && isAssignedToBranch(getAfter(transferPath()).data.sourceBranchId)))
+        && isTenantMember(request.resource.data.tenantId)
+        && (validPreparedOperationalTransferLine() || validBranchReturnLine());
+      allow update: if isAuthenticated()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && request.resource.data.inventoryClass == resource.data.inventoryClass
+        && request.resource.data.transferId == resource.data.transferId
+        && request.resource.data.masterItemId == resource.data.masterItemId
+        && request.resource.data.sourceItemId == resource.data.sourceItemId
+        && request.resource.data.destinationItemId == resource.data.destinationItemId
+        && request.resource.data.quantityDispatched == resource.data.quantityDispatched
+        && request.resource.data.dispatchMovementId == resource.data.dispatchMovementId
+        && request.resource.data.receiptMovementId == resource.data.receiptMovementId
+        && isOperationalInventoryEnabled(resource.data.tenantId)
+        && ((isProcurement()
+            && resource.data.status == 'prepared'
+            && request.resource.data.status == 'dispatched'
+            && exists(dispatchMovementPath())
+            && get(dispatchMovementPath()).data.tenantId == resource.data.tenantId
+            && get(dispatchMovementPath()).data.itemId == resource.data.sourceItemId
+            && get(dispatchMovementPath()).data.sourceLineId == transferLineId
+            && get(dispatchMovementPath()).data.movementType == 'TRANSFER_OUT')
+          || (isInventoryOperator()
+            && isAssignedToBranch(resource.data.destinationBranchId)
+            && resource.data.status == 'dispatched'
+            && request.resource.data.status in ['received', 'queried']
+            && request.resource.data.quantityAccepted is number
+            && request.resource.data.quantityQueried is number
+            && request.resource.data.quantityAccepted >= 0
+            && request.resource.data.quantityQueried >= 0
+            && request.resource.data.quantityAccepted + request.resource.data.quantityQueried == resource.data.quantityDispatched
+            && ((request.resource.data.quantityAccepted == 0 && request.resource.data.quantityQueried == resource.data.quantityDispatched)
+              || (existsAfter(receiptMovementPath())
+                && getAfter(receiptMovementPath()).data.tenantId == resource.data.tenantId
+                && getAfter(receiptMovementPath()).data.itemId == resource.data.destinationItemId
+                && getAfter(receiptMovementPath()).data.sourceLineId == transferLineId
+                && getAfter(receiptMovementPath()).data.movementType == 'TRANSFER_IN'
+                && getAfter(receiptMovementPath()).data.quantityDelta == request.resource.data.quantityAccepted)))
+          || (isProcurement()
+            && get(transferPath()).data.transferType == 'BRANCH_RETURN'
+            && resource.data.status == 'dispatched'
+            && request.resource.data.status == 'received'
+            && request.resource.data.quantityAccepted == resource.data.quantityDispatched
+            && request.resource.data.quantityQueried == 0
+            && existsAfter(receiptMovementPath())
+            && getAfter(receiptMovementPath()).data.tenantId == resource.data.tenantId
+            && getAfter(receiptMovementPath()).data.itemId == resource.data.destinationItemId
+            && getAfter(receiptMovementPath()).data.sourceTransactionId == resource.data.transferId
+            && getAfter(receiptMovementPath()).data.sourceLineId == transferLineId
+            && getAfter(receiptMovementPath()).data.movementType == 'TRANSFER_IN'
+            && getAfter(receiptMovementPath()).data.quantityDelta == resource.data.quantityDispatched));
+      allow delete: if false;
+    }
+
+    match /operational_inventory_usage/{usageId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && (isProcurement() || isAssignedToBranch(resource.data.branchId));
+      allow create: if isAuthenticated()
+        && isInventoryOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && isOperationalInventoryEnabled(request.resource.data.tenantId)
+        && request.resource.data.inventoryClass == 'OPERATIONAL'
+        && request.resource.data.operationalType == 'CONSUMABLE_OPERATIONAL'
+        && isAssignedToBranch(request.resource.data.branchId)
+        && request.resource.data.idempotencyKey is string
+        && usageId == 'opusage_' + request.resource.data.idempotencyKey
+        && request.resource.data.issuedAmount is number
+        && request.resource.data.issuedAmount > 0
+        && request.resource.data.cost is number
+        && request.resource.data.cost >= 0
+        && request.resource.data.department is string
+        && request.resource.data.purpose is string
+        && request.resource.data.reference is string
+        && request.resource.data.inventoryId is string
+        && exists(/databases/$(database)/documents/operational_inventory/$(request.resource.data.inventoryId))
+        && get(/databases/$(database)/documents/operational_inventory/$(request.resource.data.inventoryId)).data.tenantId == request.resource.data.tenantId
+        && get(/databases/$(database)/documents/operational_inventory/$(request.resource.data.inventoryId)).data.branchId == request.resource.data.branchId
+        && get(/databases/$(database)/documents/operational_inventory/$(request.resource.data.inventoryId)).data.inventoryClass == 'OPERATIONAL'
+        && get(/databases/$(database)/documents/operational_inventory/$(request.resource.data.inventoryId)).data.operationalType == 'CONSUMABLE_OPERATIONAL'
+        && existsAfter(/databases/$(database)/documents/operational_inventory_movements/$(request.resource.data.movementId))
+        && getAfter(/databases/$(database)/documents/operational_inventory_movements/$(request.resource.data.movementId)).data.sourceTransactionId == usageId
+        && getAfter(/databases/$(database)/documents/operational_inventory_movements/$(request.resource.data.movementId)).data.movementType == 'USAGE'
+        && getAfter(/databases/$(database)/documents/operational_inventory_movements/$(request.resource.data.movementId)).data.quantityDelta == -request.resource.data.issuedAmount;
+      allow update, delete: if false;
+    }
+
+    match /operational_inventory_maintenance/{maintenanceId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && (isProcurement() || isAssignedToBranch(resource.data.branchId));
+      allow create: if isAuthenticated() && isInventoryOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && isOperationalInventoryEnabled(request.resource.data.tenantId)
+        && isAssignedToBranch(request.resource.data.branchId)
+        && request.resource.data.inventoryId is string
+        && exists(/databases/$(database)/documents/operational_inventory/$(request.resource.data.inventoryId))
+        && get(/databases/$(database)/documents/operational_inventory/$(request.resource.data.inventoryId)).data.tenantId == request.resource.data.tenantId;
+      allow update: if isAuthenticated() && isInventoryOperator()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && isAssignedToBranch(resource.data.branchId)
+        && isOperationalInventoryEnabled(resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId) && isOperationalInventoryEnabled(resource.data.tenantId);
+    }
+
     match /products/{productId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isInventoryOperator() && isTenantMember(request.resource.data.tenantId);
+      allow create: if isInventoryOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.inventoryClass == 'SELLABLE';
       allow update: if isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
+        && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'SELLABLE')
         && (
           (isPOSOperator()
             && (
@@ -1193,28 +1862,159 @@ service cloud.firestore {
 
     // Procurement, transfers, billing, and welfare collections
     match /stock_orders/{orderId} {
+      function validOrderClass(data) {
+        return data.category in ['sellable_non_cosmetic', 'sellable_cosmetic', 'non_sellable']
+          && ((data.category == 'non_sellable'
+              && (!('inventoryClass' in data) || data.inventoryClass == 'OPERATIONAL')
+              && isOperationalInventoryEnabled(data.tenantId))
+            || (data.category in ['sellable_non_cosmetic', 'sellable_cosmetic']
+              && (!('inventoryClass' in data) || data.inventoryClass == 'SELLABLE')));
+      }
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (canViewProcurement() || isBranchManager());
-      allow create: if isAuthenticated() && (isProcurement() || isBranchManager()) && isTenantMember(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && (isProcurement() || isBranchManager()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow create: if isAuthenticated()
+        && (isProcurement() || isBranchManager())
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.inventoryClass in ['SELLABLE', 'OPERATIONAL']
+        && ((request.resource.data.category == 'non_sellable' && request.resource.data.inventoryClass == 'OPERATIONAL')
+          || (request.resource.data.category in ['sellable_non_cosmetic', 'sellable_cosmetic'] && request.resource.data.inventoryClass == 'SELLABLE'))
+        && validOrderClass(request.resource.data);
+      allow update: if isAuthenticated()
+        && (isProcurement() || isBranchManager())
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && request.resource.data.category == resource.data.category
+        && ((!('inventoryClass' in resource.data) && !('inventoryClass' in request.resource.data))
+          || request.resource.data.inventoryClass == resource.data.inventoryClass
+          || (!('inventoryClass' in resource.data)
+            && request.resource.data.inventoryClass == (resource.data.category == 'non_sellable' ? 'OPERATIONAL' : 'SELLABLE')))
+        && validOrderClass(request.resource.data);
       allow delete: if isAdmin();
     }
     match /stock_order_lines/{lineId} {
+      function parentOrderPath() {
+        return /databases/$(database)/documents/stock_orders/$(request.resource.data.order_id);
+      }
+      function hasValidLineClass(requireExplicitClass) {
+        let orderPath = parentOrderPath();
+        let operationalItemPath = /databases/$(database)/documents/operational_inventory/$(request.resource.data.product_id);
+        let operationalMasterPath = /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.get('masterItemId', ''));
+        let sellableItemPath = /databases/$(database)/documents/products/$(request.resource.data.product_id);
+        return exists(orderPath)
+          && get(orderPath).data.tenantId == request.resource.data.tenantId
+          && ((isOperationalOrderData(get(orderPath).data)
+              && isOperationalInventoryEnabled(request.resource.data.tenantId)
+              && (!requireExplicitClass || request.resource.data.inventoryClass == 'OPERATIONAL')
+              && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'OPERATIONAL')
+              && exists(operationalItemPath)
+              && get(operationalItemPath).data.tenantId == request.resource.data.tenantId
+              && (!requireExplicitClass || (request.resource.data.masterItemId is string
+                && request.resource.data.masterItemId == get(operationalItemPath).data.get('masterItemId', '')
+                && exists(operationalMasterPath)
+                && get(operationalMasterPath).data.tenantId == request.resource.data.tenantId
+                && get(operationalMasterPath).data.inventoryClass == 'OPERATIONAL'))
+              && (!('masterItemId' in request.resource.data)
+                || (request.resource.data.masterItemId == get(operationalItemPath).data.get('masterItemId', '')
+                  && exists(operationalMasterPath)
+                  && get(operationalMasterPath).data.tenantId == request.resource.data.tenantId
+                  && get(operationalMasterPath).data.inventoryClass == 'OPERATIONAL')))
+            || (!isOperationalOrderData(get(orderPath).data)
+              && (!requireExplicitClass || request.resource.data.inventoryClass == 'SELLABLE')
+              && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'SELLABLE')
+              && exists(sellableItemPath)
+              && get(sellableItemPath).data.tenantId == request.resource.data.tenantId));
+      }
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (canViewProcurement() || isBranchManager());
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (isProcurement() || isBranchManager());
+      allow create: if isAuthenticated()
+        && isTenantMember(request.resource.data.tenantId)
+        && (isProcurement() || isBranchManager())
+        && hasValidLineClass(true);
+      allow update: if isAuthenticated()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && (isProcurement() || isBranchManager())
+        && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
+        && (!('internal_fulfillment_transfer_id' in resource.data) || request.resource.data.internal_fulfillment_transfer_id == resource.data.internal_fulfillment_transfer_id)
+        && (!('operational_external_transfer_id' in resource.data) || request.resource.data.operational_external_transfer_id == resource.data.operational_external_transfer_id)
+        && hasValidLineClass(false);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /transfer_invoices/{invoiceId} {
+      function isOperationalTransfer(data) {
+        return isOperationalInventoryClass(data)
+          || (('order_id' in data)
+            && exists(/databases/$(database)/documents/stock_orders/$(data.order_id))
+            && get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.tenantId == data.tenantId
+            && isOperationalOrderData(get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data));
+      }
+      function hasValidTransferClass(data, requireExplicitClass) {
+        return (!requireExplicitClass || ('inventoryClass' in data))
+          && (!('order_id' in data)
+            || (exists(/databases/$(database)/documents/stock_orders/$(data.order_id))
+              && get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.tenantId == data.tenantId
+              && (!('inventoryClass' in data)
+                || data.inventoryClass == (('inventoryClass' in get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data)
+                  ? get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.inventoryClass
+                  : (get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.category == 'non_sellable' ? 'OPERATIONAL' : 'SELLABLE')))))
+          && (!('inventoryClass' in data)
+            || data.inventoryClass == 'SELLABLE'
+            || (data.inventoryClass == 'OPERATIONAL' && isOperationalInventoryEnabled(data.tenantId)));
+      }
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isStockOperator() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isStockOperator() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow create: if isStockOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && (!isOperationalTransfer(request.resource.data) || isOperationalInventoryEnabled(request.resource.data.tenantId))
+        && hasValidTransferClass(request.resource.data, true);
+      allow update: if isStockOperator()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
+        && (!isOperationalTransfer(request.resource.data) || isOperationalInventoryEnabled(resource.data.tenantId))
+        && hasValidTransferClass(request.resource.data, false);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /transfer_invoice_lines/{lineId} {
+      function isOperationalTransfer(data) {
+        return isOperationalInventoryClass(data)
+          || (('order_id' in data)
+            && exists(/databases/$(database)/documents/stock_orders/$(data.order_id))
+            && get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.tenantId == data.tenantId
+            && isOperationalOrderData(get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data));
+      }
+      function transferPath() {
+        return /databases/$(database)/documents/transfer_invoices/$(request.resource.data.transfer_id);
+      }
+      function validTransferLineClass(requireExplicitClass) {
+        let invoicePath = transferPath();
+        let operationalItemPath = /databases/$(database)/documents/operational_inventory/$(request.resource.data.product_id);
+        let sellableItemPath = /databases/$(database)/documents/products/$(request.resource.data.product_id);
+        return exists(invoicePath)
+          && get(invoicePath).data.tenantId == request.resource.data.tenantId
+          && ((isOperationalTransfer(get(invoicePath).data)
+              && isOperationalInventoryEnabled(request.resource.data.tenantId)
+              && (!requireExplicitClass || request.resource.data.inventoryClass == 'OPERATIONAL')
+              && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'OPERATIONAL')
+              && exists(operationalItemPath)
+              && get(operationalItemPath).data.tenantId == request.resource.data.tenantId)
+            || (!isOperationalTransfer(get(invoicePath).data)
+              && (!requireExplicitClass || request.resource.data.inventoryClass == 'SELLABLE')
+              && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'SELLABLE')
+              && exists(sellableItemPath)
+              && get(sellableItemPath).data.tenantId == request.resource.data.tenantId));
+      }
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isStockOperator() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isStockOperator() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow create: if isStockOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && validTransferLineClass(true);
+      allow update: if isStockOperator()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
+        && validTransferLineClass(false);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /hq_order_drafts/{draftId} {
@@ -1648,11 +2448,12 @@ service cloud.firestore {
 
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
-      allow get: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals']) && !isProtectedFinanceCollection(collectionName) && isAdmin() && isTenantMember(resource.data.tenantId);
+      allow get: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit']) && !isProtectedFinanceCollection(collectionName) && isAdmin() && isTenantMember(resource.data.tenantId);
     }
   }
 }
+

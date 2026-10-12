@@ -34,6 +34,19 @@ on:
       - 'tests/firebase-deploy-rules-drift.test.ts'
       - 'src/services/posCheckoutTierService.ts'
       - 'src/services/sellingTierService.ts'
+      - 'src/components/inventory/OperationalInventoryTab.tsx'
+      - 'src/components/procurement/**'
+      - 'src/hooks/useOperationalInventoryFeature.ts'
+      - 'src/services/operational*.ts'
+      - 'src/services/orderSubmissionService.ts'
+      - 'src/services/procurementFinanceService.ts'
+      - 'src/pages/Inventory.tsx'
+      - 'src/pages/Procurement.tsx'
+      - 'src/pages/Settings.tsx'
+      - 'src/pages/StockInOut.tsx'
+      - 'scripts/operational-inventory*.mjs'
+      - 'scripts/migrate-operational-inventory-v2.mjs'
+      - 'tests/operational-*.test.ts'
       - 'src/types.ts'
       - 'src/types/sellingTier.ts'
       - 'firestore.rules'
@@ -87,6 +100,21 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Set up Java 21 for Firestore emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install pinned Firestore rules test runtime
+        run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0 @firebase/rules-unit-testing@5.0.0
+
+      - name: Enforce POS revision RBAC in Firestore emulator
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-pos-v2-revision-rbac "node scripts/pos-v2-revision-rbac-rules-emulator.mjs"
+
+      - name: Enforce Operational Inventory class and branch boundaries in Firestore emulator
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-operational-inventory-v2-rules "node scripts/operational-inventory-rules-emulator.mjs" && touch /tmp/pharmhelm-firestore-emulator-passed
+
       - name: Authenticate for hosted Firestore rules compilation
         uses: google-github-actions/auth@v2
         with:
@@ -108,10 +136,12 @@ jobs:
           test_rules_file() {
             local label="$1"
             local file="$2"
-            local body response_file http_status errors
+            local body_file response_file http_status errors
             response_file=$(mktemp)
-            body=$(jq -n --rawfile rules "$file" \
-              '{source: {files: [{name: "firestore.rules", content: $rules}]}}')
+            body_file=$(mktemp)
+            jq -n --rawfile rules "$file" \
+              '{source: {files: [{name: "firestore.rules", content: $rules}]}}' \
+              > "$body_file"
 
             http_status=$(curl --silent --show-error \
               -o "$response_file" \
@@ -119,7 +149,7 @@ jobs:
               -X POST \
               -H "Authorization: Bearer ${access_token}" \
               -H "Content-Type: application/json" \
-              --data "$body" \
+              --data-binary "@${body_file}" \
               "https://firebaserules.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}:test")
 
             compiler_status="$http_status"
@@ -153,7 +183,9 @@ jobs:
           fi
 
           if ! test_rules_file "PharmHelm candidate" firestore.rules; then
-            if [ "$compiler_status" = "503" ] && bash scripts/verify-active-firestore-rules.sh; then
+            if [ "$compiler_status" = "503" ] && [ -f /tmp/pharmhelm-firestore-emulator-passed ]; then
+              echo "::warning title=Hosted rules compiler unavailable::Candidate compilation returned HTTP 503, but the exact candidate rules loaded and passed the POS RBAC and Operational Inventory Firestore emulator suites."
+            elif [ "$compiler_status" = "503" ] && bash scripts/verify-active-firestore-rules.sh; then
               echo "::warning title=Firebase compiler unavailable::Candidate compilation returned HTTP 503. Exact active named-database rules content verified; this commit introduces no rules change."
             else
               echo "::error title=PharmHelm rules compilation failed::Candidate rules failed validation or could not be verified as the exact active version."
@@ -162,15 +194,3 @@ jobs:
           else
             echo "Hosted Firebase compiler accepted the minimal control and firestore.rules."
           fi
-
-      - name: Set up Java 21 for Firestore emulator
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Install pinned Firestore rules test runtime
-        run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0 @firebase/rules-unit-testing@5.0.0
-
-      - name: Enforce POS revision RBAC in Firestore emulator
-        run: npx firebase emulators:exec --only firestore --project pharmhelm-pos-v2-revision-rbac "node scripts/pos-v2-revision-rbac-rules-emulator.mjs"

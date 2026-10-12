@@ -5,35 +5,67 @@ import {
   MoreVertical, Edit2, Trash2, ExternalLink, Eye, Download, FileSpreadsheet,
   File as FileIcon, Check, X, ArrowRight, ArrowLeft, ArrowRightLeft
 } from 'lucide-react';
-import { where, doc, collection, setDoc, writeBatch } from 'firebase/firestore';
+import { where, doc, collection, getDocs, query, setDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
 import { firestoreService } from '../services/firestore';
 import { 
-  Product, StockOrder, StockOrderLine, InstitutionRegistry, GRNRecord, 
-  UnsuppliedLine, ProductBatch, CreditLedgerEntry, TransferInvoice,
+  Product, StockOrder, StockOrderLine, OperationalInventory, OperationalTransfer, InstitutionRegistry, GRNRecord,
+  GRNLine, UnsuppliedLine, ProductBatch, CreditLedgerEntry, TransferInvoice,
   TransferInvoiceLine, Branch, AuditLog
 } from '../types';
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { processProcurementGrn } from '../services/procurementFinanceService';
+import { processOperationalGrn } from '../services/operationalGrnService';
+import { dispatchOperationalOrderToBranch, dispatchPreparedOperationalHqTransfer, fulfillOperationalOrderFromHqStore } from '../services/operationalTransferService';
 import { AutoGenerateOrderModal } from '../components/inventory/AutoGenerateOrderModal';
 import { isBranchReturnToHq, isHqProcurementDelivery, receiveHqTransfer } from '../services/hqStockReceiptService';
+import { isOperationalInventoryRecord } from '../services/inventoryClassification';
+import { useOperationalInventoryFeature } from '../hooks/useOperationalInventoryFeature';
+import OperationalHQStoreTab from '../components/procurement/OperationalHQStoreTab';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+async function fetchOperationalGrnLines(tenantId: string, grnId: string): Promise<GRNLine[]> {
+  const linesQuery = query(
+    collection(db, 'operational_grn_lines'),
+    where('tenantId', '==', tenantId),
+    where('grnId', '==', grnId)
+  );
+  const snapshot = await getDocs(linesQuery);
+  return snapshot.docs.map(lineDoc => {
+    const line = lineDoc.data();
+    return {
+      inventoryClass: 'OPERATIONAL',
+      operationalType: line.operationalType,
+      masterItemId: line.masterItemId,
+      product_id: line.itemId,
+      product_name: line.itemName,
+      qty_ordered: line.qtyOrdered,
+      qty_received: line.qtyReceived,
+      qty_received_units: line.qtyReceivedUnits,
+      unit_cost_ugx: line.unitCostUGX,
+      total_cost_ugx: line.totalValueUGX,
+      status: 'received'
+    } as GRNLine;
+  });
+}
+
 const Procurement: React.FC = () => {
   const { profile } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [activeMode, setActiveMode] = useState<'hq_store' | 'procurement'>('hq_store');
-  const [activeTab, setActiveTab] = useState<'hq_inventory' | 'hq_stock_io' | 'requisitions' | 'sourcing' | 'finance' | 'grn' | 'dispatch' | 'unsupplied' | 'deferred' | 'suppliers' | 'queries'>('hq_inventory');
+  const [activeTab, setActiveTab] = useState<'hq_inventory' | 'hq_stock_io' | 'operational_hq_inventory' | 'requisitions' | 'sourcing' | 'finance' | 'grn' | 'dispatch' | 'unsupplied' | 'deferred' | 'suppliers' | 'queries'>('hq_inventory');
 
   const hqTabs = [
     { id: 'hq_inventory', label: 'HQ Store Inventory', icon: Package },
     { id: 'hq_stock_io', label: 'HQ Stock In/Out', icon: ArrowLeft },
+    ...(operationalInventoryEnabled ? [{ id: 'operational_hq_inventory', label: 'Operational HQ Store', icon: Package }] : []),
   ];
 
   const procurementTabs = [
@@ -49,6 +81,12 @@ const Procurement: React.FC = () => {
   ];
 
   const currentTabs = activeMode === 'hq_store' ? hqTabs : procurementTabs;
+
+  useEffect(() => {
+    if (!operationalInventoryEnabled && activeTab === 'operational_hq_inventory') {
+      setActiveTab('hq_inventory');
+    }
+  }, [operationalInventoryEnabled, activeTab]);
 
   return (
     <div className="space-y-6">
@@ -114,6 +152,7 @@ const Procurement: React.FC = () => {
       <div className="mt-6">
         {activeTab === 'hq_inventory' && <HQStoreInventoryTab />}
         {activeTab === 'hq_stock_io' && <HQStockInOutTab />}
+        {activeTab === 'operational_hq_inventory' && operationalInventoryEnabled && <OperationalHQStoreTab />}
         {activeTab === 'requisitions' && <NewRequisitions />}
         {activeTab === 'sourcing' && <SourcingTab />}
         {activeTab === 'finance' && <FinancialApprovalTab />}
@@ -130,6 +169,7 @@ const Procurement: React.FC = () => {
 
 const NewRequisitions: React.FC = () => {
   const { profile } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [orders, setOrders] = useState<StockOrder[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
@@ -137,10 +177,17 @@ const NewRequisitions: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId) {
       firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
-        setOrders(data.filter(o => o.status === 'submitted'));
+        setOrders(data.filter(o => o.status === 'submitted' && (operationalInventoryEnabled || !isOperationalInventoryRecord(o))));
       });
     }
-  }, [profile?.tenantId]);
+  }, [profile?.tenantId, operationalInventoryEnabled]);
+
+  useEffect(() => {
+    if (!operationalInventoryEnabled && selectedOrder && isOperationalInventoryRecord(selectedOrder)) {
+      setSelectedOrder(null);
+      setIsDetailModalOpen(false);
+    }
+  }, [operationalInventoryEnabled, selectedOrder]);
 
   const handleDownload = async (order: StockOrder, format: 'pdf' | 'xls') => {
     toast.info(`Generating ${format.toUpperCase()} for order ${order.order_number}...`);
@@ -168,7 +215,7 @@ const NewRequisitions: React.FC = () => {
             order.order_number || '',
             order.requesting_branch_name || order.requesting_branch_id || '',
             order.order_type || '',
-            order.category || '',
+            isOperationalInventoryRecord(order) ? 'Operational Inventory' : 'Sellable Inventory',
             order.submitted_at ? new Date(order.submitted_at).toLocaleDateString() : '--',
             line.product_name || line.product_id || '',
             (line.qty_ordered || 0).toString(),
@@ -243,8 +290,8 @@ const NewRequisitions: React.FC = () => {
                     <div class="meta-value" style="text-transform: capitalize;">${order.order_type}</div>
                   </div>
                   <div>
-                    <div class="meta-title">Category</div>
-                    <div class="meta-value" style="text-transform: capitalize;">${order.category.replace(/_/g, ' ')}</div>
+                    <div class="meta-title">Inventory Stream</div>
+                    <div class="meta-value">${isOperationalInventoryRecord(order) ? 'Operational Inventory' : 'Sellable Inventory'}</div>
                   </div>
                 </div>
                 <table>
@@ -353,6 +400,9 @@ const NewRequisitions: React.FC = () => {
               <tr key={order.id} className="hover:bg-zinc-50/50 transition-colors">
                 <td className="px-6 py-4 font-bold text-zinc-900">
                   {order.order_number}
+                  {isOperationalInventoryRecord(order) && (
+                    <span className="ml-2 px-2 py-0.5 bg-sky-100 text-sky-700 text-[10px] rounded-full uppercase font-black">Operational Inventory</span>
+                  )}
                   {order.is_emergency && (
                     <span className="ml-2 px-2 py-0.5 bg-red-500 text-white text-[10px] rounded-full uppercase font-black">Emergency</span>
                   )}
@@ -643,6 +693,7 @@ const QueriesTab: React.FC = () => {
         const newInvoiceRef = doc(collection(db, 'transfer_invoices'));
         const newInvoice: Partial<TransferInvoice> = {
           tenantId: profile.tenantId,
+          inventoryClass: selectedQuery.inventoryClass || 'SELLABLE',
           transfer_number: `TRF-${selectedQuery.transfer_number}-${Date.now().toString().slice(-4)}`,
           source_branch_id: 'HQ',
           source_branch_name: 'Central HQ',
@@ -664,6 +715,7 @@ const QueriesTab: React.FC = () => {
           const { id, ...lineData } = line;
           await setDoc(newLineRef, {
             ...lineData,
+            inventoryClass: lineData.inventoryClass || selectedQuery.inventoryClass || 'SELLABLE',
             transfer_id: newInvoiceRef.id,
             createdAt: new Date().toISOString()
           });
@@ -1022,6 +1074,7 @@ const QueriesTab: React.FC = () => {
 
 const SourcingTab: React.FC = () => {
   const { profile } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [orderLines, setOrderLines] = useState<StockOrderLine[]>([]);
   const [orders, setOrders] = useState<StockOrder[]>([]);
   const [suppliers, setSuppliers] = useState<InstitutionRegistry[]>([]);
@@ -1034,13 +1087,22 @@ const SourcingTab: React.FC = () => {
       firestoreService.subscribeToCollection<StockOrderLine>('stock_order_lines', profile.tenantId, (data) => {
         setOrderLines(data);
       });
-      firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, setOrders);
+      firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, data => {
+        setOrders(data.filter(order => operationalInventoryEnabled || !isOperationalInventoryRecord(order)));
+      });
       firestoreService.subscribeToCollection<InstitutionRegistry>('supplier_registry', profile.tenantId, setSuppliers);
       firestoreService.subscribeToCollection<ProductBatch>('product_batches', profile.tenantId, (data) => {
         setHqBatches(data.filter(b => b.branchId === 'HQ'));
       });
     }
-  }, [profile?.tenantId]);
+  }, [profile?.tenantId, operationalInventoryEnabled]);
+
+  useEffect(() => {
+    if (!operationalInventoryEnabled && selectedOrder && isOperationalInventoryRecord(selectedOrder)) {
+      setSelectedOrder(null);
+      setIsSourcingModalOpen(false);
+    }
+  }, [operationalInventoryEnabled, selectedOrder]);
 
   // Group active sourcing lines by order_id
   const sourcingLinesGrouped = orderLines.filter(l => l.line_status === 'sourcing');
@@ -1073,6 +1135,9 @@ const SourcingTab: React.FC = () => {
                   <tr key={order.id} className="hover:bg-zinc-50/50 transition-colors">
                     <td className="px-6 py-4 text-sm font-bold text-zinc-900">
                       {order.order_number || 'Unnamed Requisition'}
+                      {isOperationalInventoryRecord(order) && (
+                        <span className="ml-2 px-2 py-0.5 bg-sky-100 text-sky-700 text-[10px] rounded-full uppercase font-black">Operational Inventory</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-sm text-zinc-600">{order.requesting_branch_name || order.requesting_branch_id}</td>
                     <td className="px-6 py-4 text-sm text-zinc-600 font-medium">
@@ -1156,10 +1221,24 @@ const WholeOrderSourcingModal: React.FC<{
   onClose: () => void;
 }> = ({ order, allLines, suppliers, hqBatches, onClose }) => {
   const { profile } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
+  const isOperationalOrder = isOperationalInventoryRecord(order);
   const [lines, setLines] = useState<StockOrderLine[]>([]);
+  const [hqOperationalItems, setHqOperationalItems] = useState<OperationalInventory[]>([]);
+  const [operationalFulfillPacks, setOperationalFulfillPacks] = useState<Record<string, number>>({});
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [itemCosts, setItemCosts] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!profile?.tenantId || !isOperationalOrder || !operationalInventoryEnabled) {
+      setHqOperationalItems([]);
+      return;
+    }
+    return firestoreService.subscribeToCollection<OperationalInventory>('operational_inventory', profile.tenantId, rows => {
+      setHqOperationalItems(rows.filter(item => item.branchId === 'HQ' && item.inventoryClass === 'OPERATIONAL' && Boolean(item.masterItemId)));
+    });
+  }, [profile?.tenantId, isOperationalOrder, operationalInventoryEnabled]);
 
   useEffect(() => {
     // Only grab lines belonging to this order, and which have line_status === 'sourcing'
@@ -1174,6 +1253,10 @@ const WholeOrderSourcingModal: React.FC<{
     setItemCosts(initialCosts);
   }, [allLines, order.id]);
 
+  const eligibleSuppliers = isOperationalOrder
+    ? suppliers.filter(supplier => supplier.inventoryCapabilities?.includes('NON_SELLABLE_OPERATIONAL'))
+    : suppliers;
+
   // Helper: compute HQ stock total quantity for a product_id
   const getProductHqStock = (productId: string) => {
     return hqBatches
@@ -1181,9 +1264,45 @@ const WholeOrderSourcingModal: React.FC<{
       .reduce((sum, b) => sum + (b.quantity || 0), 0);
   };
 
+  const getOperationalHqItem = (line: StockOrderLine) => hqOperationalItems.find(item => item.masterItemId === line.masterItemId);
+  const getOperationalPacksAvailable = (line: StockOrderLine) => {
+    const item = getOperationalHqItem(line);
+    return item ? Math.floor(Number(item.quantityInStock || 0) / Math.max(1, Number(item.unitPerPack || 1))) : 0;
+  };
+
+  const handleOperationalStoreFulfillment = async (line: StockOrderLine) => {
+    if (!profile?.tenantId || !profile.uid || !operationalInventoryEnabled || submitting) return;
+    const item = getOperationalHqItem(line);
+    const maxPacks = getOperationalPacksAvailable(line);
+    const quantityPacks = Math.min(Number(operationalFulfillPacks[line.id] || maxPacks), Number(line.qty_ordered || 0), maxPacks);
+    if (!item || quantityPacks <= 0) {
+      toast.error('No whole packs are currently available in the HQ Operational Store.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await fulfillOperationalOrderFromHqStore({
+        tenantId: profile.tenantId,
+        order,
+        line,
+        quantityPacks,
+        actor: { uid: profile.uid, name: profile.fullName || profile.displayName || profile.email || profile.uid }
+      });
+      toast.success(`Dispatched ${result.quantityPacks} pack(s) from HQ Operational Store. ${result.remainingExternalPacks} pack(s) remain for external sourcing.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Operational Store fulfilment failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   // Perform "Assign to Store" (internal transfer) for a single item from HQ Store
   const handleAssignToStore = async (line: StockOrderLine) => {
     if (!profile || submitting) return;
+    if (isOperationalOrder || isOperationalInventoryRecord(line) || line.isOperational) {
+      toast.error('Operational orders cannot be fulfilled from the Sellable HQ Store.');
+      return;
+    }
     setSubmitting(true);
     try {
       const hqQty = getProductHqStock(line.product_id);
@@ -1326,6 +1445,9 @@ const WholeOrderSourcingModal: React.FC<{
           <div>
             <h2 className="text-xl font-extrabold text-zinc-950">Procurement Integration Portal</h2>
             <p className="text-xs text-zinc-500 mt-1">Sourcing order <strong className="text-zinc-900">{order.order_number}</strong> for requesting branch <strong className="text-zinc-900">{order.requesting_branch_name}</strong></p>
+            <span className={cn('mt-2 inline-block px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide', isOperationalOrder ? 'bg-sky-100 text-sky-700' : 'bg-zinc-100 text-zinc-600')}>
+              {isOperationalOrder ? 'Operational Inventory' : 'Sellable Inventory'}
+            </span>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-zinc-200 text-zinc-400 hover:text-zinc-500 rounded-xl transition-colors">
             <X className="w-5 h-5" />
@@ -1338,8 +1460,8 @@ const WholeOrderSourcingModal: React.FC<{
           {/* Section 1: Assess HQ Stock & Assign internal items */}
           <div className="space-y-3">
             <div className="flex justify-between items-center">
-              <h3 className="text-xs font-black uppercase text-zinc-500 tracking-wider">Step 1: Internal HQ Inventory Transfer Assessment</h3>
-              <span className="text-[10px] px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full font-bold">Fulfill internally to bypass supplier cost</span>
+              <h3 className="text-xs font-black uppercase text-zinc-500 tracking-wider">Step 1: {isOperationalOrder ? 'Operational HQ Store Assessment' : 'Sellable HQ Store Assessment'}</h3>
+              <span className="text-[10px] px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full font-bold">{isOperationalOrder ? 'Operational stock is kept in its separate store.' : 'Fulfill internally to bypass supplier cost.'}</span>
             </div>
             
             <div className="border border-zinc-200 rounded-2xl overflow-hidden bg-white">
@@ -1348,27 +1470,41 @@ const WholeOrderSourcingModal: React.FC<{
                   <tr className="bg-zinc-50/50 border-b border-zinc-100 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
                     <th className="px-4 py-3">Product Name</th>
                     <th className="px-4 py-3 text-center">Req. Qty</th>
-                    <th className="px-4 py-3 text-center">Central HQ Stock</th>
+                    <th className="px-4 py-3 text-center">{isOperationalOrder ? 'HQ Operational Stock' : 'HQ Sellable Stock'}</th>
                     <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 text-sm">
                   {lines.map(line => {
-                    const hqStock = getProductHqStock(line.product_id);
-                    const canFulfill = hqStock >= line.qty_ordered;
+                    const operationalLine = isOperationalOrder || isOperationalInventoryRecord(line) || line.isOperational === true;
+                    const operationalItem = operationalLine ? getOperationalHqItem(line) : undefined;
+                    const hqStock = operationalLine ? Number(operationalItem?.quantityInStock || 0) : getProductHqStock(line.product_id);
+                    const maxOperationalPacks = operationalLine ? Math.min(Number(line.qty_ordered || 0), getOperationalPacksAvailable(line)) : 0;
+                    const requestedOperationalPacks = Math.min(Number(operationalFulfillPacks[line.id] || maxOperationalPacks), maxOperationalPacks);
+                    const canFulfill = operationalLine
+                      ? operationalInventoryEnabled && Boolean(operationalItem?.masterItemId) && requestedOperationalPacks > 0
+                      : hqStock !== null && hqStock >= line.qty_ordered;
                     return (
                       <tr key={line.id} className="hover:bg-zinc-50/50 transition-colors">
                         <td className="px-4 py-3 font-semibold text-zinc-900">{line.product_name}</td>
                         <td className="px-4 py-3 text-center font-bold text-zinc-600">{line.qty_ordered}</td>
                         <td className="px-4 py-3 text-center font-bold">
-                          <span className={cn("px-2.5 py-1 rounded-full text-xs font-black", canFulfill ? "bg-emerald-100/75 text-emerald-700" : "bg-rose-100/75 text-rose-700")}>
-                            {hqStock} packs
+                          <span className={cn("px-2.5 py-1 rounded-full text-xs font-black", canFulfill ? "bg-emerald-100/75 text-emerald-700" : operationalLine ? "bg-sky-100/75 text-sky-700" : "bg-rose-100/75 text-rose-700")}>
+                            {operationalLine ? `${hqStock.toLocaleString()} ${operationalItem?.unitOfIssue || 'units'} · up to ${maxOperationalPacks} packs` : `${hqStock} packs`}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
+                          {operationalLine && maxOperationalPacks > 0 && <input
+                            aria-label={`Operational packs to fulfill for ${line.product_name}`}
+                            type="number" min="1" max={maxOperationalPacks} step="1"
+                            value={operationalFulfillPacks[line.id] ?? maxOperationalPacks}
+                            onChange={event => setOperationalFulfillPacks(previous => ({ ...previous, [line.id]: Math.max(0, Math.min(maxOperationalPacks, Number(event.target.value))) }))}
+                            disabled={submitting}
+                            className="w-20 mr-2 px-2 py-1.5 rounded-lg border border-zinc-200 text-xs text-right"
+                          />}
                           <button
                             disabled={!canFulfill || submitting}
-                            onClick={() => handleAssignToStore(line)}
+                            onClick={() => operationalLine ? handleOperationalStoreFulfillment(line) : handleAssignToStore(line)}
                             className={cn(
                               "px-3 py-1.5 rounded-xl font-bold text-xs shadow-sm transition-all",
                               canFulfill 
@@ -1376,7 +1512,7 @@ const WholeOrderSourcingModal: React.FC<{
                                 : "bg-zinc-100 text-zinc-400 cursor-not-allowed"
                             )}
                           >
-                            Assign to Store (Draft GRN)
+                            {operationalLine ? 'Fulfill from Operational Store' : 'Assign to Store'}
                           </button>
                         </td>
                       </tr>
@@ -1409,10 +1545,13 @@ const WholeOrderSourcingModal: React.FC<{
                     className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/15 outline-none text-sm font-semibold"
                   >
                     <option value="">Choose Supplier...</option>
-                    {suppliers.map(s => (
+                    {eligibleSuppliers.map(s => (
                       <option key={s.id} value={s.id}>{s.supplier_name} - {s.country || 'Uganda'}</option>
                     ))}
                   </select>
+                  {isOperationalOrder && eligibleSuppliers.length === 0 && (
+                    <p className="mt-1 text-[11px] text-amber-700">No supplier is tagged for Non-Sellable Operational Items. Update a supplier’s capabilities before assigning this order.</p>
+                  )}
                 </div>
               </div>
 
@@ -1498,6 +1637,7 @@ const WholeOrderSourcingModal: React.FC<{
 
 const FinancialApprovalTab: React.FC = () => {
   const { profile } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [orders, setOrders] = useState<StockOrder[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -1505,10 +1645,17 @@ const FinancialApprovalTab: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId) {
       firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
-        setOrders(data.filter(o => o.status === 'awaiting_finance_approval'));
+        setOrders(data.filter(o => o.status === 'awaiting_finance_approval' && (operationalInventoryEnabled || !isOperationalInventoryRecord(o))));
       });
     }
-  }, [profile?.tenantId]);
+  }, [profile?.tenantId, operationalInventoryEnabled]);
+
+  useEffect(() => {
+    if (!operationalInventoryEnabled && selectedOrder && isOperationalInventoryRecord(selectedOrder)) {
+      setSelectedOrder(null);
+      setIsModalOpen(false);
+    }
+  }, [operationalInventoryEnabled, selectedOrder]);
 
   const handleApprove = async (id: string) => {
     try {
@@ -1807,6 +1954,7 @@ const FinancialApprovalModal: React.FC<{
 
 const GRNTab: React.FC = () => {
   const { profile } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [grns, setGrns] = useState<GRNRecord[]>([]);
   const [approvedOrders, setApprovedOrders] = useState<StockOrder[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -1814,16 +1962,18 @@ const GRNTab: React.FC = () => {
   const [isProcessModalOpen, setIsProcessModalOpen] = useState(false);
   const [isManualGRNModalOpen, setIsManualGRNModalOpen] = useState(false);
   const [selectedGRN, setSelectedGRN] = useState<GRNRecord | null>(null);
+  const [operationalGRNItems, setOperationalGRNItems] = useState<GRNRecord['items']>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [grnDateRange, setGrnDateRange] = useState({ start: '', end: '' });
 
   useEffect(() => {
     if (profile?.tenantId) {
       const unsubscribeGrns = firestoreService.subscribeToCollection<GRNRecord>('grn_records', profile.tenantId, (data) => {
-        setGrns(data.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime()));
+        setGrns(data.filter(grn => operationalInventoryEnabled || !isOperationalInventoryRecord(grn))
+          .sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime()));
       });
       const unsubscribeOrders = firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
-        setApprovedOrders(data.filter(o => o.status === 'approved'));
+        setApprovedOrders(data.filter(o => o.status === 'approved' && (operationalInventoryEnabled || !isOperationalInventoryRecord(o))));
       });
       const unsubscribeProducts = firestoreService.subscribeToCollection<Product>('products', profile.tenantId, setProducts);
       return () => {
@@ -1832,19 +1982,45 @@ const GRNTab: React.FC = () => {
         unsubscribeProducts();
       };
     }
-  }, [profile?.tenantId]);
+  }, [profile?.tenantId, operationalInventoryEnabled]);
+
+  useEffect(() => {
+    if (!operationalInventoryEnabled) {
+      if (selectedOrder && isOperationalInventoryRecord(selectedOrder)) setSelectedOrder(null);
+      if (selectedGRN && isOperationalInventoryRecord(selectedGRN)) setSelectedGRN(null);
+      setIsProcessModalOpen(false);
+      setIsManualGRNModalOpen(false);
+    }
+  }, [operationalInventoryEnabled, selectedOrder, selectedGRN]);
+
+  useEffect(() => {
+    if (!selectedGRN || !isOperationalInventoryRecord(selectedGRN) || !profile?.tenantId) {
+      setOperationalGRNItems([]);
+      return;
+    }
+    let cancelled = false;
+    fetchOperationalGrnLines(profile.tenantId, selectedGRN.id).then(lines => {
+      if (cancelled) return;
+      setOperationalGRNItems(lines);
+    }).catch(error => {
+      console.error('Failed to load Operational GRN lines', error);
+      if (!cancelled) setOperationalGRNItems(selectedGRN.items || []);
+    });
+    return () => { cancelled = true; };
+  }, [selectedGRN, profile?.tenantId]);
 
   const getProductCustomId = (id: string) => {
     const prod = products.find(p => p.id === id || p.productId === id);
     return prod ? prod.productId : id;
   };
 
-  const handleDownloadGRN = (grn: GRNRecord) => {
+  const handleDownloadGRN = async (grn: GRNRecord) => {
     let csvContent = "data:text/csv;charset=utf-8,";
     csvContent += "GOODS RECEIVED NOTE (GRN) HISTORY AND TRANSACTION STATEMENT\n\n";
     csvContent += `GRN/Ref Number,${grn.grn_number}\n`;
+    csvContent += `Inventory Class,${isOperationalInventoryRecord(grn) ? 'Operational Inventory' : 'Sellable Inventory'}\n`;
     csvContent += `Origin (Source),${grn.supplier_name || 'N/A'}\n`;
-    csvContent += `Destination,HQ Central Store / Main Depot\n`;
+    csvContent += `Destination,${grn.destination_store_id === 'HQ_OPERATIONAL' ? 'HQ Operational Store' : 'HQ Central Store / Main Depot'}\n`;
     csvContent += `Prepared/Sent By,Supplier Dispatch\n`;
     csvContent += `Prepared/Sent At,${grn.invoice_date || grn.receivedAt || 'N/A'}\n`;
     csvContent += `Received/Verified By,${grn.receivedBy || 'Staff Pharmacist'}\n`;
@@ -1854,7 +2030,13 @@ const GRNTab: React.FC = () => {
     csvContent += `Total Value,UGX ${grn.total_value_ugx || 0}\n\n`;
     csvContent += "Product ID,Product Name,Expected/Ordered Qty,Received Qty,Unit Cost Price (UGX),Line Total Value (UGX),Batch Number,Expiry Date\n";
     
-    (grn.items || []).forEach(item => {
+    const fetchedOperationalItems = isOperationalInventoryRecord(grn) && profile?.tenantId
+      ? await fetchOperationalGrnLines(profile.tenantId, grn.id)
+      : [];
+    const items = isOperationalInventoryRecord(grn)
+      ? (fetchedOperationalItems.length ? fetchedOperationalItems : operationalGRNItems.length ? operationalGRNItems : (grn.items || []))
+      : (grn.items || []);
+    items.forEach(item => {
       const row = [
         getProductCustomId(item.product_id),
         `"${(item.product_name || '').replace(/"/g, '""')}"`,
@@ -1928,6 +2110,9 @@ const GRNTab: React.FC = () => {
 
     return matchesSearch && matchesStart && matchesEnd;
   });
+  const displayedGRNItems = selectedGRN && isOperationalInventoryRecord(selectedGRN)
+    ? (operationalGRNItems.length ? operationalGRNItems : (selectedGRN.items || []))
+    : (selectedGRN?.items || []);
 
   return (
     <div className="space-y-6">
@@ -1942,9 +2127,10 @@ const GRNTab: React.FC = () => {
               <div>
                 <p className="font-bold text-zinc-900">{order.order_number}</p>
                 <p className="text-xs text-zinc-500">{order.requesting_branch_name}</p>
+                {isOperationalInventoryRecord(order) && <p className="mt-1 text-[10px] font-black uppercase tracking-wide text-emerald-700">Operational Inventory</p>}
               </div>
               <div className="flex gap-2">
-                <button 
+                {!isOperationalInventoryRecord(order) && <button
                   onClick={async () => {
                     if (window.confirm(`Are you sure you want to revert order ${order.order_number || ''} back to the Financial Approval tab?`)) {
                       try {
@@ -1969,7 +2155,7 @@ const GRNTab: React.FC = () => {
                   className="border border-zinc-200 text-zinc-500 hover:bg-zinc-50 px-2 py-1.5 rounded-lg text-xs font-bold transition-all"
                 >
                   Revert
-                </button>
+                </button>}
                 <button 
                   onClick={() => {
                     setSelectedOrder(order);
@@ -2052,6 +2238,7 @@ const GRNTab: React.FC = () => {
             <thead>
               <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
                 <th className="px-6 py-4">GRN #</th>
+                <th className="px-6 py-4">Inventory Class</th>
                 <th className="px-6 py-4">Supplier</th>
                 <th className="px-6 py-4">Value</th>
                 <th className="px-6 py-4">VAT</th>
@@ -2065,17 +2252,18 @@ const GRNTab: React.FC = () => {
               {filtered.map((grn) => (
                 <tr key={grn.id} className="hover:bg-zinc-50/50 transition-colors">
                   <td className="px-6 py-4 font-bold text-zinc-900">{grn.grn_number}</td>
+                  <td className="px-6 py-4"><span className={cn('px-2 py-1 rounded-full text-[10px] font-black uppercase', isOperationalInventoryRecord(grn) ? 'bg-emerald-100 text-emerald-800' : 'bg-zinc-100 text-zinc-600')}>{isOperationalInventoryRecord(grn) ? 'Operational' : 'Sellable'}</span></td>
                   <td className="px-6 py-4 text-sm text-zinc-600">{grn.supplier_name}</td>
                   <td className="px-6 py-4 text-sm font-bold text-zinc-900">UGX {grn.total_value_ugx.toLocaleString()}</td>
                   <td className="px-6 py-4 text-sm text-emerald-600 font-medium">UGX {(grn.inputVat || 0).toLocaleString()}</td>
                   <td className="px-6 py-4 text-sm text-amber-600 font-medium">UGX {(grn.whtAmount || 0).toLocaleString()}</td>
                   <td className="px-6 py-4">
-                    <span className={cn(
+                    {isOperationalInventoryRecord(grn) ? <span className="px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700">Finance event ready</span> : <span className={cn(
                       "px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider",
                       grn.payment_type === 'credit' ? "bg-amber-50 text-amber-600" : "bg-emerald-50 text-emerald-600"
                     )}>
                       {grn.payment_type}
-                    </span>
+                    </span>}
                   </td>
                   <td className="px-6 py-4 text-sm text-zinc-500">{new Date(grn.receivedAt).toLocaleString()}</td>
                   <td className="px-6 py-4 text-right">
@@ -2118,7 +2306,7 @@ const GRNTab: React.FC = () => {
             <div className="p-6 bg-zinc-50 border-b border-zinc-100 flex justify-between items-center">
               <div>
                 <span className="text-[10px] uppercase font-black tracking-widest text-emerald-600 font-mono">Operations Audit Registry</span>
-                <h2 className="text-xl font-bold text-zinc-900 mt-0.5">Goods Received Note #{selectedGRN.grn_number}</h2>
+                <h2 className="text-xl font-bold text-zinc-900 mt-0.5">{isOperationalInventoryRecord(selectedGRN) ? 'Operational Goods Received Note' : 'Goods Received Note'} #{selectedGRN.grn_number}</h2>
               </div>
               <button 
                 onClick={() => setSelectedGRN(null)} 
@@ -2147,7 +2335,7 @@ const GRNTab: React.FC = () => {
                 <div className="space-y-2">
                   <div>
                     <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Destination (Where arrived)</span>
-                    <span className="font-bold text-zinc-800 text-sm mt-0.5 block">HQ Central Store / Main Depot</span>
+                    <span className="font-bold text-zinc-800 text-sm mt-0.5 block">{selectedGRN.destination_store_id === 'HQ_OPERATIONAL' ? 'HQ Operational Store' : 'HQ Central Store / Main Depot'}</span>
                   </div>
                   <div className="pt-2 border-t border-zinc-200">
                     <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Received/Verified By & When</span>
@@ -2168,20 +2356,20 @@ const GRNTab: React.FC = () => {
                         <th className="px-4 py-3 text-center">Ordered Qty</th>
                         <th className="px-4 py-3 text-center">Received Qty</th>
                         <th className="px-4 py-3 text-right">Cost Price</th>
-                        <th className="px-4 py-3 text-center">Batch Number</th>
-                        <th className="px-4 py-3 text-center">Expiry Date</th>
+                        {!isOperationalInventoryRecord(selectedGRN) && <th className="px-4 py-3 text-center">Batch Number</th>}
+                        {!isOperationalInventoryRecord(selectedGRN) && <th className="px-4 py-3 text-center">Expiry Date</th>}
                         <th className="px-4 py-3 text-right text-zinc-800">Total Value</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-100 font-medium">
-                      {(selectedGRN.items || []).map((item, idx) => (
+                      {displayedGRNItems.map((item, idx) => (
                         <tr key={idx} className="hover:bg-zinc-50/20 text-zinc-700">
                           <td className="px-4 py-3 font-bold text-zinc-900">{item.product_name}</td>
                           <td className="px-4 py-3 text-center font-mono text-zinc-500">{item.qty_ordered || 0}</td>
                           <td className="px-4 py-3 text-center font-mono font-bold text-emerald-600">{item.qty_received || 0}</td>
                           <td className="px-4 py-3 text-right font-mono">UGX {(item.unit_cost_ugx || 0).toLocaleString()}</td>
-                          <td className="px-4 py-3 text-center font-mono font-semibold text-zinc-650">{item.batch_number || 'N/A'}</td>
-                          <td className="px-4 py-3 text-center font-mono text-zinc-500">{item.expiry_date ? new Date(item.expiry_date).toLocaleDateString() : 'N/A'}</td>
+                          {!isOperationalInventoryRecord(selectedGRN) && <td className="px-4 py-3 text-center font-mono font-semibold text-zinc-650">{item.batch_number || 'N/A'}</td>}
+                          {!isOperationalInventoryRecord(selectedGRN) && <td className="px-4 py-3 text-center font-mono text-zinc-500">{item.expiry_date ? new Date(item.expiry_date).toLocaleDateString() : 'N/A'}</td>}
                           <td className="px-4 py-3 text-right font-mono font-bold text-zinc-900">
                             UGX {((item.qty_received || 0) * (item.unit_cost_ugx || 0)).toLocaleString()}
                           </td>
@@ -2215,7 +2403,7 @@ const GRNTab: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleDownloadGRN(selectedGRN)}
+                  onClick={() => void handleDownloadGRN(selectedGRN)}
                   className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold text-xs uppercase tracking-wider inline-flex items-center gap-2 transition-all shadow-md shadow-emerald-500/20"
                 >
                   <Download size={14} />
@@ -2600,8 +2788,9 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
 const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({ order, onClose }) => {
   const { profile } = useAuth();
+  const isOperationalOrder = isOperationalInventoryRecord(order);
   const [lines, setLines] = useState<StockOrderLine[]>([]);
-  const [editedLines, setEditedLines] = useState<Record<string, { qty: number, removed: boolean, batch: string, expiry: string }>>({});
+  const [editedLines, setEditedLines] = useState<Record<string, { qty: number, removed: boolean, batch: string, expiry: string, unitCostUGX?: number }>>({});
   const [paymentType, setPaymentType] = useState<'cash' | 'credit'>('cash');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
@@ -2613,17 +2802,21 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
   useEffect(() => {
     const fetchLines = async () => {
       const data = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-      const approvedLines = data.filter(l => l.line_status === 'approved');
+      const approvedLines = data.filter(l => l.line_status === 'approved' && (!isOperationalOrder || l.supplier_type === 'external'));
+      if (isOperationalOrder && approvedLines.some(line => line.inventoryClass !== 'OPERATIONAL' && !line.isOperational)) {
+        toast.error('This order contains a non-Operational line and cannot be received as an Operational GRN.');
+        return;
+      }
       setLines(approvedLines);
       
-      const initialEdits: Record<string, { qty: number, removed: boolean, batch: string, expiry: string }> = {};
+      const initialEdits: Record<string, { qty: number, removed: boolean, batch: string, expiry: string, unitCostUGX?: number }> = {};
       
       for (const l of approvedLines) {
         let batch = '';
         let expiry = '';
         
         // Auto-fill for HQ items
-        if (l.supplier_type === 'internal_hq' || l.supplier_type === 'internal_warehouse') {
+        if (!isOperationalOrder && (l.supplier_type === 'internal_hq' || l.supplier_type === 'internal_warehouse')) {
           const hqBatches = await firestoreService.getDocumentsByQuery<ProductBatch>('product_batches', [
             { field: 'tenantId', operator: '==', value: profile?.tenantId },
             { field: 'productId', operator: '==', value: l.product_id },
@@ -2635,12 +2828,13 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
           }
         }
         
-        initialEdits[l.id] = { qty: l.qty_ordered, removed: false, batch, expiry };
+        const outstanding = Math.max(0, Number(l.qty_ordered || 0) - Number(l.qty_received || 0));
+        initialEdits[l.id] = { qty: isOperationalOrder ? outstanding : l.qty_ordered, removed: false, batch, expiry, unitCostUGX: Number(l.unit_cost_ugx || 0) };
       }
       setEditedLines(initialEdits);
     };
     fetchLines();
-  }, [order.id, profile?.tenantId]);
+  }, [order.id, profile?.tenantId, isOperationalOrder]);
 
   const handleQtyChange = (id: string, qty: number) => {
     setEditedLines(prev => ({
@@ -2669,6 +2863,20 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
     try {
       const tenantId = profile?.tenantId;
       if (!tenantId) throw new Error("Missing tenantId");
+      const user = {
+        uid: profile?.uid || 'SYSTEM',
+        name: profile?.fullName || profile?.displayName || profile?.email || 'Unknown'
+      };
+      if (isOperationalOrder) {
+        const result = await processOperationalGrn({
+          tenantId, order, lines, editedLines, invoiceNumber, invoiceDate, inputVat, whtAmount, notes, user
+        });
+        toast.success(result.alreadyProcessed
+          ? 'This Operational GRN was already completed. No duplicate stock was added.'
+          : `Operational GRN ${result.grnNumber} received into the HQ Operational Store. Finance event and branch dispatch are separate steps.`);
+        onClose();
+        return;
+      }
       const result = await processProcurementGrn({
         tenantId,
         order,
@@ -2680,10 +2888,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
         inputVat,
         whtAmount,
         notes,
-        user: {
-          uid: profile?.uid || 'SYSTEM',
-          name: profile?.fullName || profile?.displayName || profile?.email || 'Unknown'
-        }
+        user
       });
 
       toast.success(result.alreadyProcessed
@@ -2702,8 +2907,9 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
       <div className="bg-white rounded-[32px] w-full max-w-6xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
         <div className="p-8 border-b border-zinc-100 flex items-center justify-between">
           <div>
-            <h2 className="text-2xl font-bold text-zinc-900">Process GRN</h2>
+            <h2 className="text-2xl font-bold text-zinc-900">{isOperationalOrder ? 'Operational Inventory GRN' : 'Process GRN'}</h2>
             <p className="text-sm text-zinc-500">{order.order_number} - {order.requesting_branch_name}</p>
+            {isOperationalOrder && <p className="mt-2 text-xs font-bold uppercase tracking-wide text-emerald-700">Operational receipt → HQ Operational Store</p>}
           </div>
           <button onClick={onClose} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
             <Plus className="rotate-45" size={24} />
@@ -2731,7 +2937,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
                 onChange={(e) => setInvoiceDate(e.target.value)}
               />
             </div>
-            <div className="space-y-1">
+            {!isOperationalOrder && <div className="space-y-1">
               <label className="text-xs font-bold text-zinc-500 uppercase">Payment Type</label>
               <div className="flex gap-4">
                 <button 
@@ -2747,7 +2953,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
                   Credit
                 </button>
               </div>
-            </div>
+            </div>}
             <div className="space-y-1">
               <label className="text-xs font-bold text-zinc-500 uppercase">Input VAT (UGX)</label>
               <input 
@@ -2784,8 +2990,9 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
               <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">
                 <th className="px-4 py-3">Product</th>
                 <th className="px-4 py-3">Qty</th>
-                <th className="px-4 py-3">Batch #</th>
-                <th className="px-4 py-3">Expiry</th>
+                {!isOperationalOrder && <th className="px-4 py-3">Batch #</th>}
+                {!isOperationalOrder && <th className="px-4 py-3">Expiry</th>}
+                {isOperationalOrder && <th className="px-4 py-3">Unit cost (UGX)</th>}
                 <th className="px-4 py-3">Total</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
@@ -2802,13 +3009,14 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
                     <td className="px-4 py-3">
                       <input 
                         type="number"
+                        min="0"
                         disabled={edit.removed}
                         className="w-20 px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg text-sm"
                         value={edit.qty}
                         onChange={(e) => handleQtyChange(line.id, Number(e.target.value))}
                       />
                     </td>
-                    <td className="px-4 py-3">
+                    {!isOperationalOrder && <td className="px-4 py-3">
                       <input 
                         type="text"
                         disabled={edit.removed}
@@ -2817,8 +3025,8 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
                         onChange={(e) => handleFieldChange(line.id, 'batch', e.target.value)}
                         placeholder="Batch #"
                       />
-                    </td>
-                    <td className="px-4 py-3">
+                    </td>}
+                    {!isOperationalOrder && <td className="px-4 py-3">
                       <input 
                         type="date"
                         disabled={edit.removed}
@@ -2826,9 +3034,10 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
                         value={edit.expiry}
                         onChange={(e) => handleFieldChange(line.id, 'expiry', e.target.value)}
                       />
-                    </td>
+                    </td>}
+                    {isOperationalOrder && <td className="px-4 py-3"><input type="number" min="0" disabled={edit.removed} className="w-32 px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg text-sm" value={edit.unitCostUGX ?? line.unit_cost_ugx} onChange={e => setEditedLines(prev => ({ ...prev, [line.id]: { ...prev[line.id], unitCostUGX: Number(e.target.value) } }))} /></td>}
                     <td className="px-4 py-3 text-sm font-bold text-zinc-900">
-                      UGX {(edit.qty * line.unit_cost_ugx).toLocaleString()}
+                      UGX {(edit.qty * (isOperationalOrder ? (edit.unitCostUGX ?? line.unit_cost_ugx) : line.unit_cost_ugx)).toLocaleString()}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button 
@@ -2850,7 +3059,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
             Total GRN Value: <span className="text-xl font-bold text-zinc-900 ml-2">
               UGX {lines.reduce((sum, l) => {
                 const edit = editedLines[l.id] || { qty: l.qty_ordered, removed: false };
-                return sum + (edit.removed ? 0 : edit.qty * l.unit_cost_ugx);
+                return sum + (edit.removed ? 0 : edit.qty * (isOperationalOrder ? (edit.unitCostUGX ?? l.unit_cost_ugx) : l.unit_cost_ugx));
               }, 0).toLocaleString()}
             </span>
           </div>
@@ -2878,21 +3087,51 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
 
 const DispatchTab: React.FC = () => {
   const { profile } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [approvedOrders, setApprovedOrders] = useState<StockOrder[]>([]);
+  const [operationalOrders, setOperationalOrders] = useState<StockOrder[]>([]);
+  const [pendingOperationalTransfers, setPendingOperationalTransfers] = useState<OperationalTransfer[]>([]);
+  const [dispatchingOperationalOrderId, setDispatchingOperationalOrderId] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
   const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
 
   useEffect(() => {
-    if (profile?.tenantId) {
-      firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
-        setApprovedOrders(data.filter(o =>
-          o.status === 'fully_received' &&
-          !(o as any).transfer_id &&
-          o.requesting_branch_id !== 'HQ'
-        ));
-      });
+    if (!profile?.tenantId) {
+      setPendingOperationalTransfers([]);
+      return;
     }
-  }, [profile?.tenantId]);
+    const unsubscribeOrders = firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
+      setApprovedOrders(data.filter(o =>
+        o.status === 'fully_received' &&
+        !(o as any).transfer_id &&
+        o.requesting_branch_id !== 'HQ' &&
+        !isOperationalInventoryRecord(o)
+      ));
+      setOperationalOrders(data.filter(order =>
+        order.status === 'fully_received' &&
+        order.requesting_branch_id !== 'HQ' &&
+        isOperationalInventoryRecord(order) &&
+        !(order as any).operational_external_transfer_id
+      ));
+    });
+    const unsubscribeTransfers = operationalInventoryEnabled
+      ? firestoreService.subscribeToCollection<OperationalTransfer>('operational_transfers', profile.tenantId, transfers => {
+          setPendingOperationalTransfers(transfers.filter(transfer => transfer.fulfillmentSource === 'HQ_OPERATIONAL' && ['draft', 'dispatching'].includes(transfer.status)));
+        })
+      : undefined;
+    if (!operationalInventoryEnabled) setPendingOperationalTransfers([]);
+    return () => {
+      unsubscribeOrders();
+      unsubscribeTransfers?.();
+    };
+  }, [profile?.tenantId, operationalInventoryEnabled]);
+
+  useEffect(() => {
+    if (!operationalInventoryEnabled && selectedOrder && isOperationalInventoryRecord(selectedOrder)) {
+      setSelectedOrder(null);
+      setIsDispatchModalOpen(false);
+    }
+  }, [operationalInventoryEnabled, selectedOrder]);
 
   const handleDispatch = async (order: StockOrder, lines: StockOrderLine[]) => {
     try {
@@ -2909,6 +3148,7 @@ const DispatchTab: React.FC = () => {
       // Create Transfer Invoice
       const transferInvoiceId = await firestoreService.addDocument('transfer_invoices', {
         tenantId: profile?.tenantId,
+        inventoryClass: order.inventoryClass || 'SELLABLE',
         transfer_number: `TI-${Date.now()}`,
         source_branch_id: 'HQ', 
         source_branch_name: 'Central HQ',
@@ -2953,6 +3193,7 @@ const DispatchTab: React.FC = () => {
 
         await firestoreService.addDocument('transfer_invoice_lines', {
           tenantId: profile?.tenantId,
+          inventoryClass: line.inventoryClass || order.inventoryClass || 'SELLABLE',
           transfer_id: transferInvoiceId,
           product_id: line.product_id,
           product_name: line.product_name || 'Unknown Product',
@@ -2979,8 +3220,74 @@ const DispatchTab: React.FC = () => {
     }
   };
 
+  const handleOperationalDispatch = async (order: StockOrder) => {
+    if (!profile?.tenantId || !profile.uid || dispatchingOperationalOrderId) return;
+    setDispatchingOperationalOrderId(order.id);
+    try {
+      const result = await dispatchOperationalOrderToBranch({
+        tenantId: profile.tenantId,
+        order,
+        destinationBranchName: order.requesting_branch_name || order.requesting_branch_id,
+        actor: { uid: profile.uid, name: profile.fullName || profile.displayName || profile.email || profile.uid }
+      });
+      toast.success(result.alreadyDispatched
+        ? `Operational transfer ${result.transferNumber} was already dispatched. No duplicate stock movement was posted.`
+        : `Operational transfer ${result.transferNumber} dispatched to ${order.requesting_branch_name || order.requesting_branch_id}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to dispatch Operational Inventory.');
+    } finally {
+      setDispatchingOperationalOrderId(null);
+    }
+  };
+
+  const handleResumeOperationalTransfer = async (transfer: OperationalTransfer) => {
+    if (!profile?.tenantId || !profile.uid || dispatchingOperationalOrderId) return;
+    setDispatchingOperationalOrderId(transfer.id);
+    try {
+      const result = await dispatchPreparedOperationalHqTransfer({
+        tenantId: profile.tenantId, transferId: transfer.id,
+        actor: { uid: profile.uid, name: profile.fullName || profile.displayName || profile.email || profile.uid }
+      });
+      toast.success(result.alreadyDispatched ? `${transfer.transferNumber} was already dispatched.` : `${transfer.transferNumber} dispatch resumed and completed.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not resume the Operational transfer.');
+    } finally {
+      setDispatchingOperationalOrderId(null);
+    }
+  };
+
   return (
-    <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+    <div className="space-y-4">
+      {operationalInventoryEnabled && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+        Operational GRNs receive stock into the HQ Operational Store. Operational orders are dispatched through their separate, movement-tracked transfer ledger.
+      </div>}
+      {operationalInventoryEnabled && operationalOrders.length > 0 && <section className="rounded-2xl border border-emerald-200 bg-white shadow-sm overflow-hidden">
+        <div className="p-5 border-b border-emerald-100 bg-emerald-50/60">
+          <h3 className="font-black text-emerald-950">Operational Orders Ready for HQ Dispatch</h3>
+          <p className="text-xs text-emerald-800 mt-1">Only quantities received on Operational GRNs are considered. HQ Operational SOH and each branch ledger are updated separately.</p>
+        </div>
+        <div className="divide-y divide-zinc-100">
+          {operationalOrders.map(order => <div key={order.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div><p className="font-bold text-zinc-900">{order.order_number}</p><p className="text-xs text-zinc-500">{order.requesting_branch_name || order.requesting_branch_id} · Operational Inventory</p></div>
+            <button onClick={() => handleOperationalDispatch(order)} disabled={dispatchingOperationalOrderId !== null} className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-black disabled:opacity-50">
+              {dispatchingOperationalOrderId === order.id ? 'Dispatching…' : 'Dispatch Operational Stock'}
+            </button>
+          </div>)}
+        </div>
+      </section>}
+      {operationalInventoryEnabled && pendingOperationalTransfers.length > 0 && <section className="rounded-2xl border border-amber-200 bg-white shadow-sm overflow-hidden">
+        <div className="p-5 border-b border-amber-100 bg-amber-50/60">
+          <h3 className="font-black text-amber-950">Operational Store Transfers Awaiting Dispatch</h3>
+          <p className="text-xs text-amber-800 mt-1">Resume a safely staged transfer after a network interruption. Stock is deducted only when its immutable movement is posted.</p>
+        </div>
+        <div className="divide-y divide-zinc-100">
+          {pendingOperationalTransfers.map(transfer => <div key={transfer.id} className="p-4 flex items-center justify-between gap-3">
+            <div><p className="font-bold text-zinc-900">{transfer.transferNumber}</p><p className="text-xs text-zinc-500">{transfer.destinationBranchName || transfer.destinationBranchId} · {transfer.sourceOrderNumber || transfer.sourceOrderId}</p></div>
+            <button onClick={() => handleResumeOperationalTransfer(transfer)} disabled={dispatchingOperationalOrderId !== null} className="px-4 py-2 rounded-xl bg-amber-700 text-white text-xs font-black disabled:opacity-50">{dispatchingOperationalOrderId === transfer.id ? 'Resuming…' : 'Resume Dispatch'}</button>
+          </div>)}
+        </div>
+      </section>}
+      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
       <table className="w-full text-left border-collapse">
         <thead>
           <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
@@ -3056,6 +3363,7 @@ const DispatchTab: React.FC = () => {
           onConfirm={handleDispatch}
         />
       )}
+      </div>
     </div>
   );
 };
@@ -3529,7 +3837,16 @@ const SupplierRegistryTab: React.FC = () => {
                     <p className="font-bold text-zinc-900">{supplier.supplier_name}</p>
                     <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{supplier.supplier_id}</p>
                   </td>
-                  <td className="px-6 py-4 text-sm text-zinc-600">{supplier.commercial_category}</td>
+                  <td className="px-6 py-4 text-sm text-zinc-600">
+                    <div>{supplier.commercial_category}</div>
+                    {supplier.inventoryCapabilities?.length ? (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {supplier.inventoryCapabilities.map(capability => (
+                          <span key={capability} className="px-1.5 py-0.5 bg-zinc-100 text-zinc-600 rounded text-[9px] font-bold uppercase">{capability.replace(/_/g, ' ')}</span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </td>
                   <td className="px-6 py-4">
                     <span className={cn(
                       "px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider",
@@ -3602,8 +3919,18 @@ const SupplierModal: React.FC<{ isOpen: boolean, onClose: () => void, supplier: 
     is_suspended: supplier?.is_suspended || false,
     payment_terms: supplier?.payment_terms || '',
     tin: supplier?.tin || '',
-    whtExempt: supplier?.whtExempt || false
+    whtExempt: supplier?.whtExempt || false,
+    inventoryCapabilities: supplier?.inventoryCapabilities || []
   });
+
+  const toggleInventoryCapability = (capability: NonNullable<InstitutionRegistry['inventoryCapabilities']>[number]) => {
+    setFormData(current => ({
+      ...current,
+      inventoryCapabilities: current.inventoryCapabilities.includes(capability)
+        ? current.inventoryCapabilities.filter(value => value !== capability)
+        : [...current.inventoryCapabilities, capability]
+    }));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3665,6 +3992,30 @@ const SupplierModal: React.FC<{ isOpen: boolean, onClose: () => void, supplier: 
                 <option value="Distributor">Distributor</option>
                 <option value="Importer">Importer</option>
               </select>
+            </div>
+            <div className="md:col-span-2 p-4 bg-zinc-50 border border-zinc-200 rounded-2xl space-y-3">
+              <div>
+                <p className="text-xs font-bold text-zinc-700 uppercase">Supply Capabilities</p>
+                <p className="mt-1 text-[11px] text-zinc-500">Operational requisitions are offered only to suppliers explicitly tagged for non-sellable operational items.</p>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                {([
+                  ['DRUGS', 'Drugs'],
+                  ['COSMETICS', 'Cosmetics'],
+                  ['CONSUMABLES', 'Consumables'],
+                  ['DEVICES', 'Devices'],
+                  ['NON_SELLABLE_OPERATIONAL', 'Non-Sellable Operational Items']
+                ] as const).map(([capability, label]) => (
+                  <label key={capability} className="flex items-center gap-2 text-xs text-zinc-700">
+                    <input
+                      type="checkbox"
+                      checked={formData.inventoryCapabilities.includes(capability)}
+                      onChange={() => toggleInventoryCapability(capability)}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-zinc-500 uppercase">NDA Licence Number</label>
@@ -4401,6 +4752,7 @@ const HQStockInOutTab: React.FC = () => {
 
       const orderPayload: Partial<StockOrder> = {
         tenantId: profile.tenantId,
+        inventoryClass: 'SELLABLE',
         order_number: orderNumber,
         requesting_branch_id: 'HQ',
         requesting_branch_name: 'HQ Central Store',
@@ -4421,6 +4773,7 @@ const HQStockInOutTab: React.FC = () => {
         const lineRef = doc(collection(db, 'stock_order_lines'));
         await setDoc(lineRef, {
           tenantId: profile.tenantId,
+          inventoryClass: 'SELLABLE',
           order_id: orderRef.id,
           product_id: line.product_id,
           product_name: line.product_name || 'Unknown Product',
@@ -4634,6 +4987,7 @@ const HQStockInOutTab: React.FC = () => {
       const transferRef = doc(collection(db, 'transfer_invoices'));
       const transferPayload: Partial<TransferInvoice> = {
         tenantId: profile?.tenantId,
+        inventoryClass: 'SELLABLE',
         transfer_number: transferNumber,
         source_branch_id: 'HQ',
         source_branch_name: 'HQ Central Store',
@@ -4662,6 +5016,7 @@ const HQStockInOutTab: React.FC = () => {
         const lineRef = doc(collection(db, 'transfer_invoice_lines'));
         await setDoc(lineRef, {
           tenantId: profile?.tenantId,
+          inventoryClass: 'SELLABLE',
           transfer_id: transferRef.id,
           product_id: line.product_id,
           product_name: line.product_name || 'Unknown Product',

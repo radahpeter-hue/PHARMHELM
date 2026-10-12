@@ -33,7 +33,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
 import { firestoreService } from '../services/firestore';
 import { registerAuthUser, db } from '../firebase';
-import { runTransaction, doc, writeBatch } from 'firebase/firestore';
+import { runTransaction, doc, setDoc, writeBatch } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { 
   SystemSettings, 
@@ -247,7 +247,7 @@ const Settings = () => {
       // Fetch System Settings
       const settingsDocs = await firestoreService.getCollection<SystemSettings>('system_settings', profile.tenantId);
       if (settingsDocs.length > 0) {
-        const s = settingsDocs[0];
+        const s = settingsDocs.find(setting => setting.id === profile.tenantId) || settingsDocs[0];
         // Ensure all nested objects exist to prevent crashes
         if (!s.operationalConfig) s.operationalConfig = {} as any;
         if (!s.operationalConfig.pos) s.operationalConfig.pos = {} as any;
@@ -367,10 +367,8 @@ const Settings = () => {
             "Purchase Order": "PO-[YEAR]-[SEQ4]",
           },
         };
-        const docId = await firestoreService.addDocument('system_settings', defaultSettings);
-        if (docId) {
-          setSettings({ id: docId, ...defaultSettings });
-        }
+        await setDoc(doc(db, 'system_settings', profile.tenantId), defaultSettings);
+        setSettings({ id: profile.tenantId, ...defaultSettings });
       }
 
       // Fetch Branches
@@ -414,16 +412,30 @@ const Settings = () => {
   };
 
   const handleSaveSettings = async () => {
-    if (!settings) return;
+    if (!settings || !profile?.tenantId) return;
     if (!canEditSettings) {
       toast.error('Settings edit access is required to save system changes.');
       return;
     }
     setSaving(true);
     try {
-      await firestoreService.updateDocument('system_settings', settings.id, settings);
+      const { id: _documentId, ...settingsData } = settings;
+      const canonicalSettings = {
+        ...settingsData,
+        tenantId: profile.tenantId,
+        updatedAt: new Date().toISOString(),
+        updatedBy: profile.uid
+      };
+      const settingsBatch = writeBatch(db);
+      settingsBatch.set(doc(db, 'system_settings', profile.tenantId), canonicalSettings, { merge: true });
+      if (settings.id && settings.id !== profile.tenantId) {
+        // Keep a legacy random-ID settings document aligned until old readers are retired.
+        settingsBatch.set(doc(db, 'system_settings', settings.id), canonicalSettings, { merge: true });
+      }
+      await settingsBatch.commit();
+      setSettings({ ...canonicalSettings, id: profile.tenantId });
       toast.success('System settings updated successfully');
-      logAction('System', 'Update', 'SystemSettings', settings.id);
+      logAction('System', 'Update', 'SystemSettings', profile.tenantId);
     } catch (error) {
       toast.error('Failed to save settings');
     } finally {
@@ -776,7 +788,35 @@ const Settings = () => {
                   </button>
                 </div>
 
-                {Object.entries(settings.featureToggles).map(([key, enabled]) => (
+                <div className="flex items-center justify-between p-3 bg-emerald-50 rounded-2xl border border-emerald-100">
+                  <div className="pr-4">
+                    <p className="text-sm font-bold text-zinc-900">Operational Inventory</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-zinc-600">
+                      Enables or disables operational inventory across the tenant, including its Inventory tab, orders, procurement, receipts, transfers and usage. Turning it off preserves existing records and blocks new operational activity.
+                    </p>
+                    <p className="mt-1 text-[10px] text-zinc-500 uppercase tracking-wider font-medium">
+                      {settings.featureToggles.enableOperationalInventory ? 'Active' : 'Disabled'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!canManageSettings}
+                    aria-label="Enable or disable Operational Inventory"
+                    aria-pressed={settings.featureToggles.enableOperationalInventory === true}
+                    onClick={() => toggleFeature('enableOperationalInventory')}
+                    className={cn(
+                      "w-10 h-5 rounded-full transition-all relative shrink-0 disabled:opacity-50 disabled:cursor-not-allowed",
+                      settings.featureToggles.enableOperationalInventory ? "bg-emerald-500" : "bg-zinc-300"
+                    )}
+                  >
+                    <div className={cn(
+                      "absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all",
+                      settings.featureToggles.enableOperationalInventory ? "left-5.5" : "left-0.5"
+                    )} />
+                  </button>
+                </div>
+
+                {Object.entries(settings.featureToggles).filter(([key]) => key !== 'enableOperationalInventory').map(([key, enabled]) => (
                   <div key={key} className="flex items-center justify-between p-3 bg-zinc-50 rounded-2xl border border-zinc-100">
                     <div>
                       <p className="text-sm font-bold text-zinc-900 capitalize">
@@ -2194,3 +2234,4 @@ const Settings = () => {
 };
 
 export default Settings;
+
