@@ -1157,7 +1157,7 @@ service cloud.firestore {
     }
 
     match /operational_inventory_masters/{masterItemId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow get: if isAuthenticated()        && (resource == null || isTenantMember(resource.data.tenantId));      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
       allow create: if isAuthenticated()
         && isInventoryOperator()
         && isTenantMember(request.resource.data.tenantId)
@@ -1219,8 +1219,7 @@ service cloud.firestore {
             && getAfter(movementPath).data.quantityDelta == request.resource.data.quantityInStock
             && getAfter(movementPath).data.actorId == request.auth.uid);
       }
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId)
-        && canOperateOperationalLocation(resource.data.branchId);
+      allow get: if isAuthenticated()        && (resource == null || (isTenantMember(resource.data.tenantId)          && canOperateOperationalLocation(resource.data.branchId)));      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId)        && canOperateOperationalLocation(resource.data.branchId);
       allow create: if isAuthenticated()
         && isInventoryOperator()
         && isTenantMember(request.resource.data.tenantId)
@@ -1315,8 +1314,7 @@ service cloud.firestore {
               && getAfter(transferPathValue).data.destinationBranchId == item.branchId
               && getAfter(transferLinePathValue).data.destinationItemId == request.resource.data.itemId));
       }
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId)
-        && canOperateOperationalLocation(resource.data.branchId);
+      allow get: if isAuthenticated()        && (resource == null || (isTenantMember(resource.data.tenantId)          && canOperateOperationalLocation(resource.data.branchId)));      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId)        && canOperateOperationalLocation(resource.data.branchId);
       allow create: if isAuthenticated()
         && isTenantMember(request.resource.data.tenantId)
         && isOperationalInventoryEnabled(request.resource.data.tenantId)
