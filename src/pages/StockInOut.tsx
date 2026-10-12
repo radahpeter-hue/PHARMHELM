@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 55677)
-Total output lines: 4462
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, 
@@ -2089,7 +2086,357 @@ return (
                                   [line.id]: { ...prev[line.id], accepted: val, queried: line.qty_dispatched - val }
                                 }));
                               }}
-                              className="w-full px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg outline-none focus:ring-2 fo…5677 tokens truncated…id: line.product_id,
+                              className="w-full px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/20 text-center text-xs"
+                            />
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          {showHistory || !canOperateReception ? (
+                            <span className="font-bold text-red-600">{line.qty_queried || 0}</span>
+                          ) : (
+                            <input 
+                              type="number" 
+                              value={receivingData[line.id]?.queried ?? ''}
+                              readOnly
+                              className="w-full px-2 py-1 bg-zinc-100 border border-zinc-200 rounded-lg text-zinc-500 outline-none text-center text-xs"
+                            />
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-zinc-700">
+                          UGX {(line.unit_cost_ugx || 0).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-bold text-zinc-900">
+                          UGX {((line.qty_dispatched || 0) * (line.unit_cost_ugx || 0)).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3">
+                          {showHistory || !canOperateReception ? (
+                            <span className="text-[11px] text-red-500 italic">{line.query_reason || '--'}</span>
+                          ) : (
+                            receivingData[line.id]?.queried > 0 && (
+                              <select 
+                                value={receivingData[line.id]?.reason || ''}
+                                onChange={(e) => setReceivingData(prev => ({
+                                  ...prev,
+                                  [line.id]: { ...prev[line.id], reason: e.target.value }
+                                }))}
+                                className="w-full px-2 py-1 bg-red-50 border border-red-100 text-red-600 rounded-lg text-xs outline-none"
+                              >
+                                <option value="">Select Reason...</option>
+                                <option value="damaged">Damaged</option>
+                                <option value="short_expiry">Short Expiry</option>
+                                <option value="wrong_price">Wrong Price</option>
+                                <option value="wrong_product">Wrong Product</option>
+                              </select>
+                            )
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-zinc-50/50 font-bold border-t border-zinc-200 text-xs">
+                      <td colSpan={6} className="px-4 py-3 text-zinc-600 uppercase text-[10px] tracking-wider">Grand Invoice Total Value</td>
+                      <td className="px-4 py-3 text-right font-mono text-sm text-zinc-900">
+                        UGX {(selectedInvoice.total_value_ugx || 0).toLocaleString()}
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <div className="p-4 sm:p-6 border-t border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+              <div className="flex items-center gap-2 text-amber-600 text-xs font-bold">
+                {!showHistory && canOperateReception && (
+                  <>
+                    <AlertCircle size={16} />
+                    <span>Verify against physical invoice before submitting.</span>
+                  </>
+                )}
+                {!showHistory && !canOperateReception && (
+                  <span>View only. Your role cannot confirm or query stock reception.</span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-3 w-full sm:w-auto sm:justify-end">
+                {showHistory && (
+                  <button 
+                    onClick={() => downloadExcelGRN(selectedInvoice)}
+                    className="px-6 py-2 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded-xl font-bold hover:bg-emerald-100 transition-colors flex items-center gap-1"
+                  >
+                    <Download size={16} /> Download Excel
+                  </button>
+                )}
+                <button 
+                  onClick={() => setSelectedInvoice(null)}
+                  className="px-6 py-2 border border-zinc-200 rounded-xl font-medium text-zinc-600 hover:bg-zinc-50 transition-colors"
+                >
+                  {showHistory ? 'Close' : 'Cancel'}
+                </button>
+                {!showHistory && (
+                  <button 
+                    onClick={handleReceiveSubmit}
+                    disabled={!canOperateReception || invoiceLinesLoading || !!invoiceLinesError || invoiceLines.length === 0}
+                    className="px-8 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold transition-colors shadow-lg shadow-emerald-500/20 disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:shadow-none"
+                  >
+                    Confirm Reception
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const OperationalBranchReturnForm: React.FC = () => {
+  const { profile, activeBranchId, hasPermission } = useAuth();
+  const enabled = useOperationalInventoryFeature();
+  const canReturn = hasPermission('stock', 'operate') && hasPermission('inventory', 'operate');
+  const [items, setItems] = useState<OperationalInventory[]>([]);
+  const [itemId, setItemId] = useState('');
+  const [quantity, setQuantity] = useState('');
+  const [reason, setReason] = useState('');
+  const [requestId, setRequestId] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (!enabled || !profile?.tenantId || !activeBranchId || activeBranchId === 'HQ') { setItems([]); return; }
+    return firestoreService.subscribeToCollection<OperationalInventory>('operational_inventory', profile.tenantId, rows => setItems(rows.filter(row => row.branchId === activeBranchId && row.inventoryClass === 'OPERATIONAL' && row.masterItemId)));
+  }, [enabled, profile?.tenantId, activeBranchId]);
+  if (!enabled || !activeBranchId || activeBranchId === 'HQ') return null;
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!profile?.tenantId || !profile.uid || !canReturn) return;
+    setSaving(true);
+    try {
+      const nextRequestId = requestId || globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      if (!requestId) setRequestId(nextRequestId);
+      const result = await createOperationalBranchReturn({ tenantId: profile.tenantId, branchId: activeBranchId, itemId, quantity: Number(quantity), reason, requestId: nextRequestId, actor: { uid: profile.uid, name: profile.fullName || profile.displayName || profile.email || profile.uid } });
+      toast.success(`Return ${result.transferNumber} dispatched to HQ Operational Store.`);
+      setQuantity(''); setReason(''); setRequestId('');
+    } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not create Operational return.'); }
+    finally { setSaving(false); }
+  };
+  return <section className="rounded-2xl border border-amber-200 bg-white p-5"><h3 className="font-black text-amber-950">Operational Inventory Return to HQ</h3><p className="text-xs text-amber-800 mt-1">Dispatch reduces this branch’s Operational stock. HQ adds it only after confirmed receipt.</p><form onSubmit={submit} className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3"><select required value={itemId} onChange={event => { setItemId(event.target.value); setRequestId(''); }} className="border rounded-xl px-3 py-2 text-sm"><option value="">Select Operational item</option>{items.map(item => <option key={item.id} value={item.id}>{item.name} · SOH {item.quantityInStock} {item.unitOfIssue}</option>)}</select><input type="number" min="0.001" step="any" required value={quantity} onChange={event => { setQuantity(event.target.value); setRequestId(''); }} placeholder="Quantity" className="border rounded-xl px-3 py-2 text-sm" /><input required maxLength={300} value={reason} onChange={event => { setReason(event.target.value); setRequestId(''); }} placeholder="Return reason" className="border rounded-xl px-3 py-2 text-sm" /><button disabled={!canReturn || saving || !itemId} className="rounded-xl bg-amber-700 text-white px-4 py-2 text-sm font-bold disabled:opacity-50">{saving ? 'Dispatching…' : 'Create return'}</button></form></section>;
+};
+
+const OperationalBranchReceiptQueue: React.FC = () => {
+  const { profile, activeBranchId, hasPermission } = useAuth();
+  const enabled = useOperationalInventoryFeature();
+  const [transfers, setTransfers] = useState<OperationalTransfer[]>([]);
+  const [selectedTransfer, setSelectedTransfer] = useState<OperationalTransfer | null>(null);
+  const [lines, setLines] = useState<OperationalTransferLine[]>([]);
+  const [receiptValues, setReceiptValues] = useState<Record<string, { accepted: number; queried: number; reason: string }>>({});
+  const [showHistory, setShowHistory] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const canReceive = hasPermission('stock', 'operate') && hasPermission('inventory', 'operate');
+
+  useEffect(() => {
+    if (!enabled || !profile?.tenantId || !activeBranchId || activeBranchId === 'HQ') {
+      setTransfers([]);
+      return;
+    }
+    return firestoreService.subscribeToCollectionByQuery<OperationalTransfer>(
+      'operational_transfers', profile.tenantId,
+      [where('destinationBranchId', '==', activeBranchId)],
+      setTransfers
+    );
+  }, [enabled, profile?.tenantId, activeBranchId]);
+
+  useEffect(() => {
+    if (!enabled && selectedTransfer) {
+      setSelectedTransfer(null);
+      setLines([]);
+    }
+  }, [enabled, selectedTransfer]);
+
+  if (!enabled || !activeBranchId || activeBranchId === 'HQ') return null;
+  const visibleTransfers = transfers.filter(transfer => showHistory
+    ? ['received', 'queried'].includes(transfer.status)
+    : ['dispatched', 'partially_received'].includes(transfer.status));
+
+  const openTransfer = async (transfer: OperationalTransfer) => {
+    if (transfer.destinationBranchId !== activeBranchId || !profile?.tenantId) {
+      toast.error('This Operational transfer is not assigned to the active branch.');
+      return;
+    }
+    setSelectedTransfer(transfer);
+    setLines([]);
+    setLoading(true);
+    try {
+      const transferLines = await firestoreService.getDocumentsByQuery<OperationalTransferLine>('operational_transfer_lines', [
+        { field: 'tenantId', operator: '==', value: profile.tenantId },
+        { field: 'transferId', operator: '==', value: transfer.id }
+      ]);
+      if (!transferLines.length) throw new Error('No Operational transfer lines were found. Receipt is blocked.');
+      setLines(transferLines);
+      setReceiptValues(Object.fromEntries(transferLines.map(line => [line.id, {
+        accepted: line.status === 'dispatched' ? line.quantityDispatched : Number(line.quantityAccepted || 0),
+        queried: line.status === 'dispatched' ? 0 : Number(line.quantityQueried || 0),
+        reason: line.queryReason || ''
+      }])));
+    } catch (error) {
+      setSelectedTransfer(null);
+      toast.error(error instanceof Error ? error.message : 'Failed to load Operational transfer details.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitReceipt = async () => {
+    if (!selectedTransfer || !profile?.tenantId || !activeBranchId) return;
+    if (!canReceive) {
+      toast.error('Your role can view this Operational transfer but cannot confirm receipt.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      for (const line of lines) {
+        if (line.status !== 'dispatched') continue;
+        const values = receiptValues[line.id];
+        if (!values) throw new Error(`Enter the accepted and queried quantity for ${line.itemName}.`);
+        await receiveOperationalTransferLine({
+          tenantId: profile.tenantId, transferId: selectedTransfer.id, line,
+          accepted: values.accepted, queried: values.queried,
+          queryReason: values.reason,
+          activeBranchId,
+          actor: { uid: profile.uid, name: profile.fullName || profile.displayName || profile.email || profile.uid }
+        });
+      }
+      toast.success('Operational receipt recorded. Accepted quantities are now in the branch Operational ledger.');
+      setSelectedTransfer(null);
+      setLines([]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to receive Operational stock.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <section className="rounded-2xl border border-emerald-200 bg-white shadow-sm overflow-hidden">
+      <div className="p-5 border-b border-emerald-100 bg-emerald-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div><h3 className="font-black text-emerald-950">Operational Inventory Receipts</h3><p className="mt-1 text-xs text-emerald-800">Separate from sellable Stock In. Accepted units post to this branch’s Operational ledger.</p></div>
+        <div className="flex rounded-xl bg-white border border-emerald-100 p-1 w-fit">
+          <button onClick={() => setShowHistory(false)} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${!showHistory ? 'bg-emerald-700 text-white' : 'text-zinc-500'}`}>Pending</button>
+          <button onClick={() => setShowHistory(true)} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${showHistory ? 'bg-emerald-700 text-white' : 'text-zinc-500'}`}>History</button>
+        </div>
+      </div>
+      <div className="divide-y divide-zinc-100">
+        {visibleTransfers.map(transfer => <div key={transfer.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div><p className="font-bold text-zinc-900">{transfer.transferNumber}</p><p className="text-xs text-zinc-500">From HQ Operational Store · {transfer.sourceOrderNumber || 'HQ distribution'} · {transfer.status.replace(/_/g, ' ')}</p></div>
+          <button onClick={() => void openTransfer(transfer)} className="px-4 py-2 rounded-xl border border-emerald-200 text-emerald-800 text-xs font-black hover:bg-emerald-50">{showHistory ? 'View receipt' : canReceive ? 'Receive & verify' : 'View details'}</button>
+        </div>)}
+        {visibleTransfers.length === 0 && <p className="p-8 text-center text-sm text-zinc-400">{showHistory ? 'No Operational receipt history for this branch.' : 'No Operational transfers are awaiting receipt.'}</p>}
+      </div>
+
+      {selectedTransfer && <div className="fixed inset-0 z-[70] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-3xl bg-white shadow-2xl flex flex-col">
+          <div className="p-5 border-b border-zinc-100"><p className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Operational Inventory Transfer</p><h3 className="mt-1 text-xl font-black text-zinc-900">{selectedTransfer.transferNumber}</h3><p className="text-xs text-zinc-500">{selectedTransfer.sourceOrderNumber || 'HQ distribution'} → {selectedTransfer.destinationBranchName || activeBranchId}</p></div>
+          <div className="p-5 overflow-y-auto flex-1">
+            {loading ? <p className="py-8 text-center text-sm text-zinc-500">Loading transfer lines…</p> : <div className="overflow-x-auto border border-zinc-200 rounded-xl">
+              <table className="w-full text-left"><thead className="bg-zinc-50 text-[10px] uppercase text-zinc-500"><tr><th className="p-3">Operational item</th><th className="p-3">Dispatched</th><th className="p-3">Accepted</th><th className="p-3">Queried</th><th className="p-3">Reason</th></tr></thead>
+                <tbody className="divide-y divide-zinc-100">{lines.map(line => {
+                  const values = receiptValues[line.id] || { accepted: 0, queried: 0, reason: '' };
+                  const readOnly = showHistory || line.status !== 'dispatched' || !canReceive;
+                  return <tr key={line.id}>
+                    <td className="p-3"><p className="font-bold text-sm text-zinc-900">{line.itemName}</p><p className="text-[10px] text-zinc-500">{line.masterItemId}</p></td>
+                    <td className="p-3 text-sm font-bold">{line.quantityDispatched} {line.unitOfIssue}</td>
+                    <td className="p-3"><input aria-label={`Accepted quantity ${line.itemName}`} type="number" min="0" max={line.quantityDispatched} step="any" disabled={readOnly} value={values.accepted} onChange={event => { const accepted = Math.max(0, Number(event.target.value)); setReceiptValues(prev => ({ ...prev, [line.id]: { ...prev[line.id], accepted, queried: Math.max(0, line.quantityDispatched - accepted) } })); }} className="w-24 rounded-lg border border-zinc-200 px-2 py-1.5 text-sm" /></td>
+                    <td className="p-3"><input aria-label={`Queried quantity ${line.itemName}`} type="number" readOnly disabled={readOnly} value={values.queried} className="w-24 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm" /></td>
+                    <td className="p-3">{values.queried > 0 && <select disabled={readOnly} value={values.reason} onChange={event => setReceiptValues(prev => ({ ...prev, [line.id]: { ...prev[line.id], reason: event.target.value } }))} className="max-w-48 rounded-lg border border-zinc-200 px-2 py-1.5 text-xs"><option value="">Select reason</option><option value="wrong_item">Wrong item</option><option value="damaged">Damaged</option><option value="short_quantity">Short quantity</option><option value="quality_query">Quality query</option><option value="other">Other</option></select>}</td>
+                  </tr>;
+                })}</tbody>
+              </table>
+            </div>}
+          </div>
+          <div className="p-4 border-t border-zinc-100 bg-zinc-50 flex justify-between items-center gap-3"><p className="text-[11px] text-zinc-500">Queried units are excluded from branch SOH and remain linked to this transfer.</p><div className="flex gap-2"><button onClick={() => setSelectedTransfer(null)} disabled={submitting} className="px-4 py-2 rounded-xl border border-zinc-200 text-xs font-bold">Close</button>{!showHistory && <button onClick={() => void submitReceipt()} disabled={!canReceive || loading || submitting || lines.every(line => line.status !== 'dispatched')} className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-black disabled:opacity-40">{submitting ? 'Saving…' : 'Confirm Operational receipt'}</button>}</div></div>
+        </div>
+      </div>}
+    </section>
+  );
+};
+
+const QueriedItemsTab: React.FC = () => {
+  const { profile, activeBranchId } = useAuth();
+  const [queriedLines, setQueriedLines] = useState<TransferInvoiceLine[]>([]);
+  const [auditQueries, setAuditQueries] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
+  const [auditDateRange, setAuditDateRange] = useState({ 
+    start: '', 
+    end: '' 
+  });
+
+  useEffect(() => {
+    if (profile?.tenantId && activeBranchId) {
+      const unsubscribe = firestoreService.subscribeToCollection<TransferInvoiceLine>('transfer_invoice_lines', profile.tenantId, (data) => {
+        // Filter for lines with queries that haven't been resolved/returned yet
+        const filtered = data.filter(l => l.qty_queried > 0 && l.line_status !== 'returned');
+        setQueriedLines(filtered);
+        setLoading(false);
+      });
+
+      const unsubQueries = firestoreService.subscribeToCollection<any>('stock_queries', profile.tenantId, (data) => {
+        setAuditQueries(data.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+      });
+
+      return () => {
+        unsubscribe();
+        unsubQueries();
+      };
+    }
+  }, [profile?.tenantId, activeBranchId]);
+
+  const filteredAuditQueries = auditQueries.filter(q => {
+    const qDate = new Date(q.timestamp).toISOString().split('T')[0];
+    const matchesStart = !auditDateRange.start || qDate >= auditDateRange.start;
+    const matchesEnd = !auditDateRange.end || qDate <= auditDateRange.end;
+    return matchesStart && matchesEnd;
+  });
+
+  const handleReturnToHQ = async (line: TransferInvoiceLine) => {
+    if (!profile?.tenantId || !activeBranchId) return;
+    setProcessing(true);
+    try {
+      // Pre-fetch HQ batch to avoid getDocs inside transaction
+      const hqBatches = await firestoreService.getDocumentsByQuery<ProductBatch>('product_batches', [
+        { field: 'tenantId', operator: '==', value: profile.tenantId },
+        { field: 'branchId', operator: '==', value: 'HQ' },
+        { field: 'productId', operator: '==', value: line.product_id },
+        { field: 'batchNumber', operator: '==', value: line.batch_number }
+      ]);
+
+      await firestoreService.runTransaction(async (transaction) => {
+        // 1. Create Return Transfer Invoice
+        const returnTransferData: Partial<TransferInvoice> = {
+          tenantId: profile.tenantId,
+          inventoryClass: line.inventoryClass || 'SELLABLE',
+          transfer_number: `RET-HQ-${Date.now()}`,
+          source_branch_id: activeBranchId!,
+          source_branch_name: 'Branch Store',
+          destination_branch_id: 'HQ',
+          destination_branch_name: 'Central HQ',
+          transfer_type: 'query_return',
+          status: 'dispatched',
+          dispatched_by: profile.uid,
+          dispatched_at: new Date().toISOString(),
+          total_value_ugx: (line.qty_queried || 0) * (line.unit_cost_ugx || 0),
+          notes: `Return to HQ for queried item: ${line.product_name}. Reason: ${line.query_reason}`
+        };
+        const returnRef = doc(collection(db, 'transfer_invoices'));
+        transaction.set(returnRef, { ...returnTransferData, createdAt: new Date().toISOString() });
+
+        // 2. Create Return Line
+        const returnLineRef = doc(collection(db, 'transfer_invoice_lines'));
+        transaction.set(returnLineRef, {
+          tenantId: profile.tenantId,
+          inventoryClass: line.inventoryClass || 'SELLABLE',
+          transfer_id: returnRef.id,
+          product_id: line.product_id,
           product_name: line.product_name,
           batch_number: line.batch_number,
           expiry_date: line.expiry_date,
