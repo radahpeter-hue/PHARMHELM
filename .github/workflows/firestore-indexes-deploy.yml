@@ -34,57 +34,17 @@ jobs:
       - name: Select Firebase project
         run: gcloud config set project "$FIREBASE_PROJECT_ID"
 
-      - name: Deploy POS product batch indexes directly
-        shell: bash
-        run: |
-          set -euo pipefail
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-          create_index() {
-            local label="$1"
-            shift
+      - name: Deploy all composite indexes from the repository manifest
+        run: node scripts/deploy-firestore-indexes.mjs
 
-            echo "Creating/checking Firestore index: $label"
-            set +e
-            output=$(gcloud firestore indexes composite create \
-              --project="$FIREBASE_PROJECT_ID" \
-              --database="$FIRESTORE_DATABASE_ID" \
-              --collection-group=product_batches \
-              --query-scope=collection \
-              "$@" \
-              --async \
-              --quiet 2>&1)
-            status=$?
-            set -e
+      - name: Verify Operational Inventory composite indexes are ready
+        timeout-minutes: 15
+        run: node scripts/verify-operational-inventory-indexes.mjs
 
-            echo "$output"
-
-            if [ "$status" -eq 0 ]; then
-              return 0
-            fi
-
-            if echo "$output" | grep -Eqi 'already exists|ALREADY_EXISTS'; then
-              echo "Index already exists: $label"
-              return 0
-            fi
-
-            echo "Failed to create Firestore index: $label" >&2
-            return "$status"
-          }
-
-          create_index "tenant + branch + product" \
-            --field-config=field-path=tenantId,order=ascending \
-            --field-config=field-path=branchId,order=ascending \
-            --field-config=field-path=productId,order=ascending
-
-          create_index "tenant + branch + product + batch number" \
-            --field-config=field-path=tenantId,order=ascending \
-            --field-config=field-path=branchId,order=ascending \
-            --field-config=field-path=productId,order=ascending \
-            --field-config=field-path=batchNumber,order=ascending
-
-      - name: Show product batch index status
-        run: |
-          gcloud firestore indexes composite list \
-            --project="$FIREBASE_PROJECT_ID" \
-            --database="$FIRESTORE_DATABASE_ID" \
-            --format='table(name.basename(),queryScope,state,fields)'
+      - name: Show composite index status
+        run: gcloud firestore indexes composite list --project="$FIREBASE_PROJECT_ID" --database="$FIRESTORE_DATABASE_ID" --format='table(name.basename(),collectionGroup,queryScope,state,fields)'
