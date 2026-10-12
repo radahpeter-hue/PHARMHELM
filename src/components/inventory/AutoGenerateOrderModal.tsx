@@ -41,6 +41,7 @@ import { getNetworkFulfilmentRecommendations, createTransferReservationTx } from
 import { revalidateOrderRun, submitOrderRun } from '../../services/orderSubmissionService';
 import { useAuth } from '../../contexts/AuthContext';
 import { isLegacyOperationalInventorySeed } from '../../utils/operationalInventory';
+import { useOperationalInventoryFeature } from '../../hooks/useOperationalInventoryFeature';
 
 interface AutoGenerateOrderModalProps {
   isOpen: boolean;
@@ -64,6 +65,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   fixedBranchId
 }) => {
   const { profile, activeBranchId } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
   
   // Wizard steps: 'config' | 'processing' | 'results' | 'success'
   const [step, setStep] = useState<'config' | 'processing' | 'results' | 'success'>('config');
@@ -116,7 +118,9 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
     if (isOpen) {
       setStep('config');
       setCoverageDays(initialCoverageDays);
-      setProductScopes(initialProductScopes);
+      setProductScopes(operationalInventoryEnabled
+        ? initialProductScopes
+        : initialProductScopes.filter(scope => scope !== 'operational_inventory'));
       setCategoryScope(initialCategory);
       if (fixedBranchId || activeBranchId) {
         setSelectedBranchId(fixedBranchId || activeBranchId || '');
@@ -126,7 +130,13 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
         setCheckOtherBranches(false);
       }
     }
-  }, [isOpen, initialCoverageDays, initialProductScopes, initialCategory, activeBranchId, fixedBranchId, mode]);
+  }, [isOpen, initialCoverageDays, initialProductScopes, initialCategory, activeBranchId, fixedBranchId, mode, operationalInventoryEnabled]);
+
+  useEffect(() => {
+    if (!operationalInventoryEnabled) {
+      setProductScopes(current => current.filter(scope => scope !== 'operational_inventory'));
+    }
+  }, [operationalInventoryEnabled]);
 
   // Fetch products on load
   useEffect(() => {
@@ -354,7 +364,8 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
           wasOverridden: false,
           overrideReason: null,
           overriddenBy: null,
-          overriddenAt: null
+          overriddenAt: null,
+          inventoryClass: 'SELLABLE'
         };
 
         results.push(runLine);
@@ -404,6 +415,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
           tenantId,
           runId: tempRunId,
           productId: item.id,
+          ...(item.masterItemId ? { masterItemId: item.masterItemId } : {}),
           productName: item.name,
           sku: item.uniqueId || '',
           genericName: 'Operational Inventory',
@@ -437,7 +449,8 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
           overrideReason: null,
           overriddenBy: null,
           overriddenAt: null,
-          isOperational: true
+          isOperational: true,
+          inventoryClass: 'OPERATIONAL'
         });
         externalCount++;
       }

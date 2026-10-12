@@ -34,6 +34,19 @@ on:
       - 'tests/firebase-deploy-rules-drift.test.ts'
       - 'src/services/posCheckoutTierService.ts'
       - 'src/services/sellingTierService.ts'
+      - 'src/components/inventory/OperationalInventoryTab.tsx'
+      - 'src/components/procurement/**'
+      - 'src/hooks/useOperationalInventoryFeature.ts'
+      - 'src/services/operational*.ts'
+      - 'src/services/orderSubmissionService.ts'
+      - 'src/services/procurementFinanceService.ts'
+      - 'src/pages/Inventory.tsx'
+      - 'src/pages/Procurement.tsx'
+      - 'src/pages/Settings.tsx'
+      - 'src/pages/StockInOut.tsx'
+      - 'scripts/operational-inventory*.mjs'
+      - 'scripts/migrate-operational-inventory-v2.mjs'
+      - 'tests/operational-*.test.ts'
       - 'src/types.ts'
       - 'src/types/sellingTier.ts'
       - 'firestore.rules'
@@ -174,3 +187,6 @@ jobs:
 
       - name: Enforce POS revision RBAC in Firestore emulator
         run: npx firebase emulators:exec --only firestore --project pharmhelm-pos-v2-revision-rbac "node scripts/pos-v2-revision-rbac-rules-emulator.mjs"
+
+      - name: Enforce Operational Inventory class and branch boundaries in Firestore emulator
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-operational-inventory-v2-rules "node scripts/operational-inventory-rules-emulator.mjs"

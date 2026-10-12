@@ -279,6 +279,8 @@ export interface MasterRegistry {
 
 export interface Product {
   id: string;
+  /** New product documents are always SELLABLE; optional for historical rows. */
+  inventoryClass?: 'SELLABLE';
   tenantId: string;
   productId: string;
   sku: string;
@@ -503,8 +505,18 @@ export interface OperationalInventory {
   id: string;
   tenantId: string;
   branchId: string;
+  /** Tenant-wide identity shared by HQ and branch location records. */
+  masterItemId?: string;
+  /** New operational master rows explicitly declare their business stream. */
+  inventoryClass?: 'OPERATIONAL';
+  operationalType?: 'CONSUMABLE_OPERATIONAL' | 'FIXED_ASSET';
   type: 'fixed' | 'non-fixed';
   name: string;
+  category?: string;
+  sku?: string;
+  description?: string;
+  condition?: string;
+  status?: string;
   unitPerPack: number;
   costPerPack: number;
   unitOfIssue: string;
@@ -516,17 +528,135 @@ export interface OperationalInventory {
   utilizationTime?: number;
 }
 
+export interface OperationalInventoryMaster {
+  id: string;
+  tenantId: string;
+  inventoryClass: 'OPERATIONAL';
+  operationalType: 'CONSUMABLE_OPERATIONAL' | 'FIXED_ASSET';
+  type: 'fixed' | 'non-fixed';
+  name: string;
+  category?: string;
+  uniqueId: string;
+  sku?: string;
+  unitPerPack: number;
+  unitOfIssue: string;
+  description?: string;
+  supplier?: string;
+  hqLocationItemId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface OperationalInventoryUsage {
   id: string;
   tenantId: string;
   branchId: string;
   inventoryId: string;
+  inventoryClass?: 'OPERATIONAL';
+  operationalType?: 'CONSUMABLE_OPERATIONAL';
+  itemName?: string;
   issuedAmount: number;
+  unitOfIssue?: string;
+  unitCostUGX?: number;
   cost: number;
   timestamp: string;
   period: string;
+  department?: string;
+  recipient?: string;
+  purpose?: string;
+  reference?: string;
+  remainingStock?: number;
+  movementId?: string;
+  idempotencyKey?: string;
+  requestPayloadKey?: string;
   staffId?: string;
   staffName?: string;
+}
+
+export interface OperationalInventoryMovement {
+  id: string;
+  tenantId: string;
+  inventoryClass: 'OPERATIONAL';
+  itemId: string;
+  masterItemId?: string;
+  itemName: string;
+  locationId: string;
+  branchId: string;
+  movementType: 'RECEIPT' | 'DISPATCH' | 'RETURN' | 'TRANSFER_IN' | 'TRANSFER_OUT' | 'USAGE' | 'ADJUSTMENT' | 'WRITE_OFF';
+  quantityDelta: number;
+  balanceBefore: number;
+  balanceAfter: number;
+  unitCostUGX: number;
+  totalValueUGX: number;
+  reference: string;
+  reason?: string;
+  idempotencyKey: string;
+  actorId: string;
+  actorName?: string;
+  sourceTransactionId?: string;
+  sourceLineId?: string;
+  createdAt: any;
+}
+
+export type OperationalTransferStatus = 'draft' | 'dispatching' | 'dispatched' | 'partially_received' | 'received' | 'queried';
+
+export interface OperationalTransfer {
+  id: string;
+  tenantId: string;
+  inventoryClass: 'OPERATIONAL';
+  transferNumber: string;
+  sourceLocationId: string;
+  sourceBranchId: string;
+  destinationBranchId: string;
+  transferType?: 'ORDER_FULFILLMENT' | 'HQ_DIRECT' | 'BRANCH_RETURN';
+  returnReason?: string;
+  receiptMovementId?: string;
+  requestPayloadKey?: string;
+  destinationBranchName?: string;
+  sourceOrderId?: string;
+  sourceOrderNumber?: string;
+  fulfillmentSource?: 'HQ_OPERATIONAL' | 'EXTERNAL_SUPPLIER' | 'HQ_DIRECT' | 'BRANCH_RETURN';
+  remainingExternalPacks?: number;
+  status: OperationalTransferStatus;
+  expectedLineCount: number;
+  totalValueUGX: number;
+  dispatchedBy: string;
+  dispatchedByName?: string;
+  dispatchedAt?: string;
+  receivedBy?: string;
+  receivedByName?: string;
+  receivedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OperationalTransferLine {
+  id: string;
+  tenantId: string;
+  inventoryClass: 'OPERATIONAL';
+  transferId: string;
+  destinationBranchId: string;
+  masterItemId: string;
+  sourceItemId: string;
+  destinationItemId: string;
+  itemName: string;
+  sourceOrderLineId?: string;
+  quantityDispatched: number;
+  quantityAccepted?: number;
+  quantityQueried?: number;
+  unitOfIssue: string;
+  unitCostUGX: number;
+  totalValueUGX: number;
+  dispatchMovementId: string;
+  receiptMovementId: string;
+  status: 'prepared' | 'dispatched' | 'received' | 'queried';
+  queryReason?: string;
+  dispatchedBy?: string;
+  dispatchedAt?: string;
+  receivedBy?: string;
+  receivedAt?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface OperationalInventoryMaintenance {
@@ -703,6 +833,7 @@ export interface InstitutionRegistry {
   tin?: string;
   whtExempt?: boolean;
   discountRate?: number;
+  inventoryCapabilities?: ('DRUGS' | 'COSMETICS' | 'CONSUMABLES' | 'DEVICES' | 'NON_SELLABLE_OPERATIONAL')[];
 }
 
 export interface Prescriber {
@@ -972,6 +1103,8 @@ export interface PlatformAuditLog {
 export interface StockOrder {
   id: string;
   tenantId: string;
+  /** Optional only for backward compatibility with historical orders. */
+  inventoryClass?: 'SELLABLE' | 'OPERATIONAL';
   order_number: string;
   requesting_branch_id: string;
   requesting_branch_name?: string;
@@ -992,11 +1125,18 @@ export interface StockOrder {
 export interface StockOrderLine {
   id: string;
   tenantId: string;
+  /** Optional only for backward compatibility with historical order lines. */
+  inventoryClass?: 'SELLABLE' | 'OPERATIONAL';
+  /** Tenant-wide Operational item identity; product_id remains the source location record for legacy readers. */
+  masterItemId?: string;
   order_id: string;
   product_id: string;
   product_name: string;
   qty_ordered: number;
   qty_supplied?: number;
+  qty_received?: number;
+  qty_received_units?: number;
+  grn_ids?: string[];
   unit_cost_ugx: number;
   quoted_price_ugx?: number;
   line_total_ugx: number;
@@ -1005,6 +1145,11 @@ export interface StockOrderLine {
   supplier_name?: string;
   supplier_type?: 'external' | 'internal_hq' | 'internal_warehouse';
   original_qty?: number;
+  splitFromLineId?: string;
+  internal_fulfillment_transfer_id?: string;
+  internal_fulfilled_packs?: number;
+  internal_fulfilled_units?: number;
+  operational_external_transfer_id?: string;
   notes?: string;
   isOperational?: boolean;
 }
@@ -1012,12 +1157,16 @@ export interface StockOrderLine {
 export interface GRNRecord {
   id: string;
   tenantId: string;
+  inventoryClass?: 'SELLABLE' | 'OPERATIONAL';
+  operationalType?: 'CONSUMABLE_OPERATIONAL' | 'FIXED_ASSET';
   grn_number: string;
   order_id?: string;
   supplier_id: string;
   supplier_name?: string;
   invoice_number?: string;
   invoice_date?: string;
+  destination_store_id?: string;
+  financial_posting_status?: string;
   receivedAt: string;
   receivedBy: string;
   status: 'draft' | 'completed' | 'verified';
@@ -1026,17 +1175,23 @@ export interface GRNRecord {
   total_value_ugx: number;
   inputVat?: number;
   whtAmount?: number;
-  items: GRNLine[];
+  items?: GRNLine[];
+  itemCount?: number;
   notes?: string;
 }
 
 export interface GRNLine {
+  inventoryClass?: 'SELLABLE' | 'OPERATIONAL';
+  operationalType?: 'CONSUMABLE_OPERATIONAL' | 'FIXED_ASSET';
+  masterItemId?: string;
   product_id: string;
   product_name: string;
   qty_ordered: number;
   qty_received: number;
+  qty_received_units?: number;
   unit_cost_ugx: number;
   total_cost_ugx: number;
+  unit_cost_issue_ugx?: number;
   batch_number?: string;
   expiry_date?: string;
   status: 'received' | 'queried';
@@ -1073,6 +1228,7 @@ export interface CreditLedgerEntry {
 export interface TransferInvoice {
   id: string;
   tenantId: string;
+  inventoryClass?: 'SELLABLE' | 'OPERATIONAL';
   transfer_number: string;
   source_branch_id: string;
   source_branch_name?: string;
@@ -1094,6 +1250,7 @@ export interface TransferInvoice {
 export interface TransferInvoiceLine {
   id: string;
   tenantId: string;
+  inventoryClass?: 'SELLABLE' | 'OPERATIONAL';
   transfer_id: string;
   product_id: string;
   product_name: string;
@@ -1776,6 +1933,7 @@ export interface AutoGenerateOrderLine {
   tenantId: string;
   runId: string;
   productId: string;
+  masterItemId?: string;
   productName: string;
   sku: string;
   genericName: string;
@@ -1812,4 +1970,6 @@ export interface AutoGenerateOrderLine {
   overriddenAt: string | null;
   isManualAdd?: boolean;
   isOperational?: boolean;
+  inventoryClass?: 'SELLABLE' | 'OPERATIONAL';
 }
+

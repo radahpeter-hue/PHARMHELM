@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { where } from 'firebase/firestore';
 import { Plus, Search, Package, Settings, History, Trash2, Edit2, X } from 'lucide-react';
-import { OperationalInventory, OperationalInventoryUsage, OperationalInventoryMaintenance } from '../../types';
+import { OperationalInventory, OperationalInventoryMaster, OperationalInventoryUsage, OperationalInventoryMaintenance } from '../../types';
 import { firestoreService } from '../../services/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { hasAnyRole } from '../../utils/roles';
@@ -9,6 +10,9 @@ import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { isLegacyOperationalInventorySeed } from '../../utils/operationalInventory';
+import { operationalTypeForLegacyType } from '../../services/inventoryClassification';
+import { saveOperationalLocationItem } from '../../services/operationalInventoryMasterService';
+import { logOperationalUsage } from '../../services/operationalInventoryUsageService';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -30,20 +34,24 @@ const OperationalInventoryTab: React.FC = () => {
   const isCEO = hasAnyRole(profile, ['CEO', 'CEO / MD', 'owner']);
 
   useEffect(() => {
-    if (profile?.tenantId) {
-      const unsubscribeInv = firestoreService.subscribeToCollection<OperationalInventory>(
+    if (profile?.tenantId && activeBranchId) {
+      const branchScope = [where('branchId', '==', activeBranchId)];
+      const unsubscribeInv = firestoreService.subscribeToCollectionByQuery<OperationalInventory>(
         'operational_inventory',
         profile.tenantId,
+        branchScope,
         data => setInventory(data.filter(item => !isLegacyOperationalInventorySeed(item)))
       );
-      const unsubscribeUsage = firestoreService.subscribeToCollection<OperationalInventoryUsage>(
+      const unsubscribeUsage = firestoreService.subscribeToCollectionByQuery<OperationalInventoryUsage>(
         'operational_inventory_usage',
         profile.tenantId,
+        branchScope,
         setUsageLogs
       );
-      const unsubscribeMaintenance = firestoreService.subscribeToCollection<OperationalInventoryMaintenance>(
+      const unsubscribeMaintenance = firestoreService.subscribeToCollectionByQuery<OperationalInventoryMaintenance>(
         'operational_inventory_maintenance',
         profile.tenantId,
+        branchScope,
         setMaintenanceLogs
       );
       return () => {
@@ -52,6 +60,9 @@ const OperationalInventoryTab: React.FC = () => {
         unsubscribeMaintenance();
       };
     }
+    setInventory([]);
+    setUsageLogs([]);
+    setMaintenanceLogs([]);
   }, [profile?.tenantId, activeBranchId]);
 
   const filteredInventory = inventory.filter(item => 
@@ -203,7 +214,7 @@ const OperationalInventoryTab: React.FC = () => {
               <tr className="bg-zinc-50/50 border-b border-zinc-100">
                 <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Time</th>
                 <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Item</th>
-                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Period</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Department / Purpose</th>
                 <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Qty Issued</th>
                 <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Cost</th>
               </tr>
@@ -221,9 +232,7 @@ const OperationalInventoryTab: React.FC = () => {
                     <td className="px-6 py-4">
                       <p className="font-bold text-zinc-900">{item?.name || 'Unknown'}</p>
                     </td>
-                    <td className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">
-                      {log.period}
-                    </td>
+                    <td className="px-6 py-4 text-xs text-zinc-600"><strong>{log.department || log.period}</strong>{log.purpose && <p className="mt-1 text-[10px] text-zinc-400">{log.purpose}{log.recipient ? ` · For ${log.recipient}` : ''}</p>}</td>
                     <td className="px-6 py-4 text-xs font-black text-zinc-900 text-right">
                       {log.issuedAmount}
                     </td>
@@ -250,7 +259,7 @@ const OperationalInventoryTab: React.FC = () => {
         <UsageLogModal 
           isOpen={isUsageModalOpen}
           onClose={() => setIsUsageModalOpen(false)}
-          inventory={inventory}
+          inventory={filteredInventory}
         />
       )}
 
@@ -434,6 +443,9 @@ const DetailsModal: React.FC<{
 // Sub-modals for Operational Inventory
 const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item: OperationalInventory | null }> = ({ isOpen, onClose, item }) => {
   const { profile, activeBranchId } = useAuth();
+  const [masters, setMasters] = useState<OperationalInventoryMaster[]>([]);
+  const [linkExisting, setLinkExisting] = useState(false);
+  const [selectedMasterId, setSelectedMasterId] = useState('');
   const [formData, setFormData] = useState<Partial<OperationalInventory>>({
     name: '',
     type: 'non-fixed',
@@ -450,19 +462,60 @@ const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item:
     ...item
   });
 
+  useEffect(() => {
+    if (!profile?.tenantId) return;
+    return firestoreService.subscribeToCollection<OperationalInventoryMaster>(
+      'operational_inventory_masters', profile.tenantId, setMasters
+    );
+  }, [profile?.tenantId]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setFormData({
+      name: '', type: 'non-fixed', category: '', unitPerPack: 1, costPerPack: 0,
+      unitOfIssue: '', supplier: '', quantityInStock: 0, uniqueId: '', description: '',
+      condition: 'New', status: 'In Use', ...item
+    });
+    setSelectedMasterId(item?.masterItemId || '');
+    setLinkExisting(Boolean(item?.masterItemId));
+  }, [isOpen, item]);
+
+  const selectMaster = (masterId: string) => {
+    setSelectedMasterId(masterId);
+    const master = masters.find(row => row.id === masterId);
+    if (!master) return;
+    setFormData(current => ({
+      ...current,
+      name: master.name,
+      type: master.type,
+      category: master.category || '',
+      unitPerPack: master.unitPerPack,
+      unitOfIssue: master.unitOfIssue,
+      supplier: master.supplier || '',
+      uniqueId: master.uniqueId,
+      description: master.description || '',
+      operationalType: master.operationalType,
+      inventoryClass: 'OPERATIONAL'
+    }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile?.tenantId) return;
 
     try {
+      const branchId = activeBranchId || profile.branchId;
+      if (!branchId) throw new Error('Select a branch or HQ location before registering the item.');
       const data = { 
         ...formData, 
+        inventoryClass: 'OPERATIONAL' as const,
+        operationalType: operationalTypeForLegacyType(formData.type || 'non-fixed'),
         tenantId: profile.tenantId, 
-        branchId: activeBranchId || profile.branchId || null
+        branchId
       };
 
       // Auto-generate ID if missing
-      if (!data.uniqueId) {
+      if (!data.uniqueId && !(linkExisting && selectedMasterId)) {
         const prefix = data.type === 'fixed' ? 'AST' : 'OPS';
         const randomNum = Math.floor(100000 + Math.random() * 900000);
         data.uniqueId = `${prefix}-${randomNum}`;
@@ -474,26 +527,25 @@ const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item:
       }
 
       if (item?.id) {
-        await firestoreService.updateDocument('operational_inventory', item.id, data);
+        await saveOperationalLocationItem({
+          tenantId: profile.tenantId,
+          branchId,
+          actor: { uid: profile.uid, name: profile.displayName },
+          itemId: item.id,
+          masterItemId: linkExisting && selectedMasterId ? selectedMasterId : item.masterItemId || item.id,
+          data
+        });
         toast.success('Item updated');
       } else {
-        await firestoreService.addDocument('operational_inventory', data);
-        
-        // Log capital expenditure for new fixed assets
-        if (data.type === 'fixed' && data.cost) {
-          await firestoreService.addDocument('finance_ledger', {
-            tenantId: profile.tenantId,
-            branch_id: profile.branchId || null,
-            entry_type: 'expense',
-            amount_ugx: data.cost,
-            balance_ugx: 0,
-            description: `Capital Expenditure: ${data.name} (Fixed Asset)`,
-            reference_type: 'operational_inventory_asset',
-            staff_id: profile.uid,
-            entry_date: new Date().toISOString(),
-            created_by: profile.displayName
-          });
-        }
+        await saveOperationalLocationItem({
+          tenantId: profile.tenantId,
+          branchId,
+          actor: { uid: profile.uid, name: profile.displayName },
+          ...(linkExisting && selectedMasterId ? { masterItemId: selectedMasterId } : {}),
+          data
+        });
+        // Registering an item is not a financial acquisition. Fixed asset
+        // acquisition events are emitted only when an Operational GRN finalizes.
         toast.success('Item added');
       }
       onClose();
@@ -504,6 +556,7 @@ const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item:
 
   const nonFixedCategories = ['Stationery', 'Packaging', 'Cleaning & Hygiene', 'Kitchen & Canteen', 'Other'];
   const fixedCategories = ['Furniture & Fittings', 'IT Equipment', 'Office Equipment', 'Kitchen Equipment', 'Security Equipment', 'Medical Equipment', 'Other'];
+  const identityLocked = Boolean((!item && linkExisting) || (item?.masterItemId && item.masterItemId !== item.id) || (item && !item.masterItemId && linkExisting));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/40 backdrop-blur-sm">
@@ -512,21 +565,38 @@ const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item:
           <h2 className="text-xl font-black text-zinc-900 uppercase tracking-tight">{item ? 'Edit Item' : 'Add Item'}</h2>
         </div>
         <form onSubmit={handleSubmit} className="p-8 space-y-6 max-h-[80vh] overflow-y-auto">
+          {(!item || !item.masterItemId) && (
+            <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4 space-y-3">
+              <p className="text-[10px] font-black uppercase tracking-widest text-sky-900">Tenant-wide Operational item identity</p>
+              <div className="flex flex-wrap gap-4 text-xs font-bold text-sky-900">
+                <label className="flex items-center gap-2"><input type="radio" checked={!linkExisting} onChange={() => { setLinkExisting(false); setSelectedMasterId(''); }} />Register a new item</label>
+                <label className="flex items-center gap-2"><input type="radio" checked={linkExisting} onChange={() => setLinkExisting(true)} />Link this location to an existing item</label>
+              </div>
+              {linkExisting && (
+                <select required value={selectedMasterId} onChange={event => selectMaster(event.target.value)} className="w-full rounded-xl border border-sky-200 bg-white px-3 py-2 text-sm">
+                  <option value="">Select tenant Operational item</option>
+                  {masters.map(master => <option key={master.id} value={master.id}>{master.name} · {master.uniqueId}</option>)}
+                </select>
+              )}
+              <p className="text-[10px] text-sky-700">Use the same item identity at HQ and branches. Each location keeps its own on-hand balance.</p>
+            </div>
+          )}
+          {identityLocked && <p className="rounded-xl bg-amber-50 px-3 py-2 text-[10px] font-bold text-amber-800">This location is linked to the tenant-wide item identity. Its name, subtype and issue unit are controlled by that shared identity.</p>}
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2 space-y-1">
               <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Item Name</label>
-              <input required className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
+              <input required disabled={identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
             </div>
             <div className="space-y-1">
               <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Type</label>
-              <select className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.type || 'non-fixed'} onChange={e => setFormData({...formData, type: e.target.value as any, category: ''})}>
+              <select disabled={Boolean(item) || identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.type || 'non-fixed'} onChange={e => setFormData({...formData, type: e.target.value as any, category: ''})}>
                 <option value="fixed">Fixed</option>
                 <option value="non-fixed">Non-fixed</option>
               </select>
             </div>
             <div className="space-y-1">
               <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Category</label>
-              <select required className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.category || ''} onChange={e => setFormData({...formData, category: e.target.value})}>
+              <select required disabled={identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.category || ''} onChange={e => setFormData({...formData, category: e.target.value})}>
                 <option value="">Select Category</option>
                 {(formData.type === 'fixed' ? fixedCategories : nonFixedCategories).map(cat => (
                   <option key={cat} value={cat}>{cat}</option>
@@ -535,11 +605,11 @@ const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item:
             </div>
             <div className="space-y-1">
               <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Unit of Issue</label>
-              <input required className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.unitOfIssue || ''} onChange={e => setFormData({...formData, unitOfIssue: e.target.value})} placeholder="e.g., sheet, roll, bag" />
+              <input required disabled={identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.unitOfIssue || ''} onChange={e => setFormData({...formData, unitOfIssue: e.target.value})} placeholder="e.g., sheet, roll, bag" />
             </div>
             <div className="space-y-1">
               <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Supplier</label>
-              <input className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.supplier || ''} onChange={e => setFormData({...formData, supplier: e.target.value})} />
+              <input disabled={identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.supplier || ''} onChange={e => setFormData({...formData, supplier: e.target.value})} />
             </div>
 
             {formData.type === 'fixed' ? (
@@ -579,14 +649,14 @@ const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item:
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Asset ID (Optional)</label>
-                  <input className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.uniqueId || ''} onChange={e => setFormData({...formData, uniqueId: e.target.value})} placeholder="Auto-generated if empty" />
+                  <input disabled={identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.uniqueId || ''} onChange={e => setFormData({...formData, uniqueId: e.target.value})} placeholder="Auto-generated if empty" />
                 </div>
               </>
             ) : (
               <>
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Units Per Pack</label>
-                  <input required type="number" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.unitPerPack ?? 1} onChange={e => setFormData({...formData, unitPerPack: Number(e.target.value)})} />
+                  <input required disabled={identityLocked} type="number" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.unitPerPack ?? 1} onChange={e => setFormData({...formData, unitPerPack: Number(e.target.value)})} />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cost Per Pack</label>
@@ -598,7 +668,7 @@ const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item:
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Item ID (Optional)</label>
-                  <input className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.uniqueId || ''} onChange={e => setFormData({...formData, uniqueId: e.target.value})} placeholder="Auto-generated if empty" />
+                  <input disabled={identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.uniqueId || ''} onChange={e => setFormData({...formData, uniqueId: e.target.value})} placeholder="Auto-generated if empty" />
                 </div>
               </>
             )}
@@ -695,10 +765,15 @@ const MaintenanceLogModal: React.FC<{ isOpen: boolean; onClose: () => void; item
 
 const UsageLogModal: React.FC<{ isOpen: boolean; onClose: () => void; inventory: OperationalInventory[] }> = ({ isOpen, onClose, inventory }) => {
   const { profile, activeBranchId } = useAuth();
+  const [requestId, setRequestId] = useState('');
+  const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
     inventoryId: '',
     issuedAmount: 0,
-    period: 'daily' as any
+    department: '',
+    recipient: '',
+    purpose: '',
+    reference: ''
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -708,48 +783,25 @@ const UsageLogModal: React.FC<{ isOpen: boolean; onClose: () => void; inventory:
     const item = inventory.find(i => i.id === formData.inventoryId);
     if (!item) return;
 
-    const costPerUnit = (item.costPerPack || 0) / (item.unitPerPack || 1);
-    const totalCost = costPerUnit * formData.issuedAmount;
-
+    const idempotencyRequest = requestId || globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    if (!requestId) setRequestId(idempotencyRequest);
+    setSaving(true);
     try {
-      const logData: Omit<OperationalInventoryUsage, 'id'> = {
-        tenantId: profile.tenantId,
-        branchId: activeBranchId || null,
-        inventoryId: formData.inventoryId,
-        issuedAmount: formData.issuedAmount,
-        cost: totalCost,
-        timestamp: new Date().toISOString(),
-        period: formData.period,
-        staffId: profile.uid,
-        staffName: profile.displayName
-      };
-
-      await firestoreService.addDocument('operational_inventory_usage', logData);
-      
-      // Update stock
-      await firestoreService.updateDocument('operational_inventory', item.id, {
-        quantityInStock: item.quantityInStock - formData.issuedAmount
+      const result = await logOperationalUsage({
+        tenantId: profile.tenantId, branchId: activeBranchId || item.branchId,
+        itemId: item.id, quantity: formData.issuedAmount,
+        department: formData.department, recipient: formData.recipient,
+        purpose: formData.purpose, reference: formData.reference,
+        requestId: idempotencyRequest,
+        actor: { uid: profile.uid, name: profile.displayName || profile.full_name || profile.name || profile.uid }
       });
-
-      // Fill costs ledger in finance module
-      await firestoreService.addDocument('finance_ledger', {
-        tenantId: profile.tenantId,
-        branch_id: activeBranchId || null,
-        entry_type: 'expense',
-        amount_ugx: totalCost,
-        balance_ugx: 0, // This would normally be calculated based on previous balance
-        description: `Operational Inventory Usage: ${item.name} (${formData.issuedAmount} ${item.unitOfIssue})`,
-        reference_id: formData.inventoryId,
-        reference_type: 'operational_inventory_usage',
-        staff_id: profile.uid,
-        entry_date: new Date().toISOString(),
-        created_by: profile.displayName
-      });
-
-      toast.success('Usage logged successfully');
+      toast.success(`Usage recorded. Remaining stock: ${result.remainingStock} ${item.unitOfIssue}. No expense was posted; cost is recognized at GRN finalization.`);
+      setRequestId('');
       onClose();
     } catch (error) {
-      toast.error('Failed to log usage');
+      toast.error(error instanceof Error ? error.message : 'Failed to log Operational usage.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -763,30 +815,25 @@ const UsageLogModal: React.FC<{ isOpen: boolean; onClose: () => void; inventory:
           <div className="space-y-4">
             <div className="space-y-1">
               <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Select Item</label>
-              <select required className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.inventoryId} onChange={e => setFormData({...formData, inventoryId: e.target.value})}>
+              <select required className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.inventoryId} onChange={e => { setFormData({...formData, inventoryId: e.target.value}); setRequestId(''); }}>
                 <option value="">Select Item</option>
-                {inventory.filter(i => i.type === 'non-fixed').map(i => <option key={i.id} value={i.id}>{i.name} ({i.quantityInStock} {i.unitOfIssue} left)</option>)}
+                {inventory.filter(i => i.operationalType === 'CONSUMABLE_OPERATIONAL' || (!i.operationalType && i.type === 'non-fixed')).map(i => <option key={i.id} value={i.id}>{i.name} ({i.quantityInStock} {i.unitOfIssue} left)</option>)}
               </select>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
                 <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Amount Issued</label>
-                <input required type="number" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.issuedAmount} onChange={e => setFormData({...formData, issuedAmount: Number(e.target.value)})} />
+                <input required type="number" min="0.001" max={Number(inventory.find(item => item.id === formData.inventoryId)?.quantityInStock || 0)} step="any" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.issuedAmount || ''} onChange={e => { setFormData({...formData, issuedAmount: Number(e.target.value)}); setRequestId(''); }} />
               </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Logging Period</label>
-                <select className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.period} onChange={e => setFormData({...formData, period: e.target.value as any})}>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="bi-weekly">Bi-weekly</option>
-                  <option value="monthly">Monthly</option>
-                </select>
-              </div>
+              <label className="space-y-1 block"><span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Department</span><input required maxLength={120} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.department} onChange={e => { setFormData({...formData, department: e.target.value}); setRequestId(''); }} /></label>
+              <label className="space-y-1 block"><span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Recipient (optional)</span><input maxLength={120} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.recipient} onChange={e => { setFormData({...formData, recipient: e.target.value}); setRequestId(''); }} /></label>
+              <label className="space-y-1 block"><span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Purpose</span><input required maxLength={300} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.purpose} onChange={e => { setFormData({...formData, purpose: e.target.value}); setRequestId(''); }} /></label>
+              <label className="space-y-1 block"><span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Reference</span><input required maxLength={120} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.reference} onChange={e => { setFormData({...formData, reference: e.target.value}); setRequestId(''); }} placeholder="Issue voucher or internal reference" /></label>
             </div>
           </div>
           <div className="flex justify-end gap-3 pt-4">
-            <button type="button" onClick={onClose} className="px-6 py-2 border border-zinc-200 rounded-xl font-bold text-zinc-600 uppercase text-xs tracking-widest">Cancel</button>
-            <button type="submit" className="px-8 py-2 bg-zinc-900 text-white rounded-xl font-bold uppercase text-xs tracking-widest shadow-lg shadow-zinc-900/20">Log Usage</button>
+            <button type="button" onClick={onClose} disabled={saving} className="px-6 py-2 border border-zinc-200 rounded-xl font-bold text-zinc-600 uppercase text-xs tracking-widest">Cancel</button>
+            <button type="submit" disabled={saving} className="px-8 py-2 bg-zinc-900 text-white rounded-xl font-bold uppercase text-xs tracking-widest shadow-lg shadow-zinc-900/20 disabled:opacity-50">{saving ? 'Recording…' : 'Log Usage'}</button>
           </div>
         </form>
       </div>

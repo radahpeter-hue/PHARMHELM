@@ -107,6 +107,7 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
       const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...editableFields } = mirroredDraft as any;
       const productData = {
         ...editableFields,
+        inventoryClass: 'SELLABLE' as const,
         tenantId: profile.tenantId,
         productId: mirroredDraft.productId || `PRD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
         sku: mirroredDraft.sku || `SKU-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
@@ -622,3 +623,4 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
 };
 
 export default ProductModal;
+

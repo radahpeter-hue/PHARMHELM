@@ -92,6 +92,9 @@ async function releasePettyCashLease(tenantId: string, postingId: string) {
 export async function processProcurementGrn(input: ProcessGrnInput): Promise<ProcessGrnResult> {
   const { tenantId, order, lines, editedLines, paymentType, user } = input;
   if (!tenantId || !order.id) throw new Error('The tenant and stock order are required.');
+  if (order.inventoryClass === 'OPERATIONAL' || order.category === 'non_sellable') {
+    throw new Error('Operational orders must use the Operational GRN workflow; the sellable procurement processor is blocked for this order.');
+  }
   if (!input.invoiceNumber.trim()) throw new Error('The supplier invoice number is required.');
   if (lines.length > 150) throw new Error('This GRN is too large for one atomic posting. Split it into GRNs of 150 product lines or fewer.');
 
@@ -311,7 +314,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
 
     if (receivedItems.length) {
       transaction.set(refs.transfer, {
-        tenantId, transfer_number: `TI-${grnNumber}`, order_id: order.id, grn_id: ids.grnId,
+        tenantId, inventoryClass: 'SELLABLE', transfer_number: `TI-${grnNumber}`, order_id: order.id, grn_id: ids.grnId,
         invoice_id: financeValue > 0 ? ids.invoiceId : null, invoice_ref: invoiceRefValue,
         source_branch_id: isHqDestination ? 'PROCUREMENT' : 'HQ',
         source_branch_name: isHqDestination ? supplierName : 'Central HQ',
@@ -323,7 +326,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
       receivedItems.forEach(item => {
         const lineId = `${ids.transferId}_${stablePart(item.line_id)}`;
         transaction.set(doc(db, 'transfer_invoice_lines', lineId), {
-          tenantId, transfer_id: ids.transferId, grn_id: ids.grnId, invoice_id: ids.invoiceId,
+          tenantId, inventoryClass: 'SELLABLE', transfer_id: ids.transferId, grn_id: ids.grnId, invoice_id: ids.invoiceId,
           source_line_id: item.line_id, product_id: item.product_id, product_name: item.product_name,
           qty_dispatched: item.qty_received, unit_cost_ugx: item.unit_cost_ugx,
           total_cost_ugx: item.total_cost_ugx, batch_number: item.batch_number,

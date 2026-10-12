@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Filter, MoreVertical, Edit2, Trash2, Package, X, TrendingUp, History, Activity, Settings, ClipboardList, ArrowLeftRight, BarChart3, Building2 } from 'lucide-react';
+import { Plus, Search, Filter, MoreVertical, Edit2, Trash2, Package, X, TrendingUp, History, Activity, ClipboardList, ArrowLeftRight, BarChart3, Building2 } from 'lucide-react';
 import { Product, ProductBatch, InventoryMovement, SystemSettings } from '../types';
 import { firestoreService } from '../services/firestore';
 import { useAuth } from '../contexts/AuthContext';
@@ -10,6 +10,7 @@ import ProductStockcard from '../components/inventory/ProductStockcard';
 import StockManagementTab from '../components/inventory/StockManagementTab';
 import OperationalInventoryTab from '../components/inventory/OperationalInventoryTab';
 import ReportHubTab from '../components/inventory/ReportHubTab';
+import { useOperationalInventoryFeature } from '../hooks/useOperationalInventoryFeature';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -22,6 +23,7 @@ type TabType = 'master' | 'stock' | 'operational' | 'reports';
 const Inventory: React.FC = () => {
   const { profile, activeBranchId, activeBranch, hasPermission } = useAuth();
   const canOperateInventory = hasPermission('inventory', 'operate');
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [activeTab, setActiveTab] = useState<TabType>('master');
   const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -29,12 +31,8 @@ const Inventory: React.FC = () => {
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [selectedProductForStockcard, setSelectedProductForStockcard] = useState<Product | null>(null);
-  const [showOperational, setShowOperational] = useState(false);
   const [settings, setSettings] = useState<(SystemSettings & { id?: string }) | null>(null);
   const [branchBatches, setBranchBatches] = useState<ProductBatch[]>([]);
-
-  const userRoles = [profile?.role || 'staff', ...(profile?.secondaryRoles || [])];
-  const isCEO = userRoles.some(r => ['CEO', 'CEO / MD', 'ceo', 'owner', 'admin'].includes(r));
 
   useEffect(() => {
     if (profile?.tenantId) {
@@ -55,77 +53,23 @@ const Inventory: React.FC = () => {
         );
       }
 
-      // Fetch settings or create default
-      const fetchSettings = async () => {
-        try {
-          const docs = await firestoreService.getCollection<any>('system_settings', profile.tenantId!);
-          if (docs.length > 0) {
-            setSettings(docs[0]);
-            setShowOperational(!!docs[0].featureToggles?.enableOperationalInventory);
-          } else {
-            // Create default settings if they don't exist
-            const defaultSettings = {
-              tenantId: profile.tenantId,
-              featureToggles: {
-                enableOperationalInventory: false,
-              },
-              features: {
-                multiTierSellingEnabled: false,
-              },
-              createdAt: new Date().toISOString()
-            };
-            const newDocId = await firestoreService.addDocument('system_settings', defaultSettings);
-            setSettings({ id: newDocId, ...defaultSettings });
-            setShowOperational(false);
-          }
-
-        } catch (error) {
-          console.error('Error fetching inventory settings:', error);
-        }
-      };
-      fetchSettings();
+      const unsubscribeSettings = firestoreService.subscribeToCollection<SystemSettings>(
+        'system_settings',
+        profile.tenantId,
+        docs => setSettings(docs.find(setting => setting.id === profile.tenantId) || docs[0] || null)
+      );
 
       return () => {
         unsubscribeProducts();
         unsubscribeBatches();
+        unsubscribeSettings();
       };
     }
   }, [profile?.tenantId, activeBranchId]);
 
-  const toggleOperational = async () => {
-    if (!profile?.tenantId) return;
-    
-    const newValue = !showOperational;
-    try {
-      if (settings?.id) {
-        const newToggles = { ...settings.featureToggles, enableOperationalInventory: newValue };
-        await firestoreService.updateDocument('system_settings', settings.id, {
-          featureToggles: newToggles
-        });
-        setSettings({ ...settings, featureToggles: newToggles });
-      } else {
-        // Fallback if settings weren't loaded correctly
-        const defaultSettings = {
-          tenantId: profile.tenantId,
-          featureToggles: {
-            enableOperationalInventory: newValue,
-          },
-          features: {
-            multiTierSellingEnabled: false,
-          },
-          createdAt: new Date().toISOString()
-        };
-        const newDocId = await firestoreService.addDocument('system_settings', defaultSettings);
-        setSettings({ id: newDocId, ...defaultSettings });
-      }
-      
-      setShowOperational(newValue);
-      toast.success(`Operational Inventory ${newValue ? 'enabled' : 'disabled'}`);
-    } catch (error) {
-      console.error('Error updating settings:', error);
-      toast.error('Failed to update settings');
-    }
-  };
+  useEffect(() => {
+    if (!operationalInventoryEnabled && activeTab === 'operational') setActiveTab('master');
+  }, [operationalInventoryEnabled, activeTab]);
 
   const filteredProducts = products.filter(product => {
     const matchesSearch = 
@@ -174,24 +118,6 @@ const Inventory: React.FC = () => {
           </div>
         </div>
 
-        {isCEO && canOperateInventory && (
-          <div className="flex items-center gap-3 px-4 py-2 bg-zinc-100 rounded-2xl border border-zinc-200">
-            <Settings size={16} className="text-zinc-400" />
-            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Operational Inventory</span>
-            <button 
-              onClick={toggleOperational}
-              className={cn(
-                "w-10 h-5 rounded-full transition-all relative",
-                showOperational ? "bg-emerald-500" : "bg-zinc-300"
-              )}
-            >
-              <div className={cn(
-                "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
-                showOperational ? "right-1" : "left-1"
-              )} />
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Main Tabs */}
@@ -210,7 +136,7 @@ const Inventory: React.FC = () => {
             icon={<Activity size={16} />}
           />
         )}
-        {showOperational && canOperateInventory && (
+        {operationalInventoryEnabled && canOperateInventory && (
           <TabButton 
             active={activeTab === 'operational'} 
             onClick={() => setActiveTab('operational')} 
@@ -396,7 +322,7 @@ const Inventory: React.FC = () => {
         )}
 
         {canOperateInventory && activeTab === 'stock' && <StockManagementTab />}
-        {canOperateInventory && activeTab === 'operational' && <OperationalInventoryTab />}
+        {operationalInventoryEnabled && canOperateInventory && activeTab === 'operational' && <OperationalInventoryTab />}
         {activeTab === 'reports' && <ReportHubTab />}
       </div>
 

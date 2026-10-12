@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 55677)
+Total output lines: 4462
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, 
@@ -24,7 +27,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { hasAnyRole } from '../utils/roles';
 import { firestoreService } from '../services/firestore';
-import { Product, StockOrder, StockOrderLine, TransferInvoice, Branch, ProductBatch, TransferInvoiceLine, Sale, OperationalInventory } from '../types';
+import { Product, StockOrder, StockOrderLine, TransferInvoice, Branch, ProductBatch, TransferInvoiceLine, Sale, OperationalInventory, OperationalTransfer, OperationalTransferLine } from '../types';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, runTransaction, writeBatch } from 'firebase/firestore';
 import { logMovementAndAggregateInTx, getBranchProductBatchRefs } from '../services/consumptionService';
@@ -34,6 +37,9 @@ import { twMerge } from 'tailwind-merge';
 import { format } from 'date-fns';
 import { AutoGenerateOrderModal } from '../components/inventory/AutoGenerateOrderModal';
 import { isLegacyOperationalInventorySeed } from '../utils/operationalInventory';
+import { inventoryClassForOrderCategory } from '../services/inventoryClassification';
+import { useOperationalInventoryFeature } from '../hooks/useOperationalInventoryFeature';
+import { createOperationalBranchReturn, receiveOperationalTransferLine } from '../services/operationalTransferService';
 import { OpeningStockTab } from '../components/inventory/OpeningStockTab';
 
 function cn(...inputs: ClassValue[]) {
@@ -343,6 +349,7 @@ const InventoryTab: React.FC = () => {
 
 const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const { profile, activeBranchId, activeBranch } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [orderType, setOrderType] = useState<'monthly' | 'weekly' | 'emergency'>('monthly');
   const [category, setCategory] = useState<'sellable_non_cosmetic' | 'sellable_cosmetic' | 'non_sellable'>('sellable_non_cosmetic');
   const [genMethod, setGenMethod] = useState<'manual' | 'auto_generated'>('manual');
@@ -397,6 +404,10 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const handleSelectDraft = async (draftId: string) => {
     const draft = drafts.find(d => d.id === draftId);
     if (!draft) return;
+    if (draft.category === 'non_sellable' && !operationalInventoryEnabled) {
+      toast.error('Operational Inventory is disabled in System Settings.');
+      return;
+    }
 
     setIsGenerating(true);
     try {
@@ -407,7 +418,12 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
 
       // Fetch the draft lines
       const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: draft.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-      setOrderLines(lines);
+      setOrderLines(draft.category === 'non_sellable'
+        ? lines.map(line => ({
+            ...line,
+            masterItemId: line.masterItemId || operationalInventory.find(item => item.id === line.product_id)?.masterItemId
+          }))
+        : lines);
       toast.success(`Draft loaded: ${draft.order_number}`);
     } catch (error) {
       console.error(error);
@@ -420,11 +436,26 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const handleClearDraft = () => {
     setSelectedDraftId(null);
     setOrderLines([]);
+    setCategory('sellable_non_cosmetic');
     toast.info("Cleared draft status. Ready for fresh order.");
   };
 
+  useEffect(() => {
+    if (!operationalInventoryEnabled && category === 'non_sellable') {
+      setCategory('sellable_non_cosmetic');
+      setOrderLines([]);
+      setSelectedDraftId(null);
+    }
+  }, [operationalInventoryEnabled, category]);
+
   // Enforce segregation: clear lines when category swings
   const handleCategoryChange = (val: 'sellable_non_cosmetic' | 'sellable_cosmetic' | 'non_sellable') => {
+    if (val === 'non_sellable' && !operationalInventoryEnabled) return;
+    const currentDraft = drafts.find(draft => draft.id === selectedDraftId);
+    if (currentDraft && inventoryClassForOrderCategory(val) !== inventoryClassForOrderCategory(currentDraft.category)) {
+      toast.error('An existing order cannot change inventory class. Clear the draft to start a new order.');
+      return;
+    }
     if (orderLines.length > 0) {
       if (window.confirm("Changing the category will clear current items in this order to guarantee inventory segregation. Do you wish to proceed?")) {
         setOrderLines([]);
@@ -449,12 +480,12 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const searchItems = (() => {
     const term = searchTerm.toLowerCase();
     if (category === 'non_sellable') {
-      const filteredOps = operationalInventory.filter(op =>
+      const filteredOps = operationalInventory.filter(op => op.branchId === activeBranchId && Boolean(op.masterItemId) && (
         op.name.toLowerCase().includes(term) ||
         (op.sku && op.sku.toLowerCase().includes(term)) ||
         (op.uniqueId && op.uniqueId.toLowerCase().includes(term)) ||
         (op.supplier && op.supplier.toLowerCase().includes(term))
-      );
+      ));
       return filteredOps.map(op => ({
         id: op.id,
         name: op.name,
@@ -462,6 +493,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         genericName: op.type === 'fixed' ? 'Fixed Asset' : 'Non-Fixed Asset',
         costPricePerPack: op.costPerPack || op.cost || 0,
         isOperational: true,
+        masterItemId: op.masterItemId || op.id,
         unitOfSell: op.unitOfIssue || 'unit'
       }));
     } else {
@@ -495,8 +527,12 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       }));
     }
   })();
+  const unlinkedOperationalItemCount = category === 'non_sellable'
+    ? operationalInventory.filter(item => item.branchId === activeBranchId && !item.masterItemId).length
+    : 0;
 
-  const addProduct = (item: { id: string; name: string; sku: string; genericName: string; costPricePerPack: number; isOperational: boolean }) => {
+  const addProduct = (item: { id: string; name: string; sku: string; genericName: string; costPricePerPack: number; isOperational: boolean; masterItemId?: string }) => {
+    if (item.isOperational && !operationalInventoryEnabled) return;
     if (orderLines.find(l => l.product_id === item.id)) return;
     setOrderLines([...orderLines, { 
       product_id: item.id,
@@ -505,6 +541,8 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       unit_cost_ugx: item.costPricePerPack,
       line_total_ugx: item.costPricePerPack,
       isOperational: item.isOperational,
+      inventoryClass: item.isOperational ? 'OPERATIONAL' : 'SELLABLE',
+      ...(item.isOperational ? { masterItemId: item.masterItemId || item.id } : {}),
       tenantId: profile?.tenantId
     }]);
   };
@@ -611,8 +649,23 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   };
 
   const handleSubmit = async (status: 'draft' | 'submitted') => {
+    if (category === 'non_sellable' && !operationalInventoryEnabled) {
+      toast.error('Operational Inventory is disabled in System Settings.');
+      return;
+    }
     if (orderLines.length === 0) {
       toast.error("Add at least one product to the order.");
+      return;
+    }
+
+    const expectedClass = inventoryClassForOrderCategory(category);
+    const hasWrongClassLine = orderLines.some(line =>
+      line.inventoryClass
+        ? line.inventoryClass !== expectedClass
+        : Boolean(line.isOperational) !== (expectedClass === 'OPERATIONAL')
+    );
+    if (hasWrongClassLine) {
+      toast.error('This order contains an item from another inventory stream. Remove it or start a new order.');
       return;
     }
 
@@ -634,6 +687,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       const totalValue = orderLines.reduce((sum, l) => sum + (l.line_total_ugx || 0), 0);
       const orderData: any = {
         tenantId: profile.tenantId,
+        inventoryClass: inventoryClassForOrderCategory(category),
         order_type: orderType,
         category: category,
         generation_method: genMethod,
@@ -672,6 +726,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
           await firestoreService.addDocument('stock_order_lines', {
             ...lineToSave,
             tenantId: profile.tenantId,
+            inventoryClass: inventoryClassForOrderCategory(category),
             order_id: orderId,
             line_status: 'ordered'
           });
@@ -692,6 +747,20 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       <div className="lg:col-span-2 space-y-6">
         <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-zinc-700">Inventory Stream</label>
+              <select
+                value={category}
+                disabled={Boolean(selectedDraftId)}
+                onChange={event => handleCategoryChange(event.target.value as 'sellable_non_cosmetic' | 'sellable_cosmetic' | 'non_sellable')}
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm font-semibold disabled:opacity-60"
+              >
+                <option value="sellable_non_cosmetic">Sellable Inventory · Non-Cosmetic</option>
+                <option value="sellable_cosmetic">Sellable Inventory · Cosmetic</option>
+                {operationalInventoryEnabled && <option value="non_sellable">Operational Inventory</option>}
+              </select>
+              {selectedDraftId && <p className="text-[10px] text-zinc-500">A saved order keeps its original inventory class. Start a new order to use another stream.</p>}
+            </div>
             {/* Step 2: Order coverage period */}
             <div className="space-y-2">
               <label className="text-sm font-semibold text-zinc-700">Order Coverage Period</label>
@@ -728,7 +797,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
                   ['consumable', 'Consumable'],
                   ['device', 'Device'],
                   ['cosmetic therapeutics', 'Cosmetic Therapeutics'],
-                  ['operational_inventory', 'Operational / Non-Sellable Inventory']
+                  ...(operationalInventoryEnabled ? [['operational_inventory', 'Operational / Non-Sellable Inventory']] : [])
                 ].map(([value, label]) => (
                   <label key={value} className="flex items-center gap-2 text-xs font-semibold text-zinc-700 cursor-pointer">
                     <input
@@ -939,6 +1008,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               <option value="">Select a draft to resume...</option>
               {drafts
                 .filter(d => {
+                  if (!operationalInventoryEnabled && d.category === 'non_sellable') return false;
                   if (!selectedDraftDate) return true;
                   const dDate = d.createdAt ? (d.createdAt.toDate ? d.createdAt.toDate() : new Date(d.createdAt)) : null;
                   const draftDateString = dDate ? dDate.toISOString().split('T')[0] : '';
@@ -980,6 +1050,11 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
             />
           </div>
+          {unlinkedOperationalItemCount > 0 && (
+            <p className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {unlinkedOperationalItemCount} legacy Operational item{unlinkedOperationalItemCount === 1 ? '' : 's'} need linking to a tenant item identity in Inventory before they can be ordered.
+            </p>
+          )}
           <div className="space-y-2 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
             {searchItems.map(item => (
               <button
@@ -1747,6 +1822,8 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
 
 return (
     <div className="space-y-6">
+      <OperationalBranchReturnForm />
+      <OperationalBranchReceiptQueue />
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex gap-2 p-1 bg-zinc-100 rounded-xl w-fit">
           <button 
@@ -2012,186 +2089,7 @@ return (
                                   [line.id]: { ...prev[line.id], accepted: val, queried: line.qty_dispatched - val }
                                 }));
                               }}
-                              className="w-full px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/20 text-center text-xs"
-                            />
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          {showHistory || !canOperateReception ? (
-                            <span className="font-bold text-red-600">{line.qty_queried || 0}</span>
-                          ) : (
-                            <input 
-                              type="number" 
-                              value={receivingData[line.id]?.queried ?? ''}
-                              readOnly
-                              className="w-full px-2 py-1 bg-zinc-100 border border-zinc-200 rounded-lg text-zinc-500 outline-none text-center text-xs"
-                            />
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono text-zinc-700">
-                          UGX {(line.unit_cost_ugx || 0).toLocaleString()}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono font-bold text-zinc-900">
-                          UGX {((line.qty_dispatched || 0) * (line.unit_cost_ugx || 0)).toLocaleString()}
-                        </td>
-                        <td className="px-4 py-3">
-                          {showHistory || !canOperateReception ? (
-                            <span className="text-[11px] text-red-500 italic">{line.query_reason || '--'}</span>
-                          ) : (
-                            receivingData[line.id]?.queried > 0 && (
-                              <select 
-                                value={receivingData[line.id]?.reason || ''}
-                                onChange={(e) => setReceivingData(prev => ({
-                                  ...prev,
-                                  [line.id]: { ...prev[line.id], reason: e.target.value }
-                                }))}
-                                className="w-full px-2 py-1 bg-red-50 border border-red-100 text-red-600 rounded-lg text-xs outline-none"
-                              >
-                                <option value="">Select Reason...</option>
-                                <option value="damaged">Damaged</option>
-                                <option value="short_expiry">Short Expiry</option>
-                                <option value="wrong_price">Wrong Price</option>
-                                <option value="wrong_product">Wrong Product</option>
-                              </select>
-                            )
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-zinc-50/50 font-bold border-t border-zinc-200 text-xs">
-                      <td colSpan={6} className="px-4 py-3 text-zinc-600 uppercase text-[10px] tracking-wider">Grand Invoice Total Value</td>
-                      <td className="px-4 py-3 text-right font-mono text-sm text-zinc-900">
-                        UGX {(selectedInvoice.total_value_ugx || 0).toLocaleString()}
-                      </td>
-                      <td></td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-
-            <div className="p-4 sm:p-6 border-t border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-              <div className="flex items-center gap-2 text-amber-600 text-xs font-bold">
-                {!showHistory && canOperateReception && (
-                  <>
-                    <AlertCircle size={16} />
-                    <span>Verify against physical invoice before submitting.</span>
-                  </>
-                )}
-                {!showHistory && !canOperateReception && (
-                  <span>View only. Your role cannot confirm or query stock reception.</span>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-3 w-full sm:w-auto sm:justify-end">
-                {showHistory && (
-                  <button 
-                    onClick={() => downloadExcelGRN(selectedInvoice)}
-                    className="px-6 py-2 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded-xl font-bold hover:bg-emerald-100 transition-colors flex items-center gap-1"
-                  >
-                    <Download size={16} /> Download Excel
-                  </button>
-                )}
-                <button 
-                  onClick={() => setSelectedInvoice(null)}
-                  className="px-6 py-2 border border-zinc-200 rounded-xl font-medium text-zinc-600 hover:bg-zinc-50 transition-colors"
-                >
-                  {showHistory ? 'Close' : 'Cancel'}
-                </button>
-                {!showHistory && (
-                  <button 
-                    onClick={handleReceiveSubmit}
-                    disabled={!canOperateReception || invoiceLinesLoading || !!invoiceLinesError || invoiceLines.length === 0}
-                    className="px-8 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold transition-colors shadow-lg shadow-emerald-500/20 disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:shadow-none"
-                  >
-                    Confirm Reception
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-const QueriedItemsTab: React.FC = () => {
-  const { profile, activeBranchId } = useAuth();
-  const [queriedLines, setQueriedLines] = useState<TransferInvoiceLine[]>([]);
-  const [auditQueries, setAuditQueries] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [processing, setProcessing] = useState(false);
-  const [auditDateRange, setAuditDateRange] = useState({ 
-    start: '', 
-    end: '' 
-  });
-
-  useEffect(() => {
-    if (profile?.tenantId && activeBranchId) {
-      const unsubscribe = firestoreService.subscribeToCollection<TransferInvoiceLine>('transfer_invoice_lines', profile.tenantId, (data) => {
-        // Filter for lines with queries that haven't been resolved/returned yet
-        const filtered = data.filter(l => l.qty_queried > 0 && l.line_status !== 'returned');
-        setQueriedLines(filtered);
-        setLoading(false);
-      });
-
-      const unsubQueries = firestoreService.subscribeToCollection<any>('stock_queries', profile.tenantId, (data) => {
-        setAuditQueries(data.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
-      });
-
-      return () => {
-        unsubscribe();
-        unsubQueries();
-      };
-    }
-  }, [profile?.tenantId, activeBranchId]);
-
-  const filteredAuditQueries = auditQueries.filter(q => {
-    const qDate = new Date(q.timestamp).toISOString().split('T')[0];
-    const matchesStart = !auditDateRange.start || qDate >= auditDateRange.start;
-    const matchesEnd = !auditDateRange.end || qDate <= auditDateRange.end;
-    return matchesStart && matchesEnd;
-  });
-
-  const handleReturnToHQ = async (line: TransferInvoiceLine) => {
-    if (!profile?.tenantId || !activeBranchId) return;
-    setProcessing(true);
-    try {
-      // Pre-fetch HQ batch to avoid getDocs inside transaction
-      const hqBatches = await firestoreService.getDocumentsByQuery<ProductBatch>('product_batches', [
-        { field: 'tenantId', operator: '==', value: profile.tenantId },
-        { field: 'branchId', operator: '==', value: 'HQ' },
-        { field: 'productId', operator: '==', value: line.product_id },
-        { field: 'batchNumber', operator: '==', value: line.batch_number }
-      ]);
-
-      await firestoreService.runTransaction(async (transaction) => {
-        // 1. Create Return Transfer Invoice
-        const returnTransferData: Partial<TransferInvoice> = {
-          tenantId: profile.tenantId,
-          transfer_number: `RET-HQ-${Date.now()}`,
-          source_branch_id: activeBranchId!,
-          source_branch_name: 'Branch Store',
-          destination_branch_id: 'HQ',
-          destination_branch_name: 'Central HQ',
-          transfer_type: 'query_return',
-          status: 'dispatched',
-          dispatched_by: profile.uid,
-          dispatched_at: new Date().toISOString(),
-          total_value_ugx: (line.qty_queried || 0) * (line.unit_cost_ugx || 0),
-          notes: `Return to HQ for queried item: ${line.product_name}. Reason: ${line.query_reason}`
-        };
-        const returnRef = doc(collection(db, 'transfer_invoices'));
-        transaction.set(returnRef, { ...returnTransferData, createdAt: new Date().toISOString() });
-
-        // 2. Create Return Line
-        const returnLineRef = doc(collection(db, 'transfer_invoice_lines'));
-        transaction.set(returnLineRef, {
-          tenantId: profile.tenantId,
-          transfer_id: returnRef.id,
-          product_id: line.product_id,
+                              className="w-full px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg outline-none focus:ring-2 fo…5677 tokens truncated…id: line.product_id,
           product_name: line.product_name,
           batch_number: line.batch_number,
           expiry_date: line.expiry_date,
@@ -2644,6 +2542,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       await firestoreService.runTransaction(async (transaction) => {
         const transferData: Partial<TransferInvoice> = {
           tenantId: profile?.tenantId,
+          inventoryClass: 'SELLABLE',
           transfer_number: `TRF-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
           source_branch_id: activeBranchId || 'main',
           source_branch_name: branches.find(b => b.id === activeBranchId)?.name || 'HQ Central Depot',
@@ -2664,6 +2563,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
           const lineRef = doc(collection(db, 'transfer_invoice_lines'));
           transaction.set(lineRef, {
             ...line,
+            inventoryClass: line.inventoryClass || 'SELLABLE',
             transfer_id: transferRef.id,
             createdAt: new Date().toISOString()
           });
@@ -3539,6 +3439,7 @@ const FulfillmentModal: React.FC<{ order: StockOrder; onClose: () => void; onSuc
       await firestoreService.runTransaction(async (transaction) => {
         const transferData: any = {
           tenantId: profile.tenantId,
+          inventoryClass: 'SELLABLE',
           transfer_number: `TRF-FUL-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
           order_id: order.id,
           source_branch_id: 'HQ',
@@ -3566,6 +3467,7 @@ const FulfillmentModal: React.FC<{ order: StockOrder; onClose: () => void; onSuc
           
           transaction.set(lineRef, {
             tenantId: profile.tenantId,
+            inventoryClass: 'SELLABLE',
             transfer_id: transferRef.id,
             product_id: line.product_id,
             product_name: line.product_name,

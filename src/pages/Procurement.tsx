@@ -5,35 +5,67 @@ import {
   MoreVertical, Edit2, Trash2, ExternalLink, Eye, Download, FileSpreadsheet,
   File as FileIcon, Check, X, ArrowRight, ArrowLeft, ArrowRightLeft
 } from 'lucide-react';
-import { where, doc, collection, setDoc, writeBatch } from 'firebase/firestore';
+import { where, doc, collection, getDocs, query, setDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
 import { firestoreService } from '../services/firestore';
 import { 
-  Product, StockOrder, StockOrderLine, InstitutionRegistry, GRNRecord, 
-  UnsuppliedLine, ProductBatch, CreditLedgerEntry, TransferInvoice,
+  Product, StockOrder, StockOrderLine, OperationalInventory, OperationalTransfer, InstitutionRegistry, GRNRecord,
+  GRNLine, UnsuppliedLine, ProductBatch, CreditLedgerEntry, TransferInvoice,
   TransferInvoiceLine, Branch, AuditLog
 } from '../types';
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { processProcurementGrn } from '../services/procurementFinanceService';
+import { processOperationalGrn } from '../services/operationalGrnService';
+import { dispatchOperationalOrderToBranch, dispatchPreparedOperationalHqTransfer, fulfillOperationalOrderFromHqStore } from '../services/operationalTransferService';
 import { AutoGenerateOrderModal } from '../components/inventory/AutoGenerateOrderModal';
 import { isBranchReturnToHq, isHqProcurementDelivery, receiveHqTransfer } from '../services/hqStockReceiptService';
+import { isOperationalInventoryRecord } from '../services/inventoryClassification';
+import { useOperationalInventoryFeature } from '../hooks/useOperationalInventoryFeature';
+import OperationalHQStoreTab from '../components/procurement/OperationalHQStoreTab';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+async function fetchOperationalGrnLines(tenantId: string, grnId: string): Promise<GRNLine[]> {
+  const linesQuery = query(
+    collection(db, 'operational_grn_lines'),
+    where('tenantId', '==', tenantId),
+    where('grnId', '==', grnId)
+  );
+  const snapshot = await getDocs(linesQuery);
+  return snapshot.docs.map(lineDoc => {
+    const line = lineDoc.data();
+    return {
+      inventoryClass: 'OPERATIONAL',
+      operationalType: line.operationalType,
+      masterItemId: line.masterItemId,
+      product_id: line.itemId,
+      product_name: line.itemName,
+      qty_ordered: line.qtyOrdered,
+      qty_received: line.qtyReceived,
+      qty_received_units: line.qtyReceivedUnits,
+      unit_cost_ugx: line.unitCostUGX,
+      total_cost_ugx: line.totalValueUGX,
+      status: 'received'
+    } as GRNLine;
+  });
+}
+
 const Procurement: React.FC = () => {
   const { profile } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [activeMode, setActiveMode] = useState<'hq_store' | 'procurement'>('hq_store');
-  const [activeTab, setActiveTab] = useState<'hq_inventory' | 'hq_stock_io' | 'requisitions' | 'sourcing' | 'finance' | 'grn' | 'dispatch' | 'unsupplied' | 'deferred' | 'suppliers' | 'queries'>('hq_inventory');
+  const [activeTab, setActiveTab] = useState<'hq_inventory' | 'hq_stock_io' | 'operational_hq_inventory' | 'requisitions' | 'sourcing' | 'finance' | 'grn' | 'dispatch' | 'unsupplied' | 'deferred' | 'suppliers' | 'queries'>('hq_inventory');
 
   const hqTabs = [
     { id: 'hq_inventory', label: 'HQ Store Inventory', icon: Package },
     { id: 'hq_stock_io', label: 'HQ Stock In/Out', icon: ArrowLeft },
+    ...(operationalInventoryEnabled ? [{ id: 'operational_hq_inventory', label: 'Operational HQ Store', icon: Package }] : []),
   ];
 
   const procurementTabs = [
@@ -49,6 +81,12 @@ const Procurement: React.FC = () => {
   ];
 
   const currentTabs = activeMode === 'hq_store' ? hqTabs : procurementTabs;
+
+  useEffect(() => {
+    if (!operationalInventoryEnabled && activeTab === 'operational_hq_inventory') {
+      setActiveTab('hq_inventory');
+    }
+  }, [operationalInventoryEnabled, activeTab]);
 
   return (
     <div className="space-y-6">
@@ -114,6 +152,7 @@ const Procurement: React.FC = () => {
       <div className="mt-6">
         {activeTab === 'hq_inventory' && <HQStoreInventoryTab />}
         {activeTab === 'hq_stock_io' && <HQStockInOutTab />}
+        {activeTab === 'operational_hq_inventory' && operationalInventoryEnabled && <OperationalHQStoreTab />}
         {activeTab === 'requisitions' && <NewRequisitions />}
         {activeTab === 'sourcing' && <SourcingTab />}
         {activeTab === 'finance' && <FinancialApprovalTab />}
@@ -130,6 +169,7 @@ const Procurement: React.FC = () => {
 
 const NewRequisitions: React.FC = () => {
   const { profile } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [orders, setOrders] = useState<StockOrder[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
@@ -137,10 +177,17 @@ const NewRequisitions: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId) {
       firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
-        setOrders(data.filter(o => o.status === 'submitted'));
+        setOrders(data.filter(o => o.status === 'submitted' && (operationalInventoryEnabled || !isOperationalInventoryRecord(o))));
       });
     }
-  }, [profile?.tenantId]);
+  }, [profile?.tenantId, operationalInventoryEnabled]);
+
+  useEffect(() => {
+    if (!operationalInventoryEnabled && selectedOrder && isOperationalInventoryRecord(selectedOrder)) {
+      setSelectedOrder(null);
+      setIsDetailModalOpen(false);
+    }
+  }, [operationalInventoryEnabled, selectedOrder]);
 
   const handleDownload = async (order: StockOrder, format: 'pdf' | 'xls') => {
     toast.info(`Generating ${format.toUpperCase()} for order ${order.order_number}...`);
@@ -168,7 +215,7 @@ const NewRequisitions: React.FC = () => {
             order.order_number || '',
             order.requesting_branch_name || order.requesting_branch_id || '',
             order.order_type || '',
-            order.category || '',
+            isOperationalInventoryRecord(order) ? 'Operational Inventory' : 'Sellable Inventory',
             order.submitted_at ? new Date(order.submitted_at).toLocaleDateString() : '--',
             line.product_name || line.product_id || '',
             (line.qty_ordered || 0).toString(),
@@ -243,8 +290,8 @@ const NewRequisitions: React.FC = () => {
                     <div class="meta-value" style="text-transform: capitalize;">${order.order_type}</div>
                   </div>
                   <div>
-                    <div class="meta-title">Category</div>
-                    <div class="meta-value" style="text-transform: capitalize;">${order.category.replace(/_/g, ' ')}</div>
+                    <div class="meta-title">Inventory Stream</div>
+                    <div class="meta-value">${isOperationalInventoryRecord(order) ? 'Operational Inventory' : 'Sellable Inventory'}</div>
                   </div>
                 </div>
                 <table>
@@ -353,6 +400,9 @@ const NewRequisitions: React.FC = () => {
               <tr key={order.id} className="hover:bg-zinc-50/50 transition-colors">
                 <td className="px-6 py-4 font-bold text-zinc-900">
                   {order.order_number}
+                  {isOperationalInventoryRecord(order) && (
+                    <span className="ml-2 px-2 py-0.5 bg-sky-100 text-sky-700 text-[10px] rounded-full uppercase font-black">Operational Inventory</span>
+                  )}
                   {order.is_emergency && (
                     <span className="ml-2 px-2 py-0.5 bg-red-500 text-white text-[10px] rounded-full uppercase font-black">Emergency</span>
                   )}
@@ -643,6 +693,7 @@ const QueriesTab: React.FC = () => {
         const newInvoiceRef = doc(collection(db, 'transfer_invoices'));
         const newInvoice: Partial<TransferInvoice> = {
           tenantId: profile.tenantId,
+          inventoryClass: selectedQuery.inventoryClass || 'SELLABLE',
           transfer_number: `TRF-${selectedQuery.transfer_number}-${Date.now().toString().slice(-4)}`,
           source_branch_id: 'HQ',
           source_branch_name: 'Central HQ',
@@ -664,6 +715,7 @@ const QueriesTab: React.FC = () => {
           const { id, ...lineData } = line;
           await setDoc(newLineRef, {
             ...lineData,
+            inventoryClass: lineData.inventoryClass || selectedQuery.inventoryClass || 'SELLABLE',
             transfer_id: newInvoiceRef.id,
             createdAt: new Date().toISOString()
           });
@@ -1022,6 +1074,7 @@ const QueriesTab: React.FC = () => {
 
 const SourcingTab: React.FC = () => {
   const { profile } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [orderLines, setOrderLines] = useState<StockOrderLine[]>([]);
   const [orders, setOrders] = useState<StockOrder[]>([]);
   const [suppliers, setSuppliers] = useState<InstitutionRegistry[]>([]);
@@ -1034,13 +1087,22 @@ const SourcingTab: React.FC = () => {
       firestoreService.subscribeToCollection<StockOrderLine>('stock_order_lines', profile.tenantId, (data) => {
         setOrderLines(data);
       });
-      firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, setOrders);
+      firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, data => {
+        setOrders(data.filter(order => operationalInventoryEnabled || !isOperationalInventoryRecord(order)));
+      });
       firestoreService.subscribeToCollection<InstitutionRegistry>('supplier_registry', profile.tenantId, setSuppliers);
       firestoreService.subscribeToCollection<ProductBatch>('product_batches', profile.tenantId, (data) => {
         setHqBatches(data.filter(b => b.branchId === 'HQ'));
       });
     }
-  }, [profile?.tenantId]);
+  }, [profile?.tenantId, operationalInventoryEnabled]);
+
+  useEffect(() => {
+    if (!operationalInventoryEnabled && selectedOrder && isOperationalInventoryRecord(selectedOrder)) {
+      setSelectedOrder(null);
+      setIsSourcingModalOpen(false);
+    }
+  }, [operationalInventoryEnabled, selectedOrder]);
 
   // Group active sourcing lines by order_id
   const sourcingLinesGrouped = orderLines.filter(l => l.line_status === 'sourcing');
@@ -1073,6 +1135,9 @@ const SourcingTab: React.FC = () => {
                   <tr key={order.id} className="hover:bg-zinc-50/50 transition-colors">
                     <td className="px-6 py-4 text-sm font-bold text-zinc-900">
                       {order.order_number || 'Unnamed Requisition'}
+                      {isOperationalInventoryRecord(order) && (
+                        <span className="ml-2 px-2 py-0.5 bg-sky-100 text-sky-700 text-[10px] rounded-full uppercase font-black">Operational Inventory</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-sm text-zinc-600">{order.requesting_branch_name || order.requesting_branch_id}</td>
                     <td className="px-6 py-4 text-sm text-zinc-600 font-medium">
@@ -1156,10 +1221,24 @@ const WholeOrderSourcingModal: React.FC<{
   onClose: () => void;
 }> = ({ order, allLines, suppliers, hqBatches, onClose }) => {
   const { profile } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
+  const isOperationalOrder = isOperationalInventoryRecord(order);
   const [lines, setLines] = useState<StockOrderLine[]>([]);
+  const [hqOperationalItems, setHqOperationalItems] = useState<OperationalInventory[]>([]);
+  const [operationalFulfillPacks, setOperationalFulfillPacks] = useState<Record<string, number>>({});
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [itemCosts, setItemCosts] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!profile?.tenantId || !isOperationalOrder || !operationalInventoryEnabled) {
+      setHqOperationalItems([]);
+      return;
+    }
+    return firestoreService.subscribeToCollection<OperationalInventory>('operational_inventory', profile.tenantId, rows => {
+      setHqOperationalItems(rows.filter(item => item.branchId === 'HQ' && item.inventoryClass === 'OPERATIONAL' && Boolean(item.masterItemId)));
+    });
+  }, [profile?.tenantId, isOperationalOrder, operationalInventoryEnabled]);
 
   useEffect(() => {
     // Only grab lines belonging to this order, and which have line_status === 'sourcing'
@@ -1174,6 +1253,10 @@ const WholeOrderSourcingModal: React.FC<{
     setItemCosts(initialCosts);
   }, [allLines, order.id]);
 
+  const eligibleSuppliers = isOperationalOrder
+    ? suppliers.filter(supplier => supplier.inventoryCapabilities?.includes('NON_SELLABLE_OPERATIONAL'))
+    : suppliers;
+
   // Helper: compute HQ stock total quantity for a product_id
   const getProductHqStock = (productId: string) => {
     return hqBatches
@@ -1181,9 +1264,45 @@ const WholeOrderSourcingModal: React.FC<{
       .reduce((sum, b) => sum + (b.quantity || 0), 0);
   };
 
+  const getOperationalHqItem = (line: StockOrderLine) => hqOperationalItems.find(item => item.masterItemId === line.masterItemId);
+  const getOperationalPacksAvailable = (line: StockOrderLine) => {
+    const item = getOperationalHqItem(line);
+    return item ? Math.floor(Number(item.quantityInStock || 0) / Math.max(1, Number(item.unitPerPack || 1))) : 0;
+  };
+
+  const handleOperationalStoreFulfillment = async (line: StockOrderLine) => {
+    if (!profile?.tenantId || !profile.uid || !operationalInventoryEnabled || submitting) return;
+    const item = getOperationalHqItem(line);
+    const maxPacks = getOperationalPacksAvailable(line);
+    const quantityPacks = Math.min(Number(operationalFulfillPacks[line.id] || maxPacks), Number(line.qty_ordered || 0), maxPacks);
+    if (!item || quantityPacks <= 0) {
+      toast.error('No whole packs are currently available in the HQ Operational Store.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await fulfillOperationalOrderFromHqStore({
+        tenantId: profile.tenantId,
+        order,
+        line,
+        quantityPacks,
+        actor: { uid: profile.uid, name: profile.fullName || profile.displayName || profile.email || profile.uid }
+      });
+      toast.success(`Dispatched ${result.quantityPacks} pack(s) from HQ Operational Store. ${result.remainingExternalPacks} pack(s) remain for external sourcing.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Operational Store fulfilment failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   // Perform "Assign to Store" (internal transfer) for a single item from HQ Store
   const handleAssignToStore = async (line: StockOrderLine) => {
     if (!profile || submitting) return;
+    if (isOperationalOrder || isOperationalInventoryRecord(line) || line.isOperational) {
+      toast.error('Operational orders cannot be fulfilled from the Sellable HQ Store.');
+      return;
+    }
     setSubmitting(true);
     try {
       const hqQty = getProductHqStock(line.product_id);
@@ -1326,6 +1445,9 @@ const WholeOrderSourcingModal: React.FC<{
           <div>
             <h2 className="text-xl font-extrabold text-zinc-950">Procurement Integration Portal</h2>
             <p className="text-xs text-zinc-500 mt-1">Sourcing order <strong className="text-zinc-900">{order.order_number}</strong> for requesting branch <strong className="text-zinc-900">{order.requesting_branch_name}</strong></p>
+            <span className={cn('mt-2 inline-block px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide', isOperationalOrder ? 'bg-sky-100 text-sky-700' : 'bg-zinc-100 text-zinc-600')}>
+              {isOperationalOrder ? 'Operational Inventory' : 'Sellable Inventory'}
+            </span>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-zinc-200 text-zinc-400 hover:text-zinc-500 rounded-xl transition-colors">
             <X className="w-5 h-5" />
@@ -1338,771 +1460,490 @@ const WholeOrderSourcingModal: React.FC<{
           {/* Section 1: Assess HQ Stock & Assign internal items */}
           <div className="space-y-3">
             <div className="flex justify-between items-center">
-              <h3 className="text-xs font-black uppercase text-zinc-500 tracking-wider">Step 1: Internal HQ Inventory Transfer Assessment</h3>
-              <span className="text-[10px] px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full font-bold">Fulfill internally to bypass supplier cost</span>
-            </div>
-            
-            <div className="border border-zinc-200 rounded-2xl overflow-hidden bg-white">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-zinc-50/50 border-b border-zinc-100 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
-                    <th className="px-4 py-3">Product Name</th>
-                    <th className="px-4 py-3 text-center">Req. Qty</th>
-                    <th className="px-4 py-3 text-center">Central HQ Stock</th>
-                    <th className="px-4 py-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100 text-sm">
-                  {lines.map(line => {
-                    const hqStock = getProductHqStock(line.product_id);
-                    const canFulfill = hqStock >= line.qty_ordered;
-                    return (
-                      <tr key={line.id} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="px-4 py-3 font-semibold text-zinc-900">{line.product_name}</td>
-                        <td className="px-4 py-3 text-center font-bold text-zinc-600">{line.qty_ordered}</td>
-                        <td className="px-4 py-3 text-center font-bold">
-                          <span className={cn("px-2.5 py-1 rounded-full text-xs font-black", canFulfill ? "bg-emerald-100/75 text-emerald-700" : "bg-rose-100/75 text-rose-700")}>
-                            {hqStock} packs
-                          </span>
+              <h3 className="text-xs font-black uppercase text-zinc-500 tracking-wider">Step 1: {isOperationalOrder ? 'Operational HQ Store Assessment' : 'Sellable HQ Store Assessment'}</h3>
+              <span className="text-[10px] px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full font-bold">{isOperationalOrder ? 'Operational stock is kept i…62152 tokens truncated…ne.qty_accepted ?? line.qty_received ?? line.qty_dispatched ?? 0}</span>
+                          ) : (
+                            <input 
+                              type="number" 
+                              value={receivingData[line.id]?.accepted ?? ''}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 0;
+                                setReceivingData(prev => ({
+                                  ...prev,
+                                  [line.id]: { ...prev[line.id], accepted: val, queried: line.qty_dispatched - val }
+                                }));
+                              }}
+                              className="w-full px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/20 text-center text-xs"
+                            />
+                          )}
                         </td>
-                        <td className="px-4 py-3 text-right">
-                          <button
-                            disabled={!canFulfill || submitting}
-                            onClick={() => handleAssignToStore(line)}
-                            className={cn(
-                              "px-3 py-1.5 rounded-xl font-bold text-xs shadow-sm transition-all",
-                              canFulfill 
-                                ? "bg-emerald-500 hover:bg-emerald-600 text-white cursor-pointer" 
-                                : "bg-zinc-100 text-zinc-400 cursor-not-allowed"
-                            )}
-                          >
-                            Assign to Store (Draft GRN)
-                          </button>
+                        <td className="px-4 py-3 text-center">
+                          {showHistory || !canOperateReception ? (
+                            <span className="font-bold text-red-600">{line.qty_queried || 0}</span>
+                          ) : (
+                            <input 
+                              type="number" 
+                              value={receivingData[line.id]?.queried ?? ''}
+                              readOnly
+                              className="w-full px-2 py-1 bg-zinc-100 border border-zinc-200 rounded-lg text-zinc-500 outline-none text-center text-xs"
+                            />
+                          )}
                         </td>
-                      </tr>
-                    );
-                  })}
-                  {lines.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="px-4 py-6 text-center text-zinc-400 italic text-xs">
-                        All requisition items of this order are processed or transferred!
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Section 2: Rest of Order to Supplier */}
-          {lines.length > 0 && (
-            <div className="p-6 bg-zinc-50 rounded-3xl border border-zinc-200 space-y-4">
-              <h3 className="text-xs font-black uppercase text-zinc-400 tracking-wider">Step 2: Assign Rest of Order As a Whole to Vendor</h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-wider text-zinc-500 block">Select Assigned Supplier</label>
-                  <select
-                    disabled={submitting}
-                    value={selectedSupplierId}
-                    onChange={(e) => setSelectedSupplierId(e.target.value)}
-                    className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/15 outline-none text-sm font-semibold"
-                  >
-                    <option value="">Choose Supplier...</option>
-                    {suppliers.map(s => (
-                      <option key={s.id} value={s.id}>{s.supplier_name} - {s.country || 'Uganda'}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="border border-zinc-200 rounded-2xl overflow-hidden bg-white mt-4">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-zinc-50 border-b border-zinc-100 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
-                      <th className="px-4 py-3">Product Name</th>
-                      <th className="px-4 py-3 text-center">Qty</th>
-                      <th className="px-4 py-3">Vendor Unit Cost (UGX)</th>
-                      <th className="px-4 py-3 text-right">Exclude & Route to Unsupplied</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100 text-sm">
-                    {lines.map(line => (
-                      <tr key={line.id} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="px-4 py-3 font-semibold text-zinc-900">{line.product_name}</td>
-                        <td className="px-4 py-3 text-center font-bold text-zinc-600">{line.qty_ordered}</td>
+                        <td className="px-4 py-3 text-right font-mono text-zinc-700">
+                          UGX {(line.unit_cost_ugx || 0).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-bold text-zinc-900">
+                          UGX {((line.qty_dispatched || 0) * (line.unit_cost_ugx || 0)).toLocaleString()}
+                        </td>
                         <td className="px-4 py-3">
-                          <input
-                            type="number"
-                            disabled={submitting}
-                            min={0}
-                            placeholder="Quote price"
-                            className="px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg text-sm font-bold w-36 outline-none focus:ring-2 focus:ring-emerald-500/20"
-                            value={itemCosts[line.id] || ''}
-                            onChange={(e) => setItemCosts({
-                              ...itemCosts,
-                              [line.id]: Number(e.target.value)
-                            })}
-                          />
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <button
-                            type="button"
-                            disabled={submitting}
-                            onClick={() => handleExcludeItem(line)}
-                            className="px-3 py-1.5 text-rose-500 hover:text-rose-600 text-xs font-black uppercase transition-all"
-                          >
-                            Remove
-                          </button>
+                          {showHistory || !canOperateReception ? (
+                            <span className="text-[11px] text-red-500 italic">{line.query_reason || '--'}</span>
+                          ) : (
+                            receivingData[line.id]?.queried > 0 && (
+                              <select 
+                                value={receivingData[line.id]?.reason || ''}
+                                onChange={(e) => setReceivingData(prev => ({
+                                  ...prev,
+                                  [line.id]: { ...prev[line.id], reason: e.target.value }
+                                }))}
+                                className="w-full px-2 py-1 bg-red-50 border border-red-100 text-red-600 rounded-lg text-xs outline-none"
+                              >
+                                <option value="">Select Reason...</option>
+                                <option value="damaged">Damaged</option>
+                                <option value="short_expiry">Short Expiry</option>
+                                <option value="wrong_price">Wrong Price</option>
+                                <option value="wrong_product">Wrong Product</option>
+                              </select>
+                            )
+                          )}
                         </td>
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr className="bg-zinc-50/50 font-bold border-t border-zinc-200 text-xs">
+                      <td colSpan={6} className="px-4 py-3 text-zinc-600 uppercase text-[10px] tracking-wider">Grand Invoice Total Value</td>
+                      <td className="px-4 py-3 text-right font-mono text-sm text-zinc-900">
+                        UGX {(selectedInvoice.total_value_ugx || 0).toLocaleString()}
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </div>
-          )}
 
-        </div>
-
-        {/* Action controls footer */}
-        <div className="p-6 bg-zinc-50 border-t border-zinc-100 flex gap-4">
-          <button
-            onClick={onClose}
-            disabled={submitting}
-            className="flex-1 py-3.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-600 rounded-2xl font-bold transition-all text-sm"
-          >
-            Cancel
-          </button>
-          
-          {lines.length > 0 && (
-            <button
-              disabled={!selectedSupplierId || submitting}
-              onClick={handleBulkAssignSupplier}
-              className={cn(
-                "flex-1 py-3.5 rounded-2xl font-black uppercase text-sm tracking-wider shadow-md transition-all text-white cursor-pointer",
-                selectedSupplierId && !submitting
-                  ? "bg-zinc-950 hover:bg-zinc-800"
-                  : "bg-zinc-300 pointer-events-none"
-              )}
-            >
-              {submitting ? 'Processing Entire Order...' : 'Confirm Bulk Supplier Assignment'}
-            </button>
-          )}
-        </div>
-
-      </div>
-    </div>
-  );
-};
-
-const FinancialApprovalTab: React.FC = () => {
-  const { profile } = useAuth();
-  const [orders, setOrders] = useState<StockOrder[]>([]);
-  const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-
-  useEffect(() => {
-    if (profile?.tenantId) {
-      firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
-        setOrders(data.filter(o => o.status === 'awaiting_finance_approval'));
-      });
-    }
-  }, [profile?.tenantId]);
-
-  const handleApprove = async (id: string) => {
-    try {
-      await firestoreService.updateDocument('stock_orders', id, { 
-        status: 'approved',
-        approved_by: profile?.uid,
-        approved_at: new Date().toISOString()
-      });
-      
-      // Update all lines to approved
-      const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-      for (const line of lines) {
-        if (line.line_status === 'awaiting_finance_approval') {
-          await firestoreService.updateDocument('stock_order_lines', line.id, {
-            line_status: 'approved'
-          });
-        }
-      }
-
-      toast.success('Order approved');
-      setIsModalOpen(false);
-    } catch (error) {
-      toast.error('Failed to approve order');
-    }
-  };
-
-  return (
-    <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-      <table className="w-full text-left border-collapse">
-        <thead>
-          <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
-            <th className="px-6 py-4">Order #</th>
-            <th className="px-6 py-4">Total Value</th>
-            <th className="px-6 py-4">Branch</th>
-            <th className="px-6 py-4 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-100">
-          {orders.map((order) => (
-            <tr key={order.id} className="hover:bg-zinc-50/50 transition-colors">
-              <td className="px-6 py-4 font-bold text-zinc-900">{order.order_number}</td>
-              <td className="px-6 py-4 font-bold text-zinc-900">UGX {order.total_order_value_ugx.toLocaleString()}</td>
-              <td className="px-6 py-4 text-sm text-zinc-600">{order.requesting_branch_name || order.requesting_branch_id}</td>
-              <td className="px-6 py-4 text-right">
-                <div className="flex justify-end gap-2">
+            <div className="p-4 sm:p-6 border-t border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+              <div className="flex items-center gap-2 text-amber-600 text-xs font-bold">
+                {!showHistory && canOperateReception && (
+                  <>
+                    <AlertCircle size={16} />
+                    <span>Verify against physical invoice before submitting.</span>
+                  </>
+                )}
+                {!showHistory && !canOperateReception && (
+                  <span>View only. Your role cannot confirm or query stock reception.</span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-3 w-full sm:w-auto sm:justify-end">
+                {showHistory && (
                   <button 
-                    onClick={async () => {
-                      if (window.confirm(`Are you sure you want to revert order ${order.order_number || ''} back to the Sourcing tab?`)) {
-                        try {
-                          await firestoreService.updateDocument('stock_orders', order.id, {
-                            status: 'sourcing',
-                            updatedAt: new Date().toISOString()
-                          });
-                          const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-                          for (const line of lines) {
-                            await firestoreService.updateDocument('stock_order_lines', line.id, {
-                              line_status: 'sourcing',
-                              updatedAt: new Date().toISOString()
-                            });
-                          }
-                          toast.success('Order reverted to Sourcing.');
-                        } catch (error) {
-                          console.error(error);
-                          toast.error('Failed to revert order.');
-                        }
-                      }
-                    }}
-                    className="px-3 py-1 border border-zinc-200 text-zinc-500 hover:bg-zinc-50 rounded-lg text-xs font-bold transition-colors"
+                    onClick={() => downloadExcelGRN(selectedInvoice)}
+                    className="px-6 py-2 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded-xl font-bold hover:bg-emerald-100 transition-colors flex items-center gap-1"
                   >
-                    Revert
+                    <Download size={16} /> Download Excel
                   </button>
+                )}
+                <button 
+                  onClick={() => setSelectedInvoice(null)}
+                  className="px-6 py-2 border border-zinc-200 rounded-xl font-medium text-zinc-600 hover:bg-zinc-50 transition-colors"
+                >
+                  {showHistory ? 'Close' : 'Cancel'}
+                </button>
+                {!showHistory && (
                   <button 
-                    onClick={() => {
-                      setSelectedOrder(order);
-                      setIsModalOpen(true);
-                    }}
-                    className="bg-zinc-900 text-white px-3 py-1 rounded-lg text-xs font-bold transition-colors"
+                    onClick={handleReceiveSubmit}
+                    disabled={!canOperateReception || invoiceLinesLoading || !!invoiceLinesError || invoiceLines.length === 0}
+                    className="px-8 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold transition-colors shadow-lg shadow-emerald-500/20 disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:shadow-none"
                   >
-                    Review &amp; Approve
+                    Confirm Reception
                   </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-          {orders.length === 0 && (
-            <tr>
-              <td colSpan={4} className="px-6 py-12 text-center text-zinc-400 italic">
-                No orders awaiting financial approval.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-
-      {isModalOpen && selectedOrder && (
-        <FinancialApprovalModal 
-          order={selectedOrder}
-          onClose={() => setIsModalOpen(false)}
-          onApprove={handleApprove}
-        />
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
 };
 
-const FinancialApprovalModal: React.FC<{ 
-  order: StockOrder, 
-  onClose: () => void,
-  onApprove: (id: string) => void
-}> = ({ order, onClose, onApprove }) => {
-  const { profile } = useAuth();
-  const [lines, setLines] = useState<StockOrderLine[]>([]);
-  const [editedLines, setEditedLines] = useState<Record<string, { qty: number, removed: boolean }>>({});
+const OperationalBranchReturnForm: React.FC = () => {
+  const { profile, activeBranchId, hasPermission } = useAuth();
+  const enabled = useOperationalInventoryFeature();
+  const canReturn = hasPermission('stock', 'operate') && hasPermission('inventory', 'operate');
+  const [items, setItems] = useState<OperationalInventory[]>([]);
+  const [itemId, setItemId] = useState('');
+  const [quantity, setQuantity] = useState('');
+  const [reason, setReason] = useState('');
+  const [requestId, setRequestId] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (!enabled || !profile?.tenantId || !activeBranchId || activeBranchId === 'HQ') { setItems([]); return; }
+    return firestoreService.subscribeToCollection<OperationalInventory>('operational_inventory', profile.tenantId, rows => setItems(rows.filter(row => row.branchId === activeBranchId && row.inventoryClass === 'OPERATIONAL' && row.masterItemId)));
+  }, [enabled, profile?.tenantId, activeBranchId]);
+  if (!enabled || !activeBranchId || activeBranchId === 'HQ') return null;
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!profile?.tenantId || !profile.uid || !canReturn) return;
+    setSaving(true);
+    try {
+      const nextRequestId = requestId || globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      if (!requestId) setRequestId(nextRequestId);
+      const result = await createOperationalBranchReturn({ tenantId: profile.tenantId, branchId: activeBranchId, itemId, quantity: Number(quantity), reason, requestId: nextRequestId, actor: { uid: profile.uid, name: profile.fullName || profile.displayName || profile.email || profile.uid } });
+      toast.success(`Return ${result.transferNumber} dispatched to HQ Operational Store.`);
+      setQuantity(''); setReason(''); setRequestId('');
+    } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not create Operational return.'); }
+    finally { setSaving(false); }
+  };
+  return <section className="rounded-2xl border border-amber-200 bg-white p-5"><h3 className="font-black text-amber-950">Operational Inventory Return to HQ</h3><p className="text-xs text-amber-800 mt-1">Dispatch reduces this branch’s Operational stock. HQ adds it only after confirmed receipt.</p><form onSubmit={submit} className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3"><select required value={itemId} onChange={event => { setItemId(event.target.value); setRequestId(''); }} className="border rounded-xl px-3 py-2 text-sm"><option value="">Select Operational item</option>{items.map(item => <option key={item.id} value={item.id}>{item.name} · SOH {item.quantityInStock} {item.unitOfIssue}</option>)}</select><input type="number" min="0.001" step="any" required value={quantity} onChange={event => { setQuantity(event.target.value); setRequestId(''); }} placeholder="Quantity" className="border rounded-xl px-3 py-2 text-sm" /><input required maxLength={300} value={reason} onChange={event => { setReason(event.target.value); setRequestId(''); }} placeholder="Return reason" className="border rounded-xl px-3 py-2 text-sm" /><button disabled={!canReturn || saving || !itemId} className="rounded-xl bg-amber-700 text-white px-4 py-2 text-sm font-bold disabled:opacity-50">{saving ? 'Dispatching…' : 'Create return'}</button></form></section>;
+};
+
+const OperationalBranchReceiptQueue: React.FC = () => {
+  const { profile, activeBranchId, hasPermission } = useAuth();
+  const enabled = useOperationalInventoryFeature();
+  const [transfers, setTransfers] = useState<OperationalTransfer[]>([]);
+  const [selectedTransfer, setSelectedTransfer] = useState<OperationalTransfer | null>(null);
+  const [lines, setLines] = useState<OperationalTransferLine[]>([]);
+  const [receiptValues, setReceiptValues] = useState<Record<string, { accepted: number; queried: number; reason: string }>>({});
+  const [showHistory, setShowHistory] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const canReceive = hasPermission('stock', 'operate') && hasPermission('inventory', 'operate');
 
   useEffect(() => {
-    const fetchLines = async () => {
-      const data = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-      setLines(data.filter(l => l.line_status === 'awaiting_finance_approval'));
-      const initialEdits: Record<string, { qty: number, removed: boolean }> = {};
-      data.forEach(l => {
-        initialEdits[l.id] = { qty: l.qty_ordered, removed: false };
-      });
-      setEditedLines(initialEdits);
-    };
-    fetchLines();
-  }, [order.id]);
+    if (!enabled || !profile?.tenantId || !activeBranchId || activeBranchId === 'HQ') {
+      setTransfers([]);
+      return;
+    }
+    return firestoreService.subscribeToCollectionByQuery<OperationalTransfer>(
+      'operational_transfers', profile.tenantId,
+      [where('destinationBranchId', '==', activeBranchId)],
+      setTransfers
+    );
+  }, [enabled, profile?.tenantId, activeBranchId]);
 
-  const handleQtyChange = (id: string, qty: number) => {
-    setEditedLines(prev => ({
-      ...prev,
-      [id]: { ...prev[id], qty: Math.max(0, qty) }
-    }));
+  useEffect(() => {
+    if (!enabled && selectedTransfer) {
+      setSelectedTransfer(null);
+      setLines([]);
+    }
+  }, [enabled, selectedTransfer]);
+
+  if (!enabled || !activeBranchId || activeBranchId === 'HQ') return null;
+  const visibleTransfers = transfers.filter(transfer => showHistory
+    ? ['received', 'queried'].includes(transfer.status)
+    : ['dispatched', 'partially_received'].includes(transfer.status));
+
+  const openTransfer = async (transfer: OperationalTransfer) => {
+    if (transfer.destinationBranchId !== activeBranchId || !profile?.tenantId) {
+      toast.error('This Operational transfer is not assigned to the active branch.');
+      return;
+    }
+    setSelectedTransfer(transfer);
+    setLines([]);
+    setLoading(true);
+    try {
+      const transferLines = await firestoreService.getDocumentsByQuery<OperationalTransferLine>('operational_transfer_lines', [
+        { field: 'tenantId', operator: '==', value: profile.tenantId },
+        { field: 'transferId', operator: '==', value: transfer.id }
+      ]);
+      if (!transferLines.length) throw new Error('No Operational transfer lines were found. Receipt is blocked.');
+      setLines(transferLines);
+      setReceiptValues(Object.fromEntries(transferLines.map(line => [line.id, {
+        accepted: line.status === 'dispatched' ? line.quantityDispatched : Number(line.quantityAccepted || 0),
+        queried: line.status === 'dispatched' ? 0 : Number(line.quantityQueried || 0),
+        reason: line.queryReason || ''
+      }])));
+    } catch (error) {
+      setSelectedTransfer(null);
+      toast.error(error instanceof Error ? error.message : 'Failed to load Operational transfer details.');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleToggleRemove = (id: string) => {
-    setEditedLines(prev => ({
-      ...prev,
-      [id]: { ...prev[id], removed: !prev[id].removed }
-    }));
-  };
-
-  const handleConfirm = async () => {
-    if (submitting) return;
+  const submitReceipt = async () => {
+    if (!selectedTransfer || !profile?.tenantId || !activeBranchId) return;
+    if (!canReceive) {
+      toast.error('Your role can view this Operational transfer but cannot confirm receipt.');
+      return;
+    }
     setSubmitting(true);
     try {
-      let totalValue = 0;
       for (const line of lines) {
-        const edit = editedLines[line.id];
-        if (!edit) continue;
-        if (edit.removed || edit.qty === 0) {
-          // Move to unsupplied
-          await firestoreService.updateDocument('stock_order_lines', line.id, {
-            line_status: 'unsupplied',
-            original_qty: line.qty_ordered,
-            qty_ordered: 0
-          });
-          
-          await firestoreService.addDocument('unsupplied_lines', {
-            tenantId: profile?.tenantId,
-            order_id: order.id,
-            original_line_id: line.id,
-            product_id: line.product_id,
-            product_name: line.product_name || 'Unknown Product',
-            qty_unsupplied: line.qty_ordered,
-            reason: 'Removed during financial approval',
-            status: 'pending',
-            createdAt: new Date().toISOString()
-          });
-        } else if (edit.qty < line.qty_ordered) {
-          // Reduce qty and move difference to unsupplied
-          const diff = line.qty_ordered - edit.qty;
-          await firestoreService.updateDocument('stock_order_lines', line.id, {
-            original_qty: line.qty_ordered,
-            qty_ordered: edit.qty,
-            line_total_ugx: edit.qty * line.unit_cost_ugx
-          });
-          
-          await firestoreService.addDocument('unsupplied_lines', {
-            tenantId: profile?.tenantId,
-            order_id: order.id,
-            original_line_id: line.id,
-            product_id: line.product_id,
-            product_name: line.product_name || 'Unknown Product',
-            qty_unsupplied: diff,
-            reason: 'Quantity reduced during financial approval',
-            status: 'pending',
-            createdAt: new Date().toISOString()
-          });
-          totalValue += edit.qty * (line.unit_cost_ugx || 0);
-        } else {
-          totalValue += line.line_total_ugx;
-        }
+        if (line.status !== 'dispatched') continue;
+        const values = receiptValues[line.id];
+        if (!values) throw new Error(`Enter the accepted and queried quantity for ${line.itemName}.`);
+        await receiveOperationalTransferLine({
+          tenantId: profile.tenantId, transferId: selectedTransfer.id, line,
+          accepted: values.accepted, queried: values.queried,
+          queryReason: values.reason,
+          activeBranchId,
+          actor: { uid: profile.uid, name: profile.fullName || profile.displayName || profile.email || profile.uid }
+        });
       }
-
-      // Update order total value
-      await firestoreService.updateDocument('stock_orders', order.id, {
-        total_order_value_ugx: totalValue
-      });
-
-      onApprove(order.id);
+      toast.success('Operational receipt recorded. Accepted quantities are now in the branch Operational ledger.');
+      setSelectedTransfer(null);
+      setLines([]);
     } catch (error) {
-      toast.error('Failed to update order details');
+      toast.error(error instanceof Error ? error.message : 'Failed to receive Operational stock.');
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-[32px] w-full max-w-4xl max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
-        <div className="p-8 border-b border-zinc-100 flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-zinc-900">Financial Review</h2>
-            <p className="text-sm text-zinc-500">{order.order_number} - {order.requesting_branch_name}</p>
-          </div>
-          <button onClick={onClose} disabled={submitting} className="p-2 hover:bg-zinc-100 rounded-full transition-colors disabled:opacity-50">
-            <Plus className="rotate-45" size={24} />
-          </button>
-        </div>
-        
-        <div className="p-8 overflow-y-auto flex-1">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">
-                <th className="px-4 py-3">Product</th>
-                <th className="px-4 py-3">Supplier</th>
-                <th className="px-4 py-3">Unit Cost</th>
-                <th className="px-4 py-3">Qty</th>
-                <th className="px-4 py-3">Total</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {lines.map((line) => {
-                const edit = editedLines[line.id] || { qty: line.qty_ordered, removed: false };
-                return (
-                  <tr key={line.id} className={cn(edit.removed && "opacity-50 bg-red-50/30")}>
-                    <td className="px-4 py-3 text-sm font-medium text-zinc-900">{line.product_name}</td>
-                    <td className="px-4 py-3 text-sm text-zinc-600">{line.supplier_name}</td>
-                    <td className="px-4 py-3 text-sm text-zinc-600">UGX {line.unit_cost_ugx.toLocaleString()}</td>
-                    <td className="px-4 py-3">
-                      <input 
-                        type="number"
-                        disabled={edit.removed || submitting}
-                        className="w-20 px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg text-sm disabled:opacity-50"
-                        value={edit.qty}
-                        onChange={(e) => handleQtyChange(line.id, Number(e.target.value))}
-                      />
-                    </td>
-                    <td className="px-4 py-3 text-sm font-bold text-zinc-900">
-                      UGX {(edit.qty * line.unit_cost_ugx).toLocaleString()}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button 
-                        onClick={() => handleToggleRemove(line.id)}
-                        disabled={submitting}
-                        className={cn("p-2 rounded-lg transition-colors disabled:opacity-50", edit.removed ? "text-emerald-500 hover:bg-emerald-50" : "text-red-500 hover:bg-red-50")}
-                      >
-                        {edit.removed ? <Plus size={18} /> : <Trash2 size={18} />}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        
-        <div className="p-8 bg-zinc-50 border-t border-zinc-100 flex justify-between items-center">
-          <div className="text-zinc-600">
-            Total Approved: <span className="text-xl font-bold text-zinc-900 ml-2">
-              UGX {lines.reduce((sum, l) => {
-                const edit = editedLines[l.id] || { qty: l.qty_ordered, removed: false };
-                return sum + (edit.removed ? 0 : edit.qty * l.unit_cost_ugx);
-              }, 0).toLocaleString()}
-            </span>
-          </div>
-          <div className="flex gap-3">
-            <button onClick={onClose} disabled={submitting} className="px-6 py-2 text-zinc-500 font-bold hover:bg-zinc-100 rounded-xl transition-all disabled:opacity-50">
-              Cancel
-            </button>
-            <button 
-              onClick={handleConfirm} 
-              disabled={submitting}
-              className="px-6 py-2 bg-emerald-500 text-white font-bold hover:bg-emerald-600 rounded-xl transition-all disabled:bg-zinc-300 disabled:opacity-50"
-            >
-              {submitting ? 'Approving...' : 'Approve Order'}
-            </button>
-          </div>
+    <section className="rounded-2xl border border-emerald-200 bg-white shadow-sm overflow-hidden">
+      <div className="p-5 border-b border-emerald-100 bg-emerald-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div><h3 className="font-black text-emerald-950">Operational Inventory Receipts</h3><p className="mt-1 text-xs text-emerald-800">Separate from sellable Stock In. Accepted units post to this branch’s Operational ledger.</p></div>
+        <div className="flex rounded-xl bg-white border border-emerald-100 p-1 w-fit">
+          <button onClick={() => setShowHistory(false)} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${!showHistory ? 'bg-emerald-700 text-white' : 'text-zinc-500'}`}>Pending</button>
+          <button onClick={() => setShowHistory(true)} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${showHistory ? 'bg-emerald-700 text-white' : 'text-zinc-500'}`}>History</button>
         </div>
       </div>
-    </div>
+      <div className="divide-y divide-zinc-100">
+        {visibleTransfers.map(transfer => <div key={transfer.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div><p className="font-bold text-zinc-900">{transfer.transferNumber}</p><p className="text-xs text-zinc-500">From HQ Operational Store · {transfer.sourceOrderNumber || 'HQ distribution'} · {transfer.status.replace(/_/g, ' ')}</p></div>
+          <button onClick={() => void openTransfer(transfer)} className="px-4 py-2 rounded-xl border border-emerald-200 text-emerald-800 text-xs font-black hover:bg-emerald-50">{showHistory ? 'View receipt' : canReceive ? 'Receive & verify' : 'View details'}</button>
+        </div>)}
+        {visibleTransfers.length === 0 && <p className="p-8 text-center text-sm text-zinc-400">{showHistory ? 'No Operational receipt history for this branch.' : 'No Operational transfers are awaiting receipt.'}</p>}
+      </div>
+
+      {selectedTransfer && <div className="fixed inset-0 z-[70] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-3xl bg-white shadow-2xl flex flex-col">
+          <div className="p-5 border-b border-zinc-100"><p className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Operational Inventory Transfer</p><h3 className="mt-1 text-xl font-black text-zinc-900">{selectedTransfer.transferNumber}</h3><p className="text-xs text-zinc-500">{selectedTransfer.sourceOrderNumber || 'HQ distribution'} → {selectedTransfer.destinationBranchName || activeBranchId}</p></div>
+          <div className="p-5 overflow-y-auto flex-1">
+            {loading ? <p className="py-8 text-center text-sm text-zinc-500">Loading transfer lines…</p> : <div className="overflow-x-auto border border-zinc-200 rounded-xl">
+              <table className="w-full text-left"><thead className="bg-zinc-50 text-[10px] uppercase text-zinc-500"><tr><th className="p-3">Operational item</th><th className="p-3">Dispatched</th><th className="p-3">Accepted</th><th className="p-3">Queried</th><th className="p-3">Reason</th></tr></thead>
+                <tbody className="divide-y divide-zinc-100">{lines.map(line => {
+                  const values = receiptValues[line.id] || { accepted: 0, queried: 0, reason: '' };
+                  const readOnly = showHistory || line.status !== 'dispatched' || !canReceive;
+                  return <tr key={line.id}>
+                    <td className="p-3"><p className="font-bold text-sm text-zinc-900">{line.itemName}</p><p className="text-[10px] text-zinc-500">{line.masterItemId}</p></td>
+                    <td className="p-3 text-sm font-bold">{line.quantityDispatched} {line.unitOfIssue}</td>
+                    <td className="p-3"><input aria-label={`Accepted quantity ${line.itemName}`} type="number" min="0" max={line.quantityDispatched} step="any" disabled={readOnly} value={values.accepted} onChange={event => { const accepted = Math.max(0, Number(event.target.value)); setReceiptValues(prev => ({ ...prev, [line.id]: { ...prev[line.id], accepted, queried: Math.max(0, line.quantityDispatched - accepted) } })); }} className="w-24 rounded-lg border border-zinc-200 px-2 py-1.5 text-sm" /></td>
+                    <td className="p-3"><input aria-label={`Queried quantity ${line.itemName}`} type="number" readOnly disabled={readOnly} value={values.queried} className="w-24 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm" /></td>
+                    <td className="p-3">{values.queried > 0 && <select disabled={readOnly} value={values.reason} onChange={event => setReceiptValues(prev => ({ ...prev, [line.id]: { ...prev[line.id], reason: event.target.value } }))} className="max-w-48 rounded-lg border border-zinc-200 px-2 py-1.5 text-xs"><option value="">Select reason</option><option value="wrong_item">Wrong item</option><option value="damaged">Damaged</option><option value="short_quantity">Short quantity</option><option value="quality_query">Quality query</option><option value="other">Other</option></select>}</td>
+                  </tr>;
+                })}</tbody>
+              </table>
+            </div>}
+          </div>
+          <div className="p-4 border-t border-zinc-100 bg-zinc-50 flex justify-between items-center gap-3"><p className="text-[11px] text-zinc-500">Queried units are excluded from branch SOH and remain linked to this transfer.</p><div className="flex gap-2"><button onClick={() => setSelectedTransfer(null)} disabled={submitting} className="px-4 py-2 rounded-xl border border-zinc-200 text-xs font-bold">Close</button>{!showHistory && <button onClick={() => void submitReceipt()} disabled={!canReceive || loading || submitting || lines.every(line => line.status !== 'dispatched')} className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-black disabled:opacity-40">{submitting ? 'Saving…' : 'Confirm Operational receipt'}</button>}</div></div>
+        </div>
+      </div>}
+    </section>
   );
 };
 
-const GRNTab: React.FC = () => {
-  const { profile } = useAuth();
-  const [grns, setGrns] = useState<GRNRecord[]>([]);
-  const [approvedOrders, setApprovedOrders] = useState<StockOrder[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
-  const [isProcessModalOpen, setIsProcessModalOpen] = useState(false);
-  const [isManualGRNModalOpen, setIsManualGRNModalOpen] = useState(false);
-  const [selectedGRN, setSelectedGRN] = useState<GRNRecord | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [grnDateRange, setGrnDateRange] = useState({ start: '', end: '' });
-
-  useEffect(() => {
-    if (profile?.tenantId) {
-      const unsubscribeGrns = firestoreService.subscribeToCollection<GRNRecord>('grn_records', profile.tenantId, (data) => {
-        setGrns(data.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime()));
-      });
-      const unsubscribeOrders = firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
-        setApprovedOrders(data.filter(o => o.status === 'approved'));
-      });
-      const unsubscribeProducts = firestoreService.subscribeToCollection<Product>('products', profile.tenantId, setProducts);
-      return () => {
-        unsubscribeGrns();
-        unsubscribeOrders();
-        unsubscribeProducts();
-      };
-    }
-  }, [profile?.tenantId]);
-
-  const getProductCustomId = (id: string) => {
-    const prod = products.find(p => p.id === id || p.productId === id);
-    return prod ? prod.productId : id;
-  };
-
-  const handleDownloadGRN = (grn: GRNRecord) => {
-    let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "GOODS RECEIVED NOTE (GRN) HISTORY AND TRANSACTION STATEMENT\n\n";
-    csvContent += `GRN/Ref Number,${grn.grn_number}\n`;
-    csvContent += `Origin (Source),${grn.supplier_name || 'N/A'}\n`;
-    csvContent += `Destination,HQ Central Store / Main Depot\n`;
-    csvContent += `Prepared/Sent By,Supplier Dispatch\n`;
-    csvContent += `Prepared/Sent At,${grn.invoice_date || grn.receivedAt || 'N/A'}\n`;
-    csvContent += `Received/Verified By,${grn.receivedBy || 'Staff Pharmacist'}\n`;
-    csvContent += `Received/Verified At,${grn.receivedAt || 'N/A'}\n`;
-    csvContent += `Tax Deductions,WHT (UGX ${grn.whtAmount || 0}) / Input VAT (UGX ${grn.inputVat || 0})\n`;
-    csvContent += `Payment Status,${grn.payment_status || 'verified'}\n`;
-    csvContent += `Total Value,UGX ${grn.total_value_ugx || 0}\n\n`;
-    csvContent += "Product ID,Product Name,Expected/Ordered Qty,Received Qty,Unit Cost Price (UGX),Line Total Value (UGX),Batch Number,Expiry Date\n";
-    
-    (grn.items || []).forEach(item => {
-      const row = [
-        getProductCustomId(item.product_id),
-        `"${(item.product_name || '').replace(/"/g, '""')}"`,
-        item.qty_ordered || 0,
-        item.qty_received || 0,
-        item.unit_cost_ugx || 0,
-        (item.qty_received || 0) * (item.unit_cost_ugx || 0),
-        item.batch_number || 'N/A',
-        item.expiry_date || 'N/A'
-      ].join(",");
-      csvContent += row + "\n";
-    });
-    
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `GRN_${grn.grn_number}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const handleDownloadAggregateGRN = () => {
-    if (filtered.length === 0) {
-      toast.error("No GRN records found in the filtered list.");
-      return;
-    }
-
-    const headers = ['GRN ID', 'Supplier', 'Branch', 'Amount (UGX)', 'Cash/Credit', 'Received Date', 'Invoice Number'];
-    const rows: any[][] = [];
-
-    filtered.forEach(g => {
-      rows.push([
-        g.grn_number,
-        g.supplier_name || 'N/A',
-        'HQ Store',
-        g.total_value_ugx || 0,
-        g.payment_type ? g.payment_type.toUpperCase() : 'CREDIT',
-        g.receivedAt ? g.receivedAt.split('T')[0] : '-',
-        g.invoice_number || 'N/A'
-      ]);
-    });
-
-    const BOM = "\uFEFF";
-    const csvContent = BOM + [headers.join(','), ...rows.map(e => e.map(val => `"${(val ?? '').toString().replace(/"/g, '""')}"`).join(","))].join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `Central_GRN_Aggregate_Report.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    toast.success("Aggregate GRN report downloaded successfully.");
-  };
-
-  const filtered = grns.filter(g => {
-    const q = searchTerm.toLowerCase().trim();
-    const matchesSearch = !q || 
-      g.grn_number.toLowerCase().includes(q) ||
-      (g.supplier_name || '').toLowerCase().includes(q) ||
-      (g.invoice_number || '').toLowerCase().includes(q) ||
-      'hq store'.includes(q) ||
-      'central store'.includes(q) ||
-      'main store'.includes(q);
-
-    const grnDate = g.receivedAt ? g.receivedAt.split('T')[0] : '';
-    const matchesStart = !grnDateRange.start || grnDate >= grnDateRange.start;
-    const matchesEnd = !grnDateRange.end || grnDate <= grnDateRange.end;
-
-    return matchesSearch && matchesStart && matchesEnd;
+const QueriedItemsTab: React.FC = () => {
+  const { profile, activeBranchId } = useAuth();
+  const [queriedLines, setQueriedLines] = useState<TransferInvoiceLine[]>([]);
+  const [auditQueries, setAuditQueries] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
+  const [auditDateRange, setAuditDateRange] = useState({ 
+    start: '', 
+    end: '' 
   });
 
+  useEffect(() => {
+    if (profile?.tenantId && activeBranchId) {
+      const unsubscribe = firestoreService.subscribeToCollection<TransferInvoiceLine>('transfer_invoice_lines', profile.tenantId, (data) => {
+        // Filter for lines with queries that haven't been resolved/returned yet
+        const filtered = data.filter(l => l.qty_queried > 0 && l.line_status !== 'returned');
+        setQueriedLines(filtered);
+        setLoading(false);
+      });
+
+      const unsubQueries = firestoreService.subscribeToCollection<any>('stock_queries', profile.tenantId, (data) => {
+        setAuditQueries(data.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+      });
+
+      return () => {
+        unsubscribe();
+        unsubQueries();
+      };
+    }
+  }, [profile?.tenantId, activeBranchId]);
+
+  const filteredAuditQueries = auditQueries.filter(q => {
+    const qDate = new Date(q.timestamp).toISOString().split('T')[0];
+    const matchesStart = !auditDateRange.start || qDate >= auditDateRange.start;
+    const matchesEnd = !auditDateRange.end || qDate <= auditDateRange.end;
+    return matchesStart && matchesEnd;
+  });
+
+  const handleReturnToHQ = async (line: TransferInvoiceLine) => {
+    if (!profile?.tenantId || !activeBranchId) return;
+    setProcessing(true);
+    try {
+      // Pre-fetch HQ batch to avoid getDocs inside transaction
+      const hqBatches = await firestoreService.getDocumentsByQuery<ProductBatch>('product_batches', [
+        { field: 'tenantId', operator: '==', value: profile.tenantId },
+        { field: 'branchId', operator: '==', value: 'HQ' },
+        { field: 'productId', operator: '==', value: line.product_id },
+        { field: 'batchNumber', operator: '==', value: line.batch_number }
+      ]);
+
+      await firestoreService.runTransaction(async (transaction) => {
+        // 1. Create Return Transfer Invoice
+        const returnTransferData: Partial<TransferInvoice> = {
+          tenantId: profile.tenantId,
+          inventoryClass: line.inventoryClass || 'SELLABLE',
+          transfer_number: `RET-HQ-${Date.now()}`,
+          source_branch_id: activeBranchId!,
+          source_branch_name: 'Branch Store',
+          destination_branch_id: 'HQ',
+          destination_branch_name: 'Central HQ',
+          transfer_type: 'query_return',
+          status: 'dispatched',
+          dispatched_by: profile.uid,
+          dispatched_at: new Date().toISOString(),
+          total_value_ugx: (line.qty_queried || 0) * (line.unit_cost_ugx || 0),
+          notes: `Return to HQ for queried item: ${line.product_name}. Reason: ${line.query_reason}`
+        };
+        const returnRef = doc(collection(db, 'transfer_invoices'));
+        transaction.set(returnRef, { ...returnTransferData, createdAt: new Date().toISOString() });
+
+        // 2. Create Return Line
+        const returnLineRef = doc(collection(db, 'transfer_invoice_lines'));
+        transaction.set(returnLineRef, {
+          tenantId: profile.tenantId,
+          inventoryClass: line.inventoryClass || 'SELLABLE',
+          transfer_id: returnRef.id,
+          product_id: line.product_id,
+          product_name: line.product_name,
+          batch_number: line.batch_number,
+          expiry_date: line.expiry_date,
+          qty_dispatched: line.qty_queried,
+          unit_cost_ugx: line.unit_cost_ugx,
+          total_cost_ugx: (line.qty_queried || 0) * line.unit_cost_ugx,
+          line_status: 'dispatched',
+          createdAt: new Date().toISOString()
+        });
+
+        // 3. Update original line status
+        const lineRef = doc(db, 'transfer_invoice_lines', line.id);
+        transaction.update(lineRef, {
+          line_status: 'returned',
+          updatedAt: new Date().toISOString()
+        });
+
+        // 4. Update the persistent stock_queries status to returned_to_hq
+        const queryDocRef = doc(db, 'stock_queries', line.id);
+        transaction.set(queryDocRef, {
+          status: 'returned_to_hq',
+          resolvedAt: new Date().toISOString()
+        }, { merge: true });
+
+        // 5. Add back to HQ stock (since it's being returned)
+        if (hqBatches.length > 0) {
+          const hqBatchRef = doc(db, 'product_batches', hqBatches[0].id);
+          transaction.update(hqBatchRef, {
+            quantity: hqBatches[0].quantity + (line.qty_queried || 0),
+            lastUpdated: new Date().toISOString()
+          });
+        } else {
+          const newHqBatchRef = doc(collection(db, 'product_batches'));
+          transaction.set(newHqBatchRef, {
+            tenantId: profile.tenantId,
+            branchId: 'HQ',
+            productId: line.product_id,
+            batchNumber: line.batch_number,
+            expiryDate: line.expiry_date,
+            quantity: line.qty_queried,
+            purchasePrice: line.unit_cost_ugx,
+            sellingPrice: line.unit_cost_ugx * 1.3,
+            batch_status: 'active',
+            createdAt: new Date().toISOString(),
+            lastUpdated: new Date().toISOString()
+          });
+        }
+      });
+      toast.success("Item returned to HQ stores successfully.");
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to return item to HQ.");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-6 mb-6">
-        <h3 className="text-lg font-bold text-emerald-900 mb-4 flex items-center gap-2">
-          <Clock size={20} />
-          Approved Orders Awaiting GRN
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {approvedOrders.map(order => (
-            <div key={order.id} className="bg-white p-4 rounded-xl border border-emerald-200 shadow-sm flex justify-between items-center">
-              <div>
-                <p className="font-bold text-zinc-900">{order.order_number}</p>
-                <p className="text-xs text-zinc-500">{order.requesting_branch_name}</p>
-              </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={async () => {
-                    if (window.confirm(`Are you sure you want to revert order ${order.order_number || ''} back to the Financial Approval tab?`)) {
-                      try {
-                        await firestoreService.updateDocument('stock_orders', order.id, {
-                          status: 'awaiting_finance_approval',
-                          updatedAt: new Date().toISOString()
-                        });
-                        const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-                        for (const line of lines) {
-                          await firestoreService.updateDocument('stock_order_lines', line.id, {
-                            line_status: 'awaiting_finance_approval',
-                            updatedAt: new Date().toISOString()
-                          });
-                        }
-                        toast.success('Order reverted to Financial Approval.');
-                      } catch (error) {
-                        console.error(error);
-                        toast.error('Failed to revert order.');
-                      }
-                    }
-                  }}
-                  className="border border-zinc-200 text-zinc-500 hover:bg-zinc-50 px-2 py-1.5 rounded-lg text-xs font-bold transition-all"
-                >
-                  Revert
-                </button>
-                <button 
-                  onClick={() => {
-                    setSelectedOrder(order);
-                    setIsProcessModalOpen(true);
-                  }}
-                  className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors"
-                >
-                  Process GRN
-                </button>
-              </div>
-            </div>
-          ))}
-          {approvedOrders.length === 0 && (
-            <p className="text-sm text-emerald-600 italic">No approved orders awaiting GRN.</p>
-          )}
-        </div>
-      </div>
-
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-zinc-50 p-4 rounded-2xl border border-zinc-200">
-        <div className="flex flex-col md:flex-row md:items-center gap-4 flex-1">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-            <input 
-              type="text"
-              placeholder="Search GRNs by branch, supplier, ID..."
-              className="w-full pl-10 pr-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20 text-xs font-bold text-zinc-800"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          
-          <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl shadow-sm">
-            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Date range:</span>
-            <input 
-              type="date" 
-              value={grnDateRange.start} 
-              onChange={(e) => setGrnDateRange(prev => ({ ...prev, start: e.target.value }))}
-              className="bg-transparent border-none text-xs outline-none focus:ring-0 text-zinc-700 w-[110px]"
-            />
-            <span className="text-xs font-bold text-zinc-400">to</span>
-            <input 
-              type="date" 
-              value={grnDateRange.end} 
-              onChange={(e) => setGrnDateRange(prev => ({ ...prev, end: e.target.value }))}
-              className="bg-transparent border-none text-xs outline-none focus:ring-0 text-zinc-700 w-[110px]"
-            />
-            {(grnDateRange.start || grnDateRange.end) && (
-              <button 
-                onClick={() => setGrnDateRange({ start: '', end: '' })} 
-                className="text-zinc-400 hover:text-zinc-650 font-bold text-xs px-1"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button 
-            onClick={handleDownloadAggregateGRN}
-            className="bg-emerald-600 hover:bg-emerald-750 text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-sm transition-all"
-            title="Download Aggregated Excel Report"
-          >
-            <Download size={14} />
-            Download Aggregate
-          </button>
-          <button 
-            onClick={() => setIsManualGRNModalOpen(true)}
-            className="bg-zinc-900 hover:bg-zinc-800 text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-sm transition-all"
-          >
-            <Plus size={14} />
-            Record Manual GRN
-          </button>
-        </div>
-      </div>
-
+    <div className="space-y-8 animate-fade-in">
       <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-zinc-100 bg-zinc-50/50 flex justify-between items-center">
+          <div>
+            <h3 className="font-bold text-zinc-900">Queried Items Verification</h3>
+            <p className="text-xs text-zinc-500">Flagged stock receiving errors currently awaiting physical processing.</p>
+          </div>
+          <span className="text-xs bg-amber-50 text-amber-600 font-bold px-3 py-1 rounded-full border border-amber-200">
+            {queriedLines.length} Pending
+          </span>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
-                <th className="px-6 py-4">GRN #</th>
-                <th className="px-6 py-4">Supplier</th>
-                <th className="px-6 py-4">Value</th>
-                <th className="px-6 py-4">VAT</th>
-                <th className="px-6 py-4">WHT</th>
-                <th className="px-6 py-4">Payment</th>
-                <th className="px-6 py-4">Received At</th>
-                <th className="px-6 py-4 text-right">Actions</th>
+                <th className="px-6 py-4">Product / Item</th>
+                <th className="px-6 py-4">Batch Code</th>
+                <th className="px-6 py-4">Qty Discrepant</th>
+                <th className="px-6 py-4">Reason Given</th>
+                <th className="px-6 py-4">Status</th>
+                <th className="px-6 py-4 text-right">Action Gate</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {filtered.map((grn) => (
-                <tr key={grn.id} className="hover:bg-zinc-50/50 transition-colors">
-                  <td className="px-6 py-4 font-bold text-zinc-900">{grn.grn_number}</td>
-                  <td className="px-6 py-4 text-sm text-zinc-600">{grn.supplier_name}</td>
-                  <td className="px-6 py-4 text-sm font-bold text-zinc-900">UGX {grn.total_value_ugx.toLocaleString()}</td>
-                  <td className="px-6 py-4 text-sm text-emerald-600 font-medium">UGX {(grn.inputVat || 0).toLocaleString()}</td>
-                  <td className="px-6 py-4 text-sm text-amber-600 font-medium">UGX {(grn.whtAmount || 0).toLocaleString()}</td>
+              {queriedLines.map((line) => (
+                <tr key={line.id} className="hover:bg-zinc-50/50 transition-colors">
                   <td className="px-6 py-4">
-                    <span className={cn(
-                      "px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider",
-                      grn.payment_type === 'credit' ? "bg-amber-50 text-amber-600" : "bg-emerald-50 text-emerald-600"
-                    )}>
-                      {grn.payment_type}
+                    <p className="font-bold text-zinc-900">{line.product_name}</p>
+                    <p className="text-[10px] text-zinc-400 font-mono">Line: {line.id.slice(0, 10)}</p>
+                  </td>
+                  <td className="px-6 py-4 text-sm font-mono text-zinc-600">{line.batch_number}</td>
+                  <td className="px-6 py-4 font-bold text-red-600">
+                    {line.qty_queried} packs
+                    <span className="block text-[10px] font-black text-indigo-600 mt-1 uppercase tracking-wider">
+                      Accrued: UGX {((line.qty_queried || 0) * (line.unit_cost_ugx || 0)).toLocaleString()}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-sm text-zinc-500">{new Date(grn.receivedAt).toLocaleString()}</td>
+                  <td className="px-6 py-4">
+                    <span className="px-2.5 py-1 bg-red-50 text-red-600 rounded-md text-[10px] font-bold uppercase tracking-wider border border-red-100">
+                      {line.query_reason || 'Unspecified'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="px-2.5 py-1 bg-amber-50 text-amber-600 rounded-md text-[10px] font-bold uppercase tracking-wider border border-amber-100">
+                      Discrepancy Logged
+                    </span>
+                  </td>
                   <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end gap-2 text-xs font-bold font-sans">
-                      <button 
-                        onClick={() => setSelectedGRN(grn)}
-                        className="px-3 py-1 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors flex items-center gap-1"
-                      >
-                        <Eye size={12} />
-                        View
-                      </button>
-                      <button 
-                        onClick={() => handleDownloadGRN(grn)}
-                        className="px-3 py-1 bg-zinc-100 text-zinc-650 hover:bg-zinc-200 rounded-lg transition-colors flex items-center gap-1"
-                        title="Download CSV"
-                      >
-                        <Download size={12} />
-                        CSV
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => handleReturnToHQ(line)}
+                      disabled={processing}
+                      className="px-4 py-1.5 bg-zinc-900 text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition-all disabled:opacity-50"
+                    >
+                      {processing ? 'Processing...' : 'Return to HQ'}
+                    </button>
                   </td>
                 </tr>
               ))}
-              {filtered.length === 0 && (
+              {queriedLines.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center text-zinc-400 italic">
-                    No GRN records found.
+                  <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic">
+                    No active discrepant stock items found in review queue.
                   </td>
                 </tr>
               )}
@@ -2111,18 +1952,724 @@ const GRNTab: React.FC = () => {
         </div>
       </div>
 
-      {selectedGRN && (
+      {/* Persistent Queries Followup & Historical Audit Log Section */}
+      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-zinc-100 bg-zinc-50/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h3 className="font-bold text-zinc-900">Query Followup & Audit Log</h3>
+            <p className="text-xs text-zinc-500">Historical immutable log of all incoming stock queries raised for auditing and compliance tracking.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Filter Date:</span>
+            <input 
+              type="date" 
+              value={auditDateRange.start} 
+              onChange={(e) => setAuditDateRange(prev => ({ ...prev, start: e.target.value }))}
+              className="px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-500/20"
+            />
+            <span className="text-xs font-bold text-zinc-400">to</span>
+            <input 
+              type="date" 
+              value={auditDateRange.end} 
+              onChange={(e) => setAuditDateRange(prev => ({ ...prev, end: e.target.value }))}
+              className="px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-500/20"
+            />
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
+                <th className="px-6 py-4">Date Logged</th>
+                <th className="px-6 py-4">Invoice #</th>
+                <th className="px-6 py-4">Product & Batch</th>
+                <th className="px-6 py-4">Qty & Reason</th>
+                <th className="px-6 py-4">Logged By</th>
+                <th className="px-6 py-4">Resolution Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100 text-sm">
+              {filteredAuditQueries.map((q) => (
+                <tr key={q.id} className="hover:bg-zinc-50/50 transition-colors">
+                  <td className="px-6 py-4 text-xs font-mono text-zinc-500">
+                    {new Date(q.timestamp).toLocaleString()}
+                  </td>
+                  <td className="px-6 py-4 font-semibold text-zinc-700">
+                    {q.invoiceNumber || 'Unknown'}
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="font-semibold text-zinc-900">{q.productName}</p>
+                    <p className="text-[10px] text-zinc-500 font-mono">Batch: {q.batchNumber}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="font-bold text-zinc-900">{q.qtyQueried} units</p>
+                    <p className="text-xs text-red-500 italic mb-1">{q.reason}</p>
+                    <span className="block text-[10px] font-black text-indigo-600 uppercase tracking-wider">
+                      Accrued: UGX {(q.amountAccrued || q.qtyQueried * (q.unitCost || 0)).toLocaleString()}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-xs text-zinc-600">
+                    {q.loggedByName || 'Staff'}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                      q.status === 'returned_to_hq' 
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                        : 'bg-amber-50 text-amber-700 border-amber-200'
+                    }`}>
+                      {q.status === 'returned_to_hq' ? 'Resolved & Returned to HQ' : 'Logged / Pending return'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {filteredAuditQueries.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic">
+                    Invoice query audit database is empty for selected date range.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
+  const { profile, activeBranchId } = useAuth();
+  const [destinationBranch, setDestinationBranch] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [products, setProducts] = useState<Product[]>([]);
+  const [batches, setBatches] = useState<ProductBatch[]>([]);
+  const [transferLines, setTransferLines] = useState<Partial<TransferInvoiceLine>[]>([]);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [productBatches, setProductBatches] = useState<ProductBatch[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [transferHistory, setTransferHistory] = useState<TransferInvoice[]>([]);
+  const [historyDateRange, setHistoryDateRange] = useState({ 
+    start: '', 
+    end: '' 
+  });
+  const [selectedTransfer, setSelectedTransfer] = useState<TransferInvoice | null>(null);
+  const [selectedTransferLines, setSelectedTransferLines] = useState<TransferInvoiceLine[]>([]);
+  const [transferSearch, setTransferSearch] = useState('');
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [isDispatching, setIsDispatching] = useState(false);
+  const [staff, setStaff] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (profile?.tenantId) {
+      firestoreService.subscribeToCollection<any>('staff', profile.tenantId, setStaff);
+    }
+  }, [profile?.tenantId]);
+
+  const getUserName = (uid?: string) => {
+    if (!uid) return 'N/A';
+    const found = staff.find(s => s.uid === uid || s.id === uid);
+    return found ? (found.full_name || found.displayName || found.username || found.email) : uid;
+  };
+
+  const getProductCustomId = (id: string) => {
+    const prod = products.find(p => p.id === id || p.productId === id);
+    return prod ? prod.productId : id;
+  };
+
+  const handleDownloadTransfer = async (transfer: TransferInvoice, linesToUse?: TransferInvoiceLine[]) => {
+    let lines = linesToUse || transfer.items || [];
+    if (lines.length === 0) {
+      try {
+        lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
+          { field: 'tenantId', operator: '==', value: profile?.tenantId || '' },
+          { field: 'transfer_id', operator: '==', value: transfer.id }
+        ]);
+      } catch (err) {
+        console.error("Error fetching transfer lines for download:", err);
+      }
+    }
+
+    const BOM = "\uFEFF";
+    let csvContent = BOM + "STOCK TRANSFER OUT / TRANSFERRED GRN HISTORY STATEMENT\n\n";
+    csvContent += `Transfer Number,${transfer.transfer_number}\n`;
+    csvContent += `Type,${transfer.transfer_type.replace(/_/g, ' ')}\n`;
+    csvContent += `Source (Origin),"${(transfer.source_branch_name || 'HQ Central Depot').replace(/"/g, '""')}"\n`;
+    csvContent += `Destination,"${(transfer.destination_branch_name || 'Receiving Branch').replace(/"/g, '""')}"\n`;
+    csvContent += `Sent/Dispatched By,"${getUserName(transfer.dispatched_by).replace(/"/g, '""')}"\n`;
+    csvContent += `Sent/Dispatched At,${transfer.dispatched_at || 'N/A'}\n`;
+    csvContent += `Received/Verified By,"${(transfer.received_by ? getUserName(transfer.received_by) : 'Pending verification').replace(/"/g, '""')}"\n`;
+    csvContent += `Received/Verified At,${transfer.received_at || 'N/A'}\n`;
+    csvContent += `Status,${transfer.status}\n`;
+    csvContent += `Total Transfer Value,UGX ${transfer.total_value_ugx || 0}\n\n`;
+    csvContent += "Product ID,Product Name,Batch Number,Expiry Date,Qty Dispatched,Qty Received,Unit Cost Price (UGX),Total Costs Value (UGX)\n";
+    
+    lines.forEach(line => {
+      const row = [
+        getProductCustomId(line.product_id),
+        `"${(line.product_name || '').replace(/"/g, '""')}"`,
+        line.batch_number || 'N/A',
+        line.expiry_date || 'N/A',
+        line.qty_dispatched || 0,
+        line.qty_received ?? line.qty_dispatched ?? 0,
+        line.unit_cost_ugx || 0,
+        (line.qty_dispatched || 0) * (line.unit_cost_ugx || 0)
+      ].join(",");
+      csvContent += row + "\n";
+    });
+    
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `TRANSFER_${transfer.transfer_number}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleViewTransfer = async (transfer: TransferInvoice) => {
+    setSelectedTransfer(transfer);
+    setSelectedTransferLines([]);
+    try {
+      const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
+        { field: 'tenantId', operator: '==', value: profile?.tenantId || '' },
+        { field: 'transfer_id', operator: '==', value: transfer.id }
+      ]);
+      setSelectedTransferLines(lines);
+    } catch (err) {
+      console.error("Error loading transfer lines:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (profile?.tenantId && activeBranchId) {
+      firestoreService.subscribeToCollection<Product>('products', profile.tenantId, setProducts);
+      firestoreService.subscribeToCollection<ProductBatch>('product_batches', profile.tenantId, (data) => {
+        setBatches(data.filter(b => b.branchId === activeBranchId && b.quantity > 0));
+      });
+      firestoreService.subscribeToCollection<TransferInvoice>('transfer_invoices', profile.tenantId, (data) => {
+        setTransferHistory(data.filter(i => i.source_branch_id === activeBranchId));
+      });
+    }
+  }, [profile?.tenantId, activeBranchId]);
+
+  const displayedTransferHistory = transferHistory.filter(t => {
+    const tDate = (t.dispatched_at || t.createdAt || '').split('T')[0];
+    const matchesStart = !historyDateRange.start || tDate >= historyDateRange.start;
+    const matchesEnd = !historyDateRange.end || tDate <= historyDateRange.end;
+    
+    if (!matchesStart || !matchesEnd) return false;
+
+    if (transferSearch.trim()) {
+      const q = transferSearch.toLowerCase().trim();
+      const transferId = (t.transfer_number || '').toLowerCase();
+      const invoiceId = (t.id || '').toLowerCase();
+      const srcName = (t.source_branch_name || (branches.find(b => b.id === t.source_branch_id)?.name || 'HQ Central Depot')).toLowerCase();
+      const destName = (t.destination_branch_name || (branches.find(b => b.id === t.destination_branch_id)?.name || 'Destination Branch Store')).toLowerCase();
+      const sender = getUserName(t.dispatched_by).toLowerCase();
+      const receiver = t.received_by ? getUserName(t.received_by).toLowerCase() : 'pending';
+      
+      return transferId.includes(q) || 
+             invoiceId.includes(q) || 
+             srcName.includes(q) || 
+             destName.includes(q) || 
+             sender.includes(q) || 
+             receiver.includes(q);
+    }
+
+    return true;
+  });
+
+  if (!activeBranchId) {
+    return (
+      <div className="bg-zinc-50 border border-dashed border-zinc-200 rounded-2xl p-12 text-center">
+        <Building2 className="mx-auto text-zinc-300 mb-4" size={48} />
+        <h3 className="text-lg font-bold text-zinc-900">No Branch Selected</h3>
+        <p className="text-sm text-zinc-500 mt-2">Please select a branch from the header to manage transfers.</p>
+      </div>
+    );
+  }
+
+  const filteredProducts = products.filter(p => 
+    p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    p.sku.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleSelectProduct = (product: Product) => {
+    setSelectedProduct(product);
+    setProductBatches(batches.filter(b => b.productId === product.id));
+  };
+
+  const addBatchToTransfer = (batch: ProductBatch) => {
+    if (transferLines.find(l => l.batch_number === batch.batchNumber)) {
+      toast.error("Batch already added.");
+      return;
+    }
+    setTransferLines([...transferLines, {
+      product_id: batch.productId,
+      product_name: selectedProduct?.name,
+      batch_number: batch.batchNumber,
+      expiry_date: batch.expiryDate,
+      qty_dispatched: 1,
+      unit_cost_ugx: batch.purchasePrice,
+      line_total_ugx: batch.purchasePrice,
+      tenantId: profile?.tenantId,
+      batch_id: batch.id
+    }]);
+    setSelectedProduct(null);
+  };
+
+  const updateLineQty = (batchNumber: string, qty: number) => {
+    setTransferLines(transferLines.map(l => {
+      if (l.batch_number === batchNumber) {
+        const batch = batches.find(b => b.batchNumber === batchNumber);
+        if (batch && qty > batch.quantity) {
+          toast.error(`Only ${batch.quantity} available in this batch.`);
+          qty = batch.quantity;
+        }
+        return { ...l, qty_dispatched: qty, line_total_ugx: qty * (l.unit_cost_ugx || 0) };
+      }
+      return l;
+    }));
+  };
+
+  const handleTransfer = () => {
+    if (!destinationBranch || transferLines.length === 0 || !profile?.tenantId) {
+      toast.error("Please select a destination and add products.");
+      return;
+    }
+    // Check if any transfer line has 0 or invalid quantity
+    const hasInvalidQty = transferLines.some(l => !l.qty_dispatched || l.qty_dispatched <= 0);
+    if (hasInvalidQty) {
+      toast.error("Please enter a quantity greater than zero for all lines.");
+      return;
+    }
+    setShowPreviewModal(true);
+  };
+
+  const executeTransfer = async () => {
+    if (isDispatching) return;
+    setIsDispatching(true);
+    try {
+      // Pre-fetch batches to avoid getDocs inside transaction
+      const batchPromises = transferLines.map(line => 
+        firestoreService.getDocument<ProductBatch>('product_batches', line.batch_id!)
+      );
+      const batchResults = await Promise.all(batchPromises);
+      const batchMap: Record<string, ProductBatch> = {};
+      batchResults.forEach(batch => {
+        if (batch) batchMap[batch.id] = batch;
+      });
+
+      // Pre-fetch source branch batch refs for all products in transfer
+      const uniqueProductIds = Array.from(new Set<string>(transferLines.map(line => String(line.product_id))));
+      const branchBatchRefsMap: Record<string, { ref: any; id: string }[]> = {};
+      for (const pId of uniqueProductIds) {
+        branchBatchRefsMap[pId] = await getBranchProductBatchRefs(
+          profile?.tenantId!,
+          activeBranchId || 'main',
+          pId
+        );
+      }
+
+      await firestoreService.runTransaction(async (transaction) => {
+        const transferData: Partial<TransferInvoice> = {
+          tenantId: profile?.tenantId,
+          inventoryClass: 'SELLABLE',
+          transfer_number: `TRF-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
+          source_branch_id: activeBranchId || 'main',
+          source_branch_name: branches.find(b => b.id === activeBranchId)?.name || 'HQ Central Depot',
+          destination_branch_id: destinationBranch,
+          destination_branch_name: destinationBranch === 'HQ' ? 'HQ Central Store / Main Depot' : (branches.find(b => b.id === destinationBranch)?.name || 'Receiving Branch'),
+          transfer_type: destinationBranch === 'HQ' ? 'branch_to_central' : 'branch_to_branch',
+          status: 'dispatched',
+          dispatched_by: profile?.uid,
+          dispatched_at: new Date().toISOString(),
+          total_value_ugx: transferLines.reduce((sum, l) => sum + (l.line_total_ugx || 0), 0),
+          items: transferLines as TransferInvoiceLine[]
+        };
+
+        const transferRef = doc(collection(db, 'transfer_invoices'));
+        transaction.set(transferRef, { ...transferData, createdAt: new Date().toISOString() });
+
+        for (const line of transferLines) {
+          const lineRef = doc(collection(db, 'transfer_invoice_lines'));
+          transaction.set(lineRef, {
+            ...line,
+            inventoryClass: line.inventoryClass || 'SELLABLE',
+            transfer_id: transferRef.id,
+            createdAt: new Date().toISOString()
+          });
+          
+          // Decrement batch quantity in source branch
+          const batch = batchMap[line.batch_id!];
+          if (batch) {
+            const newQty = batch.quantity - (line.qty_dispatched || 0);
+            if (newQty < 0) {
+              throw new Error(`Insufficient stock for batch ${line.batch_number}`);
+            }
+            
+            const batchRef = doc(db, 'product_batches', batch.id);
+            transaction.update(batchRef, {
+              quantity: newQty,
+              lastUpdated: new Date().toISOString()
+            });
+
+            // Log TRANSFER_OUT movement event & update summaries
+            const batchRefs = branchBatchRefsMap[line.product_id!] || [];
+            await logMovementAndAggregateInTx(transaction, batchRefs, {
+              tenantId: profile?.tenantId!,
+              branchId: activeBranchId || 'main',
+              productId: line.product_id!,
+              eventType: 'TRANSFER_OUT',
+              quantityDeltaBaseUnits: -(line.qty_dispatched || 0),
+              consumptionDeltaBaseUnits: 0,
+              isExceptional: false,
+              exceptionalReason: null,
+              sourceCollection: 'transfer_invoices',
+              sourceDocumentId: transferRef.id,
+              sourceLineId: line.batch_id!,
+              reversalOfEventId: null,
+              createdBy: profile?.uid || 'system',
+              effectiveAt: new Date(),
+              timezone: 'Africa/Kampala'
+            });
+          } else {
+            throw new Error(`Batch ${line.batch_number} not found in inventory.`);
+          }
+        }
+      });
+
+      toast.success("Transfer dispatched and inventory updated.");
+      setTransferLines([]);
+      setDestinationBranch('');
+      setShowPreviewModal(false);
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || "Failed to dispatch transfer.");
+    } finally {
+      setIsDispatching(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <div className="flex gap-2 p-1 bg-zinc-100 rounded-xl w-fit">
+          <button 
+            onClick={() => setShowHistory(false)}
+            className={cn(
+              "px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
+              !showHistory ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+            )}
+          >
+            New Transfer
+          </button>
+          <button 
+            onClick={() => setShowHistory(true)}
+            className={cn(
+              "px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
+              showHistory ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+            )}
+          >
+            Transfer History
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl min-w-[260px]">
+            <Search size={14} className="text-zinc-400" />
+            <input 
+              type="text" 
+              placeholder="Search ID, source, dest, sender..." 
+              value={transferSearch} 
+              onChange={(e) => setTransferSearch(e.target.value)}
+              className="bg-transparent border-none text-xs outline-none w-full placeholder-zinc-400 text-zinc-800"
+            />
+            {transferSearch && (
+              <button onClick={() => setTransferSearch('')} className="text-zinc-400 hover:text-zinc-600">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl">
+            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Dates:</span>
+            <input 
+              type="date" 
+              value={historyDateRange.start} 
+              onChange={(e) => setHistoryDateRange(prev => ({ ...prev, start: e.target.value }))}
+              className="bg-transparent border-none text-xs outline-none focus:ring-0 text-zinc-700 w-[110px]"
+            />
+            <span className="text-xs font-bold text-zinc-400">to</span>
+            <input 
+              type="date" 
+              value={historyDateRange.end} 
+              onChange={(e) => setHistoryDateRange(prev => ({ ...prev, end: e.target.value }))}
+              className="bg-transparent border-none text-xs outline-none focus:ring-0 text-zinc-700 w-[110px]"
+            />
+          </div>
+        </div>
+      </div>
+
+      {!showHistory ? (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className="lg:col-span-2 space-y-6">
+            <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-6">
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-zinc-700">Destination Branch</label>
+                <select 
+                  value={destinationBranch}
+                  onChange={(e) => setDestinationBranch(e.target.value)}
+                  className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                >
+                  <option value="">Select Destination...</option>
+                  {branches.filter(b => b.id !== activeBranchId).map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                  <option value="HQ">Procurement Store (Return)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+              <div className="p-4 border-b border-zinc-100 bg-zinc-50/50 flex justify-between items-center">
+                <h3 className="font-bold text-zinc-900">Transfer Items</h3>
+                <div className="text-xs font-bold text-zinc-500">
+                  Total Value: <span className="text-emerald-600">UGX {transferLines.reduce((sum, l) => sum + (l.line_total_ugx || 0), 0).toLocaleString()}</span>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">
+                      <th className="px-6 py-3">Product</th>
+                      <th className="px-6 py-3">Batch</th>
+                      <th className="px-6 py-3 w-36">Qty to Transfer</th>
+                      <th className="px-6 py-3">Line Total</th>
+                      <th className="px-6 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {transferLines.map(line => (
+                      <tr key={line.batch_number} className="hover:bg-zinc-50/50 transition-colors">
+                        <td className="px-6 py-4">
+                          <p className="font-medium text-zinc-900">{line.product_name}</p>
+                          <p className="text-[10px] text-zinc-400">Expiry: {new Date(line.expiry_date!).toLocaleDateString()}</p>
+                        </td>
+                        <td className="px-6 py-4 text-sm font-mono text-zinc-600">{line.batch_number}</td>
+                        <td className="px-6 py-4">
+                          <input 
+                            type="number" 
+                            min="1"
+                            value={line.qty_dispatched ?? ''}
+                            onChange={(e) => updateLineQty(line.batch_number!, parseInt(e.target.value) || 0)}
+                            className="w-32 px-3 py-2 text-base font-black text-zinc-950 bg-zinc-50 border border-zinc-300 rounded-xl outline-none focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500"
+                          />
+                        </td>
+                        <td className="px-6 py-4 text-sm font-bold text-zinc-900">{line.line_total_ugx?.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-right">
+                          <button 
+                            onClick={() => setTransferLines(prev => prev.filter(l => l.batch_number !== line.batch_number))}
+                            className="text-red-500 hover:text-red-700 font-bold"
+                          >
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {transferLines.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-12 text-center text-zinc-400 italic">
+                          No items added. Search and select batches from the right panel.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="p-6 border-t border-zinc-100 flex justify-end">
+                <button 
+                  onClick={handleTransfer}
+                  className="px-8 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold transition-colors shadow-lg shadow-emerald-500/20"
+                >
+                  Dispatch Transfer
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
+              <h3 className="font-bold text-zinc-900 mb-4">Inventory Search</h3>
+              <div className="relative mb-4">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                <input 
+                  type="text" 
+                  placeholder="Search products..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                />
+              </div>
+              
+              {selectedProduct ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-bold text-zinc-900">{selectedProduct.name}</h4>
+                    <button onClick={() => setSelectedProduct(null)} className="text-xs text-zinc-500 hover:underline">Back</button>
+                  </div>
+                  <div className="space-y-2">
+                    {productBatches.map(batch => (
+                      <button
+                        key={batch.id}
+                        onClick={() => addBatchToTransfer(batch)}
+                        className="w-full p-3 text-left border border-zinc-100 rounded-xl hover:border-emerald-500 hover:bg-emerald-50/30 transition-all"
+                      >
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <p className="text-xs font-bold text-zinc-700">Batch: {batch.batchNumber}</p>
+                            <p className="text-[10px] text-zinc-500">Exp: {new Date(batch.expiryDate).toLocaleDateString()}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs font-bold text-emerald-600">{batch.quantity} in stock</p>
+                            <p className="text-[10px] text-zinc-400">UGX {batch.purchasePrice.toLocaleString()}</p>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                    {productBatches.length === 0 && (
+                      <p className="text-center py-4 text-xs text-zinc-400 italic">No active batches found for this product.</p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                  {filteredProducts.map(product => (
+                    <button
+                      key={product.id}
+                      onClick={() => handleSelectProduct(product)}
+                      className="w-full p-3 text-left border border-zinc-100 rounded-xl hover:border-emerald-500 hover:bg-emerald-50/30 transition-all group"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-zinc-900 text-sm truncate">{product.name}</p>
+                          <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{product.sku}</p>
+                        </div>
+                        <ChevronRight size={16} className="text-zinc-300 group-hover:text-emerald-500" />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
+                  <th className="px-6 py-4">Transfer #</th>
+                  <th className="px-6 py-4">Destination</th>
+                  <th className="px-6 py-4">Products Transferred</th>
+                  <th className="px-6 py-4">Transferred By</th>
+                  <th className="px-6 py-4">Received By</th>
+                  <th className="px-6 py-4 font-bold text-zinc-800">Total Value</th>
+                  <th className="px-6 py-4">Status</th>
+                  <th className="px-6 py-4">Date</th>
+                  <th className="px-6 py-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {displayedTransferHistory.map(transfer => {
+                  const transferValue = transfer.total_value_ugx || (transfer.items || []).reduce((sum, item) => sum + ((item.qty_dispatched || 0) * (item.unit_cost_ugx || 0)), 0);
+                  const isPending = transfer.status !== 'fully_accepted' && transfer.status !== 'closed' && transfer.status !== 'queried';
+                  const itemsSummary = (transfer.items || []).map(item => `${item.product_name || 'Product'} (x${item.qty_dispatched})`).join(', ');
+                  const truncatedSummary = itemsSummary.length > 40 ? itemsSummary.slice(0, 37) + '...' : itemsSummary;
+                  return (
+                    <tr key={transfer.id} className="hover:bg-zinc-50/50 transition-colors text-xs">
+                      <td className="px-6 py-4 font-bold text-zinc-900">{transfer.transfer_number}</td>
+                      <td className="px-6 py-4 text-zinc-700 font-semibold">
+                        {transfer.destination_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === transfer.destination_branch_id)?.name || 'Unknown')}
+                      </td>
+                      <td className="px-6 py-4 text-zinc-500 max-w-xs truncate" title={itemsSummary}>
+                        {truncatedSummary || 'No products listed'}
+                      </td>
+                      <td className="px-6 py-4 text-zinc-700 font-semibold">
+                        {getUserName(transfer.dispatched_by)}
+                      </td>
+                      <td className="px-6 py-4 text-zinc-700">
+                        {isPending ? (
+                          <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded font-semibold text-[10px] uppercase tracking-wider">Pending Reception</span>
+                        ) : (
+                          <span className="font-semibold">{getUserName(transfer.received_by)}</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 font-bold text-zinc-900 font-mono">
+                        UGX {transferValue.toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={cn(
+                          "px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider",
+                          transfer.status === 'dispatched' ? "bg-blue-50 text-blue-600" :
+                          transfer.status === 'fully_accepted' ? "bg-emerald-50 text-emerald-600" :
+                          "bg-zinc-100 text-zinc-600"
+                        )}>
+                          {transfer.status.replace(/_/g, ' ')}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-zinc-500 font-mono">
+                        {new Date(transfer.dispatched_at).toLocaleDateString()}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex justify-end gap-2 text-xs font-bold">
+                          <button 
+                            onClick={() => handleViewTransfer(transfer)}
+                            className="px-3 py-1 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors flex items-center gap-1 font-sans"
+                          >
+                            <Eye size={12} />
+                            View
+                          </button>
+                          <button 
+                            onClick={() => handleDownloadTransfer(transfer)}
+                            className="px-3 py-1 bg-zinc-100 text-zinc-650 hover:bg-zinc-200 rounded-lg transition-colors flex items-center gap-1 font-sans"
+                          >
+                            <Download size={12} />
+                            CSV
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {displayedTransferHistory.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="px-6 py-12 text-center text-zinc-400 italic">
+                      No transfer history found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {selectedTransfer && (
         <div className="fixed inset-0 bg-neutral-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-zinc-105 font-sans leading-normal">
+          <div className="bg-white rounded-[2rem] w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-zinc-100 font-sans leading-normal">
             {/* Header */}
             <div className="p-6 bg-zinc-50 border-b border-zinc-100 flex justify-between items-center">
               <div>
-                <span className="text-[10px] uppercase font-black tracking-widest text-emerald-600 font-mono">Operations Audit Registry</span>
-                <h2 className="text-xl font-bold text-zinc-900 mt-0.5">Goods Received Note #{selectedGRN.grn_number}</h2>
+                <span className="text-[10px] uppercase font-black tracking-widest text-emerald-600 font-mono">Stock Transfer Audit Portal</span>
+                <h2 className="text-xl font-bold text-zinc-900 mt-0.5">Transfer Note #{selectedTransfer.transfer_number}</h2>
               </div>
               <button 
-                onClick={() => setSelectedGRN(null)} 
-                className="text-zinc-400 hover:text-zinc-600 transition-colors p-2 hover:bg-zinc-100 rounded-full"
+                onClick={() => setSelectedTransfer(null)} 
+                className="text-zinc-400 hover:text-zinc-650 transition-colors p-2 hover:bg-zinc-100 rounded-full"
               >
                 <X size={20} />
               </button>
@@ -2134,56 +2681,64 @@ const GRNTab: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-zinc-50 p-6 rounded-[20px] border border-zinc-200 text-xs">
                 <div className="space-y-2">
                   <div>
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Source of Origin (Where it came from)</span>
-                    <span className="font-bold text-zinc-800 text-sm mt-0.5 block">{selectedGRN.supplier_name || 'Registry Supplier'}</span>
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block font-mono">Source Branch (Where it came from)</span>
+                    <span className="font-bold text-zinc-800 text-sm mt-0.5 block">
+                      {selectedTransfer.source_branch_name || (branches.find(b => b.id === selectedTransfer.source_branch_id)?.name || 'HQ Central Depot')}
+                    </span>
                   </div>
                   <div className="pt-2 border-t border-zinc-200">
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Sent/Prepared By & When</span>
-                    <span className="font-semibold text-zinc-700 mt-0.5 block">Supplier Dispatch Officers</span>
-                    <span className="text-zinc-500 font-mono text-[11px] block">{selectedGRN.invoice_date ? new Date(selectedGRN.invoice_date).toLocaleString() : 'N/A'}</span>
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block font-mono">Sent/Dispatched By & When</span>
+                    <span className="font-semibold text-zinc-700 mt-0.5 block">{getUserName(selectedTransfer.dispatched_by)}</span>
+                    <span className="text-zinc-500 font-mono text-[11px] block">{new Date(selectedTransfer.dispatched_at).toLocaleString()}</span>
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <div>
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Destination (Where arrived)</span>
-                    <span className="font-bold text-zinc-800 text-sm mt-0.5 block">HQ Central Store / Main Depot</span>
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block font-mono">Destination Branch (Where arrived)</span>
+                    <span className="font-bold text-zinc-800 text-sm mt-0.5 block">
+                      {selectedTransfer.destination_branch_name || (branches.find(b => b.id === selectedTransfer.destination_branch_id)?.name || 'Destination Branch Store')}
+                    </span>
                   </div>
                   <div className="pt-2 border-t border-zinc-200">
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Received/Verified By & When</span>
-                    <span className="font-semibold text-zinc-700 mt-0.5 block">{selectedGRN.receivedBy || 'Staff Pharmacist'}</span>
-                    <span className="text-zinc-500 font-mono text-[11px] block">{new Date(selectedGRN.receivedAt).toLocaleString()}</span>
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block font-mono">Received/Verified By & When</span>
+                    <span className="font-semibold text-zinc-700 mt-0.5 block">
+                      {selectedTransfer.received_by ? (selectedTransfer.received_by_name || getUserName(selectedTransfer.received_by)) : 'Pending Receipt Verification'}
+                    </span>
+                    <span className="text-zinc-500 font-mono text-[11px] block">{selectedTransfer.received_at ? new Date(selectedTransfer.received_at).toLocaleString() : 'Pending Receipt'}</span>
                   </div>
                 </div>
               </div>
 
               {/* Items details table */}
               <div className="space-y-2">
-                <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider font-mono">Product Line Items</h4>
+                <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider font-mono font-bold">Dispatched Line Items</h4>
                 <div className="border border-zinc-200 rounded-[20px] overflow-hidden bg-white shadow-sm">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-zinc-50 border-b border-zinc-100 font-bold text-zinc-500 uppercase tracking-wider">
+                        <th className="px-4 py-3">Product ID</th>
                         <th className="px-4 py-3">Product Name</th>
-                        <th className="px-4 py-3 text-center">Ordered Qty</th>
+                        <th className="px-4 py-3 text-center">Dispatched Qty</th>
                         <th className="px-4 py-3 text-center">Received Qty</th>
-                        <th className="px-4 py-3 text-right">Cost Price</th>
+                        <th className="px-4 py-3 text-right">Unit Cost Price</th>
                         <th className="px-4 py-3 text-center">Batch Number</th>
                         <th className="px-4 py-3 text-center">Expiry Date</th>
                         <th className="px-4 py-3 text-right text-zinc-800">Total Value</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-100 font-medium">
-                      {(selectedGRN.items || []).map((item, idx) => (
+                      {((selectedTransferLines.length > 0 ? selectedTransferLines : selectedTransfer.items) || []).map((item, idx) => (
                         <tr key={idx} className="hover:bg-zinc-50/20 text-zinc-700">
+                          <td className="px-4 py-3 font-mono font-bold text-zinc-900">{getProductCustomId(item.product_id)}</td>
                           <td className="px-4 py-3 font-bold text-zinc-900">{item.product_name}</td>
-                          <td className="px-4 py-3 text-center font-mono text-zinc-500">{item.qty_ordered || 0}</td>
-                          <td className="px-4 py-3 text-center font-mono font-bold text-emerald-600">{item.qty_received || 0}</td>
+                          <td className="px-4 py-3 text-center font-mono text-zinc-500">{item.qty_dispatched || 0}</td>
+                          <td className="px-4 py-3 text-center font-mono font-bold text-emerald-600">{item.qty_received ?? item.qty_dispatched ?? 0}</td>
                           <td className="px-4 py-3 text-right font-mono">UGX {(item.unit_cost_ugx || 0).toLocaleString()}</td>
-                          <td className="px-4 py-3 text-center font-mono font-semibold text-zinc-650">{item.batch_number || 'N/A'}</td>
+                          <td className="px-4 py-3 text-center font-mono font-semibold text-zinc-600">{item.batch_number || 'N/A'}</td>
                           <td className="px-4 py-3 text-center font-mono text-zinc-500">{item.expiry_date ? new Date(item.expiry_date).toLocaleDateString() : 'N/A'}</td>
                           <td className="px-4 py-3 text-right font-mono font-bold text-zinc-900">
-                            UGX {((item.qty_received || 0) * (item.unit_cost_ugx || 0)).toLocaleString()}
+                            UGX {((item.qty_dispatched || 0) * (item.unit_cost_ugx || 0)).toLocaleString()}
                           </td>
                         </tr>
                       ))}
@@ -2192,10 +2747,10 @@ const GRNTab: React.FC = () => {
                 </div>
               </div>
 
-              {selectedGRN.notes && (
+              {selectedTransfer.notes && (
                 <div className="p-4 bg-zinc-50 rounded-xl text-xs border border-zinc-200">
-                  <span className="font-extrabold uppercase text-zinc-400 select-none block font-mono">Operational logs / Notes</span>
-                  <p className="mt-1 text-zinc-700 italic">{selectedGRN.notes}</p>
+                  <span className="font-extrabold uppercase text-zinc-400 select-none block font-mono">Transfer Notes / Reason</span>
+                  <p className="mt-1 text-zinc-700 italic">{selectedTransfer.notes}</p>
                 </div>
               )}
             </div>
@@ -2203,19 +2758,19 @@ const GRNTab: React.FC = () => {
             {/* Footer */}
             <div className="p-6 bg-zinc-50 border-t border-zinc-100 flex justify-between items-center">
               <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-widest font-mono">
-                Verification state: {selectedGRN.status.toUpperCase()}
+                Transfer State: {selectedTransfer.status.toUpperCase()}
               </span>
               <div className="flex gap-3">
                 <button
                   type="button"
-                  onClick={() => setSelectedGRN(null)}
+                  onClick={() => setSelectedTransfer(null)}
                   className="px-6 py-2 border border-zinc-200 hover:bg-zinc-100 rounded-xl font-bold text-zinc-600 text-xs uppercase tracking-wider transition-colors"
                 >
                   Close View
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleDownloadGRN(selectedGRN)}
+                  onClick={() => handleDownloadTransfer(selectedTransfer, selectedTransferLines)}
                   className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold text-xs uppercase tracking-wider inline-flex items-center gap-2 transition-all shadow-md shadow-emerald-500/20"
                 >
                   <Download size={14} />
@@ -2227,934 +2782,561 @@ const GRNTab: React.FC = () => {
         </div>
       )}
 
-      {isProcessModalOpen && selectedOrder && (
-        <GRNProcessModal 
-          order={selectedOrder}
-          onClose={() => setIsProcessModalOpen(false)}
-        />
-      )}
-
-      {isManualGRNModalOpen && (
-        <ManualGRNModal 
-          onClose={() => setIsManualGRNModalOpen(false)}
-        />
-      )}
-    </div>
-  );
-};
-
-const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-  const { profile } = useAuth();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [suppliers, setSuppliers] = useState<InstitutionRegistry[]>([]);
-  const [branches, setBranches] = useState<Branch[]>([]);
-  
-  const [selectedBranchId, setSelectedBranchId] = useState('');
-  const [selectedSupplierId, setSelectedSupplierId] = useState('');
-  const [refNumber, setRefNumber] = useState('');
-  const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
-  const [paymentType, setPaymentType] = useState<'cash' | 'credit'>('cash');
-  const [items, setItems] = useState<any[]>([]);
-  
-  // Item Form
-  const [selectedProductId, setSelectedProductId] = useState('');
-  const [qty, setQty] = useState(0);
-  const [costPrice, setCostPrice] = useState(0);
-  const [batch, setBatch] = useState('');
-  const [expiry, setExpiry] = useState('');
-
-  useEffect(() => {
-    if (profile?.tenantId) {
-      firestoreService.subscribeToCollection<Product>('products', profile.tenantId, setProducts);
-      firestoreService.subscribeToCollection<InstitutionRegistry>('institutions', profile.tenantId, setSuppliers);
-      firestoreService.subscribeToCollection<Branch>('branches', profile.tenantId, setBranches);
-    }
-  }, [profile?.tenantId]);
-
-  const addItem = () => {
-    const product = products.find(p => p.id === selectedProductId);
-    if (!product || qty <= 0 || !batch || !expiry) {
-      toast.error('Please fill all item details');
-      return;
-    }
-    setItems([...items, {
-      product_id: product.id,
-      product_name: product.name,
-      qty,
-      unit_cost_ugx: costPrice || product.costPricePerPack,
-      batch,
-      expiry
-    }]);
-    // Reset item form
-    setSelectedProductId('');
-    setQty(0);
-    setCostPrice(0);
-    setBatch('');
-    setExpiry('');
-  };
-
-  const handleSave = async () => {
-    if (items.length === 0 || !selectedSupplierId || !selectedBranchId) {
-      toast.error('Fill GRN header and add at least one item');
-      return;
-    }
-
-    try {
-      const grnNumber = `MGRN-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
-      const supplier = suppliers.find(s => s.id === selectedSupplierId);
-      const targetBranch = branches.find(b => b.id === selectedBranchId);
-      
-      const totalValue = items.reduce((sum, item) => sum + (item.qty * item.unit_cost_ugx), 0);
-
-      const grnRecord: any = {
-        tenantId: profile?.tenantId,
-        grn_number: grnNumber,
-        manual_ref: refNumber,
-        supplier_id: selectedSupplierId,
-        supplier_name: supplier?.supplier_name || 'Manual Supplier',
-        invoice_number: invoiceNumber,
-        invoice_date: invoiceDate,
-        receivedAt: new Date().toISOString(),
-        receivedBy: profile?.uid,
-        status: 'completed',
-        payment_type: paymentType,
-        total_value_ugx: totalValue,
-        items
-      };
-
-      const grnId = await firestoreService.addDocument('grn_records', grnRecord);
-
-      // Write corresponding document to 'invoices' collection
-      const todayStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
-      const seq = Math.floor(1000 + Math.random() * 9000);
-      const invoiceRef = `INV-${todayStr}-${seq}`;
-
-      const invoiceId = await firestoreService.addDocument('invoices', {
-        tenantId: profile?.tenantId,
-        invoiceRef,
-        grnId: grnId,
-        branchId: selectedBranchId,
-        branchName: targetBranch?.branch_name || 'Branch Store',
-        supplierId: selectedSupplierId,
-        supplierName: supplier?.supplier_name || 'Manual Supplier',
-        invoiceValue: totalValue,
-        paymentStatus: paymentType, // 'cash' | 'credit'
-        creditBalance: paymentType === 'credit' ? totalValue : 0,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-
-      if (paymentType === 'credit') {
-        await firestoreService.addDocument('creditLedger', {
-          tenantId: profile?.tenantId,
-          invoiceId,
-          invoiceRef,
-          supplierId: selectedSupplierId,
-          supplierName: supplier?.supplier_name || 'Manual Supplier',
-          branchId: selectedBranchId,
-          branchName: targetBranch?.branch_name || 'Branch Store',
-          originalCreditAmount: totalValue,
-          remainingCreditBalance: totalValue,
-          status: 'outstanding',
-          creditAccruedAt: new Date().toISOString(),
-          lastProcessedAt: null,
-          createdAt: new Date().toISOString()
-        });
-      }
-
-      // Add to Procurement Invoices Ledger for Finance Module
-      await firestoreService.addDocument('procurement_invoices', {
-        tenantId: profile?.tenantId,
-        branch_id: selectedBranchId,
-        branch_name: targetBranch?.branch_name || 'Branch Store',
-        supplier_id: selectedSupplierId,
-        supplier_name: supplier?.supplier_name || 'Manual Supplier',
-        invoice_number: invoiceNumber || grnNumber,
-        grn_number: grnNumber,
-        invoice_date: invoiceDate,
-        due_date: new Date(new Date(invoiceDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        amount: totalValue,
-        total_amount_ugx: totalValue,
-        paid_amount_ugx: paymentType === 'cash' ? totalValue : 0,
-        status: paymentType === 'cash' ? 'Paid' : 'Credit',
-        created_at: new Date().toISOString()
-      });
-
-      if (paymentType === 'cash') {
-        // Log in Petty Cash Ledger (Outgoing) for cash stock purchase
-        await firestoreService.addDocument('petty_cash_ledger', {
-          tenantId: profile?.tenantId,
-          date: new Date().toISOString(),
-          amount: totalValue,
-          source: 'Petty Cash Reserve',
-          reference_number: invoiceNumber || grnNumber,
-          type: 'outgoing',
-          branch_id: selectedBranchId,
-          logged_by: profile?.uid || 'SYSTEM',
-          notes: `Cash stock purchase (Manual) - GRN ${grnNumber} - Supplier: ${supplier?.supplier_name || 'Manual Supplier'}`,
-          created_at: new Date().toISOString()
-        });
-      }
-
-      // Inventory Update logic...
-      for (const item of items) {
-        const product = products.find(p => p.id === item.product_id);
-        const unitsPerPack = product?.unitsPerPack || 1;
-        const totalUnits = item.qty * unitsPerPack;
-
-        // Add batch
-        await firestoreService.addDocument('product_batches', {
-          tenantId: profile?.tenantId,
-          branchId: selectedBranchId,
-          productId: item.product_id,
-          batchNumber: item.batch,
-          expiryDate: item.expiry,
-          quantity: totalUnits,
-          purchasePrice: item.unit_cost_ugx / unitsPerPack,
-          sellingPrice: product?.sellingPricePerUnit || (item.unit_cost_ugx / unitsPerPack * 1.3),
-          batch_status: 'active',
-          supplier: supplier?.supplier_name,
-          supplierId: selectedSupplierId,
-          lastUpdated: new Date().toISOString(),
-          createdAt: new Date().toISOString()
-        });
-
-        // Update product stock
-        if (product) {
-          await firestoreService.updateDocument('products', product.id, {
-            quantityInStock: (product.quantityInStock || 0) + totalUnits,
-            updatedAt: new Date().toISOString()
-          });
-        }
-
-        // Movement
-        await firestoreService.addDocument('inventory_movements', {
-          tenantId: profile?.tenantId,
-          branchId: selectedBranchId,
-          productId: item.product_id,
-          productName: item.product_name,
-          batchNumber: item.batch,
-          amount: totalUnits,
-          type: 'in',
-          movementClass: 'received',
-          class: 'received',
-          reference: grnNumber,
-          initiator: profile?.displayName || profile?.full_name || 'System',
-          initiatorId: profile?.uid || 'SYSTEM',
-          receiver: targetBranch?.name || 'Manual Branch',
-          receiverId: selectedBranchId,
-          timestamp: new Date().toISOString(),
-          amountAttached: item.qty * item.unit_cost_ugx
-        });
-      }
-
-      toast.success('Manual GRN recorded and inventory updated');
-      onClose();
-    } catch (error: any) {
-      console.error('Manual GRN Process Error:', error);
-      toast.error('Failed to save manual GRN: ' + (error?.message || 'Unknown error'));
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-      <div className="bg-white rounded-[32px] w-full max-w-6xl max-h-[95vh] overflow-hidden shadow-2xl flex flex-col">
-        <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-zinc-900">Record Manual GRN</h2>
-            <p className="text-sm text-zinc-500">Record off-system stock fulfillment</p>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
-            <X size={24} />
-          </button>
-        </div>
-
-        <div className="p-6 overflow-y-auto flex-1 space-y-8">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Target Branch</label>
-              <select 
-                value={selectedBranchId}
-                onChange={(e) => setSelectedBranchId(e.target.value)}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl"
-              >
-                <option value="">Select Branch</option>
-                {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Supplier</label>
-              <select 
-                value={selectedSupplierId}
-                onChange={(e) => setSelectedSupplierId(e.target.value)}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl"
-              >
-                <option value="">Select Supplier</option>
-                {suppliers.map(s => <option key={s.id} value={s.id}>{s.supplier_name}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Manual Ref / Order #</label>
-              <input 
-                type="text"
-                value={refNumber}
-                onChange={(e) => setRefNumber(e.target.value)}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl"
-                placeholder="e.g. M-ORD-123"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Invoice #</label>
-              <input 
-                type="text"
-                value={invoiceNumber}
-                onChange={(e) => setInvoiceNumber(e.target.value)}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl"
-              />
-            </div>
-          </div>
-
-          <div className="p-4 bg-emerald-50 rounded-2xl space-y-4 border border-emerald-100">
-            <h4 className="font-bold text-emerald-900 text-sm uppercase tracking-wider">Add Product</h4>
-            <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
-              <div className="lg:col-span-2">
-                <select 
-                  value={selectedProductId}
-                  onChange={(e) => setSelectedProductId(e.target.value)}
-                  className="w-full px-4 py-2 bg-white border border-emerald-200 rounded-xl text-sm"
-                >
-                  <option value="">Select Product...</option>
-                  {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
+      {showPreviewModal && (
+        <div className="fixed inset-0 bg-neutral-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200 font-sans">
+          <div className="bg-white rounded-[2rem] w-full max-w-3xl overflow-hidden flex flex-col shadow-2xl border border-zinc-100">
+            <div className="p-6 bg-zinc-50 border-b border-zinc-100 flex justify-between items-center">
+              <div>
+                <span className="text-[10px] uppercase font-black tracking-widest text-emerald-600 font-mono font-bold">Please review and confirm dispatch transfer details</span>
+                <h2 className="text-xl font-bold text-zinc-900 mt-0.5">Transfer Dispatch Preview</h2>
               </div>
-              <input 
-                type="number" placeholder="Qty"
-                value={qty || ''} onChange={(e) => setQty(Number(e.target.value))}
-                className="px-4 py-2 bg-white border border-emerald-200 rounded-xl text-sm"
-              />
-              <input 
-                type="text" placeholder="Batch"
-                value={batch} onChange={(e) => setBatch(e.target.value)}
-                className="px-4 py-2 bg-white border border-emerald-200 rounded-xl text-sm"
-              />
-              <input 
-                type="date"
-                value={expiry} onChange={(e) => setExpiry(e.target.value)}
-                className="px-4 py-2 bg-white border border-emerald-200 rounded-xl text-sm"
-              />
-              <button onClick={addItem} className="bg-emerald-600 text-white font-bold rounded-xl text-sm hover:bg-emerald-700">Add</button>
+              <button 
+                onClick={() => setShowPreviewModal(false)} 
+                className="text-zinc-400 hover:text-zinc-650 transition-colors p-2 hover:bg-zinc-100 rounded-full"
+              >
+                <Plus className="rotate-45" size={24} />
+              </button>
             </div>
-          </div>
 
-          <div className="border border-zinc-200 rounded-2xl overflow-hidden">
-            <table className="w-full text-left">
-              <thead className="bg-zinc-50 border-b border-zinc-200">
-                <tr className="text-[10px] font-black text-zinc-400 uppercase">
-                  <th className="px-4 py-3">Product</th>
-                  <th className="px-4 py-3">Qty</th>
-                  <th className="px-4 py-3">Batch</th>
-                  <th className="px-4 py-3">Expiry</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-100">
-                {items.map((item, idx) => (
-                  <tr key={idx} className="text-sm">
-                    <td className="px-4 py-3 font-bold">{item.product_name}</td>
-                    <td className="px-4 py-3">{item.qty}</td>
-                    <td className="px-4 py-3 text-xs">{item.batch}</td>
-                    <td className="px-4 py-3 text-xs">{item.expiry}</td>
-                    <td className="px-4 py-3 text-right">
-                      <button onClick={() => setItems(items.filter((_, i) => i !== idx))} className="text-red-500 hover:bg-red-50 p-1 rounded">
-                        <Trash2 size={16} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {items.length === 0 && (
-                  <tr><td colSpan={5} className="px-4 py-8 text-center text-zinc-400 italic">No items added yet.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+            <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto text-zinc-800">
+              <div className="grid grid-cols-2 gap-4 bg-zinc-50 p-4 rounded-2xl border border-zinc-150 text-xs">
+                <div>
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block font-mono">Source Branch (Origin)</span>
+                  <span className="font-bold text-zinc-800 text-sm mt-0.5 block">
+                    {branches.find(b => b.id === activeBranchId)?.name || 'HQ Central Depot'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block font-mono">Destination Branch</span>
+                  <span className="font-bold text-zinc-800 text-sm mt-0.5 block">
+                    {destinationBranch === 'HQ' ? 'HQ Central Store / Main Depot' : (branches.find(b => b.id === destinationBranch)?.name || 'Receiving Branch')}
+                  </span>
+                </div>
+              </div>
 
-        <div className="p-6 border-t border-zinc-100 flex items-center justify-between bg-zinc-50">
-          <div className="text-sm">
-            <span className="text-zinc-500">Items: </span>
-            <span className="font-bold text-zinc-900">{items.length}</span>
-          </div>
-          <button 
-            onClick={handleSave}
-            disabled={items.length === 0}
-            className="bg-zinc-900 text-white px-8 py-3 rounded-2xl font-bold hover:bg-zinc-800 disabled:opacity-50"
-          >
-            Finalize Manual GRN
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({ order, onClose }) => {
-  const { profile } = useAuth();
-  const [lines, setLines] = useState<StockOrderLine[]>([]);
-  const [editedLines, setEditedLines] = useState<Record<string, { qty: number, removed: boolean, batch: string, expiry: string }>>({});
-  const [paymentType, setPaymentType] = useState<'cash' | 'credit'>('cash');
-  const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
-  const [inputVat, setInputVat] = useState<number>(0);
-  const [whtAmount, setWhtAmount] = useState<number>(0);
-  const [notes, setNotes] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    const fetchLines = async () => {
-      const data = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-      const approvedLines = data.filter(l => l.line_status === 'approved');
-      setLines(approvedLines);
-      
-      const initialEdits: Record<string, { qty: number, removed: boolean, batch: string, expiry: string }> = {};
-      
-      for (const l of approvedLines) {
-        let batch = '';
-        let expiry = '';
-        
-        // Auto-fill for HQ items
-        if (l.supplier_type === 'internal_hq' || l.supplier_type === 'internal_warehouse') {
-          const hqBatches = await firestoreService.getDocumentsByQuery<ProductBatch>('product_batches', [
-            { field: 'tenantId', operator: '==', value: profile?.tenantId },
-            { field: 'productId', operator: '==', value: l.product_id },
-            { field: 'branchId', operator: '==', value: 'HQ' }
-          ]);
-          if (hqBatches.length > 0) {
-            batch = hqBatches[0].batchNumber;
-            expiry = hqBatches[0].expiryDate;
-          }
-        }
-        
-        initialEdits[l.id] = { qty: l.qty_ordered, removed: false, batch, expiry };
-      }
-      setEditedLines(initialEdits);
-    };
-    fetchLines();
-  }, [order.id, profile?.tenantId]);
-
-  const handleQtyChange = (id: string, qty: number) => {
-    setEditedLines(prev => ({
-      ...prev,
-      [id]: { ...prev[id], qty: Math.max(0, qty) }
-    }));
-  };
-
-  const handleFieldChange = (id: string, field: 'batch' | 'expiry', value: string) => {
-    setEditedLines(prev => ({
-      ...prev,
-      [id]: { ...prev[id], [field]: value }
-    }));
-  };
-
-  const handleToggleRemove = (id: string) => {
-    setEditedLines(prev => ({
-      ...prev,
-      [id]: { ...prev[id], removed: !prev[id].removed }
-    }));
-  };
-
-  const handleConfirm = async () => {
-    if (submitting) return;
-    setSubmitting(true);
-    try {
-      const tenantId = profile?.tenantId;
-      if (!tenantId) throw new Error("Missing tenantId");
-      const result = await processProcurementGrn({
-        tenantId,
-        order,
-        lines,
-        editedLines,
-        paymentType,
-        invoiceNumber,
-        invoiceDate,
-        inputVat,
-        whtAmount,
-        notes,
-        user: {
-          uid: profile?.uid || 'SYSTEM',
-          name: profile?.fullName || profile?.displayName || profile?.email || 'Unknown'
-        }
-      });
-
-      toast.success(result.alreadyProcessed
-        ? 'This GRN was already completed. No duplicate records were created.'
-        : 'GRN, Finance posting, and branch dispatch completed successfully.');
-      onClose();
-    } catch (error: any) {
-      console.error('GRN Process Error:', error);
-      toast.error('Failed to process GRN: ' + (error?.message || 'Unknown error'));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-  return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-[32px] w-full max-w-6xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
-        <div className="p-8 border-b border-zinc-100 flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-zinc-900">Process GRN</h2>
-            <p className="text-sm text-zinc-500">{order.order_number} - {order.requesting_branch_name}</p>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
-            <Plus className="rotate-45" size={24} />
-          </button>
-        </div>
-        
-        <div className="p-8 overflow-y-auto flex-1">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Invoice Number</label>
-              <input 
-                type="text"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none"
-                placeholder="Required supplier invoice reference"
-                value={invoiceNumber}
-                onChange={(e) => setInvoiceNumber(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Invoice Date</label>
-              <input 
-                type="date"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none"
-                value={invoiceDate}
-                onChange={(e) => setInvoiceDate(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Payment Type</label>
-              <div className="flex gap-4">
-                <button 
-                  onClick={() => setPaymentType('cash')}
-                  className={cn("flex-1 py-3 rounded-2xl font-bold border transition-all", paymentType === 'cash' ? "bg-zinc-900 text-white border-zinc-900" : "bg-white text-zinc-500 border-zinc-200")}
-                >
-                  Cash
-                </button>
-                <button 
-                  onClick={() => setPaymentType('credit')}
-                  className={cn("flex-1 py-3 rounded-2xl font-bold border transition-all", paymentType === 'credit' ? "bg-zinc-900 text-white border-zinc-900" : "bg-white text-zinc-500 border-zinc-200")}
-                >
-                  Credit
-                </button>
+              <div className="border border-zinc-200 rounded-[20px] overflow-hidden bg-white shadow-sm">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-zinc-50 border-b border-zinc-100 font-bold text-zinc-500 uppercase tracking-wider">
+                      <th className="px-4 py-3">Product Name</th>
+                      <th className="px-4 py-3 text-center">Batch Number</th>
+                      <th className="px-4 py-3 text-center">Qty to Transfer</th>
+                      <th className="px-4 py-3 text-right">Unit Cost Price</th>
+                      <th className="px-4 py-3 text-right">Total Line Value</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 font-medium text-zinc-800">
+                    {transferLines.map((line, idx) => (
+                      <tr key={idx} className="hover:bg-zinc-50/10">
+                        <td className="px-4 py-3 font-bold text-zinc-900">{line.product_name}</td>
+                        <td className="px-4 py-3 text-center font-mono font-semibold text-zinc-600">{line.batch_number}</td>
+                        <td className="px-4 py-3 text-center font-bold text-emerald-600 text-sm">{line.qty_dispatched}</td>
+                        <td className="px-4 py-3 text-right font-mono text-zinc-600">UGX {line.unit_cost_ugx?.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-right font-mono font-bold text-zinc-900">
+                          UGX {((line.qty_dispatched || 0) * (line.unit_cost_ugx || 0)).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-zinc-50/50 font-bold border-t border-zinc-200">
+                      <td colSpan={4} className="px-4 py-3 text-right text-zinc-500 uppercase text-[10px] tracking-wider">Grand Total Transfer Value</td>
+                      <td className="px-4 py-3 text-right font-mono text-sm text-zinc-955 font-black">
+                        UGX {transferLines.reduce((sum, l) => sum + (l.line_total_ugx || 0), 0).toLocaleString()}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
             </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Input VAT (UGX)</label>
-              <input 
-                type="number"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/20"
-                value={inputVat}
-                onChange={(e) => setInputVat(Number(e.target.value))}
-                placeholder="0"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">WHT Amount (UGX)</label>
-              <input 
-                type="number"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/20"
-                value={whtAmount}
-                onChange={(e) => setWhtAmount(Number(e.target.value))}
-                placeholder="0"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Notes</label>
-              <textarea 
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/20 h-[52px]"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Add any GRN notes..."
-              />
-            </div>
-          </div>
 
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">
-                <th className="px-4 py-3">Product</th>
-                <th className="px-4 py-3">Qty</th>
-                <th className="px-4 py-3">Batch #</th>
-                <th className="px-4 py-3">Expiry</th>
-                <th className="px-4 py-3">Total</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {lines.map((line) => {
-                const edit = editedLines[line.id] || { qty: line.qty_ordered, removed: false, batch: '', expiry: '' };
-                return (
-                  <tr key={line.id} className={cn(edit.removed && "opacity-50 bg-red-50/30")}>
-                    <td className="px-4 py-3">
-                      <p className="text-sm font-medium text-zinc-900">{line.product_name}</p>
-                      <p className="text-[10px] text-zinc-500 uppercase font-bold">{line.supplier_name}</p>
-                    </td>
-                    <td className="px-4 py-3">
-                      <input 
-                        type="number"
-                        disabled={edit.removed}
-                        className="w-20 px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg text-sm"
-                        value={edit.qty}
-                        onChange={(e) => handleQtyChange(line.id, Number(e.target.value))}
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <input 
-                        type="text"
-                        disabled={edit.removed}
-                        className="w-32 px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg text-sm"
-                        value={edit.batch}
-                        onChange={(e) => handleFieldChange(line.id, 'batch', e.target.value)}
-                        placeholder="Batch #"
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <input 
-                        type="date"
-                        disabled={edit.removed}
-                        className="w-36 px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg text-sm"
-                        value={edit.expiry}
-                        onChange={(e) => handleFieldChange(line.id, 'expiry', e.target.value)}
-                      />
-                    </td>
-                    <td className="px-4 py-3 text-sm font-bold text-zinc-900">
-                      UGX {(edit.qty * line.unit_cost_ugx).toLocaleString()}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button 
-                        onClick={() => handleToggleRemove(line.id)}
-                        className={cn("p-2 rounded-lg transition-colors", edit.removed ? "text-emerald-500 hover:bg-emerald-50" : "text-red-500 hover:bg-red-50")}
-                      >
-                        {edit.removed ? <Plus size={18} /> : <Trash2 size={18} />}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        
-        <div className="p-8 bg-zinc-50 border-t border-zinc-100 flex justify-between items-center">
-          <div className="text-zinc-600">
-            Total GRN Value: <span className="text-xl font-bold text-zinc-900 ml-2">
-              UGX {lines.reduce((sum, l) => {
-                const edit = editedLines[l.id] || { qty: l.qty_ordered, removed: false };
-                return sum + (edit.removed ? 0 : edit.qty * l.unit_cost_ugx);
-              }, 0).toLocaleString()}
-            </span>
-          </div>
-          <div className="flex gap-3">
-            <button 
-              onClick={onClose} 
-              disabled={submitting}
-              className="px-6 py-2 text-zinc-500 font-bold hover:bg-zinc-100 rounded-xl transition-all disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button 
-              onClick={handleConfirm} 
-              disabled={submitting}
-              className="px-6 py-2 bg-zinc-900 text-white font-bold hover:bg-zinc-800 rounded-xl transition-all disabled:bg-zinc-300 disabled:opacity-50"
-            >
-              {submitting ? 'Completing...' : 'Complete GRN'}
-            </button>
+            <div className="p-6 bg-zinc-50 border-t border-zinc-100 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowPreviewModal(false)}
+                className="px-6 py-2 border border-zinc-200 hover:bg-zinc-100 rounded-xl font-bold text-zinc-650 text-xs uppercase tracking-wider transition-colors"
+                disabled={isDispatching}
+              >
+                Go Back / Edit
+              </button>
+              <button
+                type="button"
+                onClick={executeTransfer}
+                disabled={isDispatching}
+                className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold text-xs uppercase tracking-wider inline-flex items-center gap-2 transition-all shadow-md shadow-emerald-500/20 disabled:opacity-50"
+              >
+                {isDispatching ? 'Dispatching...' : 'Confirm & Dispatch Transfer'}
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
 
-const DispatchTab: React.FC = () => {
+const ProcurementDashboard: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const { profile } = useAuth();
-  const [approvedOrders, setApprovedOrders] = useState<StockOrder[]>([]);
+  const [orders, setOrders] = useState<StockOrder[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
-  const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
+  const [orderLines, setOrderLines] = useState<StockOrderLine[]>([]);
+  const [procurementView, setProcurementView] = useState<'orders' | 'lpos' | 'grns'>('orders');
+  const [fulfillingOrder, setFulfillingOrder] = useState<StockOrder | null>(null);
 
   useEffect(() => {
     if (profile?.tenantId) {
       firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
-        setApprovedOrders(data.filter(o =>
-          o.status === 'fully_received' &&
-          !(o as any).transfer_id &&
-          o.requesting_branch_id !== 'HQ'
-        ));
+        setOrders(data.filter(o => o.status !== 'draft').sort((a, b) => (b.submitted_at || '').localeCompare(a.submitted_at || '')));
       });
     }
   }, [profile?.tenantId]);
 
-  const handleDispatch = async (order: StockOrder, lines: StockOrderLine[]) => {
+  const handleViewOrder = async (order: StockOrder) => {
+    setSelectedOrder(order);
+    const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [
+      { field: 'order_id', operator: '==', value: order.id }
+    ]);
+    setOrderLines(lines);
+  };
+
+  const updateOrderStatus = async (orderId: string, newStatus: StockOrder['status']) => {
     try {
-      if (order.requesting_branch_id === 'HQ') {
-        throw new Error('HQ replenishment orders cannot be dispatched back to HQ.');
+      await firestoreService.updateDocument('stock_orders', orderId, { 
+        status: newStatus,
+        updatedAt: new Date().toISOString()
+      });
+      toast.success(`Order status updated to ${newStatus.replace(/_/g, ' ')}`);
+      if (selectedOrder?.id === orderId) {
+        setSelectedOrder(prev => prev ? { ...prev, status: newStatus } : null);
       }
+    } catch (error) {
+      toast.error("Failed to update status.");
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex gap-4 border-b border-zinc-100 pb-4">
+        <button 
+          onClick={() => setProcurementView('orders')}
+          className={cn("px-4 py-2 rounded-xl text-sm font-bold transition-all", procurementView === 'orders' ? "bg-zinc-900 text-white" : "text-zinc-500 hover:bg-zinc-100")}
+        >
+          Branch Orders
+        </button>
+        <button 
+          onClick={() => setProcurementView('lpos')}
+          className={cn("px-4 py-2 rounded-xl text-sm font-bold transition-all", procurementView === 'lpos' ? "bg-zinc-900 text-white" : "text-zinc-500 hover:bg-zinc-100")}
+        >
+          Local Purchase Orders (LPOs)
+        </button>
+        <button 
+          onClick={() => setProcurementView('grns')}
+          className={cn("px-4 py-2 rounded-xl text-sm font-bold transition-all", procurementView === 'grns' ? "bg-zinc-900 text-white" : "text-zinc-500 hover:bg-zinc-100")}
+        >
+          Goods Received Notes (GRNs)
+        </button>
+      </div>
+
+      {procurementView === 'orders' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
+                    <th className="px-6 py-4">Order #</th>
+                    <th className="px-6 py-4">Branch</th>
+                    <th className="px-6 py-4">Type</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {orders.map(order => (
+                    <tr key={order.id} className={cn("hover:bg-zinc-50/50 transition-colors cursor-pointer", selectedOrder?.id === order.id && "bg-emerald-50/50")} onClick={() => handleViewOrder(order)}>
+                      <td className="px-6 py-4 font-bold text-zinc-900">
+                        {order.order_number}
+                        {order.is_emergency && <span className="ml-2 text-[8px] bg-red-500 text-white px-1 rounded">URGENT</span>}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-zinc-600">
+                        {branches.find(b => b.id === order.requesting_branch_id)?.name || 'Unknown'}
+                      </td>
+                      <td className="px-6 py-4 text-sm capitalize text-zinc-500">{order.order_type}</td>
+                      <td className="px-6 py-4">
+                        <span className="px-2 py-1 bg-zinc-100 text-zinc-600 rounded-md text-[10px] font-bold uppercase tracking-wider">
+                          {order.status.replace(/_/g, ' ')}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <button className="text-emerald-500 hover:underline text-xs font-bold">Review</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {selectedOrder ? (
+              <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-6 sticky top-6">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="font-bold text-zinc-900">Order Details</h3>
+                    <p className="text-xs text-zinc-500">{selectedOrder.order_number}</p>
+                  </div>
+                  <button onClick={() => setSelectedOrder(null)} className="text-zinc-400 hover:text-zinc-600">
+                    <Plus className="rotate-45" size={20} />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="p-3 bg-zinc-50 rounded-xl space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-zinc-500">Status:</span>
+                      <span className="font-bold text-zinc-900 uppercase">{selectedOrder.status.replace(/_/g, ' ')}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-zinc-500">Value:</span>
+                      <span className="font-bold text-emerald-600">UGX {selectedOrder.total_order_value_ugx.toLocaleString()}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Order Items</p>
+                    <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                      {orderLines.map(line => (
+                        <div key={line.id} className="p-2 border border-zinc-100 rounded-lg text-xs flex justify-between items-center">
+                          <div>
+                            <p className="font-bold text-zinc-800">{line.product_name}</p>
+                            <p className="text-zinc-500">Qty: {line.qty_ordered}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-medium text-zinc-900">UGX {(line.line_total_ugx || 0).toLocaleString()}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="pt-4 space-y-2">
+                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Actions</p>
+                    {selectedOrder.status === 'submitted' && (
+                      <button 
+                        onClick={() => updateOrderStatus(selectedOrder.id, 'in_triage')}
+                        className="w-full py-2 bg-zinc-900 text-white rounded-xl text-sm font-bold hover:bg-zinc-800 transition-colors"
+                      >
+                        Start Triage
+                      </button>
+                    )}
+                    {selectedOrder.status === 'in_triage' && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <button 
+                          onClick={() => updateOrderStatus(selectedOrder.id, 'approved')}
+                          className="py-2 bg-emerald-500 text-white rounded-xl text-sm font-bold hover:bg-emerald-600 transition-colors"
+                        >
+                          Approve
+                        </button>
+                        <button 
+                          onClick={() => updateOrderStatus(selectedOrder.id, 'sourcing')}
+                          className="py-2 bg-orange-500 text-white rounded-xl text-sm font-bold hover:bg-orange-600 transition-colors"
+                        >
+                          Sourcing
+                        </button>
+                      </div>
+                    )}
+                    {selectedOrder.status === 'approved' && (
+                      <button 
+                        onClick={() => setFulfillingOrder(selectedOrder)}
+                        className="w-full py-2 bg-blue-500 text-white rounded-xl text-sm font-bold hover:bg-blue-600 transition-colors"
+                      >
+                        Generate Transfer Invoice
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-zinc-50 border border-dashed border-zinc-200 rounded-2xl p-12 text-center">
+                <Package className="mx-auto text-zinc-300 mb-4" size={48} />
+                <p className="text-sm text-zinc-500 italic">Select an order to view details and take action.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {fulfillingOrder && (
+        <FulfillmentModal 
+          order={fulfillingOrder} 
+          onClose={() => setFulfillingOrder(null)} 
+          onSuccess={() => {
+            setFulfillingOrder(null);
+            updateOrderStatus(fulfillingOrder.id, 'dispatched');
+          }}
+        />
+      )}
+
+      {procurementView === 'lpos' && (
+        <div className="bg-zinc-50 border border-dashed border-zinc-200 rounded-2xl p-24 text-center">
+          <FileText className="mx-auto text-zinc-300 mb-4" size={48} />
+          <h3 className="text-lg font-bold text-zinc-900">LPO Management</h3>
+          <p className="text-sm text-zinc-500 max-w-md mx-auto mt-2">
+            Consolidate approved orders and generate Local Purchase Orders for suppliers. (Coming soon)
+          </p>
+        </div>
+      )}
+
+      {procurementView === 'grns' && (
+        <div className="bg-zinc-50 border border-dashed border-zinc-200 rounded-2xl p-24 text-center">
+          <Truck className="mx-auto text-zinc-300 mb-4" size={48} />
+          <h3 className="text-lg font-bold text-zinc-900">GRN Management</h3>
+          <p className="text-sm text-zinc-500 max-w-md mx-auto mt-2">
+            Receive products from suppliers at the Procurement Store and verify against LPOs. (Coming soon)
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default StockInOut;
+
+const FulfillmentModal: React.FC<{ order: StockOrder; onClose: () => void; onSuccess: () => void }> = ({ order, onClose, onSuccess }) => {
+  const { profile } = useAuth();
+  const [orderLines, setOrderLines] = useState<StockOrderLine[]>([]);
+  const [batches, setBatches] = useState<ProductBatch[]>([]);
+  const [products, setProducts] = useState<Record<string, Product>>({});
+  const [fulfillmentData, setFulfillmentData] = useState<Record<string, { batchId: string; qty: number }>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [
+        { field: 'order_id', operator: '==', value: order.id }
+      ]);
+      setOrderLines(lines);
+      
+      const allBatches = await firestoreService.getCollection<ProductBatch>('product_batches', profile?.tenantId!);
+      // Filter for HQ batches with stock
+      setBatches(allBatches.filter(b => b.branchId === 'HQ' && b.quantity > 0));
+
       // Fetch products to get unitsPerPack
       const productIds = Array.from(new Set(lines.map(l => l.product_id)));
       const productPromises = productIds.map(id => firestoreService.getDocument<Product>('products', id));
       const productResults = await Promise.all(productPromises);
-      const productMap: Record<string, Product> = {};
-      productResults.forEach(p => { if (p) productMap[p.id] = p; });
-
-      // Create Transfer Invoice
-      const transferInvoiceId = await firestoreService.addDocument('transfer_invoices', {
-        tenantId: profile?.tenantId,
-        transfer_number: `TI-${Date.now()}`,
-        source_branch_id: 'HQ', 
-        source_branch_name: 'Central HQ',
-        destination_branch_id: order.requesting_branch_id || 'UNKNOWN',
-        destination_branch_name: order.requesting_branch_name || 'Branch',
-        transfer_type: 'central_to_branch',
-        status: 'dispatched',
-        dispatched_at: new Date().toISOString(),
-        dispatched_by: profile?.uid,
-        total_value_ugx: order.total_order_value_ugx,
-        order_id: order.id
+      const pMap: Record<string, Product> = {};
+      productResults.forEach(p => { if (p) pMap[p.id] = p; });
+      setProducts(pMap);
+      
+      const initialFulfillment: Record<string, any> = {};
+      lines.forEach(l => {
+        initialFulfillment[l.id] = { batchId: '', qty: l.qty_ordered };
       });
-
-      // Create Transfer Invoice Lines and handle stock deduction
-      for (const line of lines) {
-        let batchNumber = 'BATCH-' + Math.random().toString(36).substring(7).toUpperCase();
-        let expiryDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-        const product = productMap[line.product_id];
-        const unitsPerPack = product?.unitsPerPack || 1;
-
-        // If internal supplier, deduct from HQ stock
-        if (line.supplier_type === 'internal_hq' || line.supplier_type === 'internal_warehouse') {
-           const hqBatches = await firestoreService.getDocumentsByQuery<ProductBatch>('product_batches', [
-            { field: 'tenantId', operator: '==', value: profile?.tenantId },
-            { field: 'productId', operator: '==', value: line.product_id },
-            { field: 'branchId', operator: '==', value: 'HQ' }
-          ]);
-
-          if (hqBatches.length > 0) {
-            const batch = hqBatches[0];
-            batchNumber = batch.batchNumber;
-            expiryDate = batch.expiryDate;
-            
-            const totalUnitsToDeduct = line.qty_ordered * unitsPerPack;
-            const newQty = Math.max(0, batch.quantity - totalUnitsToDeduct);
-            await firestoreService.updateDocument('product_batches', batch.id, {
-              quantity: newQty
-            });
-          }
-        }
-
-        await firestoreService.addDocument('transfer_invoice_lines', {
-          tenantId: profile?.tenantId,
-          transfer_id: transferInvoiceId,
-          product_id: line.product_id,
-          product_name: line.product_name || 'Unknown Product',
-          qty_dispatched: line.qty_ordered, // This is in packs
-          qty_received: 0,
-          qty_queried: 0,
-          batch_number: batchNumber,
-          expiry_date: expiryDate,
-          unit_cost_ugx: line.unit_cost_ugx || 0,
-          total_cost_ugx: (line.unit_cost_ugx || 0) * line.qty_ordered
-        });
-      }
-
-      // Update Order Status
-      await firestoreService.updateDocument('stock_orders', order.id, {
-        status: 'dispatched',
-        dispatched_at: new Date().toISOString()
-      });
-
-      toast.success('Order dispatched and stock updated successfully. It is now available in the branch Stock In section.');
-      setIsDispatchModalOpen(false);
-    } catch (error) {
-      toast.error('Failed to dispatch order');
-    }
-  };
-
-  return (
-    <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-      <table className="w-full text-left border-collapse">
-        <thead>
-          <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
-            <th className="px-6 py-4">Order #</th>
-            <th className="px-6 py-4">Branch</th>
-            <th className="px-6 py-4">Type</th>
-            <th className="px-6 py-4">Category</th>
-            <th className="px-6 py-4 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-100">
-          {approvedOrders.map((order) => (
-            <tr key={order.id} className="hover:bg-zinc-50/50 transition-colors">
-              <td className="px-6 py-4 font-bold text-zinc-900">{order.order_number}</td>
-              <td className="px-6 py-4 text-sm text-zinc-600">{order.requesting_branch_name || order.requesting_branch_id}</td>
-              <td className="px-6 py-4 text-sm capitalize text-zinc-600">{order.order_type}</td>
-              <td className="px-6 py-4 text-sm text-zinc-600">{order.category.replace(/_/g, ' ')}</td>
-              <td className="px-6 py-4 text-right">
-                <div className="flex justify-end gap-2">
-                  <button 
-                    onClick={async () => {
-                      if (window.confirm(`Are you sure you want to revert order ${order.order_number || ''} back to the Supplier Delivery (awaiting GRN) stage?`)) {
-                        try {
-                          await firestoreService.updateDocument('stock_orders', order.id, {
-                            status: 'approved',
-                            updatedAt: new Date().toISOString()
-                          });
-                          const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-                          for (const line of lines) {
-                            await firestoreService.updateDocument('stock_order_lines', line.id, {
-                              line_status: 'approved',
-                              updatedAt: new Date().toISOString()
-                            });
-                          }
-                          toast.success('Order reverted back to Supplier Delivery (awaiting GRN) stage.');
-                        } catch (error) {
-                          console.error(error);
-                          toast.error('Failed to revert order.');
-                        }
-                      }
-                    }}
-                    className="border border-zinc-200 text-zinc-500 hover:bg-zinc-50 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors"
-                  >
-                    Revert
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setSelectedOrder(order);
-                      setIsDispatchModalOpen(true);
-                    }}
-                    className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1.5 rounded-xl text-xs font-bold transition-colors"
-                  >
-                    Dispatch
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-          {approvedOrders.length === 0 && (
-            <tr>
-              <td colSpan={5} className="px-6 py-12 text-center text-zinc-400 italic">
-                No orders ready for dispatch.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-
-      {isDispatchModalOpen && selectedOrder && (
-        <DispatchModal 
-          order={selectedOrder}
-          onClose={() => setIsDispatchModalOpen(false)}
-          onConfirm={handleDispatch}
-        />
-      )}
-    </div>
-  );
-};
-
-const DispatchModal: React.FC<{ 
-  order: StockOrder, 
-  onClose: () => void,
-  onConfirm: (order: StockOrder, lines: StockOrderLine[]) => Promise<void>
-}> = ({ order, onClose, onConfirm }) => {
-  const [lines, setLines] = useState<StockOrderLine[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    const fetchLines = async () => {
-      try {
-        const data = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: order.tenantId }]);
-        setLines(data);
-      } catch (error) {
-        toast.error('Failed to fetch order items');
-      } finally {
-        setLoading(false);
-      }
+      setFulfillmentData(initialFulfillment);
+      setLoading(false);
     };
-    fetchLines();
-  }, [order.id]);
+    fetchData();
+  }, [order.id, profile?.tenantId]);
 
-  const handleConfirmClick = async () => {
-    if (submitting) return;
-    setSubmitting(true);
+  const handleFulfill = async () => {
+    if (!profile?.tenantId || !profile?.uid) {
+      toast.error("User profile not loaded. Please log in again.");
+      return;
+    }
+
+    if (!order.requesting_branch_id) {
+      toast.error("Order is missing requesting branch ID.");
+      return;
+    }
+
+    // Validate all lines have a batch selected
+    const incomplete = orderLines.some(l => !fulfillmentData[l.id].batchId);
+    if (incomplete) {
+      toast.error("Please select a batch for all items.");
+      return;
+    }
+
     try {
-      await onConfirm(order, lines);
-    } catch {
-      // Errors handled inside onConfirm
-    } finally {
-      setSubmitting(false);
+      // Pre-fetch HQ branch batch references for all products in transfer
+      const uniqueProductIds = Array.from(new Set<string>(orderLines.map(line => String(line.product_id))));
+      const branchBatchRefsMap: Record<string, { ref: any; id: string }[]> = {};
+      for (const pId of uniqueProductIds) {
+        branchBatchRefsMap[pId] = await getBranchProductBatchRefs(
+          profile.tenantId,
+          'HQ',
+          pId
+        );
+      }
+
+      await firestoreService.runTransaction(async (transaction) => {
+        const transferData: any = {
+          tenantId: profile.tenantId,
+          inventoryClass: 'SELLABLE',
+          transfer_number: `TRF-FUL-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
+          order_id: order.id,
+          source_branch_id: 'HQ',
+          destination_branch_id: order.requesting_branch_id,
+          transfer_type: 'store_fulfillment',
+          status: 'dispatched',
+          dispatched_by: profile.uid,
+          dispatched_at: new Date().toISOString()
+        };
+
+        const transferRef = doc(collection(db, 'transfer_invoices'));
+        transaction.set(transferRef, { ...transferData, createdAt: new Date().toISOString() });
+
+        for (const line of orderLines) {
+          const fData = fulfillmentData[line.id];
+          const batch = batches.find(b => b.id === fData.batchId);
+          if (!batch) throw new Error(`Batch not found for ${line.product_name}`);
+
+          const product = products[line.product_id];
+          const unitsPerPack = product?.unitsPerPack || 1;
+          const totalUnitsToDeduct = fData.qty * unitsPerPack;
+
+          const lineRef = doc(collection(db, 'transfer_invoice_lines'));
+          const packCost = batch.purchasePrice * unitsPerPack;
+          
+          transaction.set(lineRef, {
+            tenantId: profile.tenantId,
+            inventoryClass: 'SELLABLE',
+            transfer_id: transferRef.id,
+            product_id: line.product_id,
+            product_name: line.product_name,
+            batch_number: batch.batchNumber,
+            expiry_date: batch.expiryDate,
+            qty_dispatched: fData.qty, // This is in packs
+            unit_cost_ugx: packCost,
+            line_total_ugx: fData.qty * packCost,
+            createdAt: new Date().toISOString()
+          });
+
+          // Decrement HQ batch
+          const batchRef = doc(db, 'product_batches', batch.id);
+          const newQty = batch.quantity - totalUnitsToDeduct;
+          if (newQty < 0) throw new Error(`Insufficient stock in batch ${batch.batchNumber} for ${line.product_name}`);
+          
+          transaction.update(batchRef, {
+            quantity: newQty,
+            lastUpdated: new Date().toISOString()
+          });
+
+          // Log TRANSFER_OUT movement event & update summaries for HQ
+          const batchRefs = branchBatchRefsMap[line.product_id] || [];
+          await logMovementAndAggregateInTx(transaction, batchRefs, {
+            tenantId: profile.tenantId,
+            branchId: 'HQ',
+            productId: line.product_id,
+            eventType: 'TRANSFER_OUT',
+            quantityDeltaBaseUnits: -totalUnitsToDeduct,
+            consumptionDeltaBaseUnits: 0,
+            isExceptional: false,
+            exceptionalReason: null,
+            sourceCollection: 'transfer_invoices',
+            sourceDocumentId: transferRef.id,
+            sourceLineId: fData.batchId,
+            reversalOfEventId: null,
+            createdBy: profile.uid || 'system',
+            effectiveAt: new Date(),
+            timezone: 'Africa/Kampala'
+          });
+        }
+      });
+
+      toast.success("Transfer invoice generated and HQ inventory updated.");
+      onSuccess();
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || "Fulfillment failed.");
     }
   };
 
+  if (loading) return null;
+
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-[32px] w-full max-w-4xl max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
-        <div className="p-8 border-b border-zinc-100 flex items-center justify-between">
-          <h2 className="text-2xl font-bold text-zinc-900">Dispatch Order: {order.order_number}</h2>
-          <button onClick={onClose} disabled={submitting} className="p-2 hover:bg-zinc-100 rounded-full transition-colors disabled:opacity-50">
+    <div className="fixed inset-0 bg-zinc-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+        <div className="p-6 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50">
+          <div>
+            <h2 className="text-xl font-bold text-zinc-900">Fulfill Branch Order</h2>
+            <p className="text-sm text-zinc-500">Order: {order.order_number}</p>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-600 transition-colors">
             <Plus className="rotate-45" size={24} />
           </button>
         </div>
         
-        <div className="p-8 overflow-y-auto flex-1 space-y-6">
-          <div className="grid grid-cols-2 gap-4 p-4 bg-zinc-50 rounded-2xl">
-            <div>
-              <p className="text-xs font-bold text-zinc-500 uppercase">Destination</p>
-              <p className="font-bold text-zinc-900">{order.requesting_branch_name || order.requesting_branch_id}</p>
-            </div>
-            <div>
-              <p className="text-xs font-bold text-zinc-500 uppercase">Category</p>
-              <p className="font-bold text-zinc-900 capitalize">{order.category.replace(/_/g, ' ')}</p>
-            </div>
-          </div>
-
-          <div className="border border-zinc-100 rounded-2xl overflow-hidden">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider bg-zinc-50 border-b border-zinc-100">
-                  <th className="px-4 py-3">Product</th>
-                  <th className="px-4 py-3 text-right">Qty</th>
-                  <th className="px-4 py-3 text-right">Unit Cost</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-50">
-                {lines.map(line => (
-                  <tr key={line.id}>
-                    <td className="px-4 py-3 text-sm font-medium text-zinc-900">{line.product_name || line.product_id}</td>
-                    <td className="px-4 py-3 text-sm text-right text-zinc-600 font-bold">{line.qty_ordered}</td>
-                    <td className="px-4 py-3 text-sm text-right text-zinc-600">UGX {line.unit_cost_ugx?.toLocaleString()}</td>
+        <div className="flex-1 overflow-y-auto p-6">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">
+                <th className="pb-4">Product</th>
+                <th className="pb-4">Requested</th>
+                <th className="pb-4">Select Batch (HQ)</th>
+                <th className="pb-4">Qty to Send</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {orderLines.map(line => {
+                const productBatches = batches.filter(b => b.productId === line.product_id);
+                return (
+                  <tr key={line.id} className="text-sm">
+                    <td className="py-4">
+                      <p className="font-bold text-zinc-900">{line.product_name}</p>
+                    </td>
+                    <td className="py-4 font-bold text-zinc-900">{line.qty_ordered}</td>
+                    <td className="py-4">
+                      <select 
+                        value={fulfillmentData[line.id]?.batchId || ''}
+                        onChange={(e) => setFulfillmentData(prev => ({
+                          ...prev,
+                          [line.id]: { ...prev[line.id], batchId: e.target.value }
+                        }))}
+                        className="w-full px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-emerald-500/20"
+                      >
+                        <option value="">Select Batch...</option>
+                        {productBatches.map(b => (
+                          <option key={b.id} value={b.id}>
+                            {b.batchNumber} (Exp: {new Date(b.expiryDate).toLocaleDateString()}) - {b.quantity} avail
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="py-4">
+                      <input 
+                        type="number" 
+                        value={fulfillmentData[line.id]?.qty ?? ''}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 0;
+                          setFulfillmentData(prev => ({
+                            ...prev,
+                            [line.id]: { ...prev[line.id], qty: val }
+                          }));
+                        }}
+                        className="w-24 px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/20"
+                      />
+                    </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
 
-        <div className="p-8 border-t border-zinc-100 bg-zinc-50/50 flex gap-3">
+        <div className="p-6 border-t border-zinc-100 bg-zinc-50/50 flex justify-end gap-3">
           <button 
-            type="button"
             onClick={onClose}
-            disabled={submitting}
-            className="flex-1 py-3 text-zinc-500 font-bold hover:bg-zinc-50 rounded-2xl transition-all disabled:opacity-50"
+            className="px-6 py-2 border border-zinc-200 rounded-xl font-medium text-zinc-600 hover:bg-zinc-50 transition-colors"
           >
             Cancel
           </button>
           <button 
-            type="button"
-            onClick={handleConfirmClick}
-            disabled={loading || lines.length === 0 || submitting}
-            className="flex-1 py-3 bg-blue-500 text-white rounded-2xl font-bold hover:bg-blue-600 transition-all shadow-lg shadow-blue-500/20 disabled:bg-zinc-350 disabled:shadow-none"
+            onClick={handleFulfill}
+            className="px-8 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-bold transition-colors shadow-lg shadow-blue-500/20"
           >
-            {submitting ? 'Dispatching...' : 'Confirm Dispatch'}
+            Dispatch Fulfillment
           </button>
         </div>
       </div>
@@ -3162,1110 +3344,56 @@ const DispatchModal: React.FC<{
   );
 };
 
-const UnsuppliedTab: React.FC = () => {
-  const { profile } = useAuth();
-  const [unsupplied, setUnsupplied] = useState<UnsuppliedLine[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
+export const StockInOutReportsHub: React.FC<{ branches: Branch[] }> = ({ branches }) => {
+  const { profile, activeBranchId } = useAuth();
+  const [transferInvoices, setTransferInvoices] = useState<TransferInvoice[]>([]);
+  const [stockQueries, setStockQueries] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeSubTab, setActiveSubTab] = useState<'reception' | 'transfer' | 'queries'>('reception');
+  const [staff, setStaff] = useState<any[]>([]);
 
-  useEffect(() => {
-    if (profile?.tenantId) {
-      return firestoreService.subscribeToCollectionByQuery<UnsuppliedLine>('unsupplied_lines', profile.tenantId, [
-        where('status', '==', 'pending')
-      ], (data) => {
-        setUnsupplied(data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-      });
-    }
-  }, [profile?.tenantId]);
-
-  const handleDefer = async (item: UnsuppliedLine) => {
-    const reason = window.prompt('Reason for deferral:');
-    if (reason === null) return;
-    
-    try {
-      await firestoreService.updateDocument('unsupplied_lines', item.id, {
-        status: 'deferred',
-        deferred_reason: reason
-      });
-      toast.success('Item deferred');
-    } catch (error) {
-      toast.error('Failed to defer item');
-    }
-  };
-
-  const handleReorder = async (item: UnsuppliedLine) => {
-    try {
-      if (item.original_line_id) {
-        await firestoreService.updateDocument('stock_order_lines', item.original_line_id, {
-          line_status: 'pending',
-          qty_ordered: item.qty_unsupplied
-        });
-      }
-      
-      await firestoreService.updateDocument('unsupplied_lines', item.id, {
-        status: 're-ordered'
-      });
-      
-      toast.success('Item sent back to sourcing');
-    } catch (error) {
-      toast.error('Failed to re-order item');
-    }
-  };
-
-  const handleDownload = () => {
-    toast.info('Downloading unsupplied items list...');
-    // Mock download logic
-  };
-
-  const handleCancel = async (item: UnsuppliedLine) => {
-    if (window.confirm('Are you sure you want to cancel this item? It will be marked as cancelled.')) {
-      try {
-        await firestoreService.updateDocument('unsupplied_lines', item.id, {
-          status: 'cancelled'
-        });
-        toast.success('Item cancelled');
-      } catch (error) {
-        toast.error('Failed to cancel item');
-      }
-    }
-  };
-
-  const filtered = unsupplied.filter(u => 
-    u.product_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    u.reason.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-          <input 
-            type="text"
-            placeholder="Search unsupplied items..."
-            className="w-full pl-10 pr-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-        <button 
-          onClick={handleDownload}
-          className="bg-zinc-100 text-zinc-600 px-4 py-2 rounded-xl font-bold text-sm hover:bg-zinc-200 transition-all flex items-center gap-2"
-        >
-          <Download size={18} />
-          Download List
-        </button>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
-                <th className="px-6 py-4">Product</th>
-                <th className="px-6 py-4">Qty</th>
-                <th className="px-6 py-4">Reason</th>
-                <th className="px-6 py-4">Flagged At</th>
-                <th className="px-6 py-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {filtered.map((item) => (
-                <tr key={item.id} className="hover:bg-zinc-50/50 transition-colors">
-                  <td className="px-6 py-4">
-                    <p className="font-bold text-zinc-900">{item.product_name}</p>
-                    <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{item.order_id}</p>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-zinc-900 font-bold">{item.qty_unsupplied}</td>
-                  <td className="px-6 py-4 text-sm text-zinc-600">{item.reason}</td>
-                  <td className="px-6 py-4 text-sm text-zinc-500">{new Date(item.createdAt).toLocaleDateString()}</td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button 
-                        onClick={() => handleDefer(item)}
-                        className="bg-amber-50 text-amber-600 px-3 py-1 rounded-lg text-xs font-bold hover:bg-amber-100 transition-colors"
-                      >
-                        Defer
-                      </button>
-                      <button 
-                        onClick={() => handleReorder(item)}
-                        className="bg-emerald-50 text-emerald-600 px-3 py-1 rounded-lg text-xs font-bold hover:bg-emerald-100 transition-colors"
-                      >
-                        Re-order
-                      </button>
-                      <button 
-                        onClick={() => handleCancel(item)}
-                        className="bg-rose-50 text-rose-600 px-3 py-1 rounded-lg text-xs font-bold hover:bg-rose-100 transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-zinc-400 italic">
-                    No unsupplied items found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const DeferredTab: React.FC = () => {
-  const { profile } = useAuth();
-  const [deferred, setDeferred] = useState<UnsuppliedLine[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-
-  useEffect(() => {
-    if (profile?.tenantId) {
-      return firestoreService.subscribeToCollectionByQuery<UnsuppliedLine>('unsupplied_lines', profile.tenantId, [
-        where('status', '==', 'deferred')
-      ], (data) => {
-        setDeferred(data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-      });
-    }
-  }, [profile?.tenantId]);
-
-  const handleReactivate = async (item: UnsuppliedLine) => {
-    try {
-      await firestoreService.updateDocument('unsupplied_lines', item.id, {
-        status: 'pending'
-      });
-      toast.success('Item moved back to unsupplied');
-    } catch (error) {
-      toast.error('Failed to reactivate item');
-    }
-  };
-
-  const handleCancel = async (item: UnsuppliedLine) => {
-    if (window.confirm('Are you sure you want to cancel this item?')) {
-      try {
-        await firestoreService.updateDocument('unsupplied_lines', item.id, {
-          status: 'cancelled'
-        });
-        toast.success('Item cancelled');
-      } catch (error) {
-        toast.error('Failed to cancel item');
-      }
-    }
-  };
-
-  const handleReorder = async (item: UnsuppliedLine) => {
-    try {
-      if (item.original_line_id) {
-        await firestoreService.updateDocument('stock_order_lines', item.original_line_id, {
-          line_status: 'pending',
-          qty_ordered: item.qty_unsupplied
-        });
-      }
-      
-      await firestoreService.updateDocument('unsupplied_lines', item.id, {
-        status: 're-ordered'
-      });
-      
-      toast.success('Item sent back to sourcing');
-    } catch (error) {
-      toast.error('Failed to re-order item');
-    }
-  };
-
-  const filtered = deferred.filter(u => 
-    u.product_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (u.deferred_reason || '').toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-          <input 
-            type="text"
-            placeholder="Search deferred items..."
-            className="w-full pl-10 pr-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
-                <th className="px-6 py-4">Product</th>
-                <th className="px-6 py-4">Qty</th>
-                <th className="px-6 py-4">Deferral Reason</th>
-                <th className="px-6 py-4">Deferred At</th>
-                <th className="px-6 py-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {filtered.map((item) => (
-                <tr key={item.id} className="hover:bg-zinc-50/50 transition-colors">
-                  <td className="px-6 py-4">
-                    <p className="font-bold text-zinc-900">{item.product_name}</p>
-                    <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{item.order_id}</p>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-zinc-900 font-bold">{item.qty_unsupplied}</td>
-                  <td className="px-6 py-4 text-sm text-zinc-600">{item.deferred_reason}</td>
-                  <td className="px-6 py-4 text-sm text-zinc-500">{new Date(item.createdAt).toLocaleDateString()}</td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button 
-                        onClick={() => handleReactivate(item)}
-                        className="bg-emerald-50 text-emerald-600 px-3 py-1 rounded-lg text-xs font-bold hover:bg-emerald-100 transition-colors"
-                      >
-                        Reactivate
-                      </button>
-                      <button 
-                        onClick={() => handleReorder(item)}
-                        className="bg-blue-50 text-blue-600 px-3 py-1 rounded-lg text-xs font-bold hover:bg-blue-100 transition-colors"
-                      >
-                        Re-order
-                      </button>
-                      <button 
-                        onClick={() => handleCancel(item)}
-                        className="bg-rose-50 text-rose-600 px-3 py-1 rounded-lg text-xs font-bold hover:bg-rose-100 transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-zinc-400 italic">
-                    No deferred items found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const SupplierRegistryTab: React.FC = () => {
-  const { profile } = useAuth();
-  const [suppliers, setSuppliers] = useState<InstitutionRegistry[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingSupplier, setEditingSupplier] = useState<InstitutionRegistry | null>(null);
-
-  useEffect(() => {
-    if (profile?.tenantId) {
-      firestoreService.subscribeToCollection<InstitutionRegistry>('supplier_registry', profile.tenantId, setSuppliers);
-    }
-  }, [profile?.tenantId]);
-
-  const filtered = suppliers.filter(s => 
-    s.supplier_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    s.supplier_id.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const handleDelete = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this supplier?')) {
-      try {
-        await firestoreService.deleteDocument('supplier_registry', id);
-        toast.success('Supplier deleted');
-      } catch (error) {
-        toast.error('Failed to delete supplier');
-      }
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-          <input 
-            type="text" 
-            placeholder="Search suppliers..." 
-            className="w-full pl-10 pr-4 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-        <button 
-          onClick={() => {
-            setEditingSupplier(null);
-            setIsModalOpen(true);
-          }}
-          className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl font-medium transition-colors flex items-center gap-2"
-        >
-          <Plus size={20} />
-          Add Supplier
-        </button>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
-                <th className="px-6 py-4">Supplier Name</th>
-                <th className="px-6 py-4">Category</th>
-                <th className="px-6 py-4">NDA Licence</th>
-                <th className="px-6 py-4">Status</th>
-                <th className="px-6 py-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {filtered.map((supplier) => (
-                <tr key={supplier.id} className="hover:bg-zinc-50/50 transition-colors">
-                  <td className="px-6 py-4">
-                    <p className="font-bold text-zinc-900">{supplier.supplier_name}</p>
-                    <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{supplier.supplier_id}</p>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-zinc-600">{supplier.commercial_category}</td>
-                  <td className="px-6 py-4">
-                    <span className={cn(
-                      "px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider",
-                      supplier.nda_licence_status === 'valid' ? "bg-emerald-50 text-emerald-600" : 
-                      supplier.nda_licence_status === 'expiring_soon' ? "bg-amber-50 text-amber-600" : "bg-red-50 text-red-600"
-                    )}>
-                      {supplier.nda_licence_status.replace(/_/g, ' ')}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    {supplier.is_suspended ? (
-                      <span className="px-2 py-1 bg-red-500 text-white rounded-md text-[10px] font-bold uppercase tracking-wider">Suspended</span>
-                    ) : (
-                      <span className="px-2 py-1 bg-zinc-100 text-zinc-600 rounded-md text-[10px] font-bold uppercase tracking-wider">Active</span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button 
-                        onClick={() => {
-                          setEditingSupplier(supplier);
-                          setIsModalOpen(true);
-                        }}
-                        className="text-zinc-400 hover:text-emerald-500 p-1"
-                      >
-                        <Edit2 size={16} />
-                      </button>
-                      <button 
-                        onClick={() => handleDelete(supplier.id)}
-                        className="text-zinc-400 hover:text-red-500 p-1"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-zinc-400 italic">
-                    No suppliers found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {isModalOpen && (
-        <SupplierModal 
-          isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
-          supplier={editingSupplier}
-        />
-      )}
-    </div>
-  );
-};
-
-const SupplierModal: React.FC<{ isOpen: boolean, onClose: () => void, supplier: InstitutionRegistry | null }> = ({ isOpen, onClose, supplier }) => {
-  const { profile } = useAuth();
-  const [formData, setFormData] = useState({
-    supplier_name: supplier?.supplier_name || '',
-    supplier_id: supplier?.supplier_id || '',
-    commercial_category: supplier?.commercial_category || 'Wholesale',
-    nda_wholesale_licence_number: supplier?.nda_wholesale_licence_number || '',
-    nda_licence_expiry_date: supplier?.nda_licence_expiry_date || '',
-    nda_licence_status: supplier?.nda_licence_status || 'valid',
-    is_suspended: supplier?.is_suspended || false,
-    payment_terms: supplier?.payment_terms || '',
-    tin: supplier?.tin || '',
-    whtExempt: supplier?.whtExempt || false
+  // Date filters defaulting to current month
+  const [fromDate, setFromDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(1);
+    return d.toISOString().split('T')[0];
+  });
+  const [toDate, setToDate] = useState<string>(() => {
+    return new Date().toISOString().split('T')[0];
   });
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!profile) return;
-
-    try {
-      if (supplier) {
-        await firestoreService.updateDocument('supplier_registry', supplier.id, formData);
-        toast.success('Supplier updated');
-      } else {
-        await firestoreService.addDocument('supplier_registry', {
-          ...formData,
-          tenantId: profile.tenantId,
-          status: 'active'
-        });
-        toast.success('Supplier added');
-      }
-      onClose();
-    } catch (error) {
-      toast.error('Failed to save supplier');
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-[32px] w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
-        <div className="p-8">
-          <h2 className="text-2xl font-bold text-zinc-900 mb-6">{supplier ? 'Edit Supplier' : 'Add New Supplier'}</h2>
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Supplier Name</label>
-              <input 
-                type="text"
-                required
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.supplier_name}
-                onChange={(e) => setFormData({...formData, supplier_name: e.target.value})}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Supplier ID / Code</label>
-              <input 
-                type="text"
-                required
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.supplier_id}
-                onChange={(e) => setFormData({...formData, supplier_id: e.target.value})}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Category</label>
-              <select 
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.commercial_category}
-                onChange={(e) => setFormData({...formData, commercial_category: e.target.value})}
-              >
-                <option value="Wholesale">Wholesale</option>
-                <option value="Manufacturer">Manufacturer</option>
-                <option value="Distributor">Distributor</option>
-                <option value="Importer">Importer</option>
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">NDA Licence Number</label>
-              <input 
-                type="text"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.nda_wholesale_licence_number}
-                onChange={(e) => setFormData({...formData, nda_wholesale_licence_number: e.target.value})}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Licence Expiry</label>
-              <input 
-                type="date"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.nda_licence_expiry_date}
-                onChange={(e) => setFormData({...formData, nda_licence_expiry_date: e.target.value})}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Licence Status</label>
-              <select 
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.nda_licence_status}
-                onChange={(e) => setFormData({...formData, nda_licence_status: e.target.value as any})}
-              >
-                <option value="valid">Valid</option>
-                <option value="expiring_soon">Expiring Soon</option>
-                <option value="expired">Expired</option>
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Supplier TIN</label>
-              <input 
-                type="text"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.tin}
-                onChange={(e) => setFormData({...formData, tin: e.target.value})}
-                placeholder="e.g., 1001234567"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Payment Terms</label>
-              <input 
-                type="text"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                placeholder="e.g., Net 30, Cash on Delivery"
-                value={formData.payment_terms}
-                onChange={(e) => setFormData({...formData, payment_terms: e.target.value})}
-              />
-            </div>
-            <div className="flex items-center gap-6 md:col-span-2">
-              <div className="flex items-center gap-2">
-                <input 
-                  type="checkbox"
-                  id="is_suspended"
-                  className="w-4 h-4 rounded border-zinc-300 text-emerald-500 focus:ring-emerald-500"
-                  checked={formData.is_suspended}
-                  onChange={(e) => setFormData({...formData, is_suspended: e.target.checked})}
-                />
-                <label htmlFor="is_suspended" className="text-sm font-medium text-zinc-700">Suspend Supplier</label>
-              </div>
-              <div className="flex items-center gap-2">
-                <input 
-                  type="checkbox"
-                  id="whtExempt"
-                  className="w-4 h-4 rounded border-zinc-300 text-emerald-500 focus:ring-emerald-500"
-                  checked={formData.whtExempt}
-                  onChange={(e) => setFormData({...formData, whtExempt: e.target.checked})}
-                />
-                <label htmlFor="whtExempt" className="text-sm font-medium text-zinc-700">WHT Exempt</label>
-              </div>
-            </div>
-            <div className="flex gap-3 pt-4 md:col-span-2">
-              <button 
-                type="button"
-                onClick={onClose}
-                className="flex-1 py-3 text-zinc-500 font-bold hover:bg-zinc-50 rounded-2xl transition-all"
-              >
-                Cancel
-              </button>
-              <button 
-                type="submit"
-                className="flex-1 py-3 bg-zinc-900 text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-900/20"
-              >
-                {supplier ? 'Update Supplier' : 'Add Supplier'}
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ==========================================
-// 1. HQ STORE INVENTORY TAB (REPLICA)
-// ==========================================
-const HQStoreInventoryTab: React.FC = () => {
-  const { profile } = useAuth();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [batches, setBatches] = useState<ProductBatch[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
-  
-  const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
-  const [selectedBatch, setSelectedBatch] = useState<ProductBatch | null>(null);
-  const [adjustmentQty, setAdjustmentQty] = useState<number>(0);
-  
-  const [isAddBatchModalOpen, setIsAddBatchModalOpen] = useState(false);
-  const [newBatchData, setNewBatchData] = useState({
-    productId: '',
-    batchNumber: '',
-    expiryDate: '',
-    quantity: 0,
-    purchasePrice: 0,
-    sellingPrice: 0
-  });
-
+  // Subscriptions
   useEffect(() => {
     if (profile?.tenantId) {
-      const unsubProducts = firestoreService.subscribeToCollection<Product>('products', profile.tenantId, setProducts);
-      const unsubBatches = firestoreService.subscribeToCollectionByQuery<ProductBatch>(
-        'product_batches',
+      setLoading(true);
+      const unsubTransfers = firestoreService.subscribeToCollection<TransferInvoice>(
+        'transfer_invoices',
         profile.tenantId,
-        [where('branchId', '==', 'HQ')],
-        setBatches
+        (data) => {
+          setTransferInvoices(data);
+        }
       );
+      const unsubQueries = firestoreService.subscribeToCollection<any>(
+        'stock_queries',
+        profile.tenantId,
+        (data) => {
+          setStockQueries(data);
+          setLoading(false);
+        }
+      );
+      const unsubStaff = firestoreService.subscribeToCollection<any>(
+        'staff',
+        profile.tenantId,
+        setStaff
+      );
+
       return () => {
-        unsubProducts();
-        unsubBatches();
+        unsubTransfers();
+        unsubQueries();
+        unsubStaff();
       };
     }
   }, [profile?.tenantId]);
-
-  const handleAdjustSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedBatch) return;
-    try {
-      await firestoreService.updateDocument('product_batches', selectedBatch.id, {
-        quantity: adjustmentQty,
-        lastUpdated: new Date().toISOString()
-      });
-      toast.success('Stock quantity adjusted successfully.');
-      setIsAdjustModalOpen(false);
-      setSelectedBatch(null);
-    } catch (err) {
-      toast.error('Failed to adjust quantity.');
-    }
-  };
-
-  const handleAddBatchSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newBatchData.productId || !newBatchData.batchNumber || newBatchData.quantity < 0) {
-      toast.error('Please fill in all required fields.');
-      return;
-    }
-    try {
-      await firestoreService.addDocument('product_batches', {
-        tenantId: profile?.tenantId,
-        branchId: 'HQ',
-        productId: newBatchData.productId,
-        batchNumber: newBatchData.batchNumber.toUpperCase().trim(),
-        expiryDate: newBatchData.expiryDate || new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().split('T')[0],
-        quantity: Number(newBatchData.quantity),
-        purchasePrice: Number(newBatchData.purchasePrice),
-        sellingPrice: Number(newBatchData.sellingPrice) || Number(newBatchData.purchasePrice) * 1.3,
-        batch_status: 'active',
-        createdAt: new Date().toISOString(),
-        lastUpdated: new Date().toISOString()
-      });
-      toast.success('Successfully added batch to central store.');
-      setIsAddBatchModalOpen(false);
-      setNewBatchData({
-        productId: '',
-        batchNumber: '',
-        expiryDate: '',
-        quantity: 0,
-        purchasePrice: 0,
-        sellingPrice: 0
-      });
-    } catch (err) {
-      toast.error('Failed to record batch.');
-    }
-  };
-
-  const productStockStats = React.useMemo(() => {
-    const stats: Record<string, { totalQty: number; count: number; nearExpiry: boolean }> = {};
-    batches.forEach(b => {
-      if (!stats[b.productId]) {
-        stats[b.productId] = { totalQty: 0, count: 0, nearExpiry: false };
-      }
-      stats[b.productId].totalQty += b.quantity;
-      stats[b.productId].count += 1;
-      
-      if (b.expiryDate) {
-        const timeDiff = new Date(b.expiryDate).getTime() - Date.now();
-        const daysDiff = timeDiff / (1000 * 3600 * 24);
-        if (daysDiff >= 0 && daysDiff <= 90) {
-          stats[b.productId].nearExpiry = true;
-        }
-      }
-    });
-    return stats;
-  }, [batches]);
-
-  const filteredProducts = products.filter(p => 
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    (p.sku || '').toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-          <input 
-            type="text" 
-            placeholder="Search HQ Store items by name or SKU..."
-            className="w-full pl-10 pr-4 py-2 border border-zinc-200 bg-white rounded-xl shadow-sm outline-none focus:ring-2 focus:ring-emerald-500/20 font-medium"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-        <button 
-          onClick={() => setIsAddBatchModalOpen(true)}
-          className="px-5 py-2.5 bg-zinc-900 text-white font-bold text-sm rounded-xl flex items-center gap-2 hover:bg-zinc-800 transition-all shadow-sm"
-        >
-          <Plus size={18} />
-          Add Direct Batch to HQ Store
-        </button>
-      </div>
-
-      <div className="bg-white rounded-[2rem] border border-zinc-200 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-zinc-100 bg-zinc-50/50 flex justify-between items-center">
-          <div>
-            <h2 className="text-lg font-bold text-zinc-950">HQ Central Store Stock Matrix</h2>
-            <p className="text-xs text-zinc-400 font-medium font-sans mt-0.5">Isolated from Kampala branch other branch local operations.</p>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="text-xs font-semibold text-zinc-400 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/20">
-                <th className="px-6 py-4">Item Name</th>
-                <th className="px-6 py-4">Category</th>
-                <th className="px-6 py-4">Total Qty (Packs)</th>
-                <th className="px-6 py-4">Batches Count</th>
-                <th className="px-6 py-4">Status / Alert</th>
-                <th className="px-6 py-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100 font-sans">
-              {filteredProducts.map(p => {
-                const stats = productStockStats[p.id] || { totalQty: 0, count: 0, nearExpiry: false };
-                const isExpanded = expandedProduct === p.id;
-                const productBatches = batches.filter(b => b.productId === p.id);
-
-                return (
-                  <React.Fragment key={p.id}>
-                    <tr className="hover:bg-zinc-50/50 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex flex-col">
-                          <span className="font-bold text-zinc-900">{p.name}</span>
-                          <span className="text-xs text-zinc-400 font-mono mt-0.5">SKU: {p.sku || 'N/A'}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-zinc-600 font-medium capitalize">
-                        {p.category || 'General'}
-                      </td>
-                      <td className="px-6 py-4 text-sm font-bold text-zinc-900">
-                        {stats.totalQty} Packs
-                      </td>
-                      <td className="px-6 py-4 text-sm font-medium text-zinc-600">
-                        {stats.count} batch(es)
-                      </td>
-                      <td className="px-6 py-4">
-                        {stats.totalQty === 0 ? (
-                          <span className="px-2 py-1 bg-rose-50 text-rose-600 rounded-md text-[10px] font-bold uppercase tracking-wider">Out of Stock</span>
-                        ) : stats.nearExpiry ? (
-                          <span className="px-2 py-1 bg-amber-50 text-amber-600 rounded-md text-[10px] font-bold uppercase tracking-wider">Expiry Alert (90d)</span>
-                        ) : (
-                          <span className="px-2 py-1 bg-emerald-50 text-emerald-600 rounded-md text-[10px] font-bold uppercase tracking-wider">Good</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <button 
-                          onClick={() => setExpandedProduct(isExpanded ? null : p.id)}
-                          className="px-3 py-1.5 bg-zinc-100 font-bold hover:bg-zinc-200 text-zinc-800 rounded-xl text-xs transition-colors"
-                        >
-                          {isExpanded ? 'Hide Batches' : 'View Batches'}
-                        </button>
-                      </td>
-                    </tr>
-                    {isExpanded && (
-                      <tr>
-                        <td colSpan={6} className="px-8 py-4 bg-zinc-50/40 border-y border-zinc-100">
-                          <div className="space-y-3">
-                            <h4 className="text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Active Store Batches for {p.name}</h4>
-                            {productBatches.length === 0 ? (
-                              <p className="text-xs text-zinc-400 italic">No batches currently stored at HQ.</p>
-                            ) : (
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                {productBatches.map(b => (
-                                  <div key={b.id} className="p-4 bg-white rounded-2xl border border-zinc-200 hover:border-zinc-300 transition-all flex flex-col gap-2 relative shadow-sm">
-                                    <div className="flex justify-between items-start">
-                                      <div>
-                                        <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Batch Number</p>
-                                        <p className="text-sm font-bold text-zinc-950 font-mono mt-0.5">{b.batchNumber}</p>
-                                      </div>
-                                      <span className={cn(
-                                        "px-2.5 py-0.5 text-[10px] font-extrabold rounded-full",
-                                        b.quantity > 0 ? "bg-emerald-100 text-emerald-800" : "bg-neutral-100 text-neutral-800"
-                                      )}>
-                                        Qty: {b.quantity}
-                                      </span>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2 text-xs text-zinc-500 font-medium">
-                                      <div>
-                                        <span className="text-[10px] text-zinc-400 block uppercase">Expiry Date</span>
-                                        <span className="text-zinc-800 font-semibold">{b.expiryDate}</span>
-                                      </div>
-                                      <div>
-                                        <span className="text-[10px] text-zinc-400 block uppercase">Cost Price</span>
-                                        <span className="text-zinc-800 font-semibold">UGX {(b.purchasePrice || 0).toLocaleString()}</span>
-                                      </div>
-                                    </div>
-                                    <div className="flex justify-end gap-2 pt-2 border-t border-zinc-100 mt-2">
-                                      <button 
-                                        onClick={() => {
-                                          setSelectedBatch(b);
-                                          setAdjustmentQty(b.quantity);
-                                          setIsAdjustModalOpen(true);
-                                        }}
-                                        className="text-emerald-500 hover:text-emerald-600 text-xs font-bold"
-                                      >
-                                        Adjust Stock Qty
-                                      </button>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-              {filteredProducts.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic font-medium">
-                    No products matching search description found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Adjust Stock Modal */}
-      {isAdjustModalOpen && selectedBatch && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <form onSubmit={handleAdjustSubmit} className="bg-white rounded-[2rem] w-full max-w-sm overflow-hidden shadow-2xl p-8">
-            <h3 className="text-xl font-bold text-zinc-950 mb-2">Adjust HQ Store Stock</h3>
-            <p className="text-xs text-zinc-500 mb-6">Modify stock quantity for batch: <strong className="font-mono">{selectedBatch.batchNumber}</strong></p>
-            
-            <div className="space-y-4 mb-6">
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Quantity In Stock (Packs)</label>
-                <input 
-                  type="number"
-                  required
-                  min={0}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 font-bold rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/10 text-zinc-900"
-                  value={adjustmentQty}
-                  onChange={(e) => setAdjustmentQty(Number(e.target.value))}
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-3 pt-2">
-              <button 
-                type="button" 
-                onClick={() => {
-                  setIsAdjustModalOpen(false);
-                  setSelectedBatch(null);
-                }}
-                className="flex-1 py-3 text-zinc-400 hover:text-zinc-600 font-bold text-sm transition-all"
-              >
-                Cancel
-              </button>
-              <button 
-                type="submit"
-                className="flex-1 py-3 bg-zinc-900 hover:bg-zinc-800 text-white rounded-2xl font-bold text-sm transition-all"
-              >
-                Apply Change
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Add Direct Batch Modal */}
-      {isAddBatchModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <form onSubmit={handleAddBatchSubmit} className="bg-white rounded-[2rem] w-full max-w-md overflow-hidden shadow-2xl p-8">
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <h3 className="text-xl font-bold text-zinc-950">Add Stock Batch to HQ</h3>
-                <p className="text-xs text-zinc-400 mt-0.5">Instantly record incoming bulk replenishment stock.</p>
-              </div>
-              <button type="button" onClick={() => setIsAddBatchModalOpen(false)} className="text-zinc-400 hover:text-zinc-600">
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="space-y-4 mb-6">
-              <div className="space-y-1">
-                <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest">Select Product</label>
-                <select 
-                  required
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/10 text-sm font-semibold"
-                  value={newBatchData.productId}
-                  onChange={(e) => setNewBatchData({...newBatchData, productId: e.target.value})}
-                >
-                  <option value="">Choose item...</option>
-                  {products.map(p => (
-                    <option key={p.id} value={p.id}>{p.name} {p.sku ? `(SKU: ${p.sku})` : ''}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest">Batch Number</label>
-                  <input 
-                    type="text"
-                    required
-                    placeholder="e.g. BATCH-A4"
-                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none text-sm font-mono uppercase"
-                    value={newBatchData.batchNumber}
-                    onChange={(e) => setNewBatchData({...newBatchData, batchNumber: e.target.value})}
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest">Expiry Date</label>
-                  <input 
-                    type="date"
-                    required
-                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none text-sm"
-                    value={newBatchData.expiryDate}
-                    onChange={(e) => setNewBatchData({...newBatchData, expiryDate: e.target.value})}
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                <div className="space-y-1 col-span-1">
-                  <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest">Qty (Packs)</label>
-                  <input 
-                    type="number"
-                    required
-                    min={1}
-                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none text-sm font-bold"
-                    value={newBatchData.quantity || ''}
-                    onChange={(e) => setNewBatchData({...newBatchData, quantity: Number(e.target.value)})}
-                  />
-                </div>
-
-                <div className="space-y-1 col-span-2">
-                  <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest">Unit Cost (UGX)</label>
-                  <input 
-                    type="number"
-                    required
-                    min={0}
-                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none text-sm font-bold"
-                    value={newBatchData.purchasePrice || ''}
-                    onChange={(e) => setNewBatchData({...newBatchData, purchasePrice: Number(e.target.value)})}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <button 
-                type="button" 
-                onClick={() => setIsAddBatchModalOpen(false)}
-                className="flex-1 py-3 text-zinc-400 font-bold hover:text-zinc-600 text-sm"
-              >
-                Cancel
-              </button>
-              <button 
-                type="submit"
-                className="flex-1 py-3 bg-zinc-950 font-bold text-white rounded-2xl hover:bg-zinc-800 text-sm shadow-md"
-              >
-                Confirm Add
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ==========================================
-// 2. HQ STOCK IN/OUT MODULE TAB (REPLICA)
-// ==========================================
-const HQStockInOutTab: React.FC = () => {
-  const { profile } = useAuth();
-  const [subTab, setSubTab] = useState<'generate_order' | 'stock_in' | 'transfer_out' | 'transfer_history' | 'reception_history'>('generate_order');
-  
-  // Master Lists
-  const [products, setProducts] = useState<Product[]>([]);
-  const [suppliers, setSuppliers] = useState<InstitutionRegistry[]>([]);
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [hqBatches, setHqBatches] = useState<ProductBatch[]>([]);
-
-  // 1. GENERATE ORDER STATE
-  const [orderMethod, setOrderMethod] = useState<'manual' | 'auto'>('manual');
-  const [showHqAutoGenerate, setShowHqAutoGenerate] = useState(false);
-  const [hqCoverageDays, setHqCoverageDays] = useState(90);
-  const [hqProductScopes, setHqProductScopes] = useState<string[]>(['drug/medicine']);
-  const [isAggregating, setIsAggregating] = useState(false);
-  const [orderLines, setOrderLines] = useState<Array<{
-    product_id: string;
-    product_name: string;
-    qty_ordered: number;
-    unit_cost_ugx: number;
-    line_total_ugx: number;
-    supplier_id: string;
-  }>>([]);
-  
-  // Manual generator single line form
-  const [manualForm, setManualForm] = useState({
-    productId: '',
-    supplierId: '',
-    quantity: 10,
-    cost: 15000
-  });
-  const [manualProductSearchTerm, setManualProductSearchTerm] = useState('');
-  const [transferProductSearchTerm, setTransferProductSearchTerm] = useState('');
-
-  // 2. STOCK IN STATE
-  const [incomingTransfers, setIncomingTransfers] = useState<TransferInvoice[]>([]);
-  const [selectedTransfer, setSelectedTransfer] = useState<TransferInvoice | null>(null);
-  const [transferLinesDetail, setTransferLinesDetail] = useState<TransferInvoiceLine[]>([]);
-  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
-  const [submittingTransferReturn, setSubmittingTransferReturn] = useState(false);
-
-  // 3. TRANSFER OUT STATE
-  const [destBranchId, setDestBranchId] = useState('');
-  const [transferOutLines, setTransferOutLines] = useState<Array<{
-    product_id: string;
-    product_name: string;
-    qty_dispatched: number;
-    unit_cost_ugx: number;
-    total_cost_ugx: number;
-    batch_number: string;
-    expiry_date: string;
-    batch_id: string;
-  }>>([]);
-  const [transferOutForm, setTransferOutForm] = useState({
-    productId: '',
-    batchId: '',
-    quantity: 1
-  });
-  const [submittingTransferOut, setSubmittingTransferOut] = useState(false);
-
-  // 4. TRANSFER HISTORY & RECEPTION HISTORY STATE
-  const [transferHistory, setTransferHistory] = useState<TransferInvoice[]>([]);
-  const [receivedOrders, setReceivedOrders] = useState<StockOrder[]>([]);
-  const [acceptedReturns, setAcceptedReturns] = useState<TransferInvoice[]>([]);
-  const [viewHistoryModal, setViewHistoryModal] = useState<{
-    isOpen: boolean;
-    type: 'transfer' | 'sourced_receipt' | 'return_receipt';
-    title: string;
-    items: Array<{ name: string; qty: number; batch?: string; exp?: string; price: number }>;
-    meta: {
-      date: string;
-      operator: string;
-      originDest: string;
-      notes?: string;
-    };
-  } | null>(null);
-
-  // DRAFTS STATE
-  const [orderDrafts, setOrderDrafts] = useState<any[]>([]);
-  const [transferDrafts, setTransferDrafts] = useState<any[]>([]);
-
-  // HQ LEDGER STATES
-  const [hqTransferSearch, setHqTransferSearch] = useState('');
-  const [hqTransferDateRange, setHqTransferDateRange] = useState({ start: '', end: '' });
-  const [hqReceptionSearch, setHqReceptionSearch] = useState('');
-  const [hqReceptionDateRange, setHqReceptionDateRange] = useState({ start: '', end: '' });
-  const [staff, setStaff] = useState<any[]>([]);
 
   const getUserName = (uid?: string) => {
     if (!uid) return 'N/A';
@@ -4273,1875 +3401,449 @@ const HQStockInOutTab: React.FC = () => {
     return found ? (found.full_name || found.displayName || found.username || found.email) : uid;
   };
 
-  // Subscriptions & Initial Loads
-  useEffect(() => {
-    if (profile?.tenantId) {
-      firestoreService.subscribeToCollection<Product>('products', profile.tenantId, setProducts);
-      firestoreService.subscribeToCollection<InstitutionRegistry>('supplier_registry', profile.tenantId, setSuppliers);
-      firestoreService.subscribeToCollection<Branch>('branches', profile.tenantId, setBranches);
-      firestoreService.subscribeToCollection<any>('staff', profile.tenantId, setStaff);
+  // Helper to resolve Branch name from ID (replaces vague IDs with actual branch name)
+  const getBranchName = (id: string) => {
+    const br = branches.find(b => b.id === id);
+    return br ? br.name : id || 'Unknown Branch';
+  };
+
+  const parseItemDate = (dateVal: any) => {
+    if (!dateVal) return new Date();
+    if (dateVal.seconds) return new Date(dateVal.seconds * 1000);
+    return new Date(dateVal);
+  };
+
+  // 1. Filtered Receptions (transfers received in active branch)
+  const filteredReceptions = useMemo(() => {
+    return transferInvoices.filter(ti => {
+      if (activeBranchId && ti.destination_branch_id !== activeBranchId) return false;
+      const rDate = parseItemDate(ti.received_at || ti.dispatched_at);
+      const start = new Date(fromDate);
+      start.setHours(0,0,0,0);
+      const end = new Date(toDate);
+      end.setHours(23,59,59,999);
+      return rDate >= start && rDate <= end && (ti.status === 'received' || ti.status === 'fully_accepted' || ti.status === 'queried');
+    });
+  }, [transferInvoices, activeBranchId, fromDate, toDate]);
+
+  // 2. Filtered Transfers (transfers sent from active branch)
+  const filteredTransfers = useMemo(() => {
+    return transferInvoices.filter(ti => {
+      if (activeBranchId && ti.source_branch_id !== activeBranchId) return false;
+      const dDate = parseItemDate(ti.dispatched_at);
+      const start = new Date(fromDate);
+      start.setHours(0,0,0,0);
+      const end = new Date(toDate);
+      end.setHours(23,59,59,999);
+      return dDate >= start && dDate <= end;
+    });
+  }, [transferInvoices, activeBranchId, fromDate, toDate]);
+
+  // 3. Filtered Queries (audit log within filtered period)
+  const filteredQueries = useMemo(() => {
+    return stockQueries.filter(q => {
+      // Branch check: either source or destination is active branch
+      if (activeBranchId && q.sourceBranchId !== activeBranchId && q.destinationBranchId !== activeBranchId) return false;
+      const qDate = parseItemDate(q.timestamp);
+      const start = new Date(fromDate);
+      start.setHours(0,0,0,0);
+      const end = new Date(toDate);
+      end.setHours(23,59,59,999);
+      return qDate >= start && qDate <= end;
+    });
+  }, [stockQueries, activeBranchId, fromDate, toDate]);
+
+  // Calculations for individual Transfer/GRN row
+  const getInvoiceAmounts = (ti: TransferInvoice) => {
+    let receivedAmount = 0;
+    let queriedAmount = 0;
+    
+    (ti.items || []).forEach(line => {
+      const unitCost = line.unit_cost_ugx || 0;
+      receivedAmount += (line.qty_received ?? line.qty_dispatched) * unitCost;
+      queriedAmount += (line.qty_queried ?? 0) * unitCost;
+    });
+
+    return {
+      total: ti.total_value_ugx || receivedAmount,
+      received: receivedAmount,
+      queried: queriedAmount
+    };
+  };
+
+  const handleExportCSV = async () => {
+    let headers: string[] = [];
+    let rows: any[][] = [];
+    let filename = `stock_${activeSubTab}_report.csv`;
+
+    if (activeSubTab === 'reception') {
+      filename = `reception_history_report.csv`;
+      headers = [
+        'GRN Invoice ID', 
+        'Source Branch', 
+        'Sender (Dispatched By)', 
+        'Receiver (Received By)', 
+        'Total Qty from Invoice', 
+        'Total Qty Received', 
+        'Total Qty Queried', 
+        'Total Value (UGX)', 
+        'Received Value (UGX)', 
+        'Queried Value (UGX)', 
+        'Receipt Date', 
+        'Status'
+      ];
       
-      // Subscribe to active batches in HQ Store
-      const unsubBatches = firestoreService.subscribeToCollectionByQuery<ProductBatch>(
-        'product_batches',
-        profile.tenantId,
-        [where('branchId', '==', 'HQ'), where('quantity', '>', 0)],
-        setHqBatches
-      );
-
-      // HQ receives only physical shipments. Submitted/approved orders are not
-      // receivable until Procurement has processed and dispatched their GRN.
-      const unsubIncomingTransfers = firestoreService.subscribeToCollectionByQuery<TransferInvoice>(
-        'transfer_invoices',
-        profile.tenantId,
-        [where('destination_branch_id', '==', 'HQ'), where('status', '==', 'dispatched')],
-        setIncomingTransfers
-      );
-
-      // Subscribe to past outgoing transfers from HQ (Transfer History)
-      const unsubTransferHistory = firestoreService.subscribeToCollectionByQuery<TransferInvoice>(
-        'transfer_invoices',
-        profile.tenantId,
-        [where('source_branch_id', '==', 'HQ')],
-        setTransferHistory
-      );
-
-      // Subscribe to received HQ purchase orders (Reception History item 1)
-      const unsubReceivedOrders = firestoreService.subscribeToCollectionByQuery<StockOrder>(
-        'stock_orders',
-        profile.tenantId,
-        [where('requesting_branch_id', '==', 'HQ'), where('status', '==', 'fully_received')],
-        setReceivedOrders
-      );
-
-      // Subscribe to accepted returns to HQ (Reception History item 2)
-      const unsubAcceptedReturns = firestoreService.subscribeToCollectionByQuery<TransferInvoice>(
-        'transfer_invoices',
-        profile.tenantId,
-        [where('destination_branch_id', '==', 'HQ'), where('status', '==', 'fully_accepted')],
-        transfers => setAcceptedReturns(transfers.filter(isBranchReturnToHq))
-      );
-
-      // Subscribe to Order Drafts
-      const unsubOrderDrafts = firestoreService.subscribeToCollection<any>(
-        'hq_order_drafts',
-        profile.tenantId,
-        (data) => {
-          setOrderDrafts(data.sort((a, b) => new Date(b.saved_at).getTime() - new Date(a.saved_at).getTime()));
+      for (const ti of filteredReceptions) {
+        let lines = ti.items || [];
+        if (lines.length === 0) {
+          try {
+            lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
+              { field: 'tenantId', operator: '==', value: profile?.tenantId || '' },
+              { field: 'transfer_id', operator: '==', value: ti.id }
+            ]);
+          } catch (e) {
+            console.error("Error fetching lines for reception:", e);
+          }
         }
-      );
 
-      // Subscribe to Transfer Drafts
-      const unsubTransferDrafts = firestoreService.subscribeToCollection<any>(
-        'hq_transfer_drafts',
-        profile.tenantId,
-        (data) => {
-          setTransferDrafts(data.sort((a, b) => new Date(b.saved_at).getTime() - new Date(a.saved_at).getTime()));
-        }
-      );
+        let totalQtyInvoice = 0;
+        let totalQtyReceived = 0;
+        let totalQtyQueried = 0;
+        let receivedAmount = 0;
+        let queriedAmount = 0;
 
-      return () => {
-        unsubBatches();
-        unsubIncomingTransfers();
-        unsubTransferHistory();
-        unsubReceivedOrders();
-        unsubAcceptedReturns();
-        unsubOrderDrafts();
-        unsubTransferDrafts();
-      };
-    }
-  }, [profile?.tenantId]);
+        lines.forEach(line => {
+          const unitCost = line.unit_cost_ugx || 0;
+          const dispatched = line.qty_dispatched || 0;
+          const received = line.qty_received ?? line.qty_dispatched ?? 0;
+          const queried = line.qty_queried || Math.max(0, dispatched - received);
 
-  // Add Manual order line
-  const handleAddManualLine = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!manualForm.productId || !manualForm.supplierId) {
-      toast.error('Please choose a product and supplier.');
-      return;
-    }
-    const selectedProd = products.find(p => p.id === manualForm.productId);
-    if (!selectedProd) return;
+          totalQtyInvoice += dispatched;
+          totalQtyReceived += received;
+          totalQtyQueried += queried;
 
-    // Check if product already added
-    if (orderLines.some(l => l.product_id === manualForm.productId)) {
-      toast.error('Product is already in the order list. Edit quantity below.');
-      return;
-    }
-
-    const newLine = {
-      product_id: manualForm.productId,
-      product_name: selectedProd.name,
-      qty_ordered: Number(manualForm.quantity),
-      unit_cost_ugx: Number(manualForm.cost),
-      line_total_ugx: Number(manualForm.cost) * Number(manualForm.quantity),
-      supplier_id: manualForm.supplierId
-    };
-
-    setOrderLines([...orderLines, newLine]);
-    setManualForm({
-      productId: '',
-      supplierId: manualForm.supplierId, // Keep supplier for batching ease
-      quantity: 10,
-      cost: 15000
-    });
-    toast.success(`${selectedProd.name} added to draft order lines.`);
-  };
-
-  // Submit Generated Replenishment Order to Procurement
-  const handleSubmitReplenishOrder = async () => {
-    if (orderLines.length === 0 || !profile) {
-      toast.error('Please add products to your draft order first.');
-      return;
-    }
-
-    try {
-      const orderRef = doc(collection(db, 'stock_orders'));
-      const orderNumber = `HQR-${Date.now().toString().slice(-6)}`;
-      const totalVal = orderLines.reduce((sum, l) => sum + l.line_total_ugx, 0);
-
-      const orderPayload: Partial<StockOrder> = {
-        tenantId: profile.tenantId,
-        order_number: orderNumber,
-        requesting_branch_id: 'HQ',
-        requesting_branch_name: 'HQ Central Store',
-        order_type: 'monthly',
-        status: 'submitted', // Sent to Procurement for formal approval & sourcing (LPO generation)
-        category: 'sellable_non_cosmetic',
-        submitted_at: new Date().toISOString(),
-        created_by: profile.uid,
-        created_at: new Date().toISOString(),
-        total_order_value_ugx: totalVal,
-        generation_method: orderMethod === 'auto' ? 'auto_generated' : 'manual'
-      };
-
-      await setDoc(orderRef, orderPayload);
-
-      // Create lines
-      for (const line of orderLines) {
-        const lineRef = doc(collection(db, 'stock_order_lines'));
-        await setDoc(lineRef, {
-          tenantId: profile.tenantId,
-          order_id: orderRef.id,
-          product_id: line.product_id,
-          product_name: line.product_name || 'Unknown Product',
-          qty_ordered: Number(line.qty_ordered),
-          qty_received: 0,
-          unit_cost_ugx: Number(line.unit_cost_ugx),
-          line_total_ugx: Number(line.line_total_ugx),
-          line_status: 'pending',
-          supplier_id: line.supplier_id,
-          supplier_type: 'external',
-          createdAt: new Date().toISOString()
-        });
-      }
-
-      toast.success(`HQ Store order ${orderNumber} submitted to Procurement module successfully!`);
-      setOrderLines([]);
-    } catch (err) {
-      toast.error('Failed to submit order to Procurement.');
-    }
-  };
-
-  // Draft handlers for Requisition/Order drafts
-  const handleSaveOrderDraft = async () => {
-    if (orderLines.length === 0) {
-      toast.error('Add some products to the list first to save a draft.');
-      return;
-    }
-    const titlePrompt = window.prompt('Enter a label/title for this order draft:', `Draft order - ${new Date().toLocaleTimeString()}`);
-    if (titlePrompt === null) return; // User cancelled
-
-    try {
-      await firestoreService.addDocument('hq_order_drafts', {
-        tenantId: profile.tenantId,
-        title: titlePrompt || `Draft order - ${new Date().toLocaleString()}`,
-        lines: orderLines,
-        saved_at: new Date().toISOString(),
-        saved_by: profile.uid,
-        saved_by_name: profile.full_name || profile.displayName || profile.username || profile.email || 'HQ Staff'
-      });
-      toast.success('Order draft saved successfully!');
-    } catch (e: any) {
-      console.error(e);
-      toast.error('Failed to save order draft.');
-    }
-  };
-
-  const handleLoadOrderDraft = (draft: any) => {
-    if (orderLines.length > 0 && !window.confirm('This will replace your current unsaved order lines. Continue?')) {
-      return;
-    }
-    setOrderLines(draft.lines || []);
-    toast.success(`Loaded draft: ${draft.title}`);
-  };
-
-  const handleDeleteOrderDraft = async (id: string) => {
-    if (!window.confirm('Are you sure you want to permanently delete this draft?')) return;
-    try {
-      await firestoreService.deleteDocument('hq_order_drafts', id);
-      toast.success('Draft deleted.');
-    } catch (e) {
-      console.error(e);
-      toast.error('Failed to delete draft.');
-    }
-  };
-
-  // Draft handlers for Transfer Out drafts
-  const handleSaveTransferDraft = async () => {
-    if (transferOutLines.length === 0) {
-      toast.error('Add some products to the list first to save a draft.');
-      return;
-    }
-    const titlePrompt = window.prompt('Enter a label/title for this transfer draft:', `Draft transfer - ${new Date().toLocaleTimeString()}`);
-    if (titlePrompt === null) return; // User cancelled
-
-    try {
-      await firestoreService.addDocument('hq_transfer_drafts', {
-        tenantId: profile.tenantId,
-        title: titlePrompt || `Draft transfer - ${new Date().toLocaleString()}`,
-        dest_branch_id: destBranchId,
-        lines: transferOutLines,
-        saved_at: new Date().toISOString(),
-        saved_by: profile.uid,
-        saved_by_name: profile.full_name || profile.displayName || profile.username || profile.email || 'HQ Staff'
-      });
-      toast.success('Transfer draft saved successfully!');
-    } catch (e: any) {
-      console.error(e);
-      toast.error('Failed to save transfer draft.');
-    }
-  };
-
-  const handleLoadTransferDraft = (draft: any) => {
-    if (transferOutLines.length > 0 && !window.confirm('This will replace your current unsaved dispatch lines. Continue?')) {
-      return;
-    }
-    setDestBranchId(draft.dest_branch_id || '');
-    setTransferOutLines(draft.lines || []);
-    toast.success(`Loaded draft: ${draft.title}`);
-  };
-
-  const handleDeleteTransferDraft = async (id: string) => {
-    if (!window.confirm('Are you sure you want to permanently delete this draft?')) return;
-    try {
-      await firestoreService.deleteDocument('hq_transfer_drafts', id);
-      toast.success('Draft deleted.');
-    } catch (e) {
-      console.error(e);
-      toast.error('Failed to delete draft.');
-    }
-  };
-
-  // Open Incoming Returns / Branch Transfer receipt modal
-  const handleOpenTransferModal = async (t: TransferInvoice) => {
-    setSelectedTransfer(t);
-    try {
-      const lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: t.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-      setTransferLinesDetail(lines);
-      setIsTransferModalOpen(true);
-    } catch (err) {
-      toast.error('Error fetching transfer lines.');
-    }
-  };
-
-  // Accept an HQ-bound physical shipment once. Both Procurement GRNs and true
-  // branch returns use the same idempotent inventory-posting boundary.
-  const handleAcceptTransferReturn = async () => {
-    if (!selectedTransfer || !profile || submittingTransferReturn) return;
-    setSubmittingTransferReturn(true);
-    try {
-      await receiveHqTransfer({
-        tenantId: profile.tenantId,
-        transfer: selectedTransfer,
-        lines: transferLinesDetail,
-        user: {
-          uid: profile.uid,
-          name: profile.full_name || profile.displayName || profile.username || profile.email || 'HQ Store Officer'
-        }
-      });
-      toast.success(isHqProcurementDelivery(selectedTransfer)
-        ? 'GRN shipment received into HQ inventory.'
-        : 'Branch return received into HQ inventory.');
-      setIsTransferModalOpen(false);
-      setSelectedTransfer(null);
-    } catch (err: any) {
-      toast.error(err?.message || 'Failed to receive the HQ shipment.');
-    } finally {
-      setSubmittingTransferReturn(false);
-    }
-  };
-
-  // Add transfer out line draft
-  const handleAddTransferOutLine = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!transferOutForm.productId || !transferOutForm.batchId || !transferOutForm.quantity) {
-      toast.error('Please input product, batch, and non-zero quantity.');
-      return;
-    }
-
-    const prod = products.find(p => p.id === transferOutForm.productId);
-    const batch = hqBatches.find(b => b.id === transferOutForm.batchId);
-    if (!prod || !batch) return;
-
-    if (transferOutForm.quantity > batch.quantity) {
-      toast.error(`Only ${batch.quantity} available in batch ${batch.batchNumber}.`);
-      return;
-    }
-
-    if (transferOutLines.some(l => l.batch_id === transferOutForm.batchId)) {
-      toast.error('This batch has already been selected.');
-      return;
-    }
-
-    const newLine = {
-      product_id: prod.id,
-      product_name: prod.name,
-      qty_dispatched: Number(transferOutForm.quantity),
-      unit_cost_ugx: batch.purchasePrice,
-      total_cost_ugx: Number(transferOutForm.quantity) * batch.purchasePrice,
-      batch_number: batch.batchNumber,
-      expiry_date: batch.expiryDate,
-      batch_id: batch.id
-    };
-
-    setTransferOutLines([...transferOutLines, newLine]);
-    setTransferOutForm({
-      productId: '',
-      batchId: '',
-      quantity: 1
-    });
-    toast.success('Line added to outgoing dispatch sheet.');
-  };
-
-  // Execute Outgoing Stock Transfer from HQ to branch
-  const handleExecuteTransferOut = async () => {
-    if (!destBranchId) {
-      toast.error('Please select a destination branch.');
-      return;
-    }
-    if (transferOutLines.length === 0) {
-      toast.error('No items have been added to the transfer list.');
-      return;
-    }
-
-    setSubmittingTransferOut(true);
-    try {
-      const transferNumber = `TRF-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
-      const totalVal = transferOutLines.reduce((sum, l) => sum + l.total_cost_ugx, 0);
-      const destBranchName = branches.find(b => b.id === destBranchId)?.name || 'Receiving Branch';
-
-      // 1. Create Transfer Invoice
-      const transferRef = doc(collection(db, 'transfer_invoices'));
-      const transferPayload: Partial<TransferInvoice> = {
-        tenantId: profile?.tenantId,
-        transfer_number: transferNumber,
-        source_branch_id: 'HQ',
-        source_branch_name: 'HQ Central Store',
-        destination_branch_id: destBranchId,
-        destination_branch_name: destBranchName,
-        transfer_type: 'central_to_branch',
-        status: 'dispatched',
-        dispatched_by: profile?.uid || 'HQ Officer',
-        dispatched_at: new Date().toISOString(),
-        total_value_ugx: totalVal,
-        items: transferOutLines.map(l => ({
-          product_id: l.product_id,
-          product_name: l.product_name,
-          qty_dispatched: l.qty_dispatched,
-          unit_cost_ugx: l.unit_cost_ugx,
-          total_cost_ugx: l.total_cost_ugx,
-          batch_number: l.batch_number,
-          expiry_date: l.expiry_date
-        })) as TransferInvoiceLine[]
-      };
-
-      await setDoc(transferRef, { ...transferPayload, createdAt: new Date().toISOString() });
-
-      // 2. Create sub-lines & Decrement HQ Stock batches
-      for (const line of transferOutLines) {
-        const lineRef = doc(collection(db, 'transfer_invoice_lines'));
-        await setDoc(lineRef, {
-          tenantId: profile?.tenantId,
-          transfer_id: transferRef.id,
-          product_id: line.product_id,
-          product_name: line.product_name || 'Unknown Product',
-          qty_dispatched: line.qty_dispatched,
-          unit_cost_ugx: line.unit_cost_ugx || 0,
-          total_cost_ugx: line.total_cost_ugx,
-          batch_number: line.batch_number,
-          expiry_date: line.expiry_date,
-          createdAt: new Date().toISOString()
+          receivedAmount += received * unitCost;
+          queriedAmount += queried * unitCost;
         });
 
-        // Decrement HQ inventory batch
-        const batch = hqBatches.find(b => b.id === line.batch_id);
-        if (batch) {
-          const updatedQty = Math.max(0, batch.quantity - line.qty_dispatched);
-          await firestoreService.updateDocument('product_batches', batch.id, {
-            quantity: updatedQty,
-            lastUpdated: new Date().toISOString()
-          });
+        rows.push([
+          ti.transfer_number,
+          getBranchName(ti.source_branch_id),
+          getUserName(ti.dispatched_by),
+          ti.received_by ? getUserName(ti.received_by) : 'Pending',
+          totalQtyInvoice,
+          totalQtyReceived,
+          totalQtyQueried,
+          ti.total_value_ugx || (receivedAmount + queriedAmount),
+          receivedAmount,
+          queriedAmount,
+          ti.received_at ? format(parseItemDate(ti.received_at), 'yyyy-MM-dd') : '-',
+          ti.status
+        ]);
+      }
+    } else if (activeSubTab === 'transfer') {
+      filename = `transfer_history_report.csv`;
+      headers = [
+        'GRN Invoice ID', 
+        'Destination Branch', 
+        'Sender (Dispatched By)', 
+        'Receiver (Received By)', 
+        'Total Qty from Invoice', 
+        'Total Qty Received', 
+        'Total Qty Queried', 
+        'Total Value (UGX)', 
+        'Received Value (UGX)', 
+        'Queried Value (UGX)', 
+        'Dispatch Date', 
+        'Status'
+      ];
+
+      for (const ti of filteredTransfers) {
+        let lines = ti.items || [];
+        if (lines.length === 0) {
+          try {
+            lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [
+              { field: 'tenantId', operator: '==', value: profile?.tenantId || '' },
+              { field: 'transfer_id', operator: '==', value: ti.id }
+            ]);
+          } catch (e) {
+            console.error("Error fetching lines for transfer:", e);
+          }
         }
+
+        let totalQtyInvoice = 0;
+        let totalQtyReceived = 0;
+        let totalQtyQueried = 0;
+        let receivedAmount = 0;
+        let queriedAmount = 0;
+
+        lines.forEach(line => {
+          const unitCost = line.unit_cost_ugx || 0;
+          const dispatched = line.qty_dispatched || 0;
+          const received = line.qty_received ?? line.qty_dispatched ?? 0;
+          const queried = line.qty_queried || Math.max(0, dispatched - received);
+
+          totalQtyInvoice += dispatched;
+          totalQtyReceived += received;
+          totalQtyQueried += queried;
+
+          receivedAmount += received * unitCost;
+          queriedAmount += queried * unitCost;
+        });
+
+        rows.push([
+          ti.transfer_number,
+          getBranchName(ti.destination_branch_id),
+          getUserName(ti.dispatched_by),
+          ti.received_by ? getUserName(ti.received_by) : 'Pending',
+          totalQtyInvoice,
+          totalQtyReceived,
+          totalQtyQueried,
+          ti.total_value_ugx || (receivedAmount + queriedAmount),
+          receivedAmount,
+          queriedAmount,
+          ti.dispatched_at ? format(parseItemDate(ti.dispatched_at), 'yyyy-MM-dd') : '-',
+          ti.status
+        ]);
       }
-
-      toast.success(`Transfer ${transferNumber} successfully dispatched to ${destBranchName}!`);
-      setTransferOutLines([]);
-      setDestBranchId('');
-      setSubTab('transfer_history');
-    } catch (err) {
-      toast.error('Failed to dispatch outgoing transfer.');
-    } finally {
-      setSubmittingTransferOut(false);
-    }
-  };
-
-  // Open History Detail Modal (Transfers or Receipts)
-  const handleOpenHistoryDetail = async (item: any, type: 'transfer' | 'sourced_receipt' | 'return_receipt') => {
-    let lines: any[] = [];
-    let meta = {
-      date: '',
-      operator: '',
-      originDest: '',
-      notes: ''
-    };
-    let title = '';
-
-    if (type === 'transfer') {
-      title = `Transfer Dispatch #${item.transfer_number}`;
-      let tLines = item.items || [];
-      if (tLines.length === 0) {
-        try {
-          tLines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: item.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-        } catch (e) {
-          console.error("Error fetching transfer lines:", e);
-        }
-      }
-      lines = tLines;
-      meta = {
-        date: new Date(item.dispatched_at).toLocaleString(),
-        operator: getUserName(item.dispatched_by),
-        originDest: `To Branch: ${item.destination_branch_name}`,
-        notes: item.notes || 'Routine stock distribution'
-      };
-    } else if (type === 'sourced_receipt') {
-      title = `Sourced GRN Receipt #${item.order_number}`;
-      const oLines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: item.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-      lines = oLines.map((l: any) => ({
-        product_name: l.product_name,
-        qty_dispatched: l.qty_ordered,
-        qty_received: l.qty_received,
-        unit_cost_ugx: l.unit_cost_ugx,
-        total_cost_ugx: l.line_total_ugx
-      }));
-      meta = {
-        date: item.received_at ? new Date(item.received_at).toLocaleString() : 'N/A',
-        operator: getUserName(item.received_by),
-        originDest: 'Direct Sourced / Procurement Sourcing',
-        notes: 'Replenishment order fully stowed'
-      };
-    } else {
-      title = `Accepted Return #${item.transfer_number}`;
-      const tLines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: item.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-      lines = tLines.map(l => ({
-        product_name: l.product_name,
-        qty_dispatched: l.qty_dispatched,
-        qty_received: l.qty_dispatched,
-        unit_cost_ugx: l.unit_cost_ugx,
-        total_cost_ugx: l.total_cost_ugx,
-        batch_number: l.batch_number,
-        expiry_date: l.expiry_date
-      }));
-      meta = {
-        date: item.accepted_at ? new Date(item.accepted_at).toLocaleString() : 'N/A',
-        operator: getUserName(item.accepted_by),
-        originDest: `Returned From: ${item.source_branch_name}`,
-        notes: item.notes || 'Returned / excess inventory branch return'
-      };
-    }
-
-    const formattedItems = lines.map(l => ({
-      name: l.product_name || 'Generic Product',
-      qty: l.qty_received ?? l.qty_dispatched ?? 0,
-      batch: l.batch_number,
-      exp: l.expiry_date,
-      price: l.unit_cost_ugx || 0
-    }));
-
-    setViewHistoryModal({
-      isOpen: true,
-      type,
-      title,
-      items: formattedItems,
-      meta
-    });
-  };
-
-  // Export CSV helper
-  const handleDownloadTransferCSV = async (transfer: TransferInvoice) => {
-    let lines = transfer.items || [];
-    if (lines.length === 0) {
-      try {
-        lines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: transfer.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-      } catch (e) {
-        console.error("Error fetching lines for transfer export:", e);
-      }
+    } else if (activeSubTab === 'queries') {
+      filename = `query_followup_and_audit_log.csv`;
+      headers = ['Invoice Number', 'Product Queried', 'Batch Number', 'Qty Queried', 'Unit Cost (UGX)', 'Amount Accrued (UGX)', 'Reason', 'Source Branch', 'Destination Branch', 'Status', 'Date Logged'];
+      filteredQueries.forEach(q => {
+        rows.push([
+          q.invoiceNumber || '-',
+          q.productName || 'Unknown Product',
+          q.batchNumber || '-',
+          q.qtyQueried || 0,
+          q.unitCost || 0,
+          q.amountAccrued || 0,
+          q.reason || 'No description',
+          getBranchName(q.sourceBranchId),
+          getBranchName(q.destinationBranchId),
+          q.status || 'pending',
+          q.timestamp ? format(parseItemDate(q.timestamp), 'yyyy-MM-dd') : '-'
+        ]);
+      });
     }
 
     const BOM = "\uFEFF";
-    let csvContent = BOM + "Transfer Invoice Export\n";
-    csvContent += `Transfer Number,${transfer.transfer_number}\n`;
-    csvContent += `Source,"${(transfer.source_branch_name || 'HQ').replace(/"/g, '""')}"\n`;
-    csvContent += `Destination,"${(transfer.destination_branch_name || '').replace(/"/g, '""')}"\n`;
-    csvContent += `Dispatched At,${transfer.dispatched_at}\n`;
-    csvContent += `Dispatched By,"${getUserName(transfer.dispatched_by).replace(/"/g, '""')}"\n\n`;
-    csvContent += "Product Name,Batch Number,Qty Dispatched,Unit Cost (UGX),Total Cost (UGX)\n";
-
-    lines.forEach(item => {
-      csvContent += `"${(item.product_name || '').replace(/"/g, '""')}",${item.batch_number || 'N/A'},${item.qty_dispatched || 0},${item.unit_cost_ugx || 0},${((item.qty_dispatched || 0) * (item.unit_cost_ugx || 0))}\n`;
-    });
-
+    const csvContent = BOM + [headers.join(','), ...rows.map(e => e.map(val => `"${(val ?? '').toString().replace(/"/g, '""')}"`).join(","))].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `HQ_TRANSFER_${transfer.transfer_number}.csv`);
+    link.setAttribute("download", filename);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    toast.success('Excel-compatible CSV downloaded successfully.');
+    toast.success(`${filename} exported successfully`);
   };
-
-  const handleDownloadHqReceptionAggregate = async () => {
-    if (displayedHqReceptionHistory.length === 0) {
-      toast.error("No goods receipt records found in the current filtered period.");
-      return;
-    }
-
-    setIsAggregating(true);
-    toast.loading("Aggregating reception details from database...", { id: "hq-aggregation" });
-
-    try {
-      const rows: any[][] = [];
-      const headers = [
-        'GRN ID (Ref)', 
-        'Source', 
-        'Sender (Dispatched By)', 
-        'Receiver (Received By)', 
-        'Total Qty from Invoice', 
-        'Total Qty Received', 
-        'Total Qty Queried',
-        'Total Value (UGX)',
-        'Received Date'
-      ];
-
-      for (const item of displayedHqReceptionHistory) {
-        let totalInvoiceQty = 0;
-        let totalReceivedQty = 0;
-        let totalQueriedQty = 0;
-
-        if (item.type === 'sourced_receipt') {
-          const oLines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: item.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-          oLines.forEach(l => {
-            const ordered = l.qty_ordered || 0;
-            const received = l.qty_supplied ?? l.qty_ordered ?? 0;
-            const queried = Math.max(0, ordered - received);
-            totalInvoiceQty += ordered;
-            totalReceivedQty += received;
-            totalQueriedQty += queried;
-          });
-        } else {
-          const tLines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: item.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-          tLines.forEach(l => {
-            const dispatched = l.qty_dispatched || 0;
-            const received = l.qty_received ?? l.qty_dispatched ?? 0;
-            const queried = l.qty_queried || Math.max(0, dispatched - received);
-            totalInvoiceQty += dispatched;
-            totalReceivedQty += received;
-            totalQueriedQty += queried;
-          });
-        }
-
-        const senderName = item.type === 'sourced_receipt' ? 'External Supplier' : 'Branch Staff';
-        const receiverName = getUserName(item.operator);
-
-        rows.push([
-          item.ref_number,
-          item.source,
-          senderName,
-          receiverName,
-          totalInvoiceQty,
-          totalReceivedQty,
-          totalQueriedQty,
-          item.value,
-          item.date ? new Date(item.date).toLocaleDateString() : '-'
-        ]);
-      }
-
-      const BOM = "\uFEFF";
-      const csvContent = BOM + [headers.join(','), ...rows.map(e => e.map(val => `"${(val ?? '').toString().replace(/"/g, '""')}"`).join(","))].join("\n");
-      
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.setAttribute("href", url);
-      link.setAttribute("download", `HQ_GRN_Reception_Aggregate_${hqReceptionDateRange.start || 'all'}_to_${hqReceptionDateRange.end || 'all'}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      
-      toast.success("Aggregate reception report exported successfully!", { id: "hq-aggregation" });
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to generate aggregate report.", { id: "hq-aggregation" });
-    } finally {
-      setIsAggregating(false);
-    }
-  };
-
-  const handleDownloadHqTransferAggregate = async () => {
-    if (displayedHqTransferHistory.length === 0) {
-      toast.error("No transfer records found in the current filtered period.");
-      return;
-    }
-
-    setIsAggregating(true);
-    toast.loading("Aggregating transfer details from database...", { id: "hq-transfer-aggregation" });
-
-    try {
-      const rows: any[][] = [];
-      const headers = [
-        'Transfer ID (Ref)', 
-        'Destination', 
-        'Sender (Dispatched By)', 
-        'Receiver (Received By)', 
-        'Total Qty from Invoice', 
-        'Total Qty Received', 
-        'Total Qty Queried',
-        'Total Value (UGX)',
-        'Dispatch Date',
-        'Status'
-      ];
-
-      for (const t of displayedHqTransferHistory) {
-        let totalInvoiceQty = 0;
-        let totalReceivedQty = 0;
-        let totalQueriedQty = 0;
-
-        let tLines = t.items || [];
-        if (tLines.length === 0) {
-          try {
-            tLines = await firestoreService.getDocumentsByQuery<TransferInvoiceLine>('transfer_invoice_lines', [{ field: 'transfer_id', operator: '==', value: t.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-          } catch (e) {
-            console.error("Error fetching lines for transfer export:", e);
-          }
-        }
-
-        tLines.forEach(l => {
-          const dispatched = l.qty_dispatched || 0;
-          const received = l.qty_received ?? l.qty_dispatched ?? 0;
-          const queried = l.qty_queried || Math.max(0, dispatched - received);
-          totalInvoiceQty += dispatched;
-          totalReceivedQty += received;
-          totalQueriedQty += queried;
-        });
-
-        const senderName = getUserName(t.dispatched_by);
-        const receiverName = t.received_by ? getUserName(t.received_by) : 'Pending';
-
-        rows.push([
-          t.transfer_number,
-          t.destination_branch_name || 'Branch Store',
-          senderName,
-          receiverName,
-          totalInvoiceQty,
-          totalReceivedQty,
-          totalQueriedQty,
-          t.total_value_ugx || 0,
-          t.dispatched_at ? new Date(t.dispatched_at).toLocaleDateString() : '-',
-          t.status
-        ]);
-      }
-
-      const BOM = "\uFEFF";
-      const csvContent = BOM + [headers.join(','), ...rows.map(e => e.map(val => `"${(val ?? '').toString().replace(/"/g, '""')}"`).join(","))].join("\n");
-      
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.setAttribute("href", url);
-      link.setAttribute("download", `HQ_Transfer_Aggregate_${hqTransferDateRange.start || 'all'}_to_${hqTransferDateRange.end || 'all'}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      
-      toast.success("Aggregate transfer report exported successfully!", { id: "hq-transfer-aggregation" });
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to generate aggregate transfer report.", { id: "hq-transfer-aggregation" });
-    } finally {
-      setIsAggregating(false);
-    }
-  };
-
-  // Assemble consolidated Reception History
-  const consolidatedReceptionHistory = [
-    ...receivedOrders.map(o => ({
-      id: o.id,
-      ref_number: o.order_number,
-      source: 'Direct Procurement PO',
-      date: o.received_at || o.submitted_at || '',
-      value: o.total_order_value_ugx,
-      type: 'sourced_receipt' as const,
-      operator: o.received_by,
-      originalData: o
-    })),
-    ...acceptedReturns.map(t => ({
-      id: t.id,
-      ref_number: t.transfer_number,
-      source: t.source_branch_name || 'Branch Return',
-      date: t.accepted_at || t.dispatched_at || '',
-      value: t.total_value_ugx,
-      type: 'return_receipt' as const,
-      operator: t.accepted_by,
-      originalData: t
-    }))
-  ].sort((a, b) => b.date.localeCompare(a.date));
-
-  // Filtered lists for UI rendering based on search and date range
-  const displayedHqTransferHistory = transferHistory.filter(t => {
-    const tDate = (t.dispatched_at || t.createdAt || '').split('T')[0];
-    const matchesStart = !hqTransferDateRange.start || tDate >= hqTransferDateRange.start;
-    const matchesEnd = !hqTransferDateRange.end || tDate <= hqTransferDateRange.end;
-    
-    if (!matchesStart || !matchesEnd) return false;
-
-    if (hqTransferSearch.trim()) {
-      const q = hqTransferSearch.toLowerCase().trim();
-      const transferId = (t.transfer_number || '').toLowerCase();
-      const invoiceId = (t.id || '').toLowerCase();
-      const srcName = (t.source_branch_name || 'HQ Central Depot').toLowerCase();
-      const destName = (t.destination_branch_name || 'Branch Store').toLowerCase();
-      const sender = getUserName(t.dispatched_by).toLowerCase();
-      const receiver = t.received_by ? getUserName(t.received_by).toLowerCase() : 'pending';
-      
-      return transferId.includes(q) || 
-             invoiceId.includes(q) || 
-             srcName.includes(q) || 
-             destName.includes(q) || 
-             sender.includes(q) || 
-             receiver.includes(q);
-    }
-    return true;
-  });
-
-  const displayedHqReceptionHistory = consolidatedReceptionHistory.filter(item => {
-    const rDate = (item.date || '').split('T')[0];
-    const matchesStart = !hqReceptionDateRange.start || rDate >= hqReceptionDateRange.start;
-    const matchesEnd = !hqReceptionDateRange.end || rDate <= hqReceptionDateRange.end;
-
-    if (!matchesStart || !matchesEnd) return false;
-
-    if (hqReceptionSearch.trim()) {
-      const q = hqReceptionSearch.toLowerCase().trim();
-      const refId = (item.ref_number || '').toLowerCase();
-      const itemId = (item.id || '').toLowerCase();
-      const source = (item.source || '').toLowerCase();
-      const dest = 'HQ Central Store'.toLowerCase();
-      const operator = getUserName(item.operator).toLowerCase();
-
-      return refId.includes(q) ||
-             itemId.includes(q) ||
-             source.includes(q) ||
-             dest.includes(q) ||
-             operator.includes(q);
-    }
-    return true;
-  });
-
-  const hqGrnDeliveries = incomingTransfers.filter(isHqProcurementDelivery);
-  const hqBranchReturns = incomingTransfers.filter(isBranchReturnToHq);
-  const pendingHqReceipts = hqGrnDeliveries.length + hqBranchReturns.length;
 
   return (
-    <div className="space-y-6">
-      {/* Top mini-tab header */}
-      <div className="flex flex-wrap gap-2 p-1 bg-zinc-100 rounded-2xl w-fit">
-        <button 
-          onClick={() => setSubTab('generate_order')}
-          className={cn(
-            "px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all inline-flex items-center gap-2",
-            subTab === 'generate_order' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700 font-sans"
-          )}
-        >
-          <ShoppingCart size={13} />
-          Generate Replenishment Order
-        </button>
-        <button 
-          onClick={() => setSubTab('stock_in')}
-          className={cn(
-            "px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all inline-flex items-center gap-2",
-            subTab === 'stock_in' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700 font-sans"
-          )}
-        >
-          <Package size={13} />
-          Stock In (GRN)
-          {pendingHqReceipts > 0 && (
-            <span className="w-2.5 h-2.5 bg-rose-500 rounded-full animate-pulse inline-block"></span>
-          )}
-        </button>
-        <button 
-          onClick={() => setSubTab('transfer_out')}
-          className={cn(
-            "px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all inline-flex items-center gap-2",
-            subTab === 'transfer_out' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700 font-sans"
-          )}
-        >
-          <Truck size={13} />
-          Transfer Out (Dispatch)
-        </button>
-        <button 
-          onClick={() => setSubTab('transfer_history')}
-          className={cn(
-            "px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all inline-flex items-center gap-2",
-            subTab === 'transfer_history' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700 font-sans"
-          )}
-        >
-          <FileText size={13} />
-          Transfer History
-        </button>
-        <button 
-          onClick={() => setSubTab('reception_history')}
-          className={cn(
-            "px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all inline-flex items-center gap-2",
-            subTab === 'reception_history' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700 font-sans"
-          )}
-        >
-          <Clock size={13} />
-          Reception History Ledger
-        </button>
-      </div>
-
-      <div className="bg-white rounded-[2rem] border border-zinc-200 shadow-sm p-8">
-        
-        {/* TAB 1: GENERATE ORDER */}
-        {subTab === 'generate_order' && (
-          <div className="space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-100 pb-5">
-              <div>
-                <h3 className="text-xl font-black text-zinc-950 tracking-tight">HQ Store Replenishment Order</h3>
-                <p className="text-xs text-zinc-400 font-medium">Generate stock replenishment orders manually, or auto-calculate based on global branch consumption metrics.</p>
-              </div>
-              <div className="flex gap-2 p-1 bg-zinc-100 rounded-xl w-fit">
-                <button
-                  onClick={() => setOrderMethod('manual')}
-                  className={cn("px-4 py-1.5 rounded-lg text-xs font-bold transition-all", orderMethod === 'manual' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500")}
-                >
-                  Manual Restock Build
-                </button>
-                <button
-                  onClick={() => setOrderMethod('auto')}
-                  className={cn("px-4 py-1.5 rounded-lg text-xs font-bold transition-all", orderMethod === 'auto' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500")}
-                >
-                  Smart Auto-Generator
-                </button>
-              </div>
-            </div>
-
-            {orderMethod === 'auto' && (
-              <div className="p-6 bg-emerald-50/50 border border-emerald-100 rounded-2xl space-y-4">
-                <div className="space-y-1">
-                  <p className="text-sm font-bold text-emerald-950">HQ Consumption Aggregator Engine</p>
-                  <p className="text-xs text-zinc-600">Uses the branch replenishment model for every branch, aggregates unmet demand, then deducts usable HQ stock and confirmed incoming supply.</p>
-                </div>
-                <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr_auto] gap-4 items-end">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-wider">Coverage period</label>
-                    <select value={hqCoverageDays} onChange={event => setHqCoverageDays(Number(event.target.value))} className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold">
-                      <option value={30}>30 days</option>
-                      <option value={60}>60 days</option>
-                      <option value={90}>90 days</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-wider">Product scope (select one or more)</label>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 bg-white border border-zinc-200 rounded-xl p-3">
-                      {[
-                        ['drug/medicine', 'Drug / Medicine'], ['cosmetic', 'Cosmetic'],
-                        ['consumable', 'Consumable'], ['device', 'Device'],
-                        ['cosmetic therapeutics', 'Cosmetic Therapeutics'],
-                        ['operational_inventory', 'Operational / Non-Sellable']
-                      ].map(([value, label]) => (
-                        <label key={value} className="flex items-center gap-2 text-[10px] font-bold text-zinc-700">
-                          <input type="checkbox" checked={hqProductScopes.includes(value)} onChange={() => setHqProductScopes(current => current.includes(value) ? current.filter(scope => scope !== value) : [...current, value])} />
-                          {label}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  <button type="button" onClick={() => setShowHqAutoGenerate(true)} disabled={hqProductScopes.length === 0} className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider disabled:opacity-50">
-                    Launch Replenishment Console
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <AutoGenerateOrderModal
-              isOpen={showHqAutoGenerate}
-              onClose={() => setShowHqAutoGenerate(false)}
-              branches={branches}
-              initialCoverageDays={hqCoverageDays}
-              initialProductScopes={hqProductScopes}
-              initialCategory="sellable_non_cosmetic"
-              mode="hq_aggregate"
-              fixedBranchId="HQ"
-            />
-
-            {orderMethod === 'manual' && (
-              <form onSubmit={handleAddManualLine} className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-zinc-50/50 p-5 rounded-2xl border border-zinc-150">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block mb-1">Select Product</label>
-                  <input
-                    type="text"
-                    placeholder="Search product..."
-                    value={manualProductSearchTerm}
-                    onChange={(e) => setManualProductSearchTerm(e.target.value)}
-                    className="w-full px-3 py-1.5 mb-1.5 bg-white border border-zinc-200 rounded-xl text-xs outline-none focus:border-emerald-500 font-medium"
-                  />
-                  <select
-                    required
-                    value={manualForm.productId}
-                    onChange={(e) => {
-                      const p = products.find(prod => prod.id === e.target.value);
-                      setManualForm({
-                        ...manualForm,
-                        productId: e.target.value,
-                        cost: p?.costPricePerPack || p?.cost_price || 15000
-                      });
-                    }}
-                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none"
-                  >
-                    <option value="">Select a product...</option>
-                    {products
-                      .filter(p => 
-                        !manualProductSearchTerm || 
-                        p.name.toLowerCase().includes(manualProductSearchTerm.toLowerCase()) || 
-                        p.sku.toLowerCase().includes(manualProductSearchTerm.toLowerCase())
-                      )
-                      .map(p => (
-                        <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
-                      ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Sourcing Vendor</label>
-                  <select
-                    required
-                    value={manualForm.supplierId}
-                    onChange={(e) => setManualForm({...manualForm, supplierId: e.target.value})}
-                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none"
-                  >
-                    <option value="">Select registry vendor...</option>
-                    {suppliers.map(s => (
-                      <option key={s.id} value={s.id}>{s.supplier_name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-2 col-span-2 md:col-span-1">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Packs</label>
-                    <input
-                      type="number"
-                      required
-                      min={1}
-                      value={manualForm.quantity}
-                      onChange={(e) => setManualForm({...manualForm, quantity: Number(e.target.value)})}
-                      className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Est Cost</label>
-                    <input
-                      type="number"
-                      required
-                      min={100}
-                      value={manualForm.cost}
-                      onChange={(e) => setManualForm({...manualForm, cost: Number(e.target.value)})}
-                      className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none"
-                    />
-                  </div>
-                </div>
-                <div className="flex items-end">
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 bg-zinc-950 hover:bg-zinc-850 text-white rounded-xl text-xs font-bold uppercase transition-all"
-                  >
-                    Add Product Line
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* Current Order draft table */}
-            <div className="space-y-3">
-              <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider font-mono">Draft Sourcing Lines ({orderLines.length})</h4>
-              <div className="border border-zinc-200 rounded-2xl overflow-hidden shadow-sm">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-zinc-50 border-b border-zinc-250 font-bold text-zinc-500">
-                      <th className="px-6 py-3">Product Description</th>
-                      <th className="px-6 py-3">Supplier Name</th>
-                      <th className="px-6 py-3 text-center">Qty Packs</th>
-                      <th className="px-6 py-3 text-right">Unit Price (UGX)</th>
-                      <th className="px-6 py-3 text-right">Subtotal</th>
-                      <th className="px-6 py-3 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
-                    {orderLines.map((line, idx) => {
-                      const supp = suppliers.find(s => s.id === line.supplier_id)?.supplier_name || 'Generic Sourcing';
-                      return (
-                        <tr key={idx} className="hover:bg-zinc-50/20">
-                          <td className="px-6 py-4 font-bold text-zinc-950">{line.product_name}</td>
-                          <td className="px-6 py-4 text-zinc-500 font-mono text-[11px]">{supp}</td>
-                          <td className="px-6 py-4 text-center">
-                            <input
-                              type="number"
-                              min={1}
-                              value={line.qty_ordered}
-                              onChange={(e) => {
-                                const newQty = Number(e.target.value);
-                                const updated = [...orderLines];
-                                updated[idx].qty_ordered = newQty;
-                                updated[idx].line_total_ugx = newQty * updated[idx].unit_cost_ugx;
-                                setOrderLines(updated);
-                              }}
-                              className="w-16 px-1.5 py-1 text-center border border-zinc-200 rounded-lg focus:ring-1 focus:ring-emerald-500 outline-none"
-                            />
-                          </td>
-                          <td className="px-6 py-4 text-right">
-                            <input
-                              type="number"
-                              min={0}
-                              value={line.unit_cost_ugx}
-                              onChange={(e) => {
-                                const newCost = Number(e.target.value);
-                                const updated = [...orderLines];
-                                updated[idx].unit_cost_ugx = newCost;
-                                updated[idx].line_total_ugx = updated[idx].qty_ordered * newCost;
-                                setOrderLines(updated);
-                              }}
-                              className="w-24 px-1.5 py-1 text-right border border-zinc-200 rounded-lg focus:ring-1 focus:ring-emerald-500 outline-none"
-                            />
-                          </td>
-                          <td className="px-6 py-4 text-right font-bold text-zinc-950 font-mono">
-                            UGX {line.line_total_ugx.toLocaleString()}
-                          </td>
-                          <td className="px-6 py-4 text-right">
-                            <button
-                              onClick={() => setOrderLines(orderLines.filter((_, i) => i !== idx))}
-                              className="text-red-500 hover:text-red-700 text-[10px] font-black uppercase tracking-wider"
-                            >
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {orderLines.length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic">
-                          No lines added yet. Sourcing lines can be loaded via automated data, or added manually above.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-zinc-50/50 font-bold border-t border-zinc-250">
-                      <td colSpan={4} className="px-6 py-3 text-right text-zinc-400 uppercase font-mono tracking-wider text-[10px]">Grand Sourced Total</td>
-                      <td className="px-6 py-3 text-right text-sm text-zinc-950 font-black font-mono">
-                        UGX {orderLines.reduce((sum, l) => sum + l.line_total_ugx, 0).toLocaleString()}
-                      </td>
-                      <td></td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 pt-4">
-              <button
-                type="button"
-                onClick={() => setOrderLines([])}
-                className="px-6 py-3 border border-zinc-200 hover:bg-zinc-50 rounded-2xl text-xs font-black uppercase tracking-wider text-zinc-500 transition-colors"
-              >
-                Clear Sourcing Draft
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveOrderDraft}
-                disabled={orderLines.length === 0}
-                className="px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-colors disabled:opacity-40"
-              >
-                Save as Draft
-              </button>
-              <button
-                type="button"
-                onClick={handleSubmitReplenishOrder}
-                disabled={orderLines.length === 0}
-                className="px-8 py-3 bg-zinc-950 hover:bg-zinc-850 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all disabled:opacity-40"
-              >
-                Submit Replenishment Order to Procurement
-              </button>
-            </div>
-
-            {/* Saved Order Drafts Section */}
-            <div className="pt-6 border-t border-zinc-150 space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="p-1 bg-amber-50 rounded-md text-amber-600">
-                  <FileText size={16} />
-                </span>
-                <h4 className="text-sm font-bold text-zinc-900">Saved Order Drafts</h4>
-                <span className="text-[10px] font-bold text-zinc-400 font-mono">({orderDrafts.length})</span>
-              </div>
-              
-              <div className="border border-zinc-200 rounded-2xl overflow-hidden bg-white shadow-sm">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-zinc-50 border-b border-zinc-200 font-bold text-zinc-500">
-                      <th className="px-6 py-3">Draft Label / Title</th>
-                      <th className="px-6 py-3">Products Count</th>
-                      <th className="px-6 py-3">Last Saved</th>
-                      <th className="px-6 py-3">Saved By</th>
-                      <th className="px-6 py-3 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
-                    {orderDrafts.map((draft) => (
-                      <tr key={draft.id} className="hover:bg-zinc-50/50">
-                        <td className="px-6 py-4 font-bold text-zinc-900">{draft.title}</td>
-                        <td className="px-6 py-4 text-zinc-500 font-mono">{(draft.lines || []).length} items</td>
-                        <td className="px-6 py-4 text-zinc-400 font-mono">{new Date(draft.saved_at).toLocaleString()}</td>
-                        <td className="px-6 py-4 text-zinc-650 font-semibold">{draft.saved_by_name || 'Staff'}</td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex justify-end gap-2 text-[10px] font-bold uppercase tracking-wider">
-                            <button
-                              onClick={() => handleLoadOrderDraft(draft)}
-                              className="px-3 py-1 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-md transition-colors"
-                            >
-                              Load Draft
-                            </button>
-                            <button
-                              onClick={() => handleDeleteOrderDraft(draft.id)}
-                              className="px-3 py-1 bg-red-50 text-red-600 hover:bg-red-100 rounded-md transition-colors"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {orderDrafts.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="px-6 py-10 text-center text-zinc-400 italic">
-                          No saved order drafts found.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 2: STOCK IN (RECEIVING PORTAL) */}
-        {subTab === 'stock_in' && (
-          <div className="space-y-8 font-sans">
-            <div>
-              <h3 className="text-xl font-black text-zinc-950 tracking-tight">HQ Store Goods Receipt Notes (GRN)</h3>
-              <p className="text-xs text-zinc-400 font-medium">Verify and stowed approved incoming stock shipments back into the central HQ store database catalog.</p>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              
-              {/* Left Column: Procurement shipments created only after GRN dispatch */}
-              <div className="space-y-4">
-                <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider font-mono flex items-center gap-2">
-                  <Truck size={12} />
-                  Dispatched Procurement GRNs ({hqGrnDeliveries.length})
-                </h4>
-                {hqGrnDeliveries.length === 0 ? (
-                  <div className="p-8 border border-dashed border-zinc-200 rounded-3xl bg-zinc-50/20 text-center text-zinc-400 italic text-xs">
-                    No processed Procurement GRNs are currently awaiting HQ receipt. Submitted orders remain in Procurement until GRN dispatch.
-                  </div>
-                ) : (
-                  <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-                    {hqGrnDeliveries.map(transfer => (
-                      <div key={transfer.id} className="p-5 border border-zinc-155 rounded-3xl bg-white hover:border-zinc-300 transition-all shadow-sm">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">GRN Shipment</span>
-                            <span className="text-sm font-bold text-zinc-900">{transfer.transfer_number}</span>
-                          </div>
-                          <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] uppercase font-black tracking-wider">Dispatched</span>
-                        </div>
-                        <div className="my-4 text-xs font-semibold text-zinc-550 flex justify-between">
-                          <span>Supplier: {transfer.source_branch_name || 'Procurement'}</span>
-                          <span>Value: UGX {transfer.total_value_ugx?.toLocaleString()}</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenTransferModal(transfer)}
-                          className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all"
-                        >
-                          Verify & Receive GRN Shipment
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Right Column: Branch Returns */}
-              <div className="space-y-4">
-                <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider font-mono flex items-center gap-2">
-                  <ArrowRightLeft size={12} />
-                  Incoming Branch Returns ({hqBranchReturns.length})
-                </h4>
-                {hqBranchReturns.length === 0 ? (
-                  <div className="p-8 border border-dashed border-zinc-200 rounded-3xl bg-zinc-50/20 text-center text-zinc-400 italic text-xs">
-                    No incoming branch return transfers currently in transit.
-                  </div>
-                ) : (
-                  <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-                    {hqBranchReturns.map(t => (
-                      <div key={t.id} className="p-5 border border-zinc-155 rounded-3xl bg-white hover:border-zinc-300 transition-all shadow-sm">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">Return Invoice</span>
-                            <span className="text-sm font-bold text-zinc-900">{t.transfer_number}</span>
-                          </div>
-                          <span className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-lg text-[10px] uppercase font-black tracking-wider">In Transit</span>
-                        </div>
-                        <div className="my-4 text-xs font-semibold text-zinc-550 flex justify-between">
-                          <span>From: {t.source_branch_name}</span>
-                          <span>Value: UGX {t.total_value_ugx?.toLocaleString()}</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenTransferModal(t)}
-                          className="w-full py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all"
-                        >
-                          Verify & Confirm Return Acceptance
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Transfer return modal */}
-            {isTransferModalOpen && selectedTransfer && (
-              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 font-sans">
-                <div className="bg-white rounded-[2rem] w-full max-w-lg overflow-hidden shadow-2xl p-8 animate-fade-in leading-normal">
-                  <h3 className="text-xl font-bold text-zinc-950 mb-1">
-                    {isHqProcurementDelivery(selectedTransfer) ? 'Verify Procurement GRN' : 'Verify Return Acceptance'}: {selectedTransfer.transfer_number}
-                  </h3>
-                  <p className="text-xs text-zinc-550 mb-6">Review the dispatched batches before confirming. Confirmation posts this shipment to HQ inventory exactly once.</p>
-
-                  <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar mb-6">
-                    {transferLinesDetail.map(line => (
-                      <div key={line.id} className="p-4 bg-zinc-50 rounded-2xl flex justify-between items-center border border-zinc-100">
-                        <div>
-                          <p className="font-bold text-zinc-900 text-sm">{line.product_name}</p>
-                          <p className="text-[10px] text-zinc-400 font-mono mt-0.5">Batch: {line.batch_number} | Exp: {line.expiry_date}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-bold text-zinc-900">{line.qty_dispatched} Packs</p>
-                          <p className="text-[10px] text-zinc-400 font-mono">Cost: UGX {line.unit_cost_ugx?.toLocaleString()}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="flex gap-4">
-                    <button 
-                      type="button" 
-                      onClick={() => {
-                        setIsTransferModalOpen(false);
-                        setSelectedTransfer(null);
-                      }}
-                      disabled={submittingTransferReturn}
-                      className="flex-1 py-3 text-zinc-400 hover:text-zinc-650 font-bold text-sm"
-                    >
-                      Cancel / Close
-                    </button>
-                    <button 
-                      type="button" 
-                      onClick={handleAcceptTransferReturn}
-                      disabled={submittingTransferReturn}
-                      className="flex-1 py-3 bg-zinc-950 hover:bg-zinc-850 font-bold text-white rounded-2xl text-sm shadow-md"
-                    >
-                      {submittingTransferReturn ? 'Updating Database...' : isHqProcurementDelivery(selectedTransfer) ? 'Confirm GRN Receipt' : 'Confirm Return Goods'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-          </div>
-        )}
-
-        {/* TAB 3: TRANSFER OUT (DISPATCH WORKSHOP) */}
-        {subTab === 'transfer_out' && (
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-xl font-black text-zinc-950 tracking-tight">HQ Store Outward Dispatch</h3>
-              <p className="text-xs text-zinc-400 font-medium">Distribute verified central stock inventory batches out to local pharmacy branches.</p>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              
-              {/* Dispatch form panel */}
-              <div className="lg:col-span-1 bg-zinc-50 p-6 rounded-3xl border border-zinc-150 space-y-4 h-fit">
-                <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider font-mono">Draft Stock Line</h4>
-                
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">Destination Outlet</label>
-                  <select
-                    value={destBranchId}
-                    onChange={(e) => setDestBranchId(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none"
-                  >
-                    <option value="">Select destination branch...</option>
-                    {branches.filter(b => b.id !== 'HQ').map(b => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <form onSubmit={handleAddTransferOutLine} className="space-y-4 pt-3 border-t border-zinc-200">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block mb-1">Select Product</label>
-                    <input
-                      type="text"
-                      placeholder="Search product..."
-                      value={transferProductSearchTerm}
-                      onChange={(e) => setTransferProductSearchTerm(e.target.value)}
-                      className="w-full px-3 py-1.5 mb-1.5 bg-white border border-zinc-200 rounded-xl text-xs outline-none focus:border-emerald-500 font-medium"
-                    />
-                    <select
-                      required
-                      value={transferOutForm.productId}
-                      onChange={(e) => setTransferOutForm({ ...transferOutForm, productId: e.target.value, batchId: '' })}
-                      className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none"
-                    >
-                      <option value="">Select product to dispatch...</option>
-                      {products
-                        .filter(p => 
-                          !transferProductSearchTerm || 
-                          p.name.toLowerCase().includes(transferProductSearchTerm.toLowerCase()) || 
-                          (p.sku && p.sku.toLowerCase().includes(transferProductSearchTerm.toLowerCase()))
-                        )
-                        .map(p => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                    </select>
-                  </div>
-
-                  {transferOutForm.productId && (
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">Select Active Batch (HQ Store)</label>
-                      <select
-                        required
-                        value={transferOutForm.batchId}
-                        onChange={(e) => setTransferOutForm({ ...transferOutForm, batchId: e.target.value })}
-                        className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-mono font-bold outline-none"
-                      >
-                        <option value="">Select active stock batch...</option>
-                        {hqBatches.filter(b => b.productId === transferOutForm.productId).map(b => (
-                          <option key={b.id} value={b.id}>
-                            {b.batchNumber} (Avail: {b.quantity} packs) - Exp: {b.expiryDate}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">Quantity to Dispatch (Packs)</label>
-                    <input
-                      type="number"
-                      required
-                      min={1}
-                      value={transferOutForm.quantity}
-                      onChange={(e) => setTransferOutForm({ ...transferOutForm, quantity: Number(e.target.value) })}
-                      className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 bg-zinc-950 hover:bg-zinc-850 text-white rounded-xl text-xs font-bold uppercase transition-all flex items-center justify-center gap-2"
-                  >
-                    <Plus size={14} />
-                    Add Dispatch Line
-                  </button>
-                </form>
-              </div>
-
-              {/* Draft list table */}
-              <div className="lg:col-span-2 space-y-4">
-                <div className="p-4 border border-zinc-150 rounded-2xl bg-zinc-50/20 flex justify-between items-center">
-                  <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider font-mono">Dispatched Lines ({transferOutLines.length})</h4>
-                  <div className="text-xs font-bold text-zinc-500">
-                    Grand Total Sourced Value: <span className="text-emerald-600 font-mono font-black">UGX {transferOutLines.reduce((sum, l) => sum + l.total_cost_ugx, 0).toLocaleString()}</span>
-                  </div>
-                </div>
-
-                <div className="border border-zinc-200 rounded-[20px] overflow-hidden bg-white shadow-sm">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-zinc-50 border-b border-zinc-150 font-bold text-zinc-500">
-                        <th className="px-4 py-3">Product Description</th>
-                        <th className="px-4 py-3 text-center">Batch ID</th>
-                        <th className="px-4 py-3 text-center">Qty Dispatch</th>
-                        <th className="px-4 py-3 text-right">Cost Price</th>
-                        <th className="px-4 py-3 text-right">Total Cost</th>
-                        <th className="px-4 py-3 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
-                      {transferOutLines.map((line, idx) => (
-                        <tr key={idx} className="hover:bg-zinc-50/10">
-                          <td className="px-4 py-3 font-bold text-zinc-950">{line.product_name}</td>
-                          <td className="px-4 py-3 text-center font-mono font-bold text-zinc-600">{line.batch_number}</td>
-                          <td className="px-4 py-3 text-center font-bold text-emerald-600 text-sm">{line.qty_dispatched}</td>
-                          <td className="px-4 py-3 text-right font-mono text-zinc-500">UGX {line.unit_cost_ugx.toLocaleString()}</td>
-                          <td className="px-4 py-3 text-right font-mono font-bold text-zinc-950">
-                            UGX {line.total_cost_ugx.toLocaleString()}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <button
-                              type="button"
-                              onClick={() => setTransferOutLines(transferOutLines.filter((_, i) => i !== idx))}
-                              className="text-red-500 hover:text-red-700 text-[10px] font-black uppercase tracking-wider"
-                            >
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                      {transferOutLines.length === 0 && (
-                        <tr>
-                          <td colSpan={6} className="px-4 py-10 text-center text-zinc-400 italic">
-                            Draft list empty. Please draft a dispatch order line using the panel on the left.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="flex justify-end gap-3 pt-3">
-                  <button
-                    type="button"
-                    onClick={() => setTransferOutLines([])}
-                    className="px-5 py-2.5 border border-zinc-200 hover:bg-zinc-50 rounded-xl text-xs font-black uppercase tracking-wider text-zinc-500 transition-colors"
-                  >
-                    Reset List
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSaveTransferDraft}
-                    disabled={transferOutLines.length === 0}
-                    className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors disabled:opacity-40"
-                  >
-                    Save as Draft
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleExecuteTransferOut}
-                    disabled={submittingTransferOut || transferOutLines.length === 0 || !destBranchId}
-                    className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md shadow-emerald-500/20 disabled:opacity-45"
-                  >
-                    {submittingTransferOut ? 'Dispatching...' : 'Confirm & Dispatch Transfer'}
-                  </button>
-                </div>
-
-                {/* Saved Transfer Drafts Section */}
-                <div className="pt-6 border-t border-zinc-150 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <span className="p-1 bg-amber-50 rounded-md text-amber-600">
-                      <FileText size={16} />
-                    </span>
-                    <h4 className="text-sm font-bold text-zinc-900">Saved Dispatch Drafts</h4>
-                    <span className="text-[10px] font-bold text-zinc-400 font-mono">({transferDrafts.length})</span>
-                  </div>
-                  
-                  <div className="border border-zinc-200 rounded-2xl overflow-hidden bg-white shadow-sm">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="bg-zinc-50 border-b border-zinc-200 font-bold text-zinc-500">
-                          <th className="px-6 py-3">Draft Label / Title</th>
-                          <th className="px-6 py-3">Destination Branch</th>
-                          <th className="px-6 py-3">Products Count</th>
-                          <th className="px-6 py-3">Last Saved</th>
-                          <th className="px-6 py-3">Saved By</th>
-                          <th className="px-6 py-3 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
-                        {transferDrafts.map((draft) => {
-                          const targetBranch = branches.find(b => b.id === draft.dest_branch_id)?.name || 'HQ Central Store';
-                          return (
-                            <tr key={draft.id} className="hover:bg-zinc-50/50">
-                              <td className="px-6 py-4 font-bold text-zinc-900">{draft.title}</td>
-                              <td className="px-6 py-4 text-zinc-500 font-semibold">{targetBranch}</td>
-                              <td className="px-6 py-4 text-zinc-500 font-mono">{(draft.lines || []).length} items</td>
-                              <td className="px-6 py-4 text-zinc-400 font-mono">{new Date(draft.saved_at).toLocaleString()}</td>
-                              <td className="px-6 py-4 text-zinc-650 font-semibold">{draft.saved_by_name || 'Staff'}</td>
-                              <td className="px-6 py-4 text-right">
-                                <div className="flex justify-end gap-2 text-[10px] font-bold uppercase tracking-wider">
-                                  <button
-                                    onClick={() => handleLoadTransferDraft(draft)}
-                                    className="px-3 py-1 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-md transition-colors"
-                                  >
-                                    Load Draft
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteTransferDraft(draft.id)}
-                                    className="px-3 py-1 bg-red-50 text-red-600 hover:bg-red-100 rounded-md transition-colors"
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                        {transferDrafts.length === 0 && (
-                          <tr>
-                            <td colSpan={6} className="px-6 py-10 text-center text-zinc-400 italic">
-                              No saved transfer drafts found.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        )}
-
-        {/* TAB 4: TRANSFER OUT HISTORY */}
-        {subTab === 'transfer_history' && (
-          <div className="space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h3 className="text-xl font-black text-zinc-950 tracking-tight">HQ Store Outward Transfer Ledger</h3>
-                <p className="text-xs text-zinc-400 font-medium">Complete historic and real-time tracking of stock batches transferred from HQ central store out to branches.</p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3">
-                <button 
-                  onClick={handleDownloadHqTransferAggregate}
-                  disabled={isAggregating}
-                  className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600 text-white text-xs font-black uppercase tracking-wider rounded-xl hover:bg-emerald-750 transition-all shadow-sm disabled:opacity-50"
-                  title="Download Aggregate Excel"
-                >
-                  <Download size={13} />
-                  Export Aggregate
-                </button>
-
-                <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl min-w-[280px] shadow-sm">
-                  <Search size={14} className="text-zinc-400" />
-                  <input 
-                    type="text" 
-                    placeholder="Search ID, source, dest, sender..." 
-                    value={hqTransferSearch} 
-                    onChange={(e) => setHqTransferSearch(e.target.value)}
-                    className="bg-transparent border-none text-xs outline-none w-full placeholder-zinc-400 text-zinc-800"
-                  />
-                  {hqTransferSearch && (
-                    <button onClick={() => setHqTransferSearch('')} className="text-zinc-400 hover:text-zinc-600">
-                      <X size={14} />
-                    </button>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl shadow-sm">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Dates:</span>
-                  <input 
-                    type="date" 
-                    value={hqTransferDateRange.start} 
-                    onChange={(e) => setHqTransferDateRange(prev => ({ ...prev, start: e.target.value }))}
-                    className="bg-transparent border-none text-xs outline-none focus:ring-0 text-zinc-700 w-[110px]"
-                  />
-                  <span className="text-xs font-bold text-zinc-400">to</span>
-                  <input 
-                    type="date" 
-                    value={hqTransferDateRange.end} 
-                    onChange={(e) => setHqTransferDateRange(prev => ({ ...prev, end: e.target.value }))}
-                    className="bg-transparent border-none text-xs outline-none focus:ring-0 text-zinc-700 w-[110px]"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="border border-zinc-200 rounded-[2rem] overflow-hidden shadow-sm bg-white">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-zinc-50 border-b border-zinc-150 font-bold text-zinc-500">
-                    <th className="px-6 py-4">Transfer Number</th>
-                    <th className="px-6 py-4">Destination Branch</th>
-                    <th className="px-6 py-4">Dispatch Timestamp</th>
-                    <th className="px-6 py-4 text-right">Transfer Sourced Value</th>
-                    <th className="px-6 py-4 text-center">Status</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
-                  {displayedHqTransferHistory.map(t => (
-                    <tr key={t.id} className="hover:bg-zinc-50/20">
-                      <td className="px-6 py-4 font-bold text-zinc-950 font-mono">{t.transfer_number}</td>
-                      <td className="px-6 py-4 font-semibold text-zinc-900">{t.destination_branch_name}</td>
-                      <td className="px-6 py-4 text-zinc-400 font-mono">{new Date(t.dispatched_at).toLocaleString()}</td>
-                      <td className="px-6 py-4 text-right font-mono font-bold text-zinc-900">
-                        UGX {(t.total_value_ugx || 0).toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className={cn(
-                          "px-2 py-0.5 rounded-lg text-[9px] uppercase font-black tracking-wider leading-none",
-                          t.status === 'fully_accepted' ? "bg-emerald-50 text-emerald-700 border border-emerald-100" :
-                          t.status === 'dispatched' ? "bg-blue-50 text-blue-700 border border-blue-100 animate-pulse" :
-                          "bg-zinc-100 text-zinc-600"
-                        )}>
-                          {t.status.replace(/_/g, ' ')}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-right flex justify-end gap-2">
-                        <button
-                          onClick={() => handleOpenHistoryDetail(t, 'transfer')}
-                          className="px-3 py-1.5 bg-zinc-50 hover:bg-zinc-100 rounded-lg text-zinc-650 flex items-center gap-1 font-bold transition-all border border-zinc-200"
-                        >
-                          <Eye size={12} />
-                          Details
-                        </button>
-                        <button
-                          onClick={() => handleDownloadTransferCSV(t)}
-                          className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg flex items-center gap-1 font-bold transition-all border border-emerald-100"
-                        >
-                          <Download size={12} />
-                          CSV
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {displayedHqTransferHistory.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic">
-                        No previous outward transfers recorded from the HQ Store.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 5: RECEPTION HISTORY (INWARD GRN LEDGER) */}
-        {subTab === 'reception_history' && (
-          <div className="space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h3 className="text-xl font-black text-zinc-950 tracking-tight">HQ Store Inward GRN / Reception Ledger</h3>
-                <p className="text-xs text-zinc-400 font-medium">A chronological log of all stock received at HQ (both direct procurement PO completions and incoming branch returns).</p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3">
-                <button 
-                  onClick={handleDownloadHqReceptionAggregate}
-                  disabled={isAggregating}
-                  className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600 text-white text-xs font-black uppercase tracking-wider rounded-xl hover:bg-emerald-750 transition-all shadow-sm disabled:opacity-50"
-                  title="Download Aggregate Excel"
-                >
-                  <Download size={13} />
-                  Export Aggregate
-                </button>
-
-                <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl min-w-[280px] shadow-sm">
-                  <Search size={14} className="text-zinc-400" />
-                  <input 
-                    type="text" 
-                    placeholder="Search ID, source, dest, sender..." 
-                    value={hqReceptionSearch} 
-                    onChange={(e) => setHqReceptionSearch(e.target.value)}
-                    className="bg-transparent border-none text-xs outline-none w-full placeholder-zinc-400 text-zinc-800"
-                  />
-                  {hqReceptionSearch && (
-                    <button onClick={() => setHqReceptionSearch('')} className="text-zinc-400 hover:text-zinc-600">
-                      <X size={14} />
-                    </button>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl shadow-sm">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Dates:</span>
-                  <input 
-                    type="date" 
-                    value={hqReceptionDateRange.start} 
-                    onChange={(e) => setHqReceptionDateRange(prev => ({ ...prev, start: e.target.value }))}
-                    className="bg-transparent border-none text-xs outline-none focus:ring-0 text-zinc-700 w-[110px]"
-                  />
-                  <span className="text-xs font-bold text-zinc-400">to</span>
-                  <input 
-                    type="date" 
-                    value={hqReceptionDateRange.end} 
-                    onChange={(e) => setHqReceptionDateRange(prev => ({ ...prev, end: e.target.value }))}
-                    className="bg-transparent border-none text-xs outline-none focus:ring-0 text-zinc-700 w-[110px]"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="border border-zinc-200 rounded-[2rem] overflow-hidden shadow-sm bg-white">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-zinc-50 border-b border-zinc-150 font-bold text-zinc-500">
-                    <th className="px-6 py-4">Reference ID</th>
-                    <th className="px-6 py-4">Stock Source / Branch</th>
-                    <th className="px-6 py-4">Received Date</th>
-                    <th className="px-6 py-4 text-right font-mono">Value (UGX)</th>
-                    <th className="px-6 py-4 text-center">GRN Type</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
-                  {displayedHqReceptionHistory.map((item, idx) => (
-                    <tr key={idx} className="hover:bg-zinc-50/20">
-                      <td className="px-6 py-4 font-bold text-zinc-950 font-mono">{item.ref_number}</td>
-                      <td className="px-6 py-4 font-semibold text-zinc-900">{item.source}</td>
-                      <td className="px-6 py-4 text-zinc-400 font-mono">{new Date(item.date).toLocaleString()}</td>
-                      <td className="px-6 py-4 text-right font-mono font-bold text-zinc-950">
-                        UGX {(item.value || 0).toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className={cn(
-                          "px-2.5 py-0.5 rounded-lg text-[9px] uppercase font-black tracking-wider leading-none border",
-                          item.type === 'sourced_receipt' ? "bg-purple-50 text-purple-700 border-purple-100" :
-                          "bg-amber-50 text-amber-700 border-amber-100"
-                        )}>
-                          {item.type === 'sourced_receipt' ? 'Direct Sourced GRN' : 'Branch Return Accepted'}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <button
-                          onClick={() => handleOpenHistoryDetail(item.originalData, item.type)}
-                          className="px-4 py-1.5 bg-zinc-50 hover:bg-zinc-100 rounded-lg text-zinc-700 border border-zinc-200 font-bold transition-all flex items-center gap-1.5 ml-auto"
-                        >
-                          <Eye size={12} />
-                          Review GRN
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {displayedHqReceptionHistory.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic">
-                        No goods receipt records found in the inward ledger.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-      </div>
-
-      {/* History item viewer modal */}
-      {viewHistoryModal && viewHistoryModal.isOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 font-sans text-xs">
-          <div className="bg-white rounded-[2rem] w-full max-w-xl overflow-hidden shadow-2xl p-8 animate-fade-in leading-normal">
-            <div className="flex justify-between items-start border-b border-zinc-150 pb-4">
-              <div>
-                <span className="text-[10px] uppercase font-black tracking-widest text-emerald-600 font-mono">HQ Store Audit Ledger Record</span>
-                <h3 className="text-xl font-bold text-zinc-950 mt-1">{viewHistoryModal.title}</h3>
-              </div>
-              <button 
-                onClick={() => setViewHistoryModal(null)}
-                className="text-zinc-400 hover:text-zinc-600 p-1.5 hover:bg-zinc-100 rounded-full transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="my-5 grid grid-cols-2 gap-4 bg-zinc-50 p-4 rounded-2xl border border-zinc-150">
-              <div>
-                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">Metadata Stream</span>
-                <span className="font-bold text-zinc-800 text-xs mt-1 block">{viewHistoryModal.meta.originDest}</span>
-                <span className="text-zinc-500 font-mono text-[10px] mt-0.5 block">{viewHistoryModal.meta.date}</span>
-              </div>
-              <div>
-                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">Authorized Signatory</span>
-                <span className="font-bold text-zinc-800 text-xs mt-1 block">Officer ID: {viewHistoryModal.meta.operator}</span>
-                {viewHistoryModal.meta.notes && (
-                  <span className="text-zinc-400 italic text-[10px] mt-0.5 block">"{viewHistoryModal.meta.notes}"</span>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <h4 className="text-[10px] font-black uppercase text-zinc-400 tracking-wider font-mono">Cataloged Items ({viewHistoryModal.items.length})</h4>
-              <div className="border border-zinc-200 rounded-2xl overflow-hidden max-h-[220px] overflow-y-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-zinc-50 border-b border-zinc-150 font-bold text-zinc-500 text-[10px] tracking-wider uppercase">
-                      <th className="px-4 py-2">Item</th>
-                      <th className="px-4 py-2 text-center">Batch ID</th>
-                      <th className="px-4 py-2 text-center">Qty</th>
-                      <th className="px-4 py-2 text-right">Subtotal</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100 font-medium">
-                    {viewHistoryModal.items.map((line, idx) => (
-                      <tr key={idx} className="text-zinc-700">
-                        <td className="px-4 py-3 font-bold text-zinc-950">{line.name}</td>
-                        <td className="px-4 py-3 text-center font-mono text-[11px] font-bold text-zinc-600">{line.batch || 'N/A'}</td>
-                        <td className="px-4 py-3 text-center text-zinc-950 font-bold">{line.qty}</td>
-                        <td className="px-4 py-3 text-right font-mono font-bold">UGX {(line.qty * line.price).toLocaleString()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-5 border-t border-zinc-150 mt-5">
-              <button
-                type="button"
-                onClick={() => setViewHistoryModal(null)}
-                className="px-6 py-2.5 bg-zinc-950 hover:bg-zinc-850 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors"
-              >
-                Close Audit Record
-              </button>
-            </div>
+    <div className="bg-white rounded-[32px] border border-zinc-200 shadow-sm overflow-hidden min-h-[500px]">
+      {/* Tab controls */}
+      <div className="px-8 py-6 border-b border-zinc-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex flex-col gap-1.5">
+          <h2 className="text-xl font-black text-zinc-900 uppercase tracking-tight">Stock Reports Statement Hub</h2>
+          <div className="flex gap-1.5 bg-zinc-100 p-1 rounded-xl">
+            <button
+              onClick={() => setActiveSubTab('reception')}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                activeSubTab === 'reception' ? "bg-white text-zinc-950 shadow-sm" : "text-zinc-500 hover:text-zinc-950"
+              )}
+            >
+              Reception History
+            </button>
+            <button
+              onClick={() => setActiveSubTab('transfer')}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                activeSubTab === 'transfer' ? "bg-white text-zinc-950 shadow-sm" : "text-zinc-500 hover:text-zinc-950"
+              )}
+            >
+              Transfer History
+            </button>
+            <button
+              onClick={() => setActiveSubTab('queries')}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                activeSubTab === 'queries' ? "bg-white text-zinc-950 shadow-sm" : "text-zinc-500 hover:text-zinc-950"
+              )}
+            >
+              Query follow-up
+            </button>
           </div>
         </div>
-      )}
 
+        {/* Date Filters & Download */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">From</span>
+            <input 
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-800 outline-none focus:ring-2 focus:ring-emerald-500/20"
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">To</span>
+            <input 
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className="px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-800 outline-none focus:ring-2 focus:ring-emerald-500/20"
+            />
+          </div>
+          <button
+            onClick={handleExportCSV}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md shadow-emerald-100"
+          >
+            <Download size={14} />
+            Export CSV
+          </button>
+        </div>
+      </div>
+
+      <div className="p-8">
+        {loading ? (
+          <div className="h-64 flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500" />
+          </div>
+        ) : activeSubTab === 'reception' ? (
+          /* Reception History table */
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-zinc-50 border-b border-zinc-100">
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">GRN Invoice ID</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Source Branch</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Sender</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Receiver</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Total Invoice</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Received Amount</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Queried Amount</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Date Received</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {filteredReceptions.map(ti => {
+                const amt = getInvoiceAmounts(ti);
+                return (
+                  <tr key={ti.id} className="hover:bg-zinc-50/50 transition-colors">
+                    <td className="px-6 py-4 text-xs font-black text-zinc-900">{ti.transfer_number}</td>
+                    <td className="px-6 py-4 text-xs font-bold text-zinc-700">{getBranchName(ti.source_branch_id)}</td>
+                    <td className="px-6 py-4 text-xs text-zinc-500">{ti.dispatched_by}</td>
+                    <td className="px-6 py-4 text-xs text-zinc-500">{ti.received_by || 'N/A'}</td>
+                    <td className="px-6 py-4 text-xs font-bold text-right text-zinc-800">{amt.total.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-xs font-bold text-right text-emerald-600">{amt.received.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-xs font-black text-right text-red-600">{amt.queried.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-xs text-zinc-500">
+                      {ti.received_at ? format(parseItemDate(ti.received_at), 'MMM dd, yyyy') : '-'}
+                    </td>
+                  </tr>
+                );
+              })}
+              {filteredReceptions.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-6 py-12 text-center text-zinc-400 italic">
+                    No reception records found within this date filter.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        ) : activeSubTab === 'transfer' ? (
+          /* Transfer History table */
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-zinc-50 border-b border-zinc-100">
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">GRN Invoice ID</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Destination</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Sender</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Receiver</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Total Invoice</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Received Amount</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Queried Amount</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Date Dispatched</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {filteredTransfers.map(ti => {
+                const amt = getInvoiceAmounts(ti);
+                return (
+                  <tr key={ti.id} className="hover:bg-zinc-50/50 transition-colors">
+                    <td className="px-6 py-4 text-xs font-black text-zinc-900">{ti.transfer_number}</td>
+                    <td className="px-6 py-4 text-xs font-bold text-zinc-700">{getBranchName(ti.destination_branch_id)}</td>
+                    <td className="px-6 py-4 text-xs text-zinc-500">{ti.dispatched_by}</td>
+                    <td className="px-6 py-4 text-xs text-zinc-500">{ti.received_by || 'Pending'}</td>
+                    <td className="px-6 py-4 text-xs font-bold text-right text-zinc-800">{amt.total.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-xs font-bold text-right text-emerald-600">{amt.received.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-xs font-black text-right text-red-600">{amt.queried.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-xs text-zinc-500">
+                      {ti.dispatched_at ? format(parseItemDate(ti.dispatched_at), 'MMM dd, yyyy') : '-'}
+                    </td>
+                  </tr>
+                );
+              })}
+              {filteredTransfers.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-6 py-12 text-center text-zinc-400 italic">
+                    No transfer out records found within this date filter.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        ) : (
+          /* Query follow-up table */
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-zinc-50 border-b border-zinc-100">
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Invoice Number</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Product Queried</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Qty</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Unit Cost</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Queried Value</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Reason</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Audited Status</th>
+                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Date Logged</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {filteredQueries.map(q => (
+                <tr key={q.id} className="hover:bg-zinc-50/50 transition-colors">
+                  <td className="px-6 py-4 text-xs font-black text-zinc-900">{q.invoiceNumber || '-'}</td>
+                  <td className="px-6 py-4 font-bold text-zinc-800">{q.productName}</td>
+                  <td className="px-6 py-4 text-xs font-bold text-right text-zinc-700">{q.qtyQueried}</td>
+                  <td className="px-6 py-4 text-xs text-right text-zinc-500">{(q.unitCost || 0).toLocaleString()}</td>
+                  <td className="px-6 py-4 text-xs font-black text-right text-red-600">{(q.amountAccrued || 0).toLocaleString()} UGX</td>
+                  <td className="px-6 py-4 text-xs text-zinc-500">{q.reason}</td>
+                  <td className="px-6 py-4 text-xs">
+                    <span className={cn(
+                      "px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest",
+                      q.status === 'returned_to_hq' ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"
+                    )}>
+                      {q.status || 'pending'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-xs text-zinc-500">
+                    {q.timestamp ? format(parseItemDate(q.timestamp), 'MMM dd, yyyy') : '-'}
+                  </td>
+                </tr>
+              ))}
+              {filteredQueries.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-6 py-12 text-center text-zinc-400 italic">
+                    No queried items or logs found in this date range.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 };
-
-export default Procurement;

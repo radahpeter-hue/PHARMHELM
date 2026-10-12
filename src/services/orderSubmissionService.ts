@@ -34,6 +34,18 @@ export interface RevalidationResult {
 export const getHqAutoOrderId = (runId: string, groupKey: string) =>
   `auto_order_${`${runId}_${groupKey}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180)}`;
 
+async function requireOperationalInventoryEnabled(tenantId: string): Promise<void> {
+  const settings = await getDoc(doc(db, 'system_settings', tenantId));
+  if (!settings.exists() || settings.data().tenantId !== tenantId ||
+      settings.data().featureToggles?.enableOperationalInventory !== true) {
+    throw new Error('Operational Inventory is disabled in System Settings.');
+  }
+}
+
+function isOperationalAutoLine(line: AutoGenerateOrderLine): boolean {
+  return line.inventoryClass === 'OPERATIONAL' || line.isOperational === true;
+}
+
 /**
  * Perform live pre-submission revalidation for an order run.
  */
@@ -61,11 +73,14 @@ export async function revalidateOrderRun(runId: string): Promise<RevalidationRes
     );
     const linesSnap = await getDocs(linesQuery);
     const lines = linesSnap.docs.map(d => ({ id: d.id, ...d.data() } as AutoGenerateOrderLine & { id: string }));
+    if (lines.some(isOperationalAutoLine)) {
+      await requireOperationalInventoryEnabled(tenantId);
+    }
 
     let totalBudgetCost = 0;
 
     for (const line of lines) {
-      if (line.isOperational) {
+      if (isOperationalAutoLine(line)) {
         const operationalSnap = await getDoc(doc(db, 'operational_inventory', line.productId));
         if (!operationalSnap.exists()) {
           result.hasChanges = true;
@@ -79,6 +94,17 @@ export async function revalidateOrderRun(runId: string): Promise<RevalidationRes
           continue;
         }
         const operationalItem = operationalSnap.data() as OperationalInventory;
+        if (!operationalItem.masterItemId) {
+          result.hasChanges = true;
+          result.warnings.push({
+            productId: line.productId,
+            productName: line.productName,
+            type: 'STOCK_DROP',
+            message: 'This legacy Operational item has not been linked to a tenant-wide item identity. Edit it in Inventory before ordering.',
+            details: { identityMissing: true }
+          });
+          continue;
+        }
         if (Number(operationalItem.costPerPack || 0) !== Number(line.calculationInputs?.costPricePerPack || 0)) {
           result.hasChanges = true;
           result.warnings.push({
@@ -219,8 +245,15 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
       )
     );
     const lines = linesSnap.docs.map(d => ({ id: d.id, ...d.data() } as AutoGenerateOrderLine & { id: string }));
+    if (lines.some(isOperationalAutoLine)) {
+      await requireOperationalInventoryEnabled(tenantId);
+      const unmappedOperationalLine = lines.find(line => isOperationalAutoLine(line) && !line.masterItemId);
+      if (unmappedOperationalLine) {
+        throw new Error(`Operational item ${unmappedOperationalLine.productName} must be linked to a tenant-wide identity before ordering.`);
+      }
+    }
 
-    // Group items for external orders by supplier, and group internal transfers by donor branch
+    // Group external orders and internal transfers by both supplier/location and inventory class.
     const externalBySupplier: Record<string, typeof lines> = {};
     const transfersByDonor: Record<string, typeof lines> = {};
 
@@ -228,7 +261,8 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
       // External draft (requires positive purchase quantity)
       if (line.finalPurchasePacks > 0) {
         const supplierId = (line.calculationInputs as any)?.supplierId || 'unknown_supplier';
-        const groupKey = `${line.isOperational ? 'operational' : 'sellable'}::${supplierId}`;
+        const isOperational = isOperationalAutoLine(line);
+        const groupKey = `${isOperational ? 'operational' : 'sellable'}::${supplierId}`;
         if (!externalBySupplier[groupKey]) {
           externalBySupplier[groupKey] = [];
         }
@@ -242,15 +276,16 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
         allocations.forEach(alloc => {
           if (alloc.qtyBaseUnits > 0) {
             const donorId = alloc.branchId;
-            if (!transfersByDonor[donorId]) {
-              transfersByDonor[donorId] = [];
+            const donorKey = `${donorId}::${isOperationalAutoLine(line) ? 'OPERATIONAL' : 'SELLABLE'}`;
+            if (!transfersByDonor[donorKey]) {
+              transfersByDonor[donorKey] = [];
             }
             // Create a fake cloned line specific to this donor for splitting
             const donorLine = {
               ...line,
               qtyToTransferBaseUnits: alloc.qtyBaseUnits
             };
-            (transfersByDonor[donorId] as any).push(donorLine);
+            (transfersByDonor[donorKey] as any).push(donorLine);
           }
         });
       }
@@ -271,15 +306,17 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
       const totalCost = items.reduce((sum, item) => sum + item.finalPurchasePacks * ((item.calculationInputs as any)?.costPricePerPack || 0), 0);
       const now = new Date().toISOString();
       const isEmergency = Number(run.configuration.temporaryDemandMultiplier || 1) > 1;
+      const inventoryClass = isOperationalAutoLine(items[0]) ? 'OPERATIONAL' : 'SELLABLE';
 
       const poData = {
         tenantId,
+        inventoryClass,
         order_number: orderNumber,
         requesting_branch_id: destinationBranchId,
         requesting_branch_name: isHqAggregate ? 'HQ Central Store' : '', // Will populate on read fallback
         supplier_id: supplierId,
         order_type: isEmergency ? 'emergency' : 'monthly',
-        category: items.every(item => item.isOperational) ? 'non_sellable' : 'sellable_non_cosmetic',
+        category: inventoryClass === 'OPERATIONAL' ? 'non_sellable' : 'sellable_non_cosmetic',
         generation_method: 'auto_generated',
         status: isHqAggregate ? 'submitted' : 'draft',
         is_emergency: isEmergency,
@@ -305,6 +342,8 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
           if (snapshots[index + 1].exists()) return;
           tx.set(lineRefs[index], {
             tenantId,
+            inventoryClass: isOperationalAutoLine(item) ? 'OPERATIONAL' : 'SELLABLE',
+            ...(isOperationalAutoLine(item) && item.masterItemId ? { masterItemId: item.masterItemId } : {}),
             order_id: orderRef.id,
             product_id: item.productId,
             product_name: item.productName,
@@ -312,7 +351,7 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
             unit_cost_ugx: (item.calculationInputs as any)?.costPricePerPack || 0,
             line_total_ugx: item.finalPurchasePacks * ((item.calculationInputs as any)?.costPricePerPack || 0),
             line_status: isHqAggregate ? 'pending' : 'ordered',
-            isOperational: !!item.isOperational,
+            isOperational: isOperationalAutoLine(item),
             createdAt: now
           });
         });
@@ -321,16 +360,20 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
     }
 
     // 2. Create Internal Transfer Invoices
-    for (const donorId in transfersByDonor) {
-      const items = transfersByDonor[donorId] as any[];
+    for (const donorKey in transfersByDonor) {
+      const splitAt = donorKey.lastIndexOf('::');
+      const donorId = donorKey.slice(0, splitAt);
+      const inventoryClass = donorKey.slice(splitAt + 2) === 'OPERATIONAL' ? 'OPERATIONAL' : 'SELLABLE';
+      const items = transfersByDonor[donorKey] as any[];
       if (items.length === 0) continue;
 
-      const stableTransferPart = `${runId}_${donorId}_${destinationBranchId}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+      const stableTransferPart = `${runId}_${donorId}_${destinationBranchId}_${inventoryClass}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
       const transferRef = doc(db, 'transfer_invoices', `auto_transfer_${stableTransferPart}`);
       const transferNumber = `TRF-${runId.slice(-6)}-${donorId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'SRC'}`;
 
       const transferData = {
         tenantId,
+        inventoryClass,
         transfer_number: transferNumber,
         source_branch_id: donorId,
         destination_branch_id: destinationBranchId,
@@ -347,7 +390,10 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
         collection(db, 'inventoryTransferReservations'),
         where('tenantId', '==', tenantId), where('autoGenerateRunId', '==', runId), where('sourceBranchId', '==', donorId)
       ));
-      const reservationRefs = reservationsSnap.docs.map(snapshot => snapshot.ref);
+      const groupedProductIds = new Set(items.map(item => String(item.productId)));
+      const reservationRefs = reservationsSnap.docs
+        .filter(snapshot => groupedProductIds.has(String(snapshot.data().productId)))
+        .map(snapshot => snapshot.ref);
 
       await runTransaction(db, async tx => {
         const snapshots = await Promise.all([tx.get(transferRef), ...lineRefs.map(ref => tx.get(ref)), ...reservationRefs.map(ref => tx.get(ref))]);
@@ -355,7 +401,7 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
         items.forEach((item, index) => {
           if (snapshots[index + 1].exists()) return;
           const cost = (item.calculationInputs as any)?.costPricePerPack || 0;
-          tx.set(lineRefs[index], { tenantId, transfer_id: transferRef.id, product_id: item.productId, product_name: item.productName, qty_requested: item.qtyToTransferBaseUnits, qty_dispatched: 0, qty_received: 0, unit_cost_ugx: cost, createdAt: new Date().toISOString() });
+          tx.set(lineRefs[index], { tenantId, inventoryClass, transfer_id: transferRef.id, product_id: item.productId, product_name: item.productName, qty_requested: item.qtyToTransferBaseUnits, qty_dispatched: 0, qty_received: 0, unit_cost_ugx: cost, createdAt: new Date().toISOString() });
         });
         reservationRefs.forEach((ref, index) => {
           const snapshot = snapshots[1 + lineRefs.length + index];
