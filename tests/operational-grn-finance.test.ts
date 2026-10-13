@@ -1,3 +1,4 @@
+import { operationalReceiptCostPerPack } from '../src/services/operationalValuationPolicy';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -20,7 +21,7 @@ test('Operational GRN finance handoff is atomic, deterministic and separate from
   assert.match(service, /financial_posting_status: 'event_created'/);
   assert.match(service, /planOperationalGrnFinanceEvents\(receivedLines/);
   assert.match(service, /sourceType: 'OPERATIONAL_GRN'/);
-  assert.match(service, /return runTransaction\(db, async transaction/);
+  assert.match(service, /return runTransaction\(connection, async transaction/);
   assert.match(service, /financeEventSnapshots\[index\]\.exists\(\)/);
   assert.doesNotMatch(service, /collection\(db, 'finance_ledger'\)/);
   const inventoryUi = readFileSync(new URL('../src/components/inventory/OperationalInventoryTab.tsx', import.meta.url), 'utf8');
@@ -40,4 +41,10 @@ test('GRN event policy rejects missing subtype and invalid value or quantity', (
   assert.throws(() => planOperationalGrnFinanceEvents([]), /must contain lines/);
   assert.throws(() => planOperationalGrnFinanceEvents([{ operationalType: 'SELLABLE', itemId: 'x', itemName: 'x', quantity: 1, totalValueUGX: 1 }] as any), /valid subtype/);
   assert.throws(() => planOperationalGrnFinanceEvents([{ operationalType: 'FIXED_ASSET', itemId: 'x', itemName: 'x', quantity: -1, totalValueUGX: 1 }]), /must be valid/);
+});
+
+test('Operational receipt cost preserves pack semantics and weighted value for later transfers', () => {
+  assert.equal(operationalReceiptCostPerPack(0, 24, 0, 100, 12), 1200);
+  assert.equal(operationalReceiptCostPerPack(12, 12, 1200, 200, 12), 1800);
+  assert.throws(() => operationalReceiptCostPerPack(-1, 12, 1200, 100, 12));
 });

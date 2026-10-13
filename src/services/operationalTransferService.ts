@@ -1,4 +1,6 @@
-import { doc, runTransaction } from 'firebase/firestore';
+import { operationalReceiptCostPerPack } from './operationalValuationPolicy';
+import { collection, doc, getDoc, getDocs, query, runTransaction, where } from 'firebase/firestore';
+import type { Firestore, WhereFilterOp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { firestoreService } from './firestore';
 import {
@@ -11,6 +13,15 @@ import {
 } from '../types';
 import { postOperationalBranchMovement, postOperationalStoreMovement } from './operationalInventoryMovementService';
 import { planOperationalOrderFulfillment } from './inventoryClassification';
+
+async function readOperationalDocument<T>(connection: Firestore, name: string, id: string): Promise<T | null> {
+  const snapshot = await getDoc(doc(connection, name, id));
+  return snapshot.exists() ? { ...snapshot.data(), id: snapshot.id } as T : null;
+}
+async function readOperationalQuery<T>(connection: Firestore, name: string, filters: { field: string; operator: string; value: any }[]): Promise<T[]> {
+  const snapshot = await getDocs(query(collection(connection, name), ...filters.map(filter => where(filter.field, filter.operator as WhereFilterOp, filter.value))));
+  return snapshot.docs.map(row => ({ ...row.data(), id: row.id } as T));
+}
 
 export interface OperationalTransferActor { uid: string; name: string; }
 
@@ -41,35 +52,35 @@ export interface ReceiveOperationalTransferLineInput {
 
 export async function createOperationalBranchReturn(input: {
   tenantId: string; branchId: string; itemId: string; quantity: number; reason: string; requestId: string; actor: OperationalTransferActor;
-}): Promise<{ transferId: string; transferNumber: string }> {
+}, connection: Firestore = db): Promise<{ transferId: string; transferNumber: string }> {
   const { tenantId, branchId, itemId, actor } = input;
   const quantity = Number(input.quantity);
   if (!tenantId || !branchId || branchId === 'HQ' || !actor.uid || !input.reason.trim() || !Number.isFinite(quantity) || quantity <= 0) throw new Error('Branch, item, positive quantity, return reason and user are required.');
-  const source = await firestoreService.getDocument<OperationalInventory>('operational_inventory', itemId);
+  const source = await readOperationalDocument<OperationalInventory>(connection, 'operational_inventory', itemId);
   if (!source || source.tenantId !== tenantId || source.branchId !== branchId || source.inventoryClass !== 'OPERATIONAL' || !source.masterItemId) throw new Error('Select an Operational item from the active branch.');
-  const master = await firestoreService.getDocument<OperationalInventoryMaster>('operational_inventory_masters', source.masterItemId);
-  const hqItem = await firestoreService.getDocument<OperationalInventory>('operational_inventory', master?.hqLocationItemId || '');
-  if (!master || master.tenantId !== tenantId || master.inventoryClass !== 'OPERATIONAL' || !hqItem || hqItem.tenantId !== tenantId || hqItem.branchId !== 'HQ' || hqItem.masterItemId !== master.id || hqItem.unitPerPack !== source.unitPerPack) throw new Error('The matching HQ Operational Store item is not configured.');
+  const master = await readOperationalDocument<OperationalInventoryMaster>(connection, 'operational_inventory_masters', source.masterItemId);
+  if (!master || master.tenantId !== tenantId || master.inventoryClass !== 'OPERATIONAL' || !master.hqLocationItemId || master.unitPerPack !== source.unitPerPack) throw new Error('The matching HQ Operational Store item is not configured.');
+  const hqItem = { id: master.hqLocationItemId };
   if (!/^[A-Za-z0-9_-]{1,100}$/.test(input.requestId)) throw new Error('A valid return request reference is required.');
   const transferId = `optr_return_${safeId(input.requestId)}`;
   const lineId = `optrl_${hash(`${transferId}|${master.id}`)}`;
   const transferNumber = `OR-${new Date().getFullYear()}-${hash(`${tenantId}|${transferId}`)}`;
   const movementKey = `return_out_${hash(lineId)}`;
   const now = new Date().toISOString();
-  await runTransaction(db, async transaction => {
-    const settingsRef = doc(db, 'system_settings', tenantId);
-    const sourceRef = doc(db, 'operational_inventory', source.id);
-    const hqRef = doc(db, 'operational_inventory', hqItem.id);
-    const headerRef = doc(db, 'operational_transfers', transferId);
-    const lineRef = doc(db, 'operational_transfer_lines', lineId);
-    const movementRef = doc(db, 'operational_inventory_movements', `opm_${movementKey}`);
-    const [settings, sourceSnapshot, hqSnapshot, existing] = await Promise.all([transaction.get(settingsRef), transaction.get(sourceRef), transaction.get(hqRef), transaction.get(headerRef)]);
+  await runTransaction(connection, async transaction => {
+    const settingsRef = doc(connection, 'system_settings', tenantId);
+    const sourceRef = doc(connection, 'operational_inventory', source.id);
+    const masterRef = doc(connection, 'operational_inventory_masters', master.id);
+    const headerRef = doc(connection, 'operational_transfers', transferId);
+    const lineRef = doc(connection, 'operational_transfer_lines', lineId);
+    const movementRef = doc(connection, 'operational_inventory_movements', `opm_${movementKey}`);
+    const [settings, sourceSnapshot, masterSnapshot, existing] = await Promise.all([transaction.get(settingsRef), transaction.get(sourceRef), transaction.get(masterRef), transaction.get(headerRef)]);
     assertOperationalEnabled(settings.data(), tenantId);
     if (existing.exists()) {
       if (existing.data().tenantId !== tenantId || existing.data().sourceBranchId !== branchId || existing.data().requestPayloadKey !== `${itemId}_${quantity}_${input.reason.trim()}`) throw new Error('This return reference is already used by another transaction.');
       return;
     }
-    if (!sourceSnapshot.exists() || !hqSnapshot.exists() || sourceSnapshot.data().tenantId !== tenantId || sourceSnapshot.data().branchId !== branchId || sourceSnapshot.data().inventoryClass !== 'OPERATIONAL' || hqSnapshot.data().tenantId !== tenantId || hqSnapshot.data().branchId !== 'HQ' || hqSnapshot.data().inventoryClass !== 'OPERATIONAL' || sourceSnapshot.data().masterItemId !== hqSnapshot.data().masterItemId) throw new Error('Operational return locations changed; refresh and retry.');
+    if (!sourceSnapshot.exists() || !masterSnapshot.exists() || sourceSnapshot.data().tenantId !== tenantId || sourceSnapshot.data().branchId !== branchId || sourceSnapshot.data().inventoryClass !== 'OPERATIONAL' || masterSnapshot.data().tenantId !== tenantId || masterSnapshot.data().inventoryClass !== 'OPERATIONAL' || sourceSnapshot.data().masterItemId !== masterSnapshot.id || masterSnapshot.data().hqLocationItemId !== hqItem.id) throw new Error('Operational return locations changed; refresh and retry.');
     const before = Number(sourceSnapshot.data().quantityInStock || 0);
     if (before < quantity) throw new Error('The return quantity exceeds branch Operational stock.');
     const unitCostUGX = Number(sourceSnapshot.data().costPerPack || 0) / Math.max(1, Number(sourceSnapshot.data().unitPerPack || 1));
@@ -81,16 +92,16 @@ export async function createOperationalBranchReturn(input: {
   return { transferId, transferNumber };
 }
 
-export async function receiveOperationalBranchReturn(input: { tenantId: string; transferId: string; line: OperationalTransferLine; actor: OperationalTransferActor }): Promise<{ alreadyReceived: boolean }> {
+export async function receiveOperationalBranchReturn(input: { tenantId: string; transferId: string; line: OperationalTransferLine; actor: OperationalTransferActor }, connection: Firestore = db): Promise<{ alreadyReceived: boolean }> {
   const { tenantId, transferId, line, actor } = input;
   if (!tenantId || !actor.uid || line.inventoryClass !== 'OPERATIONAL') throw new Error('Operational return, tenant and receiving user are required.');
-  const headerRef = doc(db, 'operational_transfers', transferId);
-  const lineRef = doc(db, 'operational_transfer_lines', line.id);
-  const hqItemRef = doc(db, 'operational_inventory', line.destinationItemId);
+  const headerRef = doc(connection, 'operational_transfers', transferId);
+  const lineRef = doc(connection, 'operational_transfer_lines', line.id);
+  const hqItemRef = doc(connection, 'operational_inventory', line.destinationItemId);
   const movementKey = `return_in_${hash(line.id)}`;
-  const movementRef = doc(db, 'operational_inventory_movements', `opm_${movementKey}`);
-  const settingsRef = doc(db, 'system_settings', tenantId);
-  return runTransaction(db, async transaction => {
+  const movementRef = doc(connection, 'operational_inventory_movements', `opm_${movementKey}`);
+  const settingsRef = doc(connection, 'system_settings', tenantId);
+  return runTransaction(connection, async transaction => {
     const [settings, header, lineSnapshot, hqItem, movement] = await Promise.all([transaction.get(settingsRef), transaction.get(headerRef), transaction.get(lineRef), transaction.get(hqItemRef), transaction.get(movementRef)]);
     assertOperationalEnabled(settings.data(), tenantId);
     if (!header.exists() || header.data().tenantId !== tenantId || header.data().inventoryClass !== 'OPERATIONAL' || header.data().transferType !== 'BRANCH_RETURN' || header.data().destinationBranchId !== 'HQ') throw new Error('This is not a pending Operational branch return.');
@@ -101,7 +112,7 @@ export async function receiveOperationalBranchReturn(input: { tenantId: string; 
     const before = Number(hqItem.data().quantityInStock || 0);
     const after = before + line.quantityDispatched;
     const now = new Date().toISOString();
-    transaction.update(hqItemRef, { quantityInStock: after, lastMovementId: `opm_${movementKey}`, updatedAt: now });
+    transaction.update(hqItemRef, { quantityInStock: after, costPerPack: operationalReceiptCostPerPack(before, line.quantityDispatched, Number(hqItem.data().costPerPack || 0), line.unitCostUGX, Number(hqItem.data().unitPerPack || 1)), lastMovementId: `opm_${movementKey}`, updatedAt: now });
     transaction.set(movementRef, { tenantId, inventoryClass: 'OPERATIONAL', itemId: hqItemRef.id, masterItemId: line.masterItemId, itemName: line.itemName, locationId: 'HQ_OPERATIONAL', branchId: 'HQ', movementType: 'TRANSFER_IN', quantityDelta: line.quantityDispatched, balanceBefore: before, balanceAfter: after, unitCostUGX: line.unitCostUGX, totalValueUGX: line.totalValueUGX, reference: header.data().transferNumber, idempotencyKey: movementKey, actorId: actor.uid, actorName: actor.name, sourceTransactionId: transferId, sourceLineId: line.id, createdAt: now });
     transaction.update(lineRef, { status: 'received', quantityAccepted: line.quantityDispatched, quantityQueried: 0, receivedBy: actor.uid, receivedAt: now, receiptMovementId: `opm_${movementKey}`, updatedAt: now });
     transaction.update(headerRef, { status: 'received', receivedBy: actor.uid, receivedByName: actor.name, receivedAt: now, updatedAt: now });
@@ -113,18 +124,18 @@ export async function receiveOperationalBranchReturn(input: { tenantId: string; 
 export async function createHqOperationalDistribution(input: {
   tenantId: string; destinationBranchId: string; destinationBranchName: string;
   itemId: string; quantity: number; requestId: string; actor: OperationalTransferActor;
-}): Promise<{ transferId: string; transferNumber: string }> {
+}, connection: Firestore = db): Promise<{ transferId: string; transferNumber: string }> {
   const tenantId = input.tenantId.trim();
   const quantity = Number(input.quantity);
   if (!tenantId || !input.actor.uid || !input.destinationBranchId || input.destinationBranchId === 'HQ' || !Number.isFinite(quantity) || quantity <= 0) {
     throw new Error('A destination branch, positive quantity and authorized user are required.');
   }
-  const hqItem = await firestoreService.getDocument<OperationalInventory>('operational_inventory', input.itemId);
+  const hqItem = await readOperationalDocument<OperationalInventory>(connection, 'operational_inventory', input.itemId);
   if (!hqItem || hqItem.tenantId !== tenantId || hqItem.branchId !== 'HQ' || hqItem.inventoryClass !== 'OPERATIONAL' || !hqItem.masterItemId) {
     throw new Error('Select an Operational item from the HQ Operational Store.');
   }
-  const master = await firestoreService.getDocument<OperationalInventoryMaster>('operational_inventory_masters', hqItem.masterItemId);
-  const copies = await firestoreService.getDocumentsByQuery<OperationalInventory>('operational_inventory', [
+  const master = await readOperationalDocument<OperationalInventoryMaster>(connection, 'operational_inventory_masters', hqItem.masterItemId);
+  const copies = await readOperationalQuery<OperationalInventory>(connection, 'operational_inventory', [
     { field: 'tenantId', operator: '==', value: tenantId }, { field: 'masterItemId', operator: '==', value: hqItem.masterItemId }
   ]);
   const destination = copies.find(item => item.branchId === input.destinationBranchId);
@@ -139,13 +150,13 @@ export async function createHqOperationalDistribution(input: {
   const units = quantity;
   const unitCostUGX = Number(hqItem.costPerPack || 0) / Math.max(1, Number(hqItem.unitPerPack || 1));
   const now = new Date().toISOString();
-  const transferRef = doc(db, 'operational_transfers', transferId);
-  const lineRef = doc(db, 'operational_transfer_lines', lineId);
-  const settingsRef = doc(db, 'system_settings', tenantId);
-  await runTransaction(db, async transaction => {
+  const transferRef = doc(connection, 'operational_transfers', transferId);
+  const lineRef = doc(connection, 'operational_transfer_lines', lineId);
+  const settingsRef = doc(connection, 'system_settings', tenantId);
+  await runTransaction(connection, async transaction => {
     const [settings, source, target, existing] = await Promise.all([
-      transaction.get(settingsRef), transaction.get(doc(db, 'operational_inventory', hqItem.id)),
-      transaction.get(doc(db, 'operational_inventory', destination.id)), transaction.get(transferRef)
+      transaction.get(settingsRef), transaction.get(doc(connection, 'operational_inventory', hqItem.id)),
+      transaction.get(doc(connection, 'operational_inventory', destination.id)), transaction.get(transferRef)
     ]);
     assertOperationalEnabled(settings.data(), tenantId);
     if (existing.exists()) {
@@ -169,7 +180,7 @@ export async function createHqOperationalDistribution(input: {
       receiptMovementId: `opm_${movementKeyForTransferLine(lineId, 'in')}`, status: 'prepared', createdAt: now, updatedAt: now
     });
   });
-  await dispatchPreparedOperationalHqTransfer({ tenantId, transferId, actor: input.actor });
+  await dispatchPreparedOperationalHqTransfer({ tenantId, transferId, actor: input.actor }, connection);
   return { transferId, transferNumber };
 }
 
@@ -533,13 +544,13 @@ export async function dispatchPreparedOperationalHqTransfer(input: {
   tenantId: string;
   transferId: string;
   actor: OperationalTransferActor;
-}): Promise<{ alreadyDispatched: boolean }> {
+}, connection: Firestore = db): Promise<{ alreadyDispatched: boolean }> {
   const { tenantId, transferId, actor } = input;
-  const transfer = await firestoreService.getDocument<OperationalTransfer>('operational_transfers', transferId);
+  const transfer = await readOperationalDocument<OperationalTransfer>(connection, 'operational_transfers', transferId);
   if (!transfer || transfer.tenantId !== tenantId || transfer.inventoryClass !== 'OPERATIONAL' || !['HQ_OPERATIONAL', 'HQ_DIRECT'].includes(transfer.fulfillmentSource || '')) {
     throw new Error('This is not a pending HQ Operational Store transfer.');
   }
-  const lines = await firestoreService.getDocumentsByQuery<OperationalTransferLine>('operational_transfer_lines', [
+  const lines = await readOperationalQuery<OperationalTransferLine>(connection, 'operational_transfer_lines', [
     { field: 'tenantId', operator: '==', value: tenantId },
     { field: 'transferId', operator: '==', value: transferId }
   ]);
@@ -552,10 +563,10 @@ export async function dispatchPreparedOperationalHqTransfer(input: {
     movementType: 'TRANSFER_OUT', reference: transfer.transferNumber,
     idempotencyKey: movementKeyForTransferLine(line.id, 'out'), actorId: actor.uid,
     actorName: actor.name, sourceTransactionId: transferId, sourceLineId: line.id
-  });
-  const transferRef = doc(db, 'operational_transfers', transferId);
-  const lineRef = doc(db, 'operational_transfer_lines', line.id);
-  await runTransaction(db, async transaction => {
+  }, connection);
+  const transferRef = doc(connection, 'operational_transfers', transferId);
+  const lineRef = doc(connection, 'operational_transfer_lines', line.id);
+  await runTransaction(connection, async transaction => {
     const [headerSnapshot, lineSnapshot] = await Promise.all([transaction.get(transferRef), transaction.get(lineRef)]);
     if (!headerSnapshot.exists() || !lineSnapshot.exists() || headerSnapshot.data().tenantId !== tenantId || lineSnapshot.data().tenantId !== tenantId) throw new Error('Operational transfer could not be finalized.');
     if (['dispatched', 'received', 'queried'].includes(lineSnapshot.data().status)) return;
@@ -563,7 +574,7 @@ export async function dispatchPreparedOperationalHqTransfer(input: {
     const now = new Date().toISOString();
     transaction.update(lineRef, { status: 'dispatched', dispatchedBy: actor.uid, dispatchedAt: now, updatedAt: now });
     transaction.update(transferRef, { status: 'dispatched', dispatchedBy: actor.uid, dispatchedByName: actor.name, dispatchedAt: now, updatedAt: now });
-    if (transfer.sourceOrderId) transaction.update(doc(db, 'stock_orders', transfer.sourceOrderId), {
+    if (transfer.sourceOrderId) transaction.update(doc(connection, 'stock_orders', transfer.sourceOrderId), {
       status: Number(transfer.remainingExternalPacks || 0) > 0 ? 'sourcing' : 'dispatched',
       operational_transfer_id: transferId, updatedAt: now
     });
@@ -572,7 +583,7 @@ export async function dispatchPreparedOperationalHqTransfer(input: {
 }
 
 /** Posts an accepted receipt to the destination branch Operational ledger exactly once. */
-export async function receiveOperationalTransferLine(input: ReceiveOperationalTransferLineInput): Promise<{ alreadyReceived: boolean }> {
+export async function receiveOperationalTransferLine(input: ReceiveOperationalTransferLineInput, connection: Firestore = db): Promise<{ alreadyReceived: boolean }> {
   const { tenantId, transferId, line, actor, activeBranchId } = input;
   const accepted = Number(input.accepted);
   const queried = Number(input.queried);
@@ -582,16 +593,16 @@ export async function receiveOperationalTransferLine(input: ReceiveOperationalTr
   }
   if (queried > 0 && !input.queryReason?.trim()) throw new Error('A reason is required for queried Operational stock.');
 
-  const transferRef = doc(db, 'operational_transfers', transferId);
-  const lineRef = doc(db, 'operational_transfer_lines', line.id);
-  const itemRef = doc(db, 'operational_inventory', line.destinationItemId);
-  const masterRef = doc(db, 'operational_inventory_masters', line.masterItemId);
-  const settingsRef = doc(db, 'system_settings', tenantId);
+  const transferRef = doc(connection, 'operational_transfers', transferId);
+  const lineRef = doc(connection, 'operational_transfer_lines', line.id);
+  const itemRef = doc(connection, 'operational_inventory', line.destinationItemId);
+  const masterRef = doc(connection, 'operational_inventory_masters', line.masterItemId);
+  const settingsRef = doc(connection, 'system_settings', tenantId);
   const movementKey = movementKeyForTransferLine(line.id, 'in');
-  const movementRef = doc(db, 'operational_inventory_movements', `opm_${movementKey}`);
+  const movementRef = doc(connection, 'operational_inventory_movements', `opm_${movementKey}`);
   const now = new Date().toISOString();
 
-  const result = await runTransaction(db, async transaction => {
+  const result = await runTransaction(connection, async transaction => {
     const [settingsSnapshot, transferSnapshot, lineSnapshot, itemSnapshot, masterSnapshot, movementSnapshot] = await Promise.all([
       transaction.get(settingsRef), transaction.get(transferRef), transaction.get(lineRef),
       transaction.get(itemRef), transaction.get(masterRef), transaction.get(movementRef)
@@ -624,7 +635,7 @@ export async function receiveOperationalTransferLine(input: ReceiveOperationalTr
         actorId: actor.uid, actorName: actor.name, sourceTransactionId: transferId,
         sourceLineId: line.id, createdAt: now
       };
-      transaction.update(itemRef, { quantityInStock: after, lastMovementId: `opm_${movementKey}`, updatedAt: now });
+      transaction.update(itemRef, { quantityInStock: after, costPerPack: operationalReceiptCostPerPack(before, accepted, Number(itemSnapshot.data().costPerPack || 0), line.unitCostUGX, Number(itemSnapshot.data().unitPerPack || 1)), lastMovementId: `opm_${movementKey}`, updatedAt: now });
       transaction.set(movementRef, movement);
     }
     transaction.update(lineRef, {
@@ -636,23 +647,24 @@ export async function receiveOperationalTransferLine(input: ReceiveOperationalTr
     return { alreadyReceived: false };
   });
 
-  const lines = await firestoreService.getDocumentsByQuery<OperationalTransferLine>('operational_transfer_lines', [
+  const lines = await readOperationalQuery<OperationalTransferLine>(connection, 'operational_transfer_lines', [
     { field: 'tenantId', operator: '==', value: tenantId },
-    { field: 'transferId', operator: '==', value: transferId }
+    { field: 'transferId', operator: '==', value: transferId },
+    { field: 'destinationBranchId', operator: '==', value: activeBranchId }
   ]);
   if (lines.length > 0 && lines.every(item => ['received', 'queried'].includes(item.status))) {
     let orderResolved = false;
     let orderHasQueries = lines.some(item => item.status === 'queried');
-    const headerBeforeFinalize = await firestoreService.getDocument<OperationalTransfer>('operational_transfers', transferId);
+    const headerBeforeFinalize = await readOperationalDocument<OperationalTransfer>(connection, 'operational_transfers', transferId);
     if (headerBeforeFinalize?.sourceOrderId) {
-      const orderLines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [
+      const orderLines = await readOperationalQuery<StockOrderLine>(connection, 'stock_order_lines', [
         { field: 'tenantId', operator: '==', value: tenantId },
         { field: 'order_id', operator: '==', value: headerBeforeFinalize.sourceOrderId }
       ]);
       const resolutions = await Promise.all(orderLines.map(async orderLine => {
         if (orderLine.supplier_type === 'internal_hq' && orderLine.internal_fulfillment_transfer_id) {
           if (orderLine.internal_fulfillment_transfer_id === transferId) return true;
-          const relatedTransfer = await firestoreService.getDocument<OperationalTransfer>('operational_transfers', orderLine.internal_fulfillment_transfer_id);
+          const relatedTransfer = await readOperationalDocument<OperationalTransfer>(connection, 'operational_transfers', orderLine.internal_fulfillment_transfer_id);
           if (relatedTransfer?.status === 'queried') orderHasQueries = true;
           return Boolean(relatedTransfer && ['received', 'queried'].includes(relatedTransfer.status));
         }
@@ -661,7 +673,7 @@ export async function receiveOperationalTransferLine(input: ReceiveOperationalTr
             if (lines.some(item => item.status === 'queried')) orderHasQueries = true;
             return true;
           }
-          const externalTransfer = await firestoreService.getDocument<OperationalTransfer>('operational_transfers', orderLine.operational_external_transfer_id);
+          const externalTransfer = await readOperationalDocument<OperationalTransfer>(connection, 'operational_transfers', orderLine.operational_external_transfer_id);
           if (externalTransfer?.status === 'queried') orderHasQueries = true;
           return Boolean(externalTransfer && ['received', 'queried'].includes(externalTransfer.status));
         }
@@ -670,7 +682,7 @@ export async function receiveOperationalTransferLine(input: ReceiveOperationalTr
       }));
       orderResolved = resolutions.length > 0 && resolutions.every(Boolean);
     }
-    await runTransaction(db, async transaction => {
+    await runTransaction(connection, async transaction => {
       const header = await transaction.get(transferRef);
       if (!header.exists() || header.data().tenantId !== tenantId || header.data().destinationBranchId !== activeBranchId) throw new Error('The Operational transfer header changed before receipt completion.');
       if (['received', 'queried'].includes(header.data().status)) return;
@@ -679,7 +691,7 @@ export async function receiveOperationalTransferLine(input: ReceiveOperationalTr
         receivedByName: actor.name, receivedAt: new Date().toISOString(), updatedAt: new Date().toISOString()
       });
       if (header.data().sourceOrderId && orderResolved) {
-        transaction.update(doc(db, 'stock_orders', header.data().sourceOrderId), {
+        transaction.update(doc(connection, 'stock_orders', header.data().sourceOrderId), {
           status: orderHasQueries ? 'queried' : 'received', received_by: actor.uid,
           received_at: new Date().toISOString(), updatedAt: new Date().toISOString()
         });

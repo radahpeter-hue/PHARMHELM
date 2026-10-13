@@ -1,0 +1,45 @@
+name: Operational Identity Preview
+on:
+  push:
+    branches: [fix/operational-live-create-rules, fix/operational-catalogue-hq-repair]
+    paths:
+      - 'scripts/backfill-operational-identities.mjs'
+      - 'src/services/operationalIdentityMigrationPolicy.ts'
+      - '.github/workflows/operational-identity-preview.yml'
+  workflow_dispatch:
+    inputs:
+      tenant_slug:
+        description: 'Tenant slug to preview'
+        required: true
+        default: mp
+permissions:
+  contents: read
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Preview legacy item links without changing tenant data
+        env:
+          TENANT_SLUG: ${{ inputs.tenant_slug || 'mp' }}
+        run: GOOGLE_OAUTH_ACCESS_TOKEN="$(gcloud auth print-access-token)" node --import tsx scripts/backfill-operational-identities.mjs --slug="$TENANT_SLUG" --actor=github-actions-identity-preview > operational-identity-preview.json
+      - name: Report the reviewed identity plan
+        run: |
+          node - <<'JS'
+          const p = JSON.parse(require('fs').readFileSync('operational-identity-preview.json', 'utf8'));
+          console.log(JSON.stringify({tenantId:p.tenantId,ready:p.ready,conflicts:p.conflicts,excludedDemoIds:p.excludedDemoIds,masters:p.writes.filter(w=>w.collection==='operational_inventory_masters').map(w=>({id:w.id,name:w.fields.name})),locations:p.writes.filter(w=>w.collection==='operational_inventory').map(w=>({id:w.id,masterItemId:w.fields.masterItemId})),writeCount:p.writes.length},null,2));
+          JS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: operational-identity-preview
+          path: operational-identity-preview.json

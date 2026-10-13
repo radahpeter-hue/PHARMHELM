@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { deterministicOperationalLocationId, deterministicOperationalMasterId, operationalIdentityFingerprint } from '../src/services/operationalIdentity';
+import { deterministicOperationalIdentityClaimId, deterministicOperationalLocationId, deterministicOperationalMasterId, operationalIdentityFingerprint } from '../src/services/operationalIdentity';
 import { buildOperationalHqBufferOrder, operationalHqBufferOrderIds } from '../src/services/operationalHqBufferOrderPolicy';
 
 test('Operational identity keys are stable, tenant-scoped and distinguish materially different item units', () => {
@@ -10,6 +10,8 @@ test('Operational identity keys are stable, tenant-scoped and distinguish materi
   const fingerprint = operationalIdentityFingerprint(first);
   assert.equal(operationalIdentityFingerprint(equivalent), fingerprint);
   assert.equal(deterministicOperationalMasterId('tenant-a', fingerprint), deterministicOperationalMasterId('tenant-a', operationalIdentityFingerprint(equivalent)));
+  assert.equal(deterministicOperationalIdentityClaimId('tenant-a', fingerprint), deterministicOperationalIdentityClaimId('tenant-a', operationalIdentityFingerprint(equivalent)));
+  assert.notEqual(deterministicOperationalIdentityClaimId('tenant-a', fingerprint), deterministicOperationalIdentityClaimId('tenant-b', fingerprint));
   assert.notEqual(deterministicOperationalMasterId('tenant-a', fingerprint), deterministicOperationalMasterId('tenant-b', fingerprint));
   assert.notEqual(fingerprint, operationalIdentityFingerprint({ ...first, unitOfIssue: 'box' }));
   assert.notEqual(deterministicOperationalLocationId('tenant-a', 'master-a', 'HQ'), deterministicOperationalLocationId('tenant-a', 'master-a', 'branch-1'));
@@ -42,9 +44,9 @@ test('buffer transaction rechecks the toggle and HQ item/master, while Firestore
   assert.match(service, /master\.hqLocationItemId !== item\.id/);
   assert.match(service, /orderSnapshot\.exists\(\) && lineSnapshot\.exists\(\)/);
   assert.match(service, /orderSnapshot\.exists\(\) \|\| lineSnapshot\.exists\(\)/);
-  assert.match(lineRules, /get\(operationalItemPath\)\.data\.branchId == 'HQ'/);
-  assert.match(lineRules, /get\(operationalMasterPath\)\.data\.hqLocationItemId == request\.resource\.data\.product_id/);
-  assert.match(lineRules, /request\.resource\.data\.masterItemId == get\(operationalItemPath\)\.data\.get\('masterItemId', ''\)/);
+  assert.match(lineRules, /item\.branchId == 'HQ'/);
+  assert.match(lineRules, /master\.hqLocationItemId == request\.resource\.data\.product_id/);
+  assert.match(lineRules, /request\.resource\.data\.masterItemId == item\.get\('masterItemId', ''\)/);
   assert.match(lineRules, /existsAfter\(orderPath\)/);
   assert.match(lineRules, /isOperationalOrderData\(getAfter\(orderPath\)\.data\)/);
   assert.match(procurement, /const canUseHqOperationalStock = order\.requesting_branch_id !== 'HQ'/);
@@ -57,13 +59,22 @@ test('registration uses a stable master and per-location identity transaction an
   assert.match(service, /deterministicOperationalMasterId\(tenantId, fingerprint\)/);
   assert.match(service, /deterministicOperationalLocationId\(tenantId, requestedMasterId, branchId\)/);
   assert.match(service, /matchingLegacyMasters/);
+  assert.match(service, /transaction\.get\(identityStateRef\)/);
+  assert.match(service, /identityStateSnapshot\.data\(\)\.status !== 'READY'/);
+  assert.match(service, /transaction\.get\(identityClaimRef\)/);
+  assert.match(service, /transaction\.set\(identityClaimRef/);
+  assert.match(service, /claim\.masterItemId !== masterItemId/);
+  assert.match(service, /identityClaimId = deterministicOperationalIdentityClaimId\(tenantId, fingerprint\)/);
   assert.match(service, /Link this location to that item instead/);
-  assert.match(service, /runTransaction\(db/);
+  assert.match(service, /runTransaction\(connection/);
   assert.match(service, /inventoryClass !== 'OPERATIONAL'/);
   assert.match(service, /operational_inventory_identity_events/);
   assert.match(service, /eventType: !itemSnapshot\.exists\(\)/);
   assert.match(ui, /Link this location to an existing item/);
   assert.match(rules, /match \/operational_inventory_identity_events\/\{eventId\}/);
+  assert.match(rules, /match \/operational_inventory_identity_claims\/\{claimId\}/);
+  assert.match(rules, /request\.resource\.data\.actorId == request\.auth\.uid/);
+  assert.match(rules, /allow update, delete: if false/);
   assert.match(rules, /eventId == 'opidentity_' \+ request\.resource\.data\.itemId/);
   assert.match(rules, /allow update, delete: if false/);
 });

@@ -23,20 +23,17 @@ service cloud.firestore {
     // The staff document is authoritative for operational roles, secondary roles
     // and branch assignments. Token claims are used only during initial linking.
     function getUserData() {
-      return request.auth != null && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/staff/$(request.auth.uid)).data
-        : request.auth != null && (request.auth.token.role != null || request.auth.token.tenantId != null)
-          ? {"role": request.auth.token.role, "tenantId": request.auth.token.tenantId, "secondaryRoles": (("roles" in request.auth.token) && request.auth.token.roles is list ? request.auth.token.roles : (("secondaryRoles" in request.auth.token) && request.auth.token.secondaryRoles is list ? request.auth.token.secondaryRoles : [])), "assigned_branches": []}
-          : {"role": "", "tenantId": "", "secondaryRoles": [], "assigned_branches": []};
+      let staffPath = /databases/$(database)/documents/staff/$(request.auth.uid);
+      return exists(staffPath) ? get(staffPath).data : {
+        'role': request.auth.token.get('role', ''), 'tenantId': request.auth.token.get('tenantId', ''),
+        'secondaryRoles': request.auth.token.get('roles', request.auth.token.get('secondaryRoles', [])), 'assigned_branches': []
+      };
     }
 
     function isTenantMember(tenantId) {
       return isAuthenticated() && (
-        (request.auth.token.tenantId != null && request.auth.token.tenantId == tenantId) ||
-        getUserData().tenantId == tenantId ||
-        request.auth.token.email == "peterssentongo61@gmail.com" ||
-        request.auth.token.email == "peter.sentongo@pharmhelm" ||
-        request.auth.token.email == "peter.sentongo@pharmhelm.com"
+        getUserData().get('tenantId', request.auth.token.get('tenantId', '')) == tenantId
+        || request.auth.token.get('email', '') in ['peterssentongo61@gmail.com', 'peter.sentongo@pharmhelm', 'peter.sentongo@pharmhelm.com']
       );
     }
 
@@ -67,17 +64,10 @@ service cloud.firestore {
     }
 
     function isAdmin() {
+      let roles = ['owner', 'Owner', 'CEO', 'ceo', 'CEO / MD', 'ceo / md'];
       return isAuthenticated() && (
-        request.auth.token.email == "peterssentongo61@gmail.com" ||
-        request.auth.token.email == "peter.sentongo@pharmhelm" ||
-        request.auth.token.email == "peter.sentongo@pharmhelm.com" ||
-        request.auth.token.role == 'owner' ||
-        request.auth.token.role == 'Owner' ||
-        request.auth.token.role == 'CEO' ||
-        request.auth.token.role == 'ceo' ||
-        request.auth.token.role == 'CEO / MD' ||
-        request.auth.token.role == 'ceo / md' ||
-        hasAnyRole(['owner', 'Owner', 'CEO', 'ceo', 'CEO / MD', 'ceo / md'])
+        request.auth.token.get('email', '') in ['peterssentongo61@gmail.com', 'peter.sentongo@pharmhelm', 'peter.sentongo@pharmhelm.com']
+        || hasAnyRole(roles)
       );
     }
 
@@ -145,16 +135,16 @@ service cloud.firestore {
     }
 
     function hasCustomModuleAccess(moduleKey, accessLevels) {
-      return isAuthenticated()
-        && ('roleRealmId' in getUserData())
-        && getUserData().roleRealmId is string
-        && getUserData().roleRealmId.size() > 0
-        && exists(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId))
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.tenantId == getUserData().tenantId
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleType == 'custom'
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleName == getUserData().role
-        && moduleKey in get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions[moduleKey].accessLevel in accessLevels;
+      let user = getUserData();
+      let configuredId = user.get('roleRealmId', '');
+      let realmId = configuredId is string && configuredId.size() > 0 ? configuredId
+        : user.tenantId + '_' + user.role.replace('\\s+', '_').lower();
+      let realmPath = /databases/$(database)/documents/role_realms_of_operation/$(realmId);
+      let realm = exists(realmPath) ? get(realmPath).data : {};
+      return isAuthenticated() && realm.get('tenantId', '') == user.tenantId
+        && realm.get('roleType', '') == 'custom' && realm.get('roleName', '') == user.role
+        && moduleKey in realm.get('permissions', {})
+        && realm.permissions[moduleKey].accessLevel in accessLevels;
     }
 
     function hasCustomModuleFunctional(moduleKey) {
@@ -167,7 +157,7 @@ service cloud.firestore {
 
     function isProcurement() {
       return isAuthenticated() && (
-        hasAnyRole(['Procurement Head', 'Procurement Officer', 'Procurement Manager']) ||
+        hasAnyRole(['Procurement Head', 'Procurement Officer', 'Procurement Manager', 'Procurement Personnel']) ||
         hasCustomModuleFunctional('procurement') ||
         isAdmin()
       );
@@ -175,7 +165,7 @@ service cloud.firestore {
 
     function hasProcurementRole() {
       return isAuthenticated() && (
-        hasAnyRole(['Procurement Head', 'Procurement Officer', 'Procurement Manager'])
+        hasAnyRole(['Procurement Head', 'Procurement Officer', 'Procurement Manager', 'Procurement Personnel'])
       );
     }
 
@@ -183,7 +173,7 @@ service cloud.firestore {
       return isAuthenticated() && (
         hasAnyRole([
           'Branch Manager', 'branch manager', 'Pharmacist', 'pharmacist',
-          'Procurement Head', 'Procurement Officer'
+          'Procurement Head', 'Procurement Officer', 'Procurement Manager', 'Procurement Personnel', 'admin', 'Admin'
         ]) ||
         hasCustomModuleFunctional('inventory') ||
         isAdmin()
@@ -850,7 +840,8 @@ service cloud.firestore {
       function sourceGrnPath() {
         return /databases/$(database)/documents/grn_records/$(request.resource.data.sourceId);
       }
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
+      allow get: if isAuthenticated() && (isProcurement() || canViewFinance()) && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
       allow create: if isAuthenticated()
         && isProcurement()
         && isTenantMember(request.resource.data.tenantId)
@@ -885,7 +876,8 @@ service cloud.firestore {
       function linkedMasterPath() {
         return /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.masterItemId);
       }
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId)
         && (isInventoryOperator() || isProcurement() || isITPersonnel() || isAdmin());
       allow create: if isAuthenticated()
         && isInventoryOperator()
@@ -905,6 +897,52 @@ service cloud.firestore {
         && existsAfter(linkedMasterPath())
         && getAfter(linkedMasterPath()).data.tenantId == request.resource.data.tenantId
         && getAfter(linkedMasterPath()).data.inventoryClass == 'OPERATIONAL';
+      allow update, delete: if false;
+    }
+
+    function operationalIdentityFingerprint(data) {
+      return data.name.trim().lower().replace('\\s+', ' ') + '|'
+        + data.get('category', '').trim().lower().replace('\\s+', ' ') + '|'
+        + data.type + '|' + string(data.unitPerPack) + '|'
+        + data.unitOfIssue.trim().lower().replace('\\s+', ' ');
+    }
+    function operationalIdentityClaimId(data) {
+      return 'opidentity_' + (data.tenantId + '|' + operationalIdentityFingerprint(data)).toUtf8().toBase64()
+        .replace('/', '_').replace('[+]', '-').replace('=', '');
+    }
+    function operationalIdentityReady(tenantId) {
+      let state = /databases/$(database)/documents/operational_inventory_identity_state/$(tenantId);
+      return exists(state) && get(state).data.tenantId == tenantId && get(state).data.status == 'READY';
+    }
+    match /operational_inventory_identity_state/{tenantId} {
+      allow get: if isAuthenticated() && isTenantMember(tenantId);
+      allow list, write: if false;
+    }
+
+    // Tenant-wide identity claims serialize first registration and legacy
+    // linking transactions that use different location document IDs.
+    match /operational_inventory_identity_claims/{claimId} {
+      function claimedMasterPath() {
+        return /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.masterItemId);
+      }
+      allow get: if isAuthenticated()
+        && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && (isInventoryOperator() || isProcurement() || isITPersonnel() || isAdmin());
+      allow create: if isAuthenticated()
+        && isInventoryOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && isOperationalInventoryEnabled(request.resource.data.tenantId)
+        && request.resource.data.inventoryClass == 'OPERATIONAL'
+        && operationalIdentityReady(request.resource.data.tenantId)
+        && request.resource.data.identityFingerprint is string
+        && request.resource.data.masterItemId is string
+        && request.resource.data.actorId == request.auth.uid
+        && existsAfter(claimedMasterPath())
+        && getAfter(claimedMasterPath()).data.tenantId == request.resource.data.tenantId
+        && getAfter(claimedMasterPath()).data.inventoryClass == 'OPERATIONAL'
+        && claimId == operationalIdentityClaimId(getAfter(claimedMasterPath()).data)
+        && request.resource.data.identityFingerprint == operationalIdentityFingerprint(getAfter(claimedMasterPath()).data);
       allow update, delete: if false;
     }
 
@@ -1187,6 +1225,15 @@ service cloud.firestore {
     }
 
     match /operational_inventory_masters/{masterItemId} {
+      function hasIdentityClaim() {
+        let claimId = operationalIdentityClaimId(request.resource.data);
+        let claim = /databases/$(database)/documents/operational_inventory_identity_claims/$(claimId);
+        return operationalIdentityReady(request.resource.data.tenantId)
+          && request.resource.data.unitPerPack is int && request.resource.data.unitPerPack > 0
+          && request.resource.data.identityClaimId == claimId
+          && existsAfter(claim) && getAfter(claim).data.tenantId == request.resource.data.tenantId
+          && getAfter(claim).data.masterItemId == masterItemId;
+      }
       // Client transactions read their deterministic target documents before
       // creating them. Permit authenticated point-gets of missing documents;
       // existing documents and all collection queries remain tenant-scoped.
@@ -1197,6 +1244,7 @@ service cloud.firestore {
         && isInventoryOperator()
         && isTenantMember(request.resource.data.tenantId)
         && isOperationalInventoryEnabled(request.resource.data.tenantId)
+        && hasIdentityClaim()
         && request.resource.data.inventoryClass == 'OPERATIONAL'
         && request.resource.data.operationalType in ['CONSUMABLE_OPERATIONAL', 'FIXED_ASSET']
         && request.resource.data.type in ['fixed', 'non-fixed']
@@ -1211,6 +1259,8 @@ service cloud.firestore {
         && request.resource.data.inventoryClass == resource.data.inventoryClass
         && request.resource.data.operationalType == resource.data.operationalType
         && request.resource.data.type == resource.data.type
+        && operationalIdentityFingerprint(request.resource.data) == operationalIdentityFingerprint(resource.data)
+        && request.resource.data.get('identityClaimId', '') == resource.data.get('identityClaimId', '')
         && request.resource.data.inventoryClass == 'OPERATIONAL'
         && request.resource.data.operationalType in ['CONSUMABLE_OPERATIONAL', 'FIXED_ASSET']
         && request.resource.data.type in ['fixed', 'non-fixed'];
@@ -1221,10 +1271,12 @@ service cloud.firestore {
       function hasOperationalMaster() {
         let masterPath = /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.masterItemId);
         return request.resource.data.masterItemId is string
+          && operationalIdentityReady(request.resource.data.tenantId)
           && existsAfter(masterPath)
           && getAfter(masterPath).data.tenantId == request.resource.data.tenantId
           && getAfter(masterPath).data.inventoryClass == 'OPERATIONAL'
-          && getAfter(masterPath).data.operationalType == request.resource.data.operationalType;
+          && getAfter(masterPath).data.operationalType == request.resource.data.operationalType
+          && operationalIdentityFingerprint(getAfter(masterPath).data) == operationalIdentityFingerprint(request.resource.data);
       }
       function hasMatchingOperationalMovement() {
         let movementId = request.resource.data.lastMovementId;
@@ -1256,9 +1308,9 @@ service cloud.firestore {
       }
       allow get: if isAuthenticated()
         && (resource == null || (isTenantMember(resource.data.tenantId)
-          && canOperateOperationalLocation(resource.data.branchId)));
+          && (isProcurement() || canOperateOperationalLocation(resource.data.branchId))));
       allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId)
-        && canOperateOperationalLocation(resource.data.branchId);
+        && (isProcurement() || canOperateOperationalLocation(resource.data.branchId));
       allow create: if isAuthenticated()
         && isInventoryOperator()
         && isTenantMember(request.resource.data.tenantId)
@@ -1270,9 +1322,10 @@ service cloud.firestore {
         && hasOpeningOperationalMovement()
         && request.resource.data.type in ['fixed', 'non-fixed'];
       allow update: if isAuthenticated()
+        && resource.data.get('inventoryClass', 'OPERATIONAL') == 'OPERATIONAL'
         && ((isInventoryOperator() && canOperateOperationalLocation(resource.data.branchId)) || (isProcurement()
           && resource.data.branchId == 'HQ'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantityInStock', 'lastMovementId', 'updatedAt'])))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantityInStock', 'lastMovementId', 'costPerPack', 'updatedAt'])))
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
@@ -1423,7 +1476,8 @@ service cloud.firestore {
       function movementPath() {
         return /databases/$(database)/documents/operational_inventory_movements/$(request.resource.data.movementId);
       }
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isProcurement();
+      allow get: if isAuthenticated() && isProcurement() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isProcurement();
       allow create: if isAuthenticated()
         && isProcurement()
         && isTenantMember(request.resource.data.tenantId)
@@ -1499,8 +1553,8 @@ service cloud.firestore {
               && isOperationalOrderData(get(/databases/$(database)/documents/stock_orders/$(data.sourceOrderId)).data)
               && get(/databases/$(database)/documents/stock_orders/$(data.sourceOrderId)).data.requesting_branch_id == data.destinationBranchId));
       }
-      allow get: if isAuthenticated() && isTenantMember(resource.data.tenantId)
-        && (isProcurement() || isAssignedToBranch(resource.data.destinationBranchId) || (resource.data.get('transferType', '') == 'BRANCH_RETURN' && isAssignedToBranch(resource.data.sourceBranchId)));
+      allow get: if isAuthenticated() && ((resource == null && (isProcurement() || isInventoryOperator())) || (isTenantMember(resource.data.tenantId)
+        && (isProcurement() || isAssignedToBranch(resource.data.destinationBranchId) || (resource.data.get('transferType', '') == 'BRANCH_RETURN' && isAssignedToBranch(resource.data.sourceBranchId)))));
       allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId)
         && (isProcurement() || isAssignedToBranch(resource.data.destinationBranchId) || (resource.data.get('transferType', '') == 'BRANCH_RETURN' && isAssignedToBranch(resource.data.sourceBranchId)));
       allow create: if isAuthenticated()
@@ -1924,7 +1978,8 @@ service cloud.firestore {
         && request.resource.data.inventoryClass in ['SELLABLE', 'OPERATIONAL']
         && ((request.resource.data.category == 'non_sellable' && request.resource.data.inventoryClass == 'OPERATIONAL')
           || (request.resource.data.category in ['sellable_non_cosmetic', 'sellable_cosmetic'] && request.resource.data.inventoryClass == 'SELLABLE'))
-        && validOrderClass(request.resource.data);
+        && validOrderClass(request.resource.data)
+        && (!isOperationalOrderData(request.resource.data) || isProcurement() || isAssignedToBranch(request.resource.data.requesting_branch_id));
       allow update: if isAuthenticated()
         && (isProcurement() || isBranchManager())
         && isTenantMember(resource.data.tenantId)
@@ -1943,14 +1998,16 @@ service cloud.firestore {
         return /databases/$(database)/documents/stock_orders/$(request.resource.data.order_id);
       }
       function hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath) {
+        let item = get(operationalItemPath).data;
+        let master = get(operationalMasterPath).data;
+        let order = getAfter(orderPath).data;
         return request.resource.data.masterItemId is string
-          && request.resource.data.masterItemId == get(operationalItemPath).data.get('masterItemId', '')
-          && exists(operationalMasterPath)
-          && get(operationalMasterPath).data.tenantId == request.resource.data.tenantId
-          && get(operationalMasterPath).data.inventoryClass == 'OPERATIONAL'
-          && (getAfter(orderPath).data.requesting_branch_id != 'HQ'
-            || (get(operationalItemPath).data.branchId == 'HQ'
-              && get(operationalMasterPath).data.hqLocationItemId == request.resource.data.product_id));
+          && request.resource.data.masterItemId == item.get('masterItemId', '')
+          && master.tenantId == request.resource.data.tenantId
+          && master.inventoryClass == 'OPERATIONAL'
+          && item.branchId == order.requesting_branch_id
+          && (order.requesting_branch_id != 'HQ'
+            || (item.branchId == 'HQ' && master.hqLocationItemId == request.resource.data.product_id));
       }
       function hasValidLineClass(requireExplicitClass) {
         let orderPath = parentOrderPath();
@@ -1967,8 +2024,8 @@ service cloud.firestore {
               && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'OPERATIONAL')
               && exists(operationalItemPath)
               && get(operationalItemPath).data.tenantId == request.resource.data.tenantId
-              && (!requireExplicitClass || hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath))
-              && (!('masterItemId' in request.resource.data)
+              && get(operationalItemPath).data.inventoryClass == 'OPERATIONAL'
+              && (!(requireExplicitClass || ('masterItemId' in request.resource.data))
                 || hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath))
             )
             || (
@@ -1977,6 +2034,9 @@ service cloud.firestore {
               && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'SELLABLE')
               && exists(sellableItemPath)
               && get(sellableItemPath).data.tenantId == request.resource.data.tenantId
+              && get(sellableItemPath).data.get('inventoryClass', 'SELLABLE') == 'SELLABLE'
+              && get(sellableItemPath).data.get('category', '') != 'non_sellable'
+              && get(sellableItemPath).data.get('isOperational', false) != true
             )
           );
       }
@@ -1990,8 +2050,19 @@ service cloud.firestore {
       allow create: if isAuthenticated()
         && isTenantMember(request.resource.data.tenantId)
         && (isProcurement() || isBranchManager())
-        && hasValidLineClass(true);
+        && hasValidLineClass(true)
+        && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL' || isProcurement() || isAssignedToBranch(getAfter(parentOrderPath()).data.requesting_branch_id))
+        && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL'
+          || (request.resource.data.qty_ordered is number && request.resource.data.qty_ordered > 0 && request.resource.data.qty_ordered <= 9007199254740991
+            && request.resource.data.unit_cost_ugx is number && request.resource.data.unit_cost_ugx >= 0 && request.resource.data.unit_cost_ugx <= 9007199254740991
+            && request.resource.data.line_total_ugx <= 9007199254740991
+            && request.resource.data.line_total_ugx == request.resource.data.qty_ordered * request.resource.data.unit_cost_ugx));
       allow update: if isAuthenticated()
+        && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL'
+          || (request.resource.data.order_id == resource.data.order_id
+            && request.resource.data.product_id == resource.data.product_id
+            && (!('masterItemId' in resource.data) || request.resource.data.masterItemId == resource.data.masterItemId)
+            && (isProcurement() || isAssignedToBranch(getAfter(parentOrderPath()).data.requesting_branch_id))))
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
@@ -2510,11 +2581,11 @@ service cloud.firestore {
 
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
-      allow get: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAdmin() && isTenantMember(resource.data.tenantId);
+      allow get: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAdmin() && isTenantMember(resource.data.tenantId);
     }
   }
 }

@@ -23,9 +23,9 @@ test('HQ Sellable ordering UI is Sellable-only; Operational HQ buffer order is a
   const sellableHqScopes = procurement.match(/\['drug\/medicine', 'Drug \/ Medicine'\][\s\S]{0,240}/)?.[0] || '';
   assert.doesNotMatch(sellableHqScopes, /operational_inventory/);
   assert.match(procurement, /inventoryClassLock="SELLABLE"/);
-  assert.match(operationalStore, /Order Operational buffer stock/);
+  assert.match(operationalStore, /Order Buffer Stock/);
   assert.match(bufferOrderService, /buildOperationalHqBufferOrder/);
   assert.match(bufferOrderService, /item\.masterItemId/);
   assert.match(bufferOrderService, /enableOperationalInventory !== true/);
-  assert.match(autoOrder, /getFilteredProducts\(\)\.map\(p =>/);
+  assert.match(autoOrder, /getManualOrderItems\(\)\.map\(p =>/);
 });

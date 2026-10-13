@@ -1,0 +1,30 @@
+name: Complete Martin Pharma Operational Catalogue
+on:
+  workflow_run:
+    workflows: ['Deploy to Firebase']
+    types: [completed]
+permissions:
+  contents: read
+concurrency:
+  group: operational-identity-backfill-mp
+  cancel-in-progress: false
+jobs:
+  backfill:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Complete the reviewed test-tenant identity backfill after verified deployment
+        run: GOOGLE_OAUTH_ACCESS_TOKEN="$(gcloud auth print-access-token)" node scripts/complete-operational-identity-release.mjs

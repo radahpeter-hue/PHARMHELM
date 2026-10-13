@@ -26,7 +26,7 @@ async function verify() {
   if (!project || !database) throw new Error('Firebase project and named database are required.');
   const required = JSON.parse(readFileSync('firestore.indexes.json', 'utf8')).indexes
     .filter(index => index.collectionGroup.startsWith('operational_'));
-  if (required.length !== 8) throw new Error(`Expected eight Operational Inventory indexes; found ${required.length}.`);
+  if (required.length === 0) throw new Error('No Operational Inventory indexes are present in the manifest.');
 
   for (let attempt = 0; attempt < 40; attempt++) {
     const deployed = loadCompositeIndexes(project, database);

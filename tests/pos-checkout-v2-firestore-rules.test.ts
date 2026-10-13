@@ -31,7 +31,7 @@ test('global role and custom-module checks share compact primitives', () => {
   assert.match(globalHelpers, /function hasCustomModuleAccess\(moduleKey, accessLevels\)/);
   assert.match(globalHelpers, /function hasCustomModuleFunctional\(moduleKey\)\s*\{\s*return hasCustomModuleAccess\(moduleKey, \['view_functional', 'all'\]\);/);
   assert.match(globalHelpers, /function hasCustomModuleView\(moduleKey\)\s*\{\s*return hasCustomModuleAccess\(moduleKey, \['view_only', 'view_functional', 'all'\]\);/);
-  assert.equal((globalHelpers.match(/documents\/role_realms_of_operation/g) || []).length, 6);
+  assert.equal((globalHelpers.match(/documents\/role_realms_of_operation/g) || []).length, 1);
 });
 
 test('sale creation requires an authorised active-branch POS operator boundary', () => {

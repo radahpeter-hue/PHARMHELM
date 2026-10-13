@@ -1,3 +1,5 @@
+import { operationalReceiptCostPerPack } from './operationalValuationPolicy';
+import type { Firestore } from 'firebase/firestore';
 import { doc, runTransaction, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { OperationalInventory, OperationalInventoryMaster, StockOrder, StockOrderLine } from '../types';
@@ -40,7 +42,7 @@ function validInvoiceDate(value: string): Timestamp {
 }
 
 /** Finalizes an Operational supplier GRN into HQ Operational balances atomically. */
-export async function processOperationalGrn(input: ProcessOperationalGrnInput): Promise<ProcessOperationalGrnResult> {
+export async function processOperationalGrn(input: ProcessOperationalGrnInput, connection: Firestore = db): Promise<ProcessOperationalGrnResult> {
   const tenantId = input.tenantId.trim();
   const invoiceNumber = input.invoiceNumber.trim();
   const invoiceTimestamp = validInvoiceDate(input.invoiceDate);
@@ -94,20 +96,20 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput): 
   const grnId = `op_grn_${hash(`${tenantId}|${input.order.id}|${supplierId}|${invoiceNumber.toLowerCase()}`)}`;
   const grnNumber = `OGRN-${input.invoiceDate.slice(0, 4)}-${hash(grnId)}`;
   const now = Timestamp.now();
-  const orderRef = doc(db, 'stock_orders', input.order.id);
+  const orderRef = doc(connection, 'stock_orders', input.order.id);
   const orderLines = supplierLines;
-  const lineRefs = orderLines.map(line => doc(db, 'stock_order_lines', line.id));
-  const sourceItemRefs = receivingLines.map(row => doc(db, 'operational_inventory', row.line.product_id));
-  const masterRefs = receivingLines.map(row => doc(db, 'operational_inventory_masters', row.line.masterItemId!));
-  const grnRef = doc(db, 'grn_records', grnId);
-  const settingsRef = doc(db, 'system_settings', tenantId);
+  const lineRefs = orderLines.map(line => doc(connection, 'stock_order_lines', line.id));
+  const sourceItemRefs = receivingLines.map(row => doc(connection, 'operational_inventory', row.line.product_id));
+  const masterRefs = receivingLines.map(row => doc(connection, 'operational_inventory_masters', row.line.masterItemId!));
+  const grnRef = doc(connection, 'grn_records', grnId);
+  const settingsRef = doc(connection, 'system_settings', tenantId);
   const movementKeys = receivingLines.map(row => `grn_${hash(`${grnId}|${row.line.id}`)}`);
-  const movementRefs = movementKeys.map(key => doc(db, 'operational_inventory_movements', `opm_${key}`));
-  const grnLineRefs = receivingLines.map(row => doc(db, 'operational_grn_lines', `${grnId}_${hash(row.line.id)}`));
+  const movementRefs = movementKeys.map(key => doc(connection, 'operational_inventory_movements', `opm_${key}`));
+  const grnLineRefs = receivingLines.map(row => doc(connection, 'operational_grn_lines', `${grnId}_${hash(row.line.id)}`));
   const financeEventIds = ['CONSUMABLE_OPERATIONAL', 'FIXED_ASSET'].map(type => `opfin_${hash(`${grnId}|${type}`)}`);
-  const financeEventRefs = financeEventIds.map(id => doc(db, 'operational_finance_events', id));
+  const financeEventRefs = financeEventIds.map(id => doc(connection, 'operational_finance_events', id));
 
-  return runTransaction(db, async transaction => {
+  return runTransaction(connection, async transaction => {
     const [settingsSnapshot, orderSnapshot, grnSnapshot, lineSnapshots, sourceSnapshots, masterSnapshots, movementSnapshots, grnLineSnapshots, financeEventSnapshots] = await Promise.all([
       transaction.get(settingsRef),
       transaction.get(orderRef),
@@ -148,7 +150,7 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput): 
       if (master.tenantId !== tenantId || master.inventoryClass !== 'OPERATIONAL' || !master.hqLocationItemId) {
         throw new Error('Register this Operational item at HQ before receiving a supplier delivery.');
       }
-      return doc(db, 'operational_inventory', master.hqLocationItemId);
+      return doc(connection, 'operational_inventory', master.hqLocationItemId);
     });
     const hqSnapshots = await Promise.all(hqItemRefs.map(ref => transaction.get(ref)));
 
@@ -172,7 +174,7 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput): 
             line_status: 'unsupplied', qty_unsupplied: inputRow.outstanding,
             unsupplied_reason: 'Removed during Operational GRN processing', grn_id: grnId, updatedAt: now.toDate().toISOString()
           });
-          const unsuppliedRef = doc(db, 'unsupplied_lines', `${grnId}_${hash(inputRow.line.id)}`);
+          const unsuppliedRef = doc(connection, 'unsupplied_lines', `${grnId}_${hash(inputRow.line.id)}`);
           transaction.set(unsuppliedRef, {
             tenantId, inventoryClass: 'OPERATIONAL', order_id: input.order.id, grn_id: grnId,
             original_line_id: inputRow.line.id, product_id: inputRow.line.product_id,
@@ -189,9 +191,9 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput): 
       const sourceSnapshot = sourceSnapshots[sourceSnapshotIndex];
       const masterSnapshot = masterSnapshots[sourceSnapshotIndex];
       const hqSnapshot = hqSnapshots[sourceSnapshotIndex];
-      const source = sourceSnapshot.data() as OperationalInventory | undefined;
-      const master = masterSnapshot.data() as OperationalInventoryMaster;
-      const hqItem = hqSnapshot.data() as OperationalInventory | undefined;
+      const source = sourceSnapshot.exists() ? { ...sourceSnapshot.data(), id: sourceSnapshot.id } as OperationalInventory : undefined;
+      const master = { ...masterSnapshot.data(), id: masterSnapshot.id } as OperationalInventoryMaster;
+      const hqItem = hqSnapshot.exists() ? { ...hqSnapshot.data(), id: hqSnapshot.id } as OperationalInventory : undefined;
       if (!sourceSnapshot.exists() || !hqSnapshot.exists() || source?.tenantId !== tenantId || source.inventoryClass !== 'OPERATIONAL' ||
           source.branchId !== input.order.requesting_branch_id || source.masterItemId !== inputRow.line.masterItemId ||
           master.tenantId !== tenantId || master.inventoryClass !== 'OPERATIONAL' || master.operationalType !== source.operationalType ||
@@ -232,6 +234,7 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput): 
 
       transaction.update(hqItemRefs[sourceSnapshotIndex], {
         inventoryClass: 'OPERATIONAL', operationalType, quantityInStock: balanceAfter,
+        costPerPack: operationalReceiptCostPerPack(balanceBefore, receivedUnits, Number(hqItem.costPerPack || 0), unitCostIssueUGX, unitsPerPack),
         lastMovementId: movementId, updatedAt: now.toDate().toISOString()
       });
       transaction.set(movementRefs[sourceSnapshotIndex], movementDocs[movementDocs.length - 1]);

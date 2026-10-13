@@ -7,8 +7,8 @@ import { operationalIndexesReady } from '../scripts/verify-operational-inventory
 const manifest = JSON.parse(readFileSync('firestore.indexes.json', 'utf8'));
 const operational = manifest.indexes.filter((index: { collectionGroup: string }) => index.collectionGroup.startsWith('operational_'));
 
-test('deployment manifest contains all eight Operational Inventory composite indexes', () => {
-  assert.equal(operational.length, 8);
+test('deployment manifest contains all nine Operational Inventory composite indexes', () => {
+  assert.equal(operational.length, 9);
   const args = indexCreateArgs(operational.find((index: { collectionGroup: string }) => index.collectionGroup === 'operational_grn_lines'), 'project', 'database');
   assert.ok(args.includes('--collection-group=operational_grn_lines'));
   assert.ok(args.includes('--field-config=field-path=grnId,order=ascending'));
