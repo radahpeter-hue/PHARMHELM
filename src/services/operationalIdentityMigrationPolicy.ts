@@ -81,5 +81,10 @@ export function planOperationalIdentityBackfill(input: {
     if (!claim) writes.push({ collection: 'operational_inventory_identity_claims', id: claimId, create: true,
       fields: { tenantId, inventoryClass: 'OPERATIONAL', identityFingerprint: fingerprint, masterItemId: master.id, actorId, createdAt: now } });
   }
-  return { tenantId, conflicts, writes: conflicts.length ? [] : writes, ready: conflicts.length === 0 };
+  const reviewItems = input.items.filter(row => row.tenantId === tenantId).map(row => ({
+    id: row.id, name: row.name ?? null, branchId: row.branchId ?? null, inventoryClass: row.inventoryClass ?? null,
+    type: row.type ?? null, operationalType: row.operationalType ?? null, category: row.category ?? null,
+    unitPerPack: row.unitPerPack ?? null, unitOfIssue: row.unitOfIssue ?? null, masterItemId: row.masterItemId ?? null
+  }));
+  return { tenantId, reviewItems, conflicts, writes: conflicts.length ? [] : writes, ready: conflicts.length === 0 };
 }
