@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, ArrowDownToLine, ArrowUpFromLine, History, Package, X } from 'lucide-react';
+import { Search, ArrowDownToLine, ArrowUpFromLine, History, Package, X, ShoppingCart } from 'lucide-react';
 import { format } from 'date-fns';
 import { where } from 'firebase/firestore';
 import { Branch, OperationalInventory, OperationalInventoryMovement, OperationalTransfer, OperationalTransferLine } from '../../types';
@@ -8,6 +8,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useOperationalInventoryFeature } from '../../hooks/useOperationalInventoryFeature';
 import { postOperationalStoreMovement } from '../../services/operationalInventoryMovementService';
 import { createHqOperationalDistribution, receiveOperationalBranchReturn } from '../../services/operationalTransferService';
+import { submitOperationalHqBufferOrder } from '../../services/operationalHqBufferOrderService';
 import { toast } from 'sonner';
 
 const OperationalHQStoreTab: React.FC = () => {
@@ -27,6 +28,10 @@ const OperationalHQStoreTab: React.FC = () => {
   const [distributionQuantity, setDistributionQuantity] = useState('');
   const [distributionRequestId, setDistributionRequestId] = useState('');
   const [distributionSaving, setDistributionSaving] = useState(false);
+  const [bufferItemId, setBufferItemId] = useState('');
+  const [bufferQuantity, setBufferQuantity] = useState('');
+  const [bufferSaving, setBufferSaving] = useState(false);
+  const [bufferRequestId, setBufferRequestId] = useState(createMovementKey);
 
   useEffect(() => {
     if (!profile?.tenantId || !enabled) {
@@ -85,6 +90,31 @@ const OperationalHQStoreTab: React.FC = () => {
     finally { setDistributionSaving(false); }
   };
 
+  const submitBufferOrder = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!profile?.tenantId || !profile.uid || !canDistribute) return;
+    const item = items.find(row => row.id === bufferItemId);
+    const quantity = Number(bufferQuantity);
+    if (!item?.masterItemId || !Number.isFinite(quantity) || quantity <= 0) {
+      toast.error('Choose a linked Operational item and enter a positive quantity.');
+      return;
+    }
+    setBufferSaving(true);
+    try {
+      const result = await submitOperationalHqBufferOrder({
+        tenantId: profile.tenantId,
+        itemId: item.id,
+        quantityPacks: quantity,
+        requestId: bufferRequestId,
+        actor: { uid: profile.uid, name: profile.displayName || profile.full_name || profile.name || profile.uid }
+      });
+      toast.success(result.alreadySubmitted ? 'Operational HQ buffer order was already submitted.' : 'Operational HQ buffer order sent to Procurement.');
+      setBufferItemId(''); setBufferQuantity('');
+      setBufferRequestId(createMovementKey());
+    } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not submit Operational buffer order.'); }
+    finally { setBufferSaving(false); }
+  };
+
   if (!enabled) return null;
 
   return (
@@ -98,6 +128,15 @@ const OperationalHQStoreTab: React.FC = () => {
       </div>
 
       <OperationalBranchReturnsQueue />
+
+      <section className="rounded-3xl border border-sky-200 bg-white p-5 shadow-sm">
+        <div className="flex items-start gap-3 mb-4"><ShoppingCart className="text-sky-700 mt-0.5" size={19} /><div><h3 className="font-black text-zinc-900">Order Operational buffer stock</h3><p className="text-xs text-zinc-500 mt-1">Creates an Operational-only HQ requisition for Procurement. Enter packs to order. Fixed assets are acquired through their asset workflow.</p></div></div>
+        <form onSubmit={submitBufferOrder} className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3">
+          <select required value={bufferItemId} onChange={event => setBufferItemId(event.target.value)} className="rounded-xl border border-zinc-200 px-3 py-2 text-sm"><option value="">Select an HQ Operational consumable</option>{items.filter(item => item.masterItemId && item.operationalType === 'CONSUMABLE_OPERATIONAL').map(item => <option key={item.id} value={item.id}>{item.name} · {item.uniqueId || item.id}</option>)}</select>
+          <input aria-label="Buffer order quantity in packs" type="number" min="0.001" step="any" required value={bufferQuantity} onChange={event => setBufferQuantity(event.target.value)} placeholder="Packs to order" className="rounded-xl border border-zinc-200 px-3 py-2 text-sm" />
+          <button disabled={!canDistribute || bufferSaving} className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{bufferSaving ? 'Submitting…' : 'Send to Procurement'}</button>
+        </form>
+      </section>
 
       <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
         <section className="xl:col-span-3 bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">

@@ -1,6 +1,7 @@
 import { collection, doc, getDocs, query, runTransaction, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { OperationalInventory, OperationalInventoryMaster } from '../types';
+import { deterministicOperationalLocationId, deterministicOperationalMasterId, operationalIdentityFingerprint } from './operationalIdentity';
 
 type OperationalItemWrite = Omit<OperationalInventory, 'id' | 'masterItemId'>;
 
@@ -45,29 +46,51 @@ export async function saveOperationalLocationItem(input: SaveOperationalLocation
     throw new Error('Operational item classification is required.');
   }
 
+  const fingerprint = operationalIdentityFingerprint(input.data);
+  const requestedMasterId = input.masterItemId || input.itemId || deterministicOperationalMasterId(tenantId, fingerprint);
   const itemRef = input.itemId
     ? doc(db, 'operational_inventory', input.itemId)
-    : doc(collection(db, 'operational_inventory'));
-  const masterItemId = input.masterItemId || input.itemId || itemRef.id;
+    : doc(db, 'operational_inventory', deterministicOperationalLocationId(tenantId, requestedMasterId, branchId));
+  const masterItemId = requestedMasterId;
   const masterRef = doc(db, 'operational_inventory_masters', masterItemId);
+  const identityAuditRef = doc(db, 'operational_inventory_identity_events', `opidentity_${itemRef.id}`);
   const openingMovementKey = `op_opening_${itemRef.id}`;
   const openingMovementRef = doc(db, 'operational_inventory_movements', `opm_${openingMovementKey}`);
   const settingsRef = doc(db, 'system_settings', tenantId);
   const now = new Date().toISOString();
-  const linkedLocationRefs = input.itemId && input.itemId === masterItemId
+  const matchingLegacyMasters = !input.itemId && !input.masterItemId
+    ? (await getDocs(query(collection(db, 'operational_inventory_masters'), where('tenantId', '==', tenantId)))).docs
+        .filter(snapshot => {
+          const master = snapshot.data();
+          return master.inventoryClass === 'OPERATIONAL' && operationalIdentityFingerprint(master as any) === fingerprint;
+        })
+    : [];
+  if (matchingLegacyMasters.length) {
+    throw new Error('A tenant-wide Operational item with the same name, category, type and issue unit already exists. Link this location to that item instead.');
+  }
+  const matchingUnlinkedLegacyLocations = !input.itemId && !input.masterItemId
     ? (await getDocs(query(
         collection(db, 'operational_inventory'),
         where('tenantId', '==', tenantId),
-        where('masterItemId', '==', masterItemId)
-      ))).docs.map(snapshot => snapshot.ref)
+        where('branchId', '==', branchId)
+      ))).docs
+        .filter(snapshot => {
+          const location = snapshot.data();
+          return !location.masterItemId && location.inventoryClass !== 'SELLABLE' &&
+            operationalIdentityFingerprint(location as any) === fingerprint;
+        })
     : [];
+  if (matchingUnlinkedLegacyLocations.length) {
+    throw new Error('A legacy Operational location with this identity has no tenant master yet. Edit and link that record first; it will keep its existing ID and stock history.');
+  }
 
   await runTransaction(db, async transaction => {
-    const [settingsSnapshot, itemSnapshot, masterSnapshot, openingMovementSnapshot] = await Promise.all([
+    const [settingsSnapshot, itemSnapshot, masterSnapshot, openingMovementSnapshot, identityAuditSnapshot] = await Promise.all([
       transaction.get(settingsRef),
       transaction.get(itemRef),
       transaction.get(masterRef),
-      transaction.get(openingMovementRef)
+      transaction.get(openingMovementRef),
+      transaction.get(identityAuditRef)
     ]);
 
     const settings = settingsSnapshot.data();
@@ -77,13 +100,24 @@ export async function saveOperationalLocationItem(input: SaveOperationalLocation
     if (itemSnapshot.exists() && (itemSnapshot.data().tenantId !== tenantId || itemSnapshot.data().branchId !== branchId)) {
       throw new Error('The selected Operational location record belongs to another tenant or location.');
     }
+    if (!input.itemId && itemSnapshot.exists()) {
+      throw new Error('This Operational item already has a location record at the selected branch. Open that record instead.');
+    }
     if (masterSnapshot.exists()) {
       const master = masterSnapshot.data();
       if (master.tenantId !== tenantId || master.inventoryClass !== 'OPERATIONAL') {
         throw new Error('The selected item identity is not an Operational item in this tenant.');
       }
+      if (!input.itemId && !input.masterItemId) {
+        throw new Error('A tenant-wide Operational item with the same identity already exists. Link this location to that item instead.');
+      }
     } else if (input.masterItemId && !(itemSnapshot.exists() && input.masterItemId === itemRef.id)) {
       throw new Error('The selected tenant-wide Operational item identity no longer exists.');
+    }
+    const identityEventRequired = !itemSnapshot.exists() || !masterSnapshot.exists();
+    if (identityAuditSnapshot.exists() && (identityAuditSnapshot.data().tenantId !== tenantId ||
+        identityAuditSnapshot.data().itemId !== itemRef.id || identityAuditSnapshot.data().masterItemId !== masterItemId)) {
+      throw new Error('An Operational identity audit record conflicts with this location. Reconcile before retrying.');
     }
 
     const currentMaster = masterSnapshot.data() as OperationalInventoryMaster | undefined;
@@ -91,9 +125,6 @@ export async function saveOperationalLocationItem(input: SaveOperationalLocation
       throw new Error('This Operational item already has an HQ location record. Link the existing record instead of creating another.');
     }
     const shouldUpdateMaster = !currentMaster || Boolean(input.itemId && input.itemId === masterItemId);
-    const linkedLocationSnapshots = shouldUpdateMaster && currentMaster
-      ? await Promise.all(linkedLocationRefs.map(ref => transaction.get(ref)))
-      : [];
     const masterData: Omit<OperationalInventoryMaster, 'id'> = {
       tenantId,
       ...masterFields(input.data, now),
@@ -123,6 +154,20 @@ export async function saveOperationalLocationItem(input: SaveOperationalLocation
     if (shouldUpdateMaster) transaction.set(masterRef, masterData, { merge: true });
     else if (branchId === 'HQ' && !currentMaster?.hqLocationItemId) transaction.set(masterRef, { hqLocationItemId: itemRef.id, updatedAt: now }, { merge: true });
     transaction.set(itemRef, locationData, { merge: true });
+    if (identityEventRequired && !identityAuditSnapshot.exists()) {
+      transaction.set(identityAuditRef, {
+        tenantId,
+        inventoryClass: 'OPERATIONAL',
+        eventType: !itemSnapshot.exists() ? (currentMaster ? 'LOCATION_LINKED' : 'MASTER_CREATED') : 'LEGACY_ITEM_LINKED',
+        itemId: itemRef.id,
+        masterItemId,
+        branchId,
+        beforeMasterItemId: itemSnapshot.data()?.masterItemId || null,
+        actorId: input.actor.uid,
+        actorName: input.actor.name || '',
+        createdAt: now
+      });
+    }
     if (!itemSnapshot.exists() && Number(input.data.quantityInStock || 0) > 0) {
       if (openingMovementSnapshot.exists()) throw new Error('An opening balance movement already exists for this Operational item. Reconcile before retrying.');
       const openingQuantity = Number(input.data.quantityInStock);
@@ -141,23 +186,6 @@ export async function saveOperationalLocationItem(input: SaveOperationalLocation
         actorName: input.actor.name || '',
         sourceTransactionId: itemRef.id, createdAt: now
       });
-    }
-    if (linkedLocationSnapshots.length) {
-      const sharedFields = {
-        name: masterData.name,
-        category: masterData.category,
-        unitPerPack: masterData.unitPerPack,
-        unitOfIssue: masterData.unitOfIssue,
-        uniqueId: masterData.uniqueId,
-        sku: masterData.sku,
-        description: masterData.description,
-        supplier: masterData.supplier,
-        updatedAt: now
-      };
-      linkedLocationSnapshots
-        .filter(snapshot => snapshot.exists())
-        .filter(snapshot => snapshot.id !== itemRef.id)
-        .forEach(snapshot => transaction.update(snapshot.ref, sharedFields));
     }
   });
 

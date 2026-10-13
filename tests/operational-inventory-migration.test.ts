@@ -25,6 +25,19 @@ test('legacy Operational location is backfilled with a stable identity and openi
   assert.ok(first.auditCreates.length > 0);
 });
 
+test('legacy duplicate candidates with separately generated unique IDs are flagged and never auto-merged', () => {
+  const report = planOperationalInventoryMigration({
+    ...base,
+    items: [
+      { id: 'paper-branch-a', tenantId: 'tenant-1', branchId: 'Branch-A', type: 'non-fixed', name: 'A4 Paper', category: 'Stationery', uniqueId: 'OPS-100001', unitPerPack: 5, unitOfIssue: 'ream', quantityInStock: 8 },
+      { id: 'paper-branch-b', tenantId: 'tenant-1', branchId: 'Branch-B', type: 'non-fixed', name: ' a4   paper ', category: 'stationery', uniqueId: 'OPS-900001', unitPerPack: 5, unitOfIssue: 'REAM', quantityInStock: 4 }
+    ]
+  });
+  assert.equal(report.masterCreates.length, 0);
+  assert.equal(report.itemBackfills.length, 0);
+  assert.ok(report.ambiguous.some(row => /Potential duplicate across tenant-wide item identities/.test(row.reason)));
+});
+
 test('migration never reclassifies explicit Sellable or mixed historical orders and GRNs', () => {
   const report = planOperationalInventoryMigration({
     ...base,
@@ -82,7 +95,7 @@ test('migration runner is tenant-scoped, preview-only by default and stops apply
   assert.match(movementRule, /request\.resource\.data\.balanceBefore == 0/);
   const auditRule = rules.slice(rules.indexOf('match /operational_inventory_migration_audit/'), rules.indexOf('match /grn_records/'));
   assert.match(auditRule, /allow create, update, delete: if false/);
-  assert.match(rules, /'operational_inventory_migration_audit'\]\)/);
+  assert.match(rules, /'operational_inventory_migration_audit','operational_inventory_identity_events'\]\)/);
   const masterService = readFileSync(new URL('../src/services/operationalInventoryMasterService.ts', import.meta.url), 'utf8');
   assert.match(masterService, /openingMovementRef/);
   assert.match(masterService, /movementType: 'ADJUSTMENT'/);

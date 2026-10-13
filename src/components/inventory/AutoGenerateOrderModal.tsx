@@ -42,6 +42,7 @@ import { revalidateOrderRun, submitOrderRun } from '../../services/orderSubmissi
 import { useAuth } from '../../contexts/AuthContext';
 import { isLegacyOperationalInventorySeed } from '../../utils/operationalInventory';
 import { useOperationalInventoryFeature } from '../../hooks/useOperationalInventoryFeature';
+import { OPERATIONAL_PRODUCT_SCOPE, scopesForOrderCategory } from '../../services/operationalOrderScopes';
 
 interface AutoGenerateOrderModalProps {
   isOpen: boolean;
@@ -52,6 +53,7 @@ interface AutoGenerateOrderModalProps {
   initialCategory: string;
   mode?: 'branch' | 'hq_aggregate';
   fixedBranchId?: string;
+  inventoryClassLock?: 'SELLABLE' | 'OPERATIONAL';
 }
 
 export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({ 
@@ -62,7 +64,8 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   initialProductScopes,
   initialCategory,
   mode = 'branch',
-  fixedBranchId
+  fixedBranchId,
+  inventoryClassLock = initialCategory === 'non_sellable' ? 'OPERATIONAL' : 'SELLABLE'
 }) => {
   const { profile, activeBranchId } = useAuth();
   const operationalInventoryEnabled = useOperationalInventoryFeature();
@@ -118,9 +121,10 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
     if (isOpen) {
       setStep('config');
       setCoverageDays(initialCoverageDays);
+      const scopedCategory = inventoryClassLock === 'OPERATIONAL' ? 'non_sellable' : 'sellable_non_cosmetic';
       setProductScopes(operationalInventoryEnabled
-        ? initialProductScopes
-        : initialProductScopes.filter(scope => scope !== 'operational_inventory'));
+        ? scopesForOrderCategory(scopedCategory, initialProductScopes)
+        : scopesForOrderCategory(scopedCategory, initialProductScopes).filter(scope => scope !== OPERATIONAL_PRODUCT_SCOPE));
       setCategoryScope(initialCategory);
       if (fixedBranchId || activeBranchId) {
         setSelectedBranchId(fixedBranchId || activeBranchId || '');
@@ -130,13 +134,13 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
         setCheckOtherBranches(false);
       }
     }
-  }, [isOpen, initialCoverageDays, initialProductScopes, initialCategory, activeBranchId, fixedBranchId, mode, operationalInventoryEnabled]);
+  }, [isOpen, initialCoverageDays, initialProductScopes, initialCategory, activeBranchId, fixedBranchId, mode, operationalInventoryEnabled, inventoryClassLock]);
 
   useEffect(() => {
-    if (!operationalInventoryEnabled) {
-      setProductScopes(current => current.filter(scope => scope !== 'operational_inventory'));
-    }
-  }, [operationalInventoryEnabled]);
+    const scopedCategory = inventoryClassLock === 'OPERATIONAL' ? 'non_sellable' : 'sellable_non_cosmetic';
+    setProductScopes(current => scopesForOrderCategory(scopedCategory, current)
+      .filter(scope => operationalInventoryEnabled || scope !== OPERATIONAL_PRODUCT_SCOPE));
+  }, [operationalInventoryEnabled, inventoryClassLock]);
 
   // Fetch products on load
   useEffect(() => {
@@ -572,7 +576,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
       toast.error('Select a product to add.');
       return;
     }
-    const product = allProducts.find(p => p.id === selectedProductId);
+    const product = getFilteredProducts().find(p => p.id === selectedProductId);
     if (!product) return;
 
     if (lines.find(l => l.productId === selectedProductId)) {
@@ -694,8 +698,8 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
               <RotateCw className="animate-spin-slow" size={20} />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-zinc-900">{mode === 'hq_aggregate' ? 'HQ Aggregate Replenishment' : 'Auto-Generate Order Replenishment'}</h2>
-              <p className="text-xs text-zinc-500">{mode === 'hq_aggregate' ? 'Branch-level forecasts aggregated into one HQ sourcing requirement' : 'Deterministic multi-criteria forecasting & network donor allocation'}</p>
+              <h2 className="text-xl font-bold text-zinc-900">{inventoryClassLock === 'OPERATIONAL' ? 'Operational Inventory Replenishment' : mode === 'hq_aggregate' ? 'HQ Aggregate Replenishment' : 'Auto-Generate Order Replenishment'}</h2>
+              <p className="text-xs text-zinc-500">{inventoryClassLock === 'OPERATIONAL' ? 'Operational items only. This run cannot include Sellable Inventory.' : mode === 'hq_aggregate' ? 'Branch-level forecasts aggregated into one HQ sourcing requirement' : 'Deterministic multi-criteria forecasting & network donor allocation'}</p>
             </div>
           </div>
           {step !== 'processing' && (
@@ -1222,7 +1226,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                     className="w-full px-3 py-2 bg-zinc-50 border rounded-lg text-sm"
                   >
                     <option value="">Select product...</option>
-                    {allProducts.map(p => (
+                    {getFilteredProducts().map(p => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
                   </select>

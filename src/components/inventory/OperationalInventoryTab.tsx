@@ -550,7 +550,7 @@ const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item:
       }
       onClose();
     } catch (error) {
-      toast.error('Failed to save item');
+      toast.error(error instanceof Error ? error.message : 'Failed to save item');
     }
   };
 
