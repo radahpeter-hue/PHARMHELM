@@ -33,6 +33,12 @@ jobs:
         env:
           TENANT_SLUG: ${{ inputs.tenant_slug || 'mp' }}
         run: GOOGLE_OAUTH_ACCESS_TOKEN="$(gcloud auth print-access-token)" node --import tsx scripts/backfill-operational-identities.mjs --slug="$TENANT_SLUG" --actor=github-actions-identity-preview > operational-identity-preview.json
+      - name: Report the reviewed identity plan
+        run: |
+          node - <<'JS'
+          const p = JSON.parse(require('fs').readFileSync('operational-identity-preview.json', 'utf8'));
+          console.log(JSON.stringify({tenantId:p.tenantId,ready:p.ready,conflicts:p.conflicts,excludedDemoIds:p.excludedDemoIds,masters:p.writes.filter(w=>w.collection==='operational_inventory_masters').map(w=>({id:w.id,name:w.fields.name})),locations:p.writes.filter(w=>w.collection==='operational_inventory').map(w=>({id:w.id,masterItemId:w.fields.masterItemId})),writeCount:p.writes.length},null,2));
+          JS
       - uses: actions/upload-artifact@v4
         with:
           name: operational-identity-preview
