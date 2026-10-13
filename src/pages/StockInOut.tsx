@@ -38,6 +38,7 @@ import { inventoryClassForOrderCategory } from '../services/inventoryClassificat
 import { useOperationalInventoryFeature } from '../hooks/useOperationalInventoryFeature';
 import { createOperationalBranchReturn, receiveOperationalTransferLine } from '../services/operationalTransferService';
 import { OpeningStockTab } from '../components/inventory/OpeningStockTab';
+import { isScopeAllowedForOrderCategory, scopesForOrderCategory } from '../services/operationalOrderScopes';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -445,6 +446,10 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     }
   }, [operationalInventoryEnabled, category]);
 
+  useEffect(() => {
+    setProductScopes(current => scopesForOrderCategory(category, current));
+  }, [category]);
+
   // Enforce segregation: clear lines when category swings
   const handleCategoryChange = (val: 'sellable_non_cosmetic' | 'sellable_cosmetic' | 'non_sellable') => {
     if (val === 'non_sellable' && !operationalInventoryEnabled) return;
@@ -796,19 +801,23 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
                   ['cosmetic therapeutics', 'Cosmetic Therapeutics'],
                   ...(operationalInventoryEnabled ? [['operational_inventory', 'Operational / Non-Sellable Inventory']] : [])
                 ].map(([value, label]) => (
-                  <label key={value} className="flex items-center gap-2 text-xs font-semibold text-zinc-700 cursor-pointer">
+                  <label key={value} className={`flex items-center gap-2 text-xs font-semibold ${isScopeAllowedForOrderCategory(category, value) ? 'text-zinc-700 cursor-pointer' : 'text-zinc-400 cursor-not-allowed'}`}>
                     <input
                       type="checkbox"
                       checked={productScopes.includes(value)}
-                      onChange={() => setProductScopes(current =>
-                        current.includes(value) ? current.filter(scope => scope !== value) : [...current, value]
-                      )}
+                      disabled={!isScopeAllowedForOrderCategory(category, value)}
+                      onChange={() => setProductScopes(current => {
+                        if (!isScopeAllowedForOrderCategory(category, value)) return scopesForOrderCategory(category, current);
+                        const next = current.includes(value) ? current.filter(scope => scope !== value) : [...current, value];
+                        return category === 'non_sellable' ? ['operational_inventory'] : next.filter(scope => scope !== 'operational_inventory');
+                      })}
                       className="rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500"
                     />
                     {label}
                   </label>
                 ))}
               </div>
+              {category === 'non_sellable' && <p className="text-[11px] text-sky-700">Operational orders use only Operational items. Sellable scopes are locked for this order.</p>}
             </div>
 
             {/* Step 3: Order Method */}
@@ -849,6 +858,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
             initialCoverageDays={coveragePeriod === '1_month' ? 30 : coveragePeriod === '2_months' ? 60 : coveragePeriod === '3_months' ? 90 : customCoverageDays}
             initialProductScopes={productScopes}
             initialCategory={category}
+            inventoryClassLock={category === 'non_sellable' ? 'OPERATIONAL' : 'SELLABLE'}
           />
 
           {orderType === 'emergency' && (

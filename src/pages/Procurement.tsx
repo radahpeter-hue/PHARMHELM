@@ -1477,12 +1477,13 @@ const WholeOrderSourcingModal: React.FC<{
                 <tbody className="divide-y divide-zinc-100 text-sm">
                   {lines.map(line => {
                     const operationalLine = isOperationalOrder || isOperationalInventoryRecord(line) || line.isOperational === true;
+                    const canUseHqOperationalStock = order.requesting_branch_id !== 'HQ';
                     const operationalItem = operationalLine ? getOperationalHqItem(line) : undefined;
                     const hqStock = operationalLine ? Number(operationalItem?.quantityInStock || 0) : getProductHqStock(line.product_id);
                     const maxOperationalPacks = operationalLine ? Math.min(Number(line.qty_ordered || 0), getOperationalPacksAvailable(line)) : 0;
                     const requestedOperationalPacks = Math.min(Number(operationalFulfillPacks[line.id] || maxOperationalPacks), maxOperationalPacks);
                     const canFulfill = operationalLine
-                      ? operationalInventoryEnabled && Boolean(operationalItem?.masterItemId) && requestedOperationalPacks > 0
+                      ? canUseHqOperationalStock && operationalInventoryEnabled && Boolean(operationalItem?.masterItemId) && requestedOperationalPacks > 0
                       : hqStock !== null && hqStock >= line.qty_ordered;
                     return (
                       <tr key={line.id} className="hover:bg-zinc-50/50 transition-colors">
@@ -1494,7 +1495,7 @@ const WholeOrderSourcingModal: React.FC<{
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          {operationalLine && maxOperationalPacks > 0 && <input
+                          {operationalLine && canUseHqOperationalStock && maxOperationalPacks > 0 && <input
                             aria-label={`Operational packs to fulfill for ${line.product_name}`}
                             type="number" min="1" max={maxOperationalPacks} step="1"
                             value={operationalFulfillPacks[line.id] ?? maxOperationalPacks}
@@ -1512,7 +1513,7 @@ const WholeOrderSourcingModal: React.FC<{
                                 : "bg-zinc-100 text-zinc-400 cursor-not-allowed"
                             )}
                           >
-                            {operationalLine ? 'Fulfill from Operational Store' : 'Assign to Store'}
+                            {operationalLine ? (canUseHqOperationalStock ? 'Fulfill from Operational Store' : 'HQ replenishment uses suppliers') : 'Assign to Store'}
                           </button>
                         </td>
                       </tr>
@@ -5526,8 +5527,7 @@ const HQStockInOutTab: React.FC = () => {
                       {[
                         ['drug/medicine', 'Drug / Medicine'], ['cosmetic', 'Cosmetic'],
                         ['consumable', 'Consumable'], ['device', 'Device'],
-                        ['cosmetic therapeutics', 'Cosmetic Therapeutics'],
-                        ['operational_inventory', 'Operational / Non-Sellable']
+                        ['cosmetic therapeutics', 'Cosmetic Therapeutics']
                       ].map(([value, label]) => (
                         <label key={value} className="flex items-center gap-2 text-[10px] font-bold text-zinc-700">
                           <input type="checkbox" checked={hqProductScopes.includes(value)} onChange={() => setHqProductScopes(current => current.includes(value) ? current.filter(scope => scope !== value) : [...current, value])} />
@@ -5550,6 +5550,7 @@ const HQStockInOutTab: React.FC = () => {
               initialCoverageDays={hqCoverageDays}
               initialProductScopes={hqProductScopes}
               initialCategory="sellable_non_cosmetic"
+              inventoryClassLock="SELLABLE"
               mode="hq_aggregate"
               fixedBranchId="HQ"
             />

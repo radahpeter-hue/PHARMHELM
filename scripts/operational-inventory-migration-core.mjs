@@ -37,10 +37,24 @@ export function planOperationalInventoryMigration({ tenantId, items, masters, mo
     const key = item.masterItemId || (item.uniqueId ? `uid:${String(item.uniqueId).trim().toLowerCase()}` : `doc:${item.id}`);
     groups.set(key, [...(groups.get(key) || []), item]);
   }
+  const identityGroups = new Map();
+  for (const [key, group] of groups) {
+    const item = group[0];
+    const identity = [item.name, item.category, item.type, item.operationalType, item.unitPerPack || 1, item.unitOfIssue || '']
+      .map(value => String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ')).join('|');
+    identityGroups.set(identity, [...(identityGroups.get(identity) || []), key]);
+  }
   const itemMaster = new Map();
   for (const [key, group] of groups) {
-    const identities = new Set(group.map(item => `${item.name.trim().toLowerCase()}|${item.operationalType}|${item.unitPerPack || 1}|${item.unitOfIssue || ''}`));
+    const identities = new Set(group.map(item => `${item.name.trim().toLowerCase()}|${item.category || ''}|${item.type}|${item.operationalType}|${item.unitPerPack || 1}|${item.unitOfIssue || ''}`));
     const hq = group.filter(item => item.branchId === 'HQ');
+    const templateIdentity = [group[0].name, group[0].category, group[0].type, group[0].operationalType, group[0].unitPerPack || 1, group[0].unitOfIssue || '']
+      .map(value => String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ')).join('|');
+    const duplicateGroups = identityGroups.get(templateIdentity) || [];
+    if (duplicateGroups.length > 1) {
+      issue('operational_identity', key, `Potential duplicate across tenant-wide item identities (${duplicateGroups.join(', ')}). Link the location records to one reviewed master; migration will not merge them automatically.`);
+      continue;
+    }
     if (identities.size !== 1 || hq.length > 1) {
       issue('operational_identity', key, 'Location copies conflict on identity or contain multiple HQ records.');
       continue;

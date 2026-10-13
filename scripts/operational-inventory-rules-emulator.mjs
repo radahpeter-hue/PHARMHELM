@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, setDoc, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, setDoc, writeBatch } from 'firebase/firestore';
 
 const projectId = 'pharmhelm-operational-inventory-v2-rules';
 const tenantId = 'tenant-a';
@@ -51,7 +51,11 @@ try {
         tenantId, role: 'Procurement Head', assigned_branches: [], status: 'active', active: true
       }),
       setDoc(doc(db, 'operational_inventory_masters', 'op-master'), {
-        tenantId, inventoryClass: 'OPERATIONAL', operationalType: 'CONSUMABLE_OPERATIONAL', type: 'non-fixed'
+        tenantId, inventoryClass: 'OPERATIONAL', operationalType: 'CONSUMABLE_OPERATIONAL', type: 'non-fixed', hqLocationItemId: 'op-item-hq'
+      }),
+      setDoc(doc(db, 'operational_inventory', 'op-item-hq'), {
+        tenantId, branchId: 'HQ', masterItemId: 'op-master', inventoryClass: 'OPERATIONAL',
+        operationalType: 'CONSUMABLE_OPERATIONAL', type: 'non-fixed', name: 'Paper', quantityInStock: 10
       }),
       setDoc(doc(db, 'operational_inventory', 'op-item-a'), {
         tenantId, branchId: branchA, masterItemId: 'op-master', inventoryClass: 'OPERATIONAL',
@@ -71,6 +75,15 @@ try {
     tenantId, branchId: branchA, masterItemId: 'op-master', inventoryClass: 'OPERATIONAL',
     operationalType: 'CONSUMABLE_OPERATIONAL', type: 'non-fixed', name: 'Notebooks', quantityInStock: 0
   }));
+  // The live master-registration service uses a Firestore transaction, which
+  // point-reads deterministic item/master/movement IDs before creating them.
+  // Missing point-reads must be allowed for authenticated users while the
+  // subsequent creates remain fully tenant-, branch- and class-validated.
+  await assertSucceeds(getDoc(doc(branchManager, 'operational_inventory', 'missing-item')));
+  await assertSucceeds(getDoc(doc(branchManager, 'operational_inventory_masters', 'missing-master')));
+  await assertSucceeds(getDoc(doc(branchManager, 'operational_inventory_movements', 'missing-movement')));
+  const unauthenticated = testEnv.unauthenticatedContext().firestore();
+  await assertFails(getDoc(doc(unauthenticated, 'operational_inventory', 'missing-item')));
   await assertFails(setDoc(doc(branchManager, 'operational_inventory', 'op-item-wrong-branch'), {
     tenantId, branchId: branchB, masterItemId: 'op-master', inventoryClass: 'OPERATIONAL',
     operationalType: 'CONSUMABLE_OPERATIONAL', type: 'non-fixed', name: 'Notebooks', quantityInStock: 0
@@ -81,6 +94,28 @@ try {
   await assertFails(setDoc(doc(branchManager, 'operational_inventory_masters', 'sellable-in-operational'), {
     tenantId, inventoryClass: 'SELLABLE', operationalType: 'CONSUMABLE_OPERATIONAL', type: 'non-fixed'
   }));
+
+  // The HQ buffer-order transaction first reads both deterministic target IDs.
+  // Only Procurement may preflight these missing Operational IDs, and the feature
+  // toggle must remain enabled. The subsequent atomic order+line create is class-
+  // and master-validated by getAfter and the Operational HQ item/master records.
+  const bufferOrderId = 'op_hq_buffer_retry_01';
+  const bufferLineId = 'op_hq_buffer_line_retry_01';
+  await assertSucceeds(getDoc(doc(procurement, 'stock_orders', bufferOrderId)));
+  await assertSucceeds(getDoc(doc(procurement, 'stock_order_lines', bufferLineId)));
+  await assertFails(getDoc(doc(branchManager, 'stock_orders', 'op_hq_buffer_branch_manager')));
+  const bufferBatch = writeBatch(procurement);
+  bufferBatch.set(doc(procurement, 'stock_orders', bufferOrderId), {
+    ...stockOrder(bufferOrderId, 'non_sellable', 'OPERATIONAL', 'HQ'),
+    requesting_branch_name: 'HQ Operational Store', status: 'submitted'
+  });
+  bufferBatch.set(doc(procurement, 'stock_order_lines', bufferLineId), {
+    ...operationalLine(bufferLineId, bufferOrderId, 'op-item-hq'),
+    isOperational: true, qty_ordered: 2, qty_received: 0, unit_cost_ugx: 1000, line_total_ugx: 2000
+  });
+  await assertSucceeds(bufferBatch.commit());
+  const tenantBProcurement = testEnv.authenticatedContext('procurement-b', { tenantId: 'tenant-b', role: 'Procurement Head' }).firestore();
+  await assertFails(getDoc(doc(tenantBProcurement, 'stock_orders', bufferOrderId)));
 
   await assertSucceeds(setDoc(doc(branchManager, 'stock_orders', 'op-order'),
     stockOrder('op-order', 'non_sellable', 'OPERATIONAL')));
@@ -128,6 +163,8 @@ try {
   }));
   await assertFails(setDoc(doc(branchManager, 'stock_orders', 'op-order-disabled'),
     stockOrder('op-order-disabled', 'non_sellable', 'OPERATIONAL')));
+  await assertFails(getDoc(doc(procurement, 'stock_orders', 'op_hq_buffer_toggle_off')));
+  await assertFails(getDoc(doc(procurement, 'stock_order_lines', 'op_hq_buffer_line_toggle_off')));
   await testEnv.withSecurityRulesDisabled(context => setDoc(doc(context.firestore(), 'system_settings', tenantId), {
     tenantId, featureToggles: { enableOperationalInventory: true }
   }));
@@ -153,7 +190,7 @@ try {
   });
   await assertFails(usageBatch.commit());
 
-  console.log('[operational-inventory-rules] PASS: order, GRN, transfer, master, store and usage writes stay class- and branch-scoped.');
+  console.log('[operational-inventory-rules] PASS: buffer-order preflight/create, order, GRN, transfer, master, store and usage writes stay class-, tenant- and branch-scoped.');
 } finally {
   await testEnv.cleanup();
 }
