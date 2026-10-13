@@ -1942,6 +1942,16 @@ service cloud.firestore {
       function parentOrderPath() {
         return /databases/$(database)/documents/stock_orders/$(request.resource.data.order_id);
       }
+      function hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath) {
+        return request.resource.data.masterItemId is string
+          && request.resource.data.masterItemId == get(operationalItemPath).data.get('masterItemId', '')
+          && exists(operationalMasterPath)
+          && get(operationalMasterPath).data.tenantId == request.resource.data.tenantId
+          && get(operationalMasterPath).data.inventoryClass == 'OPERATIONAL'
+          && (getAfter(orderPath).data.requesting_branch_id != 'HQ'
+            || (get(operationalItemPath).data.branchId == 'HQ'
+              && get(operationalMasterPath).data.hqLocationItemId == request.resource.data.product_id));
+      }
       function hasValidLineClass(requireExplicitClass) {
         let orderPath = parentOrderPath();
         let operationalItemPath = /databases/$(database)/documents/operational_inventory/$(request.resource.data.product_id);
@@ -1949,33 +1959,26 @@ service cloud.firestore {
         let sellableItemPath = /databases/$(database)/documents/products/$(request.resource.data.product_id);
         return existsAfter(orderPath)
           && getAfter(orderPath).data.tenantId == request.resource.data.tenantId
-          && ((isOperationalOrderData(getAfter(orderPath).data)
+          && (
+            (
+              isOperationalOrderData(getAfter(orderPath).data)
               && isOperationalInventoryEnabled(request.resource.data.tenantId)
               && (!requireExplicitClass || request.resource.data.inventoryClass == 'OPERATIONAL')
               && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'OPERATIONAL')
               && exists(operationalItemPath)
               && get(operationalItemPath).data.tenantId == request.resource.data.tenantId
-              && (!requireExplicitClass || (request.resource.data.masterItemId is string
-                && request.resource.data.masterItemId == get(operationalItemPath).data.get('masterItemId', '')
-                && exists(operationalMasterPath)
-                && get(operationalMasterPath).data.tenantId == request.resource.data.tenantId
-                && get(operationalMasterPath).data.inventoryClass == 'OPERATIONAL'
-                && (getAfter(orderPath).data.requesting_branch_id != 'HQ'
-                  || (get(operationalItemPath).data.branchId == 'HQ'
-                    && get(operationalMasterPath).data.hqLocationItemId == request.resource.data.product_id))))
+              && (!requireExplicitClass || hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath))
               && (!('masterItemId' in request.resource.data)
-                || (request.resource.data.masterItemId == get(operationalItemPath).data.get('masterItemId', '')
-                  && exists(operationalMasterPath)
-                  && get(operationalMasterPath).data.tenantId == request.resource.data.tenantId
-                  && get(operationalMasterPath).data.inventoryClass == 'OPERATIONAL'
-                  && (getAfter(orderPath).data.requesting_branch_id != 'HQ'
-                    || (get(operationalItemPath).data.branchId == 'HQ'
-                      && get(operationalMasterPath).data.hqLocationItemId == request.resource.data.product_id))))
-            || (!isOperationalOrderData(getAfter(orderPath).data)
+                || hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath))
+            )
+            || (
+              !isOperationalOrderData(getAfter(orderPath).data)
               && (!requireExplicitClass || request.resource.data.inventoryClass == 'SELLABLE')
               && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'SELLABLE')
               && exists(sellableItemPath)
-              && get(sellableItemPath).data.tenantId == request.resource.data.tenantId));
+              && get(sellableItemPath).data.tenantId == request.resource.data.tenantId
+            )
+          );
       }
       allow get: if isAuthenticated()
         && ((resource == null && isProcurement()
