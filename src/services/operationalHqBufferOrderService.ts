@@ -1,10 +1,11 @@
+import type { Firestore } from 'firebase/firestore';
 import { doc, runTransaction } from 'firebase/firestore';
 import { db } from '../firebase';
 import { OperationalInventory, OperationalInventoryMaster } from '../types';
 import { buildOperationalHqBufferOrder, operationalHqBufferOrderIds, OperationalHqBufferOrderInput } from './operationalHqBufferOrderPolicy';
 
 /** Creates one validated HQ Operational requisition; requestId is the retry key. */
-export async function submitOperationalHqBufferOrder(input: OperationalHqBufferOrderInput): Promise<{ alreadySubmitted: boolean; orderId: string }> {
+export async function submitOperationalHqBufferOrder(input: OperationalHqBufferOrderInput, connection: Firestore = db): Promise<{ alreadySubmitted: boolean; orderId: string }> {
   const tenantId = input.tenantId.trim();
   const requestId = input.requestId.trim();
   const quantity = Number(input.quantityPacks);
@@ -12,14 +13,14 @@ export async function submitOperationalHqBufferOrder(input: OperationalHqBufferO
     throw new Error('Tenant, user, request identity and positive pack quantity are required.');
   }
   const ids = operationalHqBufferOrderIds(requestId);
-  const orderRef = doc(db, 'stock_orders', ids.orderId);
-  const lineRef = doc(db, 'stock_order_lines', ids.lineId);
-  const itemRef = doc(db, 'operational_inventory', input.itemId);
+  const orderRef = doc(connection, 'stock_orders', ids.orderId);
+  const lineRef = doc(connection, 'stock_order_lines', ids.lineId);
+  const itemRef = doc(connection, 'operational_inventory', input.itemId);
   const now = new Date().toISOString();
 
-  const alreadySubmitted = await runTransaction(db, async transaction => {
+  const alreadySubmitted = await runTransaction(connection, async transaction => {
     const [settingsSnapshot, itemSnapshot, orderSnapshot, lineSnapshot] = await Promise.all([
-      transaction.get(doc(db, 'system_settings', tenantId)), transaction.get(itemRef),
+      transaction.get(doc(connection, 'system_settings', tenantId)), transaction.get(itemRef),
       transaction.get(orderRef), transaction.get(lineRef)
     ]);
     const settings = settingsSnapshot.data();
@@ -32,7 +33,7 @@ export async function submitOperationalHqBufferOrder(input: OperationalHqBufferO
         item.operationalType !== 'CONSUMABLE_OPERATIONAL') {
       throw new Error('Buffer orders require an HQ Operational consumable linked to a tenant Operational master.');
     }
-    const masterRef = doc(db, 'operational_inventory_masters', item.masterItemId);
+    const masterRef = doc(connection, 'operational_inventory_masters', item.masterItemId);
     const masterSnapshot = await transaction.get(masterRef);
     const master = masterSnapshot.data() as OperationalInventoryMaster | undefined;
     if (!masterSnapshot.exists() || master?.tenantId !== tenantId || master.inventoryClass !== 'OPERATIONAL' ||

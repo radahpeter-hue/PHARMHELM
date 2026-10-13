@@ -19,7 +19,7 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const OperationalInventoryTab: React.FC = () => {
-  const { profile, activeBranchId } = useAuth();
+  const { profile, activeBranchId, hasPermission } = useAuth();
   const [activeSubTab, setActiveSubTab] = useState<'registry' | 'usage'>('registry');
   const [inventory, setInventory] = useState<OperationalInventory[]>([]);
   const [usageLogs, setUsageLogs] = useState<OperationalInventoryUsage[]>([]);
@@ -31,6 +31,7 @@ const OperationalInventoryTab: React.FC = () => {
   const [selectedItemForDetails, setSelectedItemForDetails] = useState<OperationalInventory | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
+  const canOperate = hasPermission('inventory', 'operate');
   const isCEO = hasAnyRole(profile, ['CEO', 'CEO / MD', 'owner']);
 
   useEffect(() => {
@@ -105,7 +106,7 @@ const OperationalInventoryTab: React.FC = () => {
           </button>
         </div>
         <div className="flex gap-3">
-          {activeSubTab === 'registry' ? (
+          {canOperate && (activeSubTab === 'registry' ? (
             <button 
               onClick={() => {
                 setEditingItem(null);
@@ -124,10 +125,11 @@ const OperationalInventoryTab: React.FC = () => {
               <Plus size={16} />
               Log Usage
             </button>
-          )}
+          ))}
         </div>
       </div>
 
+      {activeSubTab === 'registry' && <OperationalMasterCatalogue locationId={activeBranchId || profile?.branchId || ''} items={inventory} />}
       {activeSubTab === 'registry' ? (
         <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
           <div className="p-4 border-b border-zinc-100">
@@ -183,8 +185,8 @@ const OperationalInventoryTab: React.FC = () => {
                       {item.supplier || 'N/A'}
                     </td>
                     <td className="px-6 py-4 text-right" onClick={e => e.stopPropagation()}>
-                      <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button 
+                      <div className="flex items-center justify-end gap-2 opacity-100 transition-opacity">
+                        <button disabled={!canOperate}
                           onClick={() => {
                             setEditingItem(item);
                             setIsModalOpen(true);
@@ -193,7 +195,7 @@ const OperationalInventoryTab: React.FC = () => {
                         >
                           <Edit2 size={16} />
                         </button>
-                        <button 
+                        <button disabled={!isCEO}
                           onClick={() => handleDelete(item.id)}
                           className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
                         >
@@ -441,7 +443,7 @@ const DetailsModal: React.FC<{
 };
 
 // Sub-modals for Operational Inventory
-const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item: OperationalInventory | null }> = ({ isOpen, onClose, item }) => {
+export const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item: OperationalInventory | null; initialMaster?: OperationalInventoryMaster; locationId?: string }> = ({ isOpen, onClose, item, initialMaster, locationId }) => {
   const { profile, activeBranchId } = useAuth();
   const [masters, setMasters] = useState<OperationalInventoryMaster[]>([]);
   const [linkExisting, setLinkExisting] = useState(false);
@@ -476,9 +478,10 @@ const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item:
       unitOfIssue: '', supplier: '', quantityInStock: 0, uniqueId: '', description: '',
       condition: 'New', status: 'In Use', ...item
     });
-    setSelectedMasterId(item?.masterItemId || '');
-    setLinkExisting(Boolean(item?.masterItemId));
-  }, [isOpen, item]);
+    setSelectedMasterId(item?.masterItemId || initialMaster?.id || '');
+    setLinkExisting(Boolean(item?.masterItemId || initialMaster));
+    if (initialMaster) setFormData(current => ({ ...current, name: initialMaster.name, type: initialMaster.type, category: initialMaster.category || '', unitPerPack: initialMaster.unitPerPack, unitOfIssue: initialMaster.unitOfIssue, uniqueId: initialMaster.uniqueId, supplier: initialMaster.supplier || '', description: initialMaster.description || '', inventoryClass: 'OPERATIONAL', operationalType: initialMaster.operationalType, quantityInStock: 0, costPerPack: 0 }));
+  }, [isOpen, item, initialMaster]);
 
   const selectMaster = (masterId: string) => {
     setSelectedMasterId(masterId);
@@ -504,7 +507,7 @@ const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item:
     if (!profile?.tenantId) return;
 
     try {
-      const branchId = activeBranchId || profile.branchId;
+      const branchId = locationId || activeBranchId || profile.branchId;
       if (!branchId) throw new Error('Select a branch or HQ location before registering the item.');
       const data = { 
         ...formData, 
@@ -522,7 +525,7 @@ const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item:
       }
 
       // Enforce quantity = 1 for fixed assets
-      if (data.type === 'fixed') {
+      if (data.type === 'fixed' && !linkExisting) {
         data.quantityInStock = 1;
       }
 
@@ -556,7 +559,7 @@ const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void; item:
 
   const nonFixedCategories = ['Stationery', 'Packaging', 'Cleaning & Hygiene', 'Kitchen & Canteen', 'Other'];
   const fixedCategories = ['Furniture & Fittings', 'IT Equipment', 'Office Equipment', 'Kitchen Equipment', 'Security Equipment', 'Medical Equipment', 'Other'];
-  const identityLocked = Boolean((!item && linkExisting) || (item?.masterItemId && item.masterItemId !== item.id) || (item && !item.masterItemId && linkExisting));
+  const identityLocked = Boolean((!item && linkExisting) || item?.masterItemId || (item && !item.masterItemId && linkExisting));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/40 backdrop-blur-sm">
@@ -842,3 +845,24 @@ const UsageLogModal: React.FC<{ isOpen: boolean; onClose: () => void; inventory:
 };
 
 export default OperationalInventoryTab;
+
+/** Item identities are shared; balances remain in the selected location registry. */
+export const OperationalMasterCatalogue: React.FC<{ locationId: string; items: OperationalInventory[] }> = ({ locationId, items }) => {
+  const { profile, hasPermission } = useAuth();
+  const [masters, setMasters] = useState<OperationalInventoryMaster[]>([]);
+  const [selected, setSelected] = useState<OperationalInventoryMaster | null>(null);
+  useEffect(() => {
+    if (!profile?.tenantId) return;
+    return firestoreService.subscribeToCollection<OperationalInventoryMaster>('operational_inventory_masters', profile.tenantId, setMasters);
+  }, [profile?.tenantId]);
+  const available = masters.filter(master => master.inventoryClass === 'OPERATIONAL' && !items.some(item => item.masterItemId === master.id));
+  return <section className="rounded-3xl border border-zinc-200 bg-white p-5">
+    <h3 className="font-black text-zinc-900">Item Catalogue</h3>
+    <p className="mt-1 text-xs text-zinc-500">Register an existing item at this location.</p>
+    <div className="mt-3 space-y-2">{available.map(master => <div key={master.id} className="flex items-center justify-between gap-3 border-b border-zinc-100 py-2">
+      <span className="text-sm font-bold">{master.name}<span className="ml-2 text-xs font-normal text-zinc-500">{master.unitOfIssue}</span></span>
+      <button disabled={!hasPermission('inventory', 'operate')} onClick={() => setSelected(master)} className="rounded-lg bg-sky-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">{locationId === 'HQ' ? 'Register at HQ' : 'Register Here'}</button>
+    </div>)}{available.length === 0 && <p className="text-xs text-zinc-500">No additional items in the catalogue.</p>}</div>
+    {selected && <InventoryItemModal isOpen onClose={() => setSelected(null)} item={null} initialMaster={selected} locationId={locationId} />}
+  </section>;
+};

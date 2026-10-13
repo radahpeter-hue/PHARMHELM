@@ -148,8 +148,8 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
       const fetchProds = async () => {
         const [prodSnap, operationalSnap, usageSnap] = await Promise.all([
           getDocs(query(collection(db, 'products'), where('tenantId', '==', profile.tenantId))),
-          getDocs(query(collection(db, 'operational_inventory'), where('tenantId', '==', profile.tenantId))),
-          getDocs(query(collection(db, 'operational_inventory_usage'), where('tenantId', '==', profile.tenantId)))
+          getDocs(query(collection(db, 'operational_inventory'), where('tenantId', '==', profile.tenantId), ...(mode === 'hq_aggregate' ? [] : [where('branchId', '==', selectedBranchId || fixedBranchId || activeBranchId || '')]))),
+          getDocs(query(collection(db, 'operational_inventory_usage'), where('tenantId', '==', profile.tenantId), ...(mode === 'hq_aggregate' ? [] : [where('branchId', '==', selectedBranchId || fixedBranchId || activeBranchId || '')])))
         ]);
         const prods = prodSnap.docs.map(d => ({ id: d.id, ...d.data() } as Product));
         setAllProducts(prods);
@@ -160,9 +160,9 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
         );
         setOperationalUsage(usageSnap.docs.map(d => ({ id: d.id, ...d.data() } as OperationalInventoryUsage)));
       };
-      fetchProds();
+      fetchProds().catch(error => toast.error(error instanceof Error ? error.message : 'Could not load order items.'));
     }
-  }, [profile?.tenantId, isOpen]);
+  }, [profile?.tenantId, isOpen, selectedBranchId, fixedBranchId, activeBranchId, mode]);
 
   if (!isOpen) return null;
 
@@ -171,6 +171,13 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
     const activeProducts = allProducts.filter(p => p.status !== 'inactive');
     return activeProducts.filter(p => productScopes.includes(p.category));
   };
+
+  const getManualOrderItems = () => inventoryClassLock === 'OPERATIONAL'
+    ? operationalInventory.filter(item => item.branchId === selectedBranchId && item.masterItemId && item.type === 'non-fixed')
+      .map(item => ({ id: item.id, name: item.name, sku: item.uniqueId || '', genericName: 'Operational Inventory',
+        dosageForm: '', unitsPerPack: item.unitPerPack, unitOfSell: item.unitOfIssue,
+        costPricePerPack: item.costPerPack || 0, supplierId: item.supplier || '', masterItemId: item.masterItemId }))
+    : getFilteredProducts().map(product => ({ ...product, masterItemId: undefined }));
 
   // Step 5: Run optimal calculations
   const runGenerationEngine = async () => {
@@ -218,7 +225,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
       // Filter products based on selected scope
       const targetProducts = getFilteredProducts();
       const includeOperational = productScopes.includes('operational_inventory');
-      const operationalCandidates = operationalInventory.filter(item => item.type === 'non-fixed');
+      const operationalCandidates = operationalInventory.filter(item => item.type === 'non-fixed' && item.masterItemId);
       const aggregateOperationalItems = Array.from(operationalCandidates.reduce((groups, item) => {
         const key = item.uniqueId || item.name.trim().toLowerCase();
         const current = groups.get(key);
@@ -576,7 +583,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
       toast.error('Select a product to add.');
       return;
     }
-    const product = getFilteredProducts().find(p => p.id === selectedProductId);
+    const product = getManualOrderItems().find(p => p.id === selectedProductId);
     if (!product) return;
 
     if (lines.find(l => l.productId === selectedProductId)) {
@@ -589,6 +596,8 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
       tenantId: profile?.tenantId || 'demo',
       runId,
       productId: product.id,
+      inventoryClass: inventoryClassLock === 'OPERATIONAL' ? 'OPERATIONAL' : 'SELLABLE',
+      ...(product.masterItemId ? { masterItemId: product.masterItemId } : {}),
       productName: product.name,
       sku: product.sku || '',
       genericName: product.genericName || '',
@@ -1226,7 +1235,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                     className="w-full px-3 py-2 bg-zinc-50 border rounded-lg text-sm"
                   >
                     <option value="">Select product...</option>
-                    {getFilteredProducts().map(p => (
+                    {getManualOrderItems().map(p => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
                   </select>

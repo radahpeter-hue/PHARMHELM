@@ -371,9 +371,10 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   useEffect(() => {
     if (profile?.tenantId) {
       const unsubProducts = firestoreService.subscribeToCollection<Product>('products', profile.tenantId, setProducts);
-      const unsubOps = firestoreService.subscribeToCollection<OperationalInventory>(
+      const unsubOps = firestoreService.subscribeToCollectionByQuery<OperationalInventory>(
         'operational_inventory',
         profile.tenantId,
+        [where('branchId', '==', activeBranchId || profile.branchId || '')],
         data => setOperationalInventory(data.filter(item => !isLegacyOperationalInventorySeed(item)))
       );
       return () => {
@@ -381,7 +382,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         unsubOps();
       };
     }
-  }, [profile?.tenantId]);
+  }, [profile?.tenantId, activeBranchId, profile?.branchId]);
 
   // Subscribe to draft orders for active branch
   useEffect(() => {
@@ -2213,7 +2214,7 @@ const OperationalBranchReturnForm: React.FC = () => {
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     if (!enabled || !profile?.tenantId || !activeBranchId || activeBranchId === 'HQ') { setItems([]); return; }
-    return firestoreService.subscribeToCollection<OperationalInventory>('operational_inventory', profile.tenantId, rows => setItems(rows.filter(row => row.branchId === activeBranchId && row.inventoryClass === 'OPERATIONAL' && row.masterItemId)));
+    return firestoreService.subscribeToCollectionByQuery<OperationalInventory>('operational_inventory', profile.tenantId, [where('branchId', '==', activeBranchId)], rows => setItems(rows.filter(row => row.branchId === activeBranchId && row.inventoryClass === 'OPERATIONAL' && row.masterItemId)));
   }, [enabled, profile?.tenantId, activeBranchId]);
   if (!enabled || !activeBranchId || activeBranchId === 'HQ') return null;
   const submit = async (event: React.FormEvent) => {
@@ -2279,7 +2280,8 @@ const OperationalBranchReceiptQueue: React.FC = () => {
     try {
       const transferLines = await firestoreService.getDocumentsByQuery<OperationalTransferLine>('operational_transfer_lines', [
         { field: 'tenantId', operator: '==', value: profile.tenantId },
-        { field: 'transferId', operator: '==', value: transfer.id }
+        { field: 'transferId', operator: '==', value: transfer.id },
+        { field: 'destinationBranchId', operator: '==', value: activeBranchId }
       ]);
       if (!transferLines.length) throw new Error('No Operational transfer lines were found. Receipt is blocked.');
       setLines(transferLines);

@@ -20,7 +20,7 @@ test('Operational GRN finance handoff is atomic, deterministic and separate from
   assert.match(service, /financial_posting_status: 'event_created'/);
   assert.match(service, /planOperationalGrnFinanceEvents\(receivedLines/);
   assert.match(service, /sourceType: 'OPERATIONAL_GRN'/);
-  assert.match(service, /return runTransaction\(db, async transaction/);
+  assert.match(service, /return runTransaction\(connection, async transaction/);
   assert.match(service, /financeEventSnapshots\[index\]\.exists\(\)/);
   assert.doesNotMatch(service, /collection\(db, 'finance_ledger'\)/);
   const inventoryUi = readFileSync(new URL('../src/components/inventory/OperationalInventoryTab.tsx', import.meta.url), 'utf8');

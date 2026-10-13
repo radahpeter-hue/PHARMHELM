@@ -92,7 +92,7 @@ test('Operational HQ Store is a separate, settings-gated Procurement tab with it
   assert.match(store, /operational_inventory_movements/);
   assert.match(store, /locationId === 'HQ_OPERATIONAL'/);
   assert.match(store, /postOperationalStoreMovement/);
-  assert.match(movementService, /runTransaction\(db/);
+  assert.match(movementService, /runTransaction\(connection/);
   assert.match(movementService, /alreadyProcessed: true/);
   assert.match(movementService, /existing\.quantityDelta !== input\.quantityDelta/);
   assert.match(rules, /match \/operational_inventory_movements\/\{movementId\}/);
@@ -107,7 +107,7 @@ test('Operational location records link to a tenant master and order lines carry
   const inventory = readFileSync(new URL('../src/components/inventory/OperationalInventoryTab.tsx', import.meta.url), 'utf8');
   const stockInOut = readFileSync(new URL('../src/pages/StockInOut.tsx', import.meta.url), 'utf8');
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
-  assert.match(masterService, /runTransaction\(db/);
+  assert.match(masterService, /runTransaction\(connection/);
   assert.match(masterService, /Operational Inventory is disabled in System Settings/);
   assert.match(masterService, /masterItemId/);
   assert.match(inventory, /operational_inventory_masters/);

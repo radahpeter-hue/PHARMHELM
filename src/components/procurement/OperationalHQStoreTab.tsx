@@ -10,6 +10,7 @@ import { postOperationalStoreMovement } from '../../services/operationalInventor
 import { createHqOperationalDistribution, receiveOperationalBranchReturn } from '../../services/operationalTransferService';
 import { submitOperationalHqBufferOrder } from '../../services/operationalHqBufferOrderService';
 import { toast } from 'sonner';
+import { OperationalMasterCatalogue } from '../inventory/OperationalInventoryTab';
 
 const OperationalHQStoreTab: React.FC = () => {
   const { profile, hasPermission } = useAuth();
@@ -123,17 +124,18 @@ const OperationalHQStoreTab: React.FC = () => {
         <Package className="text-sky-700 mt-0.5" size={20} />
         <div>
           <h2 className="font-black text-sky-950">Operational HQ Store</h2>
-          <p className="text-xs text-sky-800 mt-1">Separate from the Sellable HQ Store. Every balance adjustment writes an immutable Operational stock movement and updates the item balance atomically.</p>
+
         </div>
       </div>
 
+      <OperationalMasterCatalogue locationId="HQ" items={items} />
       <OperationalBranchReturnsQueue />
 
       <section className="rounded-3xl border border-sky-200 bg-white p-5 shadow-sm">
-        <div className="flex items-start gap-3 mb-4"><ShoppingCart className="text-sky-700 mt-0.5" size={19} /><div><h3 className="font-black text-zinc-900">Order Operational buffer stock</h3><p className="text-xs text-zinc-500 mt-1">Creates an Operational-only HQ requisition for Procurement. Enter packs to order. Fixed assets are acquired through their asset workflow.</p></div></div>
+        <div className="flex items-start gap-3 mb-4"><ShoppingCart className="text-sky-700 mt-0.5" size={19} /><div><h3 className="font-black text-zinc-900">Order Buffer Stock</h3><p className="text-xs text-zinc-500 mt-1">Request stock replenishment from Procurement.</p></div></div>
         <form onSubmit={submitBufferOrder} className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3">
-          <select required value={bufferItemId} onChange={event => setBufferItemId(event.target.value)} className="rounded-xl border border-zinc-200 px-3 py-2 text-sm"><option value="">Select an HQ Operational consumable</option>{items.filter(item => item.masterItemId && item.operationalType === 'CONSUMABLE_OPERATIONAL').map(item => <option key={item.id} value={item.id}>{item.name} · {item.uniqueId || item.id}</option>)}</select>
-          <input aria-label="Buffer order quantity in packs" type="number" min="0.001" step="any" required value={bufferQuantity} onChange={event => setBufferQuantity(event.target.value)} placeholder="Packs to order" className="rounded-xl border border-zinc-200 px-3 py-2 text-sm" />
+          <select required value={bufferItemId} onChange={event => setBufferItemId(event.target.value)} className="rounded-xl border border-zinc-200 px-3 py-2 text-sm"><option value="">Select an item</option>{items.filter(item => item.masterItemId && item.operationalType === 'CONSUMABLE_OPERATIONAL').map(item => <option key={item.id} value={item.id}>{item.name} · {item.uniqueId || item.id}</option>)}</select>
+          <input aria-label="Buffer order quantity in packs" type="number" min="0.001" step="any" required value={bufferQuantity} onChange={event => setBufferQuantity(event.target.value)} placeholder="Quantity (packs)" className="rounded-xl border border-zinc-200 px-3 py-2 text-sm" />
           <button disabled={!canDistribute || bufferSaving} className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{bufferSaving ? 'Submitting…' : 'Send to Procurement'}</button>
         </form>
       </section>
@@ -142,7 +144,7 @@ const OperationalHQStoreTab: React.FC = () => {
         <section className="xl:col-span-3 bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
           <div className="p-5 border-b border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h3 className="font-black text-zinc-900">Operational stock on hand</h3>
+              <h3 className="font-black text-zinc-900">Stock on Hand</h3>
               <p className="text-xs text-zinc-500 mt-1">{visibleItems.length} Operational items at HQ</p>
             </div>
             <div className="relative w-full sm:w-72">
@@ -174,7 +176,7 @@ const OperationalHQStoreTab: React.FC = () => {
                     <td className="px-5 py-4 text-right font-black text-zinc-900">{Number(item.quantityInStock || 0).toLocaleString()} <span className="text-[10px] text-zinc-500 font-medium">{item.unitOfIssue}</span></td>
                     <td className="px-5 py-4 text-right text-xs text-zinc-600">UGX {(Number(item.costPerPack || 0) / Math.max(1, Number(item.unitPerPack || 1))).toLocaleString()}</td>
                     <td className="px-5 py-4 text-right">
-                      <div className="inline-flex gap-1"><button onClick={() => setSelectedItem(item)} disabled={!canManage || !item.masterItemId} title={!item.masterItemId ? 'Link this legacy item in Inventory first' : undefined} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-zinc-900 text-white disabled:bg-zinc-200 disabled:text-zinc-500">{item.masterItemId ? 'Adjust' : 'Link in Inventory'}</button><button onClick={() => { setDistributionItem(item); setDistributionQuantity(''); setDistributionRequestId(globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`); }} disabled={!canDistribute || !item.masterItemId || Number(item.quantityInStock || 0) <= 0} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-sky-200 text-sky-800 disabled:opacity-40">Transfer</button></div>
+                      <div className="inline-flex gap-1"><button onClick={() => setSelectedItem(item)} disabled={!canManage || !item.masterItemId} title={!item.masterItemId ? 'Link this legacy item in Inventory first' : undefined} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-zinc-900 text-white disabled:bg-zinc-200 disabled:text-zinc-500">{item.masterItemId ? 'Adjust' : 'Link in Inventory'}</button><button onClick={() => { setDistributionItem(item); setDistributionQuantity(''); setDistributionRequestId(globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`); }} disabled={!canDistribute || !item.masterItemId || Number(item.quantityInStock || 0) <= 0} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-sky-200 text-sky-800 disabled:opacity-40">Send to Branch</button></div>
                     </td>
                   </tr>
                 ))}
@@ -243,7 +245,7 @@ const OperationalBranchReturnsQueue: React.FC = () => {
     } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not receive Operational return.'); }
     finally { setBusyId(''); }
   };
-  return <section className="rounded-2xl border border-amber-200 bg-white overflow-hidden"><div className="p-4 bg-amber-50 border-b border-amber-100"><h3 className="font-black text-amber-950">Operational Returns Awaiting HQ Receipt</h3><p className="text-xs text-amber-800 mt-1">Branch stock was reduced at dispatch. HQ stock increases only after receipt confirmation.</p></div><div className="divide-y divide-zinc-100">{returns.map(row => <div key={row.id} className="p-4 flex items-center justify-between gap-3"><div><p className="font-bold text-sm">{row.transferNumber} · {row.sourceBranchId}</p><p className="text-xs text-zinc-500">{row.returnReason || 'Operational return'} · {row.status}</p></div><button onClick={() => void receive(row)} disabled={!canReceive || Boolean(busyId)} className="px-3 py-2 rounded-lg bg-amber-700 text-white text-xs font-bold disabled:opacity-50">{busyId === row.id ? 'Receiving…' : 'Confirm HQ receipt'}</button></div>)}{returns.length === 0 && <p className="p-5 text-sm text-center text-zinc-400">No Operational returns are awaiting HQ receipt.</p>}</div></section>;
+  return <section className="rounded-2xl border border-amber-200 bg-white overflow-hidden"><div className="p-4 bg-amber-50 border-b border-amber-100"><h3 className="font-black text-amber-950">Branch Returns</h3><p className="text-xs text-amber-800 mt-1">Confirm receipt of items returned by branches.</p></div><div className="divide-y divide-zinc-100">{returns.map(row => <div key={row.id} className="p-4 flex items-center justify-between gap-3"><div><p className="font-bold text-sm">{row.transferNumber} · {row.sourceBranchId}</p><p className="text-xs text-zinc-500">{row.returnReason || 'Operational return'} · {row.status}</p></div><button onClick={() => void receive(row)} disabled={!canReceive || Boolean(busyId)} className="px-3 py-2 rounded-lg bg-amber-700 text-white text-xs font-bold disabled:opacity-50">{busyId === row.id ? 'Receiving…' : 'Confirm HQ receipt'}</button></div>)}{returns.length === 0 && <p className="p-5 text-sm text-center text-zinc-400">No pending returns.</p>}</div></section>;
 };
 
 function createMovementKey() {

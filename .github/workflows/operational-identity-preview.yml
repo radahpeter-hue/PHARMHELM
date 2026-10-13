@@ -1,0 +1,41 @@
+name: Operational Identity Preview
+on:
+  push:
+    branches: [fix/operational-live-create-rules, fix/operational-catalogue-hq-repair]
+    paths:
+      - 'scripts/backfill-operational-identities.mjs'
+      - 'src/services/operationalIdentityMigrationPolicy.ts'
+      - '.github/workflows/operational-identity-preview.yml'
+  workflow_dispatch:
+    inputs:
+      tenant_slug:
+        description: 'Tenant slug to preview'
+        required: true
+        default: mp
+permissions:
+  contents: read
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: google-github-actions/auth@v2
+        id: auth
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          token_format: access_token
+      - name: Preview legacy item links without changing tenant data
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          TENANT_SLUG: ${{ inputs.tenant_slug || 'mp' }}
+        run: node --import tsx scripts/backfill-operational-identities.mjs --slug="$TENANT_SLUG" --actor=github-actions-identity-preview > operational-identity-preview.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: operational-identity-preview
+          path: operational-identity-preview.json

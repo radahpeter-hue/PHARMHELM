@@ -529,6 +529,7 @@ export interface OperationalInventory {
 }
 
 export interface OperationalInventoryMaster {
+  identityClaimId?: string;
   id: string;
   tenantId: string;
   inventoryClass: 'OPERATIONAL';

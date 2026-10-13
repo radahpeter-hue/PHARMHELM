@@ -1,3 +1,4 @@
+import type { Firestore } from 'firebase/firestore';
 import { doc, runTransaction } from 'firebase/firestore';
 import { db } from '../firebase';
 import { OperationalInventory, OperationalInventoryMovement } from '../types';
@@ -58,9 +59,9 @@ function assertMovementDirection(type: OperationalStoreMovementType, delta: numb
  * without applying the balance change again.
  */
 export async function postOperationalStoreMovement(
-  input: PostOperationalStoreMovementInput
+  input: PostOperationalStoreMovementInput, connection: Firestore = db
 ): Promise<PostOperationalStoreMovementResult> {
-  return postOperationalLocationMovement(input, 'HQ');
+  return postOperationalLocationMovement(input, 'HQ', connection);
 }
 
 export async function postOperationalBranchMovement(
@@ -73,7 +74,7 @@ export async function postOperationalBranchMovement(
 
 async function postOperationalLocationMovement(
   input: PostOperationalStoreMovementInput,
-  expectedBranchId: string
+  expectedBranchId: string, connection: Firestore = db
 ): Promise<PostOperationalStoreMovementResult> {
   const tenantId = input.tenantId.trim();
   const reference = input.reference.trim();
@@ -92,11 +93,11 @@ async function postOperationalLocationMovement(
   assertMovementDirection(input.movementType, input.quantityDelta);
 
   const movementId = movementDocumentId(input.idempotencyKey);
-  const itemRef = doc(db, 'operational_inventory', input.itemId);
-  const movementRef = doc(db, 'operational_inventory_movements', movementId);
-  const settingsRef = doc(db, 'system_settings', tenantId);
+  const itemRef = doc(connection, 'operational_inventory', input.itemId);
+  const movementRef = doc(connection, 'operational_inventory_movements', movementId);
+  const settingsRef = doc(connection, 'system_settings', tenantId);
 
-  return runTransaction(db, async transaction => {
+  return runTransaction(connection, async transaction => {
     const [itemSnapshot, movementSnapshot, settingsSnapshot] = await Promise.all([
       transaction.get(itemRef),
       transaction.get(movementRef),
@@ -110,7 +111,7 @@ async function postOperationalLocationMovement(
     if (item.inventoryClass && item.inventoryClass !== 'OPERATIONAL') {
       throw new Error('The selected item is not classified as Operational Inventory.');
     }
-    const resolvedMasterRef = doc(db, 'operational_inventory_masters', item.masterItemId || 'missing');
+    const resolvedMasterRef = doc(connection, 'operational_inventory_masters', item.masterItemId || 'missing');
     const resolvedMasterSnapshot = await transaction.get(resolvedMasterRef);
     if (!item.masterItemId || !resolvedMasterSnapshot.exists() || resolvedMasterSnapshot.data().tenantId !== tenantId || resolvedMasterSnapshot.data().inventoryClass !== 'OPERATIONAL') {
       throw new Error('Link this legacy item to a tenant-wide Operational identity before posting stock movements.');
