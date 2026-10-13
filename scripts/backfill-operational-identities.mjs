@@ -37,7 +37,8 @@ if (APPLY) {
   for (let i = 0; i < names.length; i++) for (const row of rows[i]) if (!changed.has(`${names[i]}/${row.id}`)) writes.push({ verify: `${documentsRoot}/${names[i]}/${row.id}`, currentDocument: { updateTime: row.updateTime } });
   writes.push({ verify: settingsRaw.name, currentDocument: { updateTime: settingsRaw.updateTime } });
   writes.push({ update: { name: `${documentsRoot}/operational_inventory_identity_state/${tenantId}`, fields: {
-    tenantId: encode(tenantId), status: encode('READY'), actorId: encode(actorId), completedAt: encode(new Date().toISOString())
+    tenantId: encode(tenantId), status: encode('READY'), actorId: encode(actorId), completedAt: encode(new Date().toISOString()),
+    ...(arg('enabled-before') ? { enabledBeforeBackfill: encode(arg('enabled-before') === 'true'), settingsFrozenVersion: encode(arg('frozen-version') || '') } : {})
   } }, currentDocument: { exists: false } });
   if (writes.length > 450) throw new Error('Atomic backfill exceeds 450 writes. Use a staged reviewed migration; readiness was not changed.');
   await commit(writes);

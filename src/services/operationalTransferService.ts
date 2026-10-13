@@ -1,3 +1,4 @@
+import { operationalReceiptCostPerPack } from './operationalValuationPolicy';
 import { collection, doc, getDoc, getDocs, query, runTransaction, where } from 'firebase/firestore';
 import type { Firestore, WhereFilterOp } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -111,7 +112,7 @@ export async function receiveOperationalBranchReturn(input: { tenantId: string; 
     const before = Number(hqItem.data().quantityInStock || 0);
     const after = before + line.quantityDispatched;
     const now = new Date().toISOString();
-    transaction.update(hqItemRef, { quantityInStock: after, lastMovementId: `opm_${movementKey}`, updatedAt: now });
+    transaction.update(hqItemRef, { quantityInStock: after, costPerPack: operationalReceiptCostPerPack(before, line.quantityDispatched, Number(hqItem.data().costPerPack || 0), line.unitCostUGX, Number(hqItem.data().unitPerPack || 1)), lastMovementId: `opm_${movementKey}`, updatedAt: now });
     transaction.set(movementRef, { tenantId, inventoryClass: 'OPERATIONAL', itemId: hqItemRef.id, masterItemId: line.masterItemId, itemName: line.itemName, locationId: 'HQ_OPERATIONAL', branchId: 'HQ', movementType: 'TRANSFER_IN', quantityDelta: line.quantityDispatched, balanceBefore: before, balanceAfter: after, unitCostUGX: line.unitCostUGX, totalValueUGX: line.totalValueUGX, reference: header.data().transferNumber, idempotencyKey: movementKey, actorId: actor.uid, actorName: actor.name, sourceTransactionId: transferId, sourceLineId: line.id, createdAt: now });
     transaction.update(lineRef, { status: 'received', quantityAccepted: line.quantityDispatched, quantityQueried: 0, receivedBy: actor.uid, receivedAt: now, receiptMovementId: `opm_${movementKey}`, updatedAt: now });
     transaction.update(headerRef, { status: 'received', receivedBy: actor.uid, receivedByName: actor.name, receivedAt: now, updatedAt: now });
@@ -634,7 +635,7 @@ export async function receiveOperationalTransferLine(input: ReceiveOperationalTr
         actorId: actor.uid, actorName: actor.name, sourceTransactionId: transferId,
         sourceLineId: line.id, createdAt: now
       };
-      transaction.update(itemRef, { quantityInStock: after, lastMovementId: `opm_${movementKey}`, updatedAt: now });
+      transaction.update(itemRef, { quantityInStock: after, costPerPack: operationalReceiptCostPerPack(before, accepted, Number(itemSnapshot.data().costPerPack || 0), line.unitCostUGX, Number(itemSnapshot.data().unitPerPack || 1)), lastMovementId: `opm_${movementKey}`, updatedAt: now });
       transaction.set(movementRef, movement);
     }
     transaction.update(lineRef, {

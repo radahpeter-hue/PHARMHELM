@@ -47,10 +47,10 @@ export async function submitOperationalHqBufferOrder(input: OperationalHqBufferO
       const identical = order.tenantId === tenantId && order.inventoryClass === 'OPERATIONAL' && order.category === 'non_sellable' &&
         order.requesting_branch_id === 'HQ' && order.requesting_branch_name === 'HQ Operational Store' &&
         order.order_number === expected.order.order_number && order.generation_method === 'manual' &&
-        Number(order.total_order_value_ugx) === expected.order.total_order_value_ugx &&
+        order.created_by === input.actor.uid &&
         line.tenantId === tenantId && line.inventoryClass === 'OPERATIONAL' && line.isOperational === true &&
         line.masterItemId === item.masterItemId && line.order_id === orderRef.id && line.product_id === item.id &&
-        line.qty_ordered === quantity && line.unit_cost_ugx === expected.line.unit_cost_ugx && line.line_total_ugx === expected.line.line_total_ugx;
+        line.qty_ordered === quantity;
       if (identical) return true;
       throw new Error('This buffer-order request already exists with different contents. Start a new request after checking Procurement.');
     }

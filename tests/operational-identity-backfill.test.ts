@@ -37,3 +37,14 @@ test('completed identity backfill is idempotent and excludes other tenants', () 
   const result = plan({ items: [{ ...master, masterItemId: item.id }, { ...item, id: 'foreign', tenantId: 'tenant-b' }], masters: [master], claims: [{ id: claimId, tenantId: item.tenantId, inventoryClass: 'OPERATIONAL', identityFingerprint: fingerprint, masterItemId: item.id }] });
   assert.equal(result.ready, true); assert.deepEqual(result.writes, []);
 });
+
+test('known legacy demo seeds stay untouched and do not block genuine branch items', () => {
+  const seed = { id: 'old-printer-demo', tenantId: 'tenant-a', branchId: 'old-branch', name: 'Office Printer (HP LaserJet)',
+    uniqueId: 'PRN-001', supplier: 'Tech Solutions Ltd', type: 'fixed', unitOfIssue: 'unit' };
+  const result = plan({ items: [item, seed] });
+  assert.equal(result.ready, true);
+  assert.deepEqual(result.excludedDemoIds, [seed.id]);
+  assert.ok(!result.writes.some(row => row.id === seed.id));
+  assert.equal(plan({items:[item,{...seed,uniqueId:'REAL-PRINTER'}]}).ready,false);
+  assert.equal(plan({items:[item,{...seed,inventoryClass:'SELLABLE'}]}).ready,false);
+});

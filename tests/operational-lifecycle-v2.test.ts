@@ -44,9 +44,9 @@ test('buffer transaction rechecks the toggle and HQ item/master, while Firestore
   assert.match(service, /master\.hqLocationItemId !== item\.id/);
   assert.match(service, /orderSnapshot\.exists\(\) && lineSnapshot\.exists\(\)/);
   assert.match(service, /orderSnapshot\.exists\(\) \|\| lineSnapshot\.exists\(\)/);
-  assert.match(lineRules, /get\(operationalItemPath\)\.data\.branchId == 'HQ'/);
-  assert.match(lineRules, /get\(operationalMasterPath\)\.data\.hqLocationItemId == request\.resource\.data\.product_id/);
-  assert.match(lineRules, /request\.resource\.data\.masterItemId == get\(operationalItemPath\)\.data\.get\('masterItemId', ''\)/);
+  assert.match(lineRules, /item\.branchId == 'HQ'/);
+  assert.match(lineRules, /master\.hqLocationItemId == request\.resource\.data\.product_id/);
+  assert.match(lineRules, /request\.resource\.data\.masterItemId == item\.get\('masterItemId', ''\)/);
   assert.match(lineRules, /existsAfter\(orderPath\)/);
   assert.match(lineRules, /isOperationalOrderData\(getAfter\(orderPath\)\.data\)/);
   assert.match(procurement, /const canUseHqOperationalStock = order\.requesting_branch_id !== 'HQ'/);

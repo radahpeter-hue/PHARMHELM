@@ -32,11 +32,8 @@ service cloud.firestore {
 
     function isTenantMember(tenantId) {
       return isAuthenticated() && (
-        (request.auth.token.tenantId != null && request.auth.token.tenantId == tenantId) ||
-        getUserData().tenantId == tenantId ||
-        request.auth.token.email == "peterssentongo61@gmail.com" ||
-        request.auth.token.email == "peter.sentongo@pharmhelm" ||
-        request.auth.token.email == "peter.sentongo@pharmhelm.com"
+        getUserData().get('tenantId', request.auth.token.get('tenantId', '')) == tenantId
+        || request.auth.token.get('email', '') in ['peterssentongo61@gmail.com', 'peter.sentongo@pharmhelm', 'peter.sentongo@pharmhelm.com']
       );
     }
 
@@ -70,7 +67,7 @@ service cloud.firestore {
       let roles = ['owner', 'Owner', 'CEO', 'ceo', 'CEO / MD', 'ceo / md'];
       return isAuthenticated() && (
         request.auth.token.get('email', '') in ['peterssentongo61@gmail.com', 'peter.sentongo@pharmhelm', 'peter.sentongo@pharmhelm.com']
-        || request.auth.token.get('role', '') in roles || hasAnyRole(roles)
+        || hasAnyRole(roles)
       );
     }
 
@@ -138,16 +135,16 @@ service cloud.firestore {
     }
 
     function hasCustomModuleAccess(moduleKey, accessLevels) {
-      return isAuthenticated()
-        && ('roleRealmId' in getUserData())
-        && getUserData().roleRealmId is string
-        && getUserData().roleRealmId.size() > 0
-        && exists(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId))
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.tenantId == getUserData().tenantId
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleType == 'custom'
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.roleName == getUserData().role
-        && moduleKey in get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions
-        && get(/databases/$(database)/documents/role_realms_of_operation/$(getUserData().roleRealmId)).data.permissions[moduleKey].accessLevel in accessLevels;
+      let user = getUserData();
+      let configuredId = user.get('roleRealmId', '');
+      let realmId = configuredId is string && configuredId.size() > 0 ? configuredId
+        : user.tenantId + '_' + user.role.replace('\\s+', '_').lower();
+      let realmPath = /databases/$(database)/documents/role_realms_of_operation/$(realmId);
+      let realm = exists(realmPath) ? get(realmPath).data : {};
+      return isAuthenticated() && realm.get('tenantId', '') == user.tenantId
+        && realm.get('roleType', '') == 'custom' && realm.get('roleName', '') == user.role
+        && moduleKey in realm.get('permissions', {})
+        && realm.permissions[moduleKey].accessLevel in accessLevels;
     }
 
     function hasCustomModuleFunctional(moduleKey) {
@@ -160,7 +157,7 @@ service cloud.firestore {
 
     function isProcurement() {
       return isAuthenticated() && (
-        hasAnyRole(['Procurement Head', 'Procurement Officer', 'Procurement Manager']) ||
+        hasAnyRole(['Procurement Head', 'Procurement Officer', 'Procurement Manager', 'Procurement Personnel']) ||
         hasCustomModuleFunctional('procurement') ||
         isAdmin()
       );
@@ -168,7 +165,7 @@ service cloud.firestore {
 
     function hasProcurementRole() {
       return isAuthenticated() && (
-        hasAnyRole(['Procurement Head', 'Procurement Officer', 'Procurement Manager'])
+        hasAnyRole(['Procurement Head', 'Procurement Officer', 'Procurement Manager', 'Procurement Personnel'])
       );
     }
 
@@ -176,7 +173,7 @@ service cloud.firestore {
       return isAuthenticated() && (
         hasAnyRole([
           'Branch Manager', 'branch manager', 'Pharmacist', 'pharmacist',
-          'Procurement Head', 'Procurement Officer', 'Procurement Manager'
+          'Procurement Head', 'Procurement Officer', 'Procurement Manager', 'Procurement Personnel', 'admin', 'Admin'
         ]) ||
         hasCustomModuleFunctional('inventory') ||
         isAdmin()
@@ -1325,9 +1322,10 @@ service cloud.firestore {
         && hasOpeningOperationalMovement()
         && request.resource.data.type in ['fixed', 'non-fixed'];
       allow update: if isAuthenticated()
+        && resource.data.get('inventoryClass', 'OPERATIONAL') == 'OPERATIONAL'
         && ((isInventoryOperator() && canOperateOperationalLocation(resource.data.branchId)) || (isProcurement()
           && resource.data.branchId == 'HQ'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantityInStock', 'lastMovementId', 'updatedAt'])))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantityInStock', 'lastMovementId', 'costPerPack', 'updatedAt'])))
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
@@ -1980,7 +1978,8 @@ service cloud.firestore {
         && request.resource.data.inventoryClass in ['SELLABLE', 'OPERATIONAL']
         && ((request.resource.data.category == 'non_sellable' && request.resource.data.inventoryClass == 'OPERATIONAL')
           || (request.resource.data.category in ['sellable_non_cosmetic', 'sellable_cosmetic'] && request.resource.data.inventoryClass == 'SELLABLE'))
-        && validOrderClass(request.resource.data);
+        && validOrderClass(request.resource.data)
+        && (!isOperationalOrderData(request.resource.data) || isProcurement() || isAssignedToBranch(request.resource.data.requesting_branch_id));
       allow update: if isAuthenticated()
         && (isProcurement() || isBranchManager())
         && isTenantMember(resource.data.tenantId)
@@ -1999,14 +1998,16 @@ service cloud.firestore {
         return /databases/$(database)/documents/stock_orders/$(request.resource.data.order_id);
       }
       function hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath) {
+        let item = get(operationalItemPath).data;
+        let master = get(operationalMasterPath).data;
+        let order = getAfter(orderPath).data;
         return request.resource.data.masterItemId is string
-          && request.resource.data.masterItemId == get(operationalItemPath).data.get('masterItemId', '')
-          && exists(operationalMasterPath)
-          && get(operationalMasterPath).data.tenantId == request.resource.data.tenantId
-          && get(operationalMasterPath).data.inventoryClass == 'OPERATIONAL'
-          && (getAfter(orderPath).data.requesting_branch_id != 'HQ'
-            || (get(operationalItemPath).data.branchId == 'HQ'
-              && get(operationalMasterPath).data.hqLocationItemId == request.resource.data.product_id));
+          && request.resource.data.masterItemId == item.get('masterItemId', '')
+          && master.tenantId == request.resource.data.tenantId
+          && master.inventoryClass == 'OPERATIONAL'
+          && item.branchId == order.requesting_branch_id
+          && (order.requesting_branch_id != 'HQ'
+            || (item.branchId == 'HQ' && master.hqLocationItemId == request.resource.data.product_id));
       }
       function hasValidLineClass(requireExplicitClass) {
         let orderPath = parentOrderPath();
@@ -2023,8 +2024,8 @@ service cloud.firestore {
               && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'OPERATIONAL')
               && exists(operationalItemPath)
               && get(operationalItemPath).data.tenantId == request.resource.data.tenantId
-              && (!requireExplicitClass || hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath))
-              && (!('masterItemId' in request.resource.data)
+              && get(operationalItemPath).data.inventoryClass == 'OPERATIONAL'
+              && (!(requireExplicitClass || ('masterItemId' in request.resource.data))
                 || hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath))
             )
             || (
@@ -2033,6 +2034,9 @@ service cloud.firestore {
               && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'SELLABLE')
               && exists(sellableItemPath)
               && get(sellableItemPath).data.tenantId == request.resource.data.tenantId
+              && get(sellableItemPath).data.get('inventoryClass', 'SELLABLE') == 'SELLABLE'
+              && get(sellableItemPath).data.get('category', '') != 'non_sellable'
+              && get(sellableItemPath).data.get('isOperational', false) != true
             )
           );
       }
@@ -2046,8 +2050,19 @@ service cloud.firestore {
       allow create: if isAuthenticated()
         && isTenantMember(request.resource.data.tenantId)
         && (isProcurement() || isBranchManager())
-        && hasValidLineClass(true);
+        && hasValidLineClass(true)
+        && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL' || isProcurement() || isAssignedToBranch(getAfter(parentOrderPath()).data.requesting_branch_id))
+        && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL'
+          || (request.resource.data.qty_ordered is number && request.resource.data.qty_ordered > 0 && request.resource.data.qty_ordered <= 9007199254740991
+            && request.resource.data.unit_cost_ugx is number && request.resource.data.unit_cost_ugx >= 0 && request.resource.data.unit_cost_ugx <= 9007199254740991
+            && request.resource.data.line_total_ugx <= 9007199254740991
+            && request.resource.data.line_total_ugx == request.resource.data.qty_ordered * request.resource.data.unit_cost_ugx));
       allow update: if isAuthenticated()
+        && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL'
+          || (request.resource.data.order_id == resource.data.order_id
+            && request.resource.data.product_id == resource.data.product_id
+            && (!('masterItemId' in resource.data) || request.resource.data.masterItemId == resource.data.masterItemId)
+            && (isProcurement() || isAssignedToBranch(getAfter(parentOrderPath()).data.requesting_branch_id))))
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId

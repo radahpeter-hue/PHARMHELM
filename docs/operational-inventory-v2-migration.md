@@ -72,3 +72,7 @@ and a create-only readiness marker. It refuses more than 450 operations. It upda
 identity metadata only; quantities, historical IDs, movements and finance records
 are preserved. A completed backfill has no remaining identity writes on preview.
 The readiness marker is writable only by an authorized server/IAM process.
+
+The identity preview reports exact legacy demo seeds separately. These are the same unclassified, unlinked sample rows already excluded by Inventory and ordering. Their records and balances are preserved and they are not promoted into the business catalogue. A classified, linked, or differently identified record requires normal reconciliation.
+
+The scoped **Complete Martin Pharma Operational Catalogue** workflow completes the reviewed backfill only after a successful verified Firebase deployment of main. It freezes Operational writes with a settings version precondition, commits identity links atomically, and restores only its own unchanged settings version. The readiness marker records enough context to resume an interrupted restoration. Later deployments detect the completed marker and do not rerun the migration or toggle the feature.

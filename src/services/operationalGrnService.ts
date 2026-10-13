@@ -1,3 +1,4 @@
+import { operationalReceiptCostPerPack } from './operationalValuationPolicy';
 import type { Firestore } from 'firebase/firestore';
 import { doc, runTransaction, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -233,6 +234,7 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
 
       transaction.update(hqItemRefs[sourceSnapshotIndex], {
         inventoryClass: 'OPERATIONAL', operationalType, quantityInStock: balanceAfter,
+        costPerPack: operationalReceiptCostPerPack(balanceBefore, receivedUnits, Number(hqItem.costPerPack || 0), unitCostIssueUGX, unitsPerPack),
         lastMovementId: movementId, updatedAt: now.toDate().toISOString()
       });
       transaction.set(movementRefs[sourceSnapshotIndex], movementDocs[movementDocs.length - 1]);

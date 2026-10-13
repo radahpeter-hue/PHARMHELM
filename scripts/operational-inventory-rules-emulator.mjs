@@ -33,7 +33,7 @@ function operationalLine(id, orderId, productId, masterItemId = 'op-master') {
     order_id: orderId,
     inventoryClass: 'OPERATIONAL',
     masterItemId,
-    product_id: productId
+    product_id: productId, qty_ordered: 1, unit_cost_ugx: 0, line_total_ugx: 0
   };
 }
 
@@ -67,6 +67,8 @@ try {
         tenantId, branchId: branchB, masterItemId: 'op-master', inventoryClass: 'OPERATIONAL',
         operationalType: 'CONSUMABLE_OPERATIONAL', type: 'non-fixed', name: 'Paper', category: 'Stationery', unitPerPack: 1, unitOfIssue: 'ream', quantityInStock: 10
       }),
+      setDoc(doc(db, 'operational_inventory', 'explicit-sellable-location'), { tenantId, branchId: branchA, inventoryClass: 'SELLABLE', type: 'non-fixed', operationalType: 'CONSUMABLE_OPERATIONAL', masterItemId: 'op-master', name: 'Paper', category: 'Stationery', unitPerPack: 1, unitOfIssue: 'ream', quantityInStock: 0 }),
+      setDoc(doc(db, 'operational_inventory_masters', 'foreign-master'), { tenantId: 'tenant-b', inventoryClass: 'OPERATIONAL', type: 'non-fixed' }),
       setDoc(doc(db, 'products', 'sellable-item'), {
         tenantId, inventoryClass: 'SELLABLE', productName: 'Paracetamol'
       })
@@ -100,6 +102,8 @@ try {
     tenantId, inventoryClass: 'SELLABLE', operationalType: 'CONSUMABLE_OPERATIONAL', type: 'non-fixed'
   }));
 
+  await assertFails(setDoc(doc(branchManager, 'operational_inventory', 'explicit-sellable-location'), {inventoryClass:'OPERATIONAL'}, {merge:true}));
+
   // Every app registration for one normalized tenant identity uses the same
   // deterministic claim path. Concurrent claim creation must therefore have
   // a single winner, and claims stay immutable and tenant scoped.
@@ -131,7 +135,7 @@ try {
   const registration = { tenantId, branchId: 'HQ', actor: { uid: 'procurement-a', name: 'Buyer' }, data: {
     tenantId, branchId: 'HQ', name: 'Register test notebooks', category: 'Stationery', type: 'non-fixed',
     inventoryClass: 'OPERATIONAL', operationalType: 'CONSUMABLE_OPERATIONAL', unitPerPack: 1,
-    unitOfIssue: 'book', quantityInStock: 0, costPerPack: 1000, uniqueId: 'RULES-BOOK',
+    unitOfIssue: 'book', quantityInStock: 0, costPerPack: 0, uniqueId: 'RULES-BOOK',
     description: '', supplier: '', condition: 'New', status: 'In Use'
   } };
   const registrationAttempts = await Promise.allSettled([
@@ -169,6 +173,9 @@ try {
   assert.equal(receiptMovement.movementType, 'RECEIPT');
   assert.equal(receiptMovement.sourceTransactionId, receipt.grnId);
   assert.equal(receiptMovement.quantityDelta, 2);
+  assert.equal(receivedItem.costPerPack, 1000);
+  assert.equal(receiptMovement.unitCostUGX, 1000);
+  assert.equal((await submitOperationalHqBufferOrder(bufferInput, procurement)).alreadySubmitted, true);
   assert.equal((await processOperationalGrn(grnInput, procurement)).alreadyProcessed, true);
   assert.equal((await getDoc(doc(procurement, 'operational_inventory', registered.itemId))).data().quantityInStock, 2);
 
@@ -186,6 +193,7 @@ try {
   assert.equal((await receiveOperationalTransferLine(receiveInput, branchManager)).alreadyReceived, false);
   assert.equal((await receiveOperationalTransferLine(receiveInput, branchManager)).alreadyReceived, true);
   assert.equal((await getDoc(doc(branchManager, 'operational_inventory', branchRegistration.itemId))).data().quantityInStock, 1);
+  assert.equal((await getDoc(doc(branchManager, 'operational_inventory', branchRegistration.itemId))).data().costPerPack, 1000);
 
 
   const returnInput = {tenantId, branchId:branchA, itemId:branchRegistration.itemId, quantity:1, reason:'Test return', requestId:'actual-return-12345', actor:{uid:'manager-a',name:'Manager'}};
@@ -199,6 +207,29 @@ try {
   assert.equal((await receiveOperationalBranchReturn(returnReceiptInput, procurement)).alreadyReceived, false);
   assert.equal((await receiveOperationalBranchReturn(returnReceiptInput, procurement)).alreadyReceived, true);
   assert.equal((await getDoc(doc(procurement, 'operational_inventory', registered.itemId))).data().quantityInStock, 2);
+
+
+  // Custom Inventory permission uses the same derived realm ID as the UI when
+  // a legacy staff profile does not contain a roleRealmId.
+  const customInventory = testEnv.authenticatedContext('custom-inventory-a', {tenantId}).firestore();
+  await testEnv.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(),'staff','custom-inventory-a'),{tenantId,role:'Store Officer',assigned_branches:['HQ']});
+    await setDoc(doc(context.firestore(),'role_realms_of_operation',`${tenantId}_store_officer`),{tenantId,roleType:'custom',roleName:'Store Officer',permissions:{inventory:{accessLevel:'view_functional'}}});
+  });
+  await saveOperationalLocationItem({...registration,actor:{uid:'custom-inventory-a',name:'Store Officer'},data:{...registration.data,name:'Custom Inventory Item'}},customInventory);
+  await testEnv.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(),'role_realms_of_operation',`${tenantId}_store_officer`),{tenantId,roleType:'custom',roleName:'Store Officer',permissions:{inventory:{accessLevel:'view_only'}}});
+  });
+  await assertFails(saveOperationalLocationItem({...registration,actor:{uid:'custom-inventory-a',name:'Store Officer'},data:{...registration.data,name:'Read Only Item'}},customInventory));
+
+  const staleOwner = testEnv.authenticatedContext('stale-owner-a',{tenantId,role:'Owner'}).firestore();
+  await testEnv.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(),'staff','stale-owner-a'),{tenantId,role:'Branch Manager',assigned_branches:[branchA]});
+  });
+  await assertFails(saveOperationalLocationItem({...registration,actor:{uid:'stale-owner-a',name:'Manager'},data:{...registration.data,name:'Unauthorized HQ Item'}},staleOwner));
+  const staleTenant = testEnv.authenticatedContext('procurement-a',{tenantId:'tenant-b',role:'Procurement Head'}).firestore();
+  await assertFails(getDoc(doc(staleTenant,'operational_inventory_masters','foreign-master')));
+  await assertSucceeds(getDoc(doc(staleTenant,'operational_inventory_masters','op-master')));
 
   // The HQ buffer-order transaction first reads both deterministic target IDs.
   // Only Procurement may preflight these missing Operational IDs, and the feature
@@ -230,6 +261,15 @@ try {
     stockOrder('mixed-order', 'non_sellable', 'SELLABLE')));
   await assertSucceeds(setDoc(doc(branchManager, 'stock_order_lines', 'op-line'),
     operationalLine('op-line', 'op-order', 'op-item-a')));
+  await assertFails(setDoc(doc(branchManager,'stock_orders','cross-branch-op-order'),stockOrder('cross-branch-op-order','non_sellable','OPERATIONAL',branchB)));
+  await assertFails(setDoc(doc(branchManager,'stock_order_lines','cross-branch-op-line'),operationalLine('cross-branch-op-line','op-order','op-item-b')));
+  await assertFails(setDoc(doc(procurement,'stock_order_lines','negative-op-quantity'),{...operationalLine('negative-op-quantity','op-order','op-item-a'),qty_ordered:-1}));
+  await assertFails(setDoc(doc(procurement,'stock_order_lines','negative-op-cost'),{...operationalLine('negative-op-cost','op-order','op-item-a'),unit_cost_ugx:-1,line_total_ugx:-1}));
+  await assertFails(setDoc(doc(procurement,'stock_order_lines','infinite-op-quantity'),{...operationalLine('infinite-op-quantity','op-order','op-item-a'),qty_ordered:Infinity,line_total_ugx:Infinity}));
+  await assertSucceeds(setDoc(doc(procurement,'stock_orders','other-op-order'),stockOrder('other-op-order','non_sellable','OPERATIONAL')));
+  await assertFails(setDoc(doc(procurement,'stock_order_lines','op-line'),{order_id:'other-op-order'},{merge:true}));
+  await assertFails(setDoc(doc(procurement,'stock_order_lines','sellable-as-operational'),operationalLine('sellable-as-operational','op-order','explicit-sellable-location')));
+
   await assertFails(setDoc(doc(branchManager, 'stock_order_lines', 'sellable-on-op-order'), {
     tenantId, order_id: 'op-order', inventoryClass: 'SELLABLE', product_id: 'sellable-item'
   }));

@@ -1,3 +1,4 @@
+import { isLegacyOperationalInventorySeed } from '../utils/operationalInventory';
 import { deterministicOperationalIdentityClaimId, operationalIdentityFingerprint } from './operationalIdentity';
 
 type Row = Record<string, any> & { id: string; tenantId: string };
@@ -14,6 +15,7 @@ export function planOperationalIdentityBackfill(input: {
   const masters = new Map(input.masters.filter(row => row.tenantId === tenantId).map(row => [row.id, { ...row }]));
   const identities = new Map<string, string>();
   const locations = new Set<string>();
+  const excludedDemoIds: string[] = [];
   const claimById = new Map(input.claims.filter(row => row.tenantId === tenantId).map(row => [row.id, row]));
   const valid = (row: Row) => row.inventoryClass !== 'SELLABLE' && row.name?.trim() &&
     ['fixed', 'non-fixed'].includes(row.type) && (!row.operationalType || row.operationalType === (row.type === 'fixed' ? 'FIXED_ASSET' : 'CONSUMABLE_OPERATIONAL')) && Number.isInteger(row.unitPerPack) && row.unitPerPack > 0 &&
@@ -27,6 +29,11 @@ export function planOperationalIdentityBackfill(input: {
   };
   masters.forEach(reserve);
   for (const item of input.items.filter(row => row.tenantId === tenantId)) {
+    // Preserve the exact legacy demo rows already excluded by Inventory and order pickers.
+    // An explicitly classified or linked record always requires normal reconciliation.
+    if (!item.inventoryClass && !item.masterItemId && isLegacyOperationalInventorySeed(item as any)) {
+      excludedDemoIds.push(item.id); continue;
+    }
     if (!valid(item) || !item.branchId || (item.inventoryClass && item.inventoryClass !== 'OPERATIONAL')) {
       conflicts.push(`Invalid or non-Operational location ${item.id}`); continue;
     }
@@ -86,5 +93,5 @@ export function planOperationalIdentityBackfill(input: {
     type: row.type ?? null, operationalType: row.operationalType ?? null, category: row.category ?? null,
     unitPerPack: row.unitPerPack ?? null, unitOfIssue: row.unitOfIssue ?? null, masterItemId: row.masterItemId ?? null
   }));
-  return { tenantId, reviewItems, conflicts, writes: conflicts.length ? [] : writes, ready: conflicts.length === 0 };
+  return { tenantId, reviewItems, excludedDemoIds, conflicts, writes: conflicts.length ? [] : writes, ready: conflicts.length === 0 };
 }

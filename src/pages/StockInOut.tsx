@@ -502,7 +502,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     } else {
       const isCosmetics = (cat: string) => cat === 'cosmetic' || cat === 'cosmetic therapeutics';
       
-      const rxProducts = products.filter(p => {
+      const rxProducts = products.filter(p => (p as any).inventoryClass !== 'OPERATIONAL' && (p as any).isOperational !== true).filter(p => {
         if (category === 'sellable_cosmetic') {
           return isCosmetics(p.category || '');
         } else {

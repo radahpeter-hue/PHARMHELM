@@ -157,7 +157,7 @@ const OperationalHQStoreTab: React.FC = () => {
               <thead className="bg-zinc-50 text-[10px] text-zinc-500 uppercase tracking-wider">
                 <tr>
                   <th className="px-5 py-3">Item</th>
-                  <th className="px-5 py-3">Subtype</th>
+                  <th className="px-5 py-3">Type</th>
                   <th className="px-5 py-3">Supplier</th>
                   <th className="px-5 py-3 text-right">On hand</th>
                   <th className="px-5 py-3 text-right">Unit cost</th>
@@ -169,9 +169,9 @@ const OperationalHQStoreTab: React.FC = () => {
                   <tr key={item.id} className="hover:bg-zinc-50">
                     <td className="px-5 py-4">
                       <p className="font-bold text-sm text-zinc-900">{item.name}</p>
-                      <p className="text-[10px] text-zinc-500">{item.uniqueId || item.sku || item.id}</p>
+                      <p className="text-[10px] text-zinc-500">{item.uniqueId || item.sku || '—'}</p>
                     </td>
-                    <td className="px-5 py-4 text-xs text-zinc-600">{item.operationalType || (item.type === 'fixed' ? 'FIXED_ASSET' : 'CONSUMABLE_OPERATIONAL')}</td>
+                    <td className="px-5 py-4 text-xs text-zinc-600">{item.type === 'fixed' ? 'Fixed asset' : 'Consumable'}</td>
                     <td className="px-5 py-4 text-xs text-zinc-600">{item.supplier || '—'}</td>
                     <td className="px-5 py-4 text-right font-black text-zinc-900">{Number(item.quantityInStock || 0).toLocaleString()} <span className="text-[10px] text-zinc-500 font-medium">{item.unitOfIssue}</span></td>
                     <td className="px-5 py-4 text-right text-xs text-zinc-600">UGX {(Number(item.costPerPack || 0) / Math.max(1, Number(item.unitPerPack || 1))).toLocaleString()}</td>

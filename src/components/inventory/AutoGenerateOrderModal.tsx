@@ -168,7 +168,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
   // Filter products by the same categories used by Inventory Master registration.
   const getFilteredProducts = () => {
-    const activeProducts = allProducts.filter(p => p.status !== 'inactive');
+    const activeProducts = allProducts.filter(p => p.status !== 'inactive' && (p as any).inventoryClass !== 'OPERATIONAL' && (p as any).isOperational !== true);
     return activeProducts.filter(p => productScopes.includes(p.category));
   };
 
