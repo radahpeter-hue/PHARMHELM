@@ -113,7 +113,7 @@ jobs:
         run: npx firebase emulators:exec --only firestore --project pharmhelm-pos-v2-revision-rbac "node scripts/pos-v2-revision-rbac-rules-emulator.mjs"
 
       - name: Enforce Operational Inventory class and branch boundaries in Firestore emulator
-        run: npx firebase emulators:exec --only firestore --project pharmhelm-operational-inventory-v2-rules "node scripts/operational-inventory-rules-emulator.mjs" && touch /tmp/pharmhelm-firestore-emulator-passed
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-operational-inventory-v2-rules "node scripts/operational-inventory-rules-emulator.mjs && node scripts/operational-manual-order-regression.mjs" && touch /tmp/pharmhelm-firestore-emulator-passed
 
       - name: Authenticate for hosted Firestore rules compilation
         uses: google-github-actions/auth@v2

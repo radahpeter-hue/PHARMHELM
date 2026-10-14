@@ -1970,18 +1970,18 @@ service cloud.firestore {
             && orderId.matches('^op_hq_buffer_[A-Za-z0-9_-]{1,120}$')
             && isOperationalInventoryEnabled(getUserData().tenantId))
           || (resource != null && isTenantMember(resource.data.tenantId)
-            && (canViewProcurement() || isBranchManager())));
-      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (canViewProcurement() || isBranchManager());
+            && (isBranchManager() || canViewProcurement())));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isBranchManager() || canViewProcurement());
       allow create: if isAuthenticated()
-        && (isProcurement() || isBranchManager())
+        && (isBranchManager() || isProcurement())
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.inventoryClass in ['SELLABLE', 'OPERATIONAL']
         && ((request.resource.data.category == 'non_sellable' && request.resource.data.inventoryClass == 'OPERATIONAL')
           || (request.resource.data.category in ['sellable_non_cosmetic', 'sellable_cosmetic'] && request.resource.data.inventoryClass == 'SELLABLE'))
         && validOrderClass(request.resource.data)
-        && (!isOperationalOrderData(request.resource.data) || isProcurement() || isAssignedToBranch(request.resource.data.requesting_branch_id));
+        && (!isOperationalOrderData(request.resource.data) || isAssignedToBranch(request.resource.data.requesting_branch_id) || isProcurement());
       allow update: if isAuthenticated()
-        && (isProcurement() || isBranchManager())
+        && (isBranchManager() || isProcurement())
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
@@ -2045,13 +2045,13 @@ service cloud.firestore {
             && lineId.matches('^op_hq_buffer_line_[A-Za-z0-9_-]{1,120}$')
             && isOperationalInventoryEnabled(getUserData().tenantId))
           || (resource != null && isTenantMember(resource.data.tenantId)
-            && (canViewProcurement() || isBranchManager())));
-      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (canViewProcurement() || isBranchManager());
+            && (isBranchManager() || canViewProcurement())));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isBranchManager() || canViewProcurement());
       allow create: if isAuthenticated()
         && isTenantMember(request.resource.data.tenantId)
-        && (isProcurement() || isBranchManager())
+        && (isBranchManager() || isProcurement())
         && hasValidLineClass(true)
-        && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL' || isProcurement() || isAssignedToBranch(getAfter(parentOrderPath()).data.requesting_branch_id))
+        && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL' || isAssignedToBranch(getAfter(parentOrderPath()).data.requesting_branch_id) || isProcurement())
         && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL'
           || (request.resource.data.qty_ordered is number && request.resource.data.qty_ordered > 0 && request.resource.data.qty_ordered <= 9007199254740991
             && request.resource.data.unit_cost_ugx is number && request.resource.data.unit_cost_ugx >= 0 && request.resource.data.unit_cost_ugx <= 9007199254740991
@@ -2062,11 +2062,11 @@ service cloud.firestore {
           || (request.resource.data.order_id == resource.data.order_id
             && request.resource.data.product_id == resource.data.product_id
             && (!('masterItemId' in resource.data) || request.resource.data.masterItemId == resource.data.masterItemId)
-            && (isProcurement() || isAssignedToBranch(getAfter(parentOrderPath()).data.requesting_branch_id))))
+            && (isAssignedToBranch(getAfter(parentOrderPath()).data.requesting_branch_id) || isProcurement())))
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
-        && (isProcurement() || isBranchManager())
+        && (isBranchManager() || isProcurement())
         && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
         && (!('internal_fulfillment_transfer_id' in resource.data) || request.resource.data.internal_fulfillment_transfer_id == resource.data.internal_fulfillment_transfer_id)
         && (!('operational_external_transfer_id' in resource.data) || request.resource.data.operational_external_transfer_id == resource.data.operational_external_transfer_id)

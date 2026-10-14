@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Plus, 
   Search, 
@@ -39,6 +39,8 @@ import { useOperationalInventoryFeature } from '../hooks/useOperationalInventory
 import { createOperationalBranchReturn, receiveOperationalTransferLine } from '../services/operationalTransferService';
 import { OpeningStockTab } from '../components/inventory/OpeningStockTab';
 import { isScopeAllowedForOrderCategory, scopesForOrderCategory } from '../services/operationalOrderScopes';
+
+import { persistNewManualStockOrder } from '../services/manualStockOrderService';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -346,6 +348,7 @@ const InventoryTab: React.FC = () => {
 
 
 const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
+  const pendingNewOrder = useRef<{ id: string; orderNumber: string; createdAt: string } | null>(null);
   const { profile, activeBranchId, activeBranch } = useAuth();
   const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [orderType, setOrderType] = useState<'monthly' | 'weekly' | 'emergency'>('monthly');
@@ -705,6 +708,27 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       }
 
       let orderId = selectedDraftId;
+      if (!orderId) {
+        pendingNewOrder.current ||= {
+          id: doc(collection(db, 'stock_orders')).id,
+          orderNumber: `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
+          createdAt: new Date().toISOString()
+        };
+        const pending = pendingNewOrder.current;
+        await persistNewManualStockOrder(pending.id, {
+          ...orderData,
+          order_number: pending.orderNumber,
+          requesting_branch_id: branchId,
+          requesting_branch_name: activeBranch?.name || branches.find(b => b.id === branchId)?.name || 'Unknown Branch',
+          createdAt: pending.createdAt,
+          updatedAt: new Date().toISOString()
+        }, orderLines.map(line => ({ ...line, tenantId: profile.tenantId, inventoryClass: expectedClass })));
+        pendingNewOrder.current = null;
+        toast.success(`Order ${status === 'submitted' ? 'submitted' : 'saved as draft'}.`);
+        setOrderLines([]);
+        setSelectedDraftId(null);
+        return;
+      }
       if (orderId) {
         // Update existing draft's order metadata
         await firestoreService.updateDocument('stock_orders', orderId, orderData);
