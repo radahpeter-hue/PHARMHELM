@@ -1955,6 +1955,689 @@ service cloud.firestore {
       allow read, update, delete: if isAdmin();
     }
 
+    // One tenant-wide supplier register serves both Procurement and CRM.
+    match /supplier_registry/{supplierId} {
+      function canMaintainSupplier() {
+        let user = getUserData();
+        let role = request.resource.data.updatedAccessRole;
+        let module = request.resource.data.updatedModule;
+        let normalized = role.lower();
+        let systemRoles = ['owner','ceo','ceo / md','admin','hr head','hr support personnel','qa head','qa officer','finance head','finance officer','procurement head','procurement officer','procurement personnel','logistics head','transport & logistics personnel','marketing head','marketing personnel','it head','it support staff','it support personnel','branch manager','pharmacist','dispenser','cashier','cleaner','trainee'];
+        let path = /databases/$(database)/documents/role_realms_of_operation/$(user.tenantId + '_' + role.replace('\\s+', '_').lower());
+        let realm = normalized in systemRoles ? {} : (exists(path) ? get(path).data : {});
+        return module in ['clients','procurement']
+          && (role == user.role || user.get('secondaryRoles', []).hasAny([role]))
+          && ((module == 'clients' && normalized in ['owner','ceo','ceo / md','admin','procurement head','procurement officer','procurement personnel','marketing head','marketing personnel','branch manager','pharmacist','dispenser'])
+            || (module == 'procurement' && normalized in ['owner','ceo','ceo / md','finance head','procurement head','procurement officer','procurement personnel'])
+            || (!(normalized in systemRoles) && realm.get('tenantId', '') == user.tenantId && realm.get('roleType', '') == 'custom' && realm.get('roleName', '') == role
+              && realm.get('permissions', {}).get(module, {}).get('accessLevel', '') in ['view_functional','operate','all']));
+      }
+      function validSupplier() {
+        let data = request.resource.data;
+        return data.supplier_name is string && data.supplier_name.size() > 0
+          && data.supplier_id is string
+          && data.inventoryCapabilities is list
+          && data.inventoryCapabilities.hasOnly(['DRUGS','COSMETICS','CONSUMABLES','DEVICES','NON_SELLABLE_OPERATIONAL'])
+          && data.updatedBy == request.auth.uid && data.updatedAt == request.time;
+      }
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId)
+        && canMaintainSupplier() && validSupplier()
+        && supplierId.matches('^[A-Za-z0-9_-]{1,120}
+    match /stock_orders/{orderId} {
+      function validOrderClass(data) {
+        return data.category in ['sellable_non_cosmetic', 'sellable_cosmetic', 'non_sellable']
+          && ((data.category == 'non_sellable'
+              && (!('inventoryClass' in data) || data.inventoryClass == 'OPERATIONAL')
+              && isOperationalInventoryEnabled(data.tenantId))
+            || (data.category in ['sellable_non_cosmetic', 'sellable_cosmetic']
+              && (!('inventoryClass' in data) || data.inventoryClass == 'SELLABLE')));
+      }
+      allow get: if isAuthenticated()
+        && ((resource == null && isProcurement()
+            && orderId.matches('^op_hq_buffer_[A-Za-z0-9_-]{1,120}$')
+            && isOperationalInventoryEnabled(getUserData().tenantId))
+          || (resource != null && isTenantMember(resource.data.tenantId)
+            && (isBranchManager() || canViewProcurement())));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isBranchManager() || canViewProcurement());
+      allow create: if isAuthenticated()
+        && (isBranchManager() || isProcurement())
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.inventoryClass in ['SELLABLE', 'OPERATIONAL']
+        && ((request.resource.data.category == 'non_sellable' && request.resource.data.inventoryClass == 'OPERATIONAL')
+          || (request.resource.data.category in ['sellable_non_cosmetic', 'sellable_cosmetic'] && request.resource.data.inventoryClass == 'SELLABLE'))
+        && validOrderClass(request.resource.data)
+        && (!isOperationalOrderData(request.resource.data) || isAssignedToBranch(request.resource.data.requesting_branch_id) || isProcurement());
+      allow update: if isAuthenticated()
+        && (isBranchManager() || isProcurement())
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && request.resource.data.category == resource.data.category
+        && ((!('inventoryClass' in resource.data) && !('inventoryClass' in request.resource.data))
+          || request.resource.data.inventoryClass == resource.data.inventoryClass
+          || (!('inventoryClass' in resource.data)
+            && request.resource.data.inventoryClass == (resource.data.category == 'non_sellable' ? 'OPERATIONAL' : 'SELLABLE')))
+        && validOrderClass(request.resource.data);
+      allow delete: if isAdmin();
+    }
+    match /stock_order_lines/{lineId} {
+      function parentOrderPath() {
+        return /databases/$(database)/documents/stock_orders/$(request.resource.data.order_id);
+      }
+      function hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath) {
+        let item = get(operationalItemPath).data;
+        let master = get(operationalMasterPath).data;
+        let order = getAfter(orderPath).data;
+        return request.resource.data.masterItemId is string
+          && request.resource.data.masterItemId == item.get('masterItemId', '')
+          && master.tenantId == request.resource.data.tenantId
+          && master.inventoryClass == 'OPERATIONAL'
+          && item.branchId == order.requesting_branch_id
+          && (order.requesting_branch_id != 'HQ'
+            || (item.branchId == 'HQ' && master.hqLocationItemId == request.resource.data.product_id));
+      }
+      function hasValidLineClass(requireExplicitClass) {
+        let orderPath = parentOrderPath();
+        let operationalItemPath = /databases/$(database)/documents/operational_inventory/$(request.resource.data.product_id);
+        let operationalMasterPath = /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.get('masterItemId', ''));
+        let sellableItemPath = /databases/$(database)/documents/products/$(request.resource.data.product_id);
+        return existsAfter(orderPath)
+          && getAfter(orderPath).data.tenantId == request.resource.data.tenantId
+          && (
+            (
+              isOperationalOrderData(getAfter(orderPath).data)
+              && isOperationalInventoryEnabled(request.resource.data.tenantId)
+              && (!requireExplicitClass || request.resource.data.inventoryClass == 'OPERATIONAL')
+              && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'OPERATIONAL')
+              && exists(operationalItemPath)
+              && get(operationalItemPath).data.tenantId == request.resource.data.tenantId
+              && get(operationalItemPath).data.inventoryClass == 'OPERATIONAL'
+              && (!(requireExplicitClass || ('masterItemId' in request.resource.data))
+                || hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath))
+            )
+            || (
+              !isOperationalOrderData(getAfter(orderPath).data)
+              && (!requireExplicitClass || request.resource.data.inventoryClass == 'SELLABLE')
+              && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'SELLABLE')
+              && exists(sellableItemPath)
+              && get(sellableItemPath).data.tenantId == request.resource.data.tenantId
+              && get(sellableItemPath).data.get('inventoryClass', 'SELLABLE') == 'SELLABLE'
+              && get(sellableItemPath).data.get('category', '') != 'non_sellable'
+              && get(sellableItemPath).data.get('isOperational', false) != true
+            )
+          );
+      }
+      allow get: if isAuthenticated()
+        && ((resource == null && isProcurement()
+            && lineId.matches('^op_hq_buffer_line_[A-Za-z0-9_-]{1,120}$')
+            && isOperationalInventoryEnabled(getUserData().tenantId))
+          || (resource != null && isTenantMember(resource.data.tenantId)
+            && (isBranchManager() || canViewProcurement())));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isBranchManager() || canViewProcurement());
+      allow create: if isAuthenticated()
+        && isTenantMember(request.resource.data.tenantId)
+        && (isBranchManager() || isProcurement())
+        && hasValidLineClass(true)
+        && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL' || isAssignedToBranch(getAfter(parentOrderPath()).data.requesting_branch_id) || isProcurement())
+        && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL'
+          || (request.resource.data.qty_ordered is number && request.resource.data.qty_ordered > 0 && request.resource.data.qty_ordered <= 9007199254740991
+            && request.resource.data.unit_cost_ugx is number && request.resource.data.unit_cost_ugx >= 0 && request.resource.data.unit_cost_ugx <= 9007199254740991
+            && request.resource.data.line_total_ugx <= 9007199254740991
+            && request.resource.data.line_total_ugx == request.resource.data.qty_ordered * request.resource.data.unit_cost_ugx));
+      allow update: if isAuthenticated()
+        && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL'
+          || (request.resource.data.order_id == resource.data.order_id
+            && request.resource.data.product_id == resource.data.product_id
+            && (!('masterItemId' in resource.data) || request.resource.data.masterItemId == resource.data.masterItemId)
+            && (isAssignedToBranch(getAfter(parentOrderPath()).data.requesting_branch_id) || isProcurement())))
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && (isBranchManager() || isProcurement())
+        && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
+        && (!('internal_fulfillment_transfer_id' in resource.data) || request.resource.data.internal_fulfillment_transfer_id == resource.data.internal_fulfillment_transfer_id)
+        && (!('operational_external_transfer_id' in resource.data) || request.resource.data.operational_external_transfer_id == resource.data.operational_external_transfer_id)
+        && hasValidLineClass(false);
+      // Only unsubmitted drafts may remove lines. Read the pre-commit parent
+      // so submitting an edited draft and removing its old lines is atomic.
+      allow delete: if isTenantMember(resource.data.tenantId)
+        && (isAdmin() || (isBranchManager()
+          && get(/databases/$(database)/documents/stock_orders/$(resource.data.order_id)).data.tenantId == resource.data.tenantId
+          && get(/databases/$(database)/documents/stock_orders/$(resource.data.order_id)).data.status == 'draft'
+          && isAssignedToBranch(get(/databases/$(database)/documents/stock_orders/$(resource.data.order_id)).data.requesting_branch_id)));
+    }
+    match /transfer_invoices/{invoiceId} {
+      function isOperationalTransfer(data) {
+        return isOperationalInventoryClass(data)
+          || (('order_id' in data)
+            && exists(/databases/$(database)/documents/stock_orders/$(data.order_id))
+            && get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.tenantId == data.tenantId
+            && isOperationalOrderData(get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data));
+      }
+      function hasValidTransferClass(data, requireExplicitClass) {
+        return (!requireExplicitClass || ('inventoryClass' in data))
+          && (!('order_id' in data)
+            || (exists(/databases/$(database)/documents/stock_orders/$(data.order_id))
+              && get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.tenantId == data.tenantId
+              && (!('inventoryClass' in data)
+                || data.inventoryClass == (('inventoryClass' in get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data)
+                  ? get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.inventoryClass
+                  : (get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.category == 'non_sellable' ? 'OPERATIONAL' : 'SELLABLE')))))
+          && (!('inventoryClass' in data)
+            || data.inventoryClass == 'SELLABLE'
+            || (data.inventoryClass == 'OPERATIONAL' && isOperationalInventoryEnabled(data.tenantId)));
+      }
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isStockOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && (!isOperationalTransfer(request.resource.data) || isOperationalInventoryEnabled(request.resource.data.tenantId))
+        && hasValidTransferClass(request.resource.data, true);
+      allow update: if isStockOperator()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
+        && (!isOperationalTransfer(request.resource.data) || isOperationalInventoryEnabled(resource.data.tenantId))
+        && hasValidTransferClass(request.resource.data, false);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+    match /transfer_invoice_lines/{lineId} {
+      function isOperationalTransfer(data) {
+        return isOperationalInventoryClass(data)
+          || (('order_id' in data)
+            && exists(/databases/$(database)/documents/stock_orders/$(data.order_id))
+            && get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.tenantId == data.tenantId
+            && isOperationalOrderData(get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data));
+      }
+      function transferPath() {
+        return /databases/$(database)/documents/transfer_invoices/$(request.resource.data.transfer_id);
+      }
+      function validTransferLineClass(requireExplicitClass) {
+        let invoicePath = transferPath();
+        let operationalItemPath = /databases/$(database)/documents/operational_inventory/$(request.resource.data.product_id);
+        let sellableItemPath = /databases/$(database)/documents/products/$(request.resource.data.product_id);
+        return exists(invoicePath)
+          && get(invoicePath).data.tenantId == request.resource.data.tenantId
+          && ((isOperationalTransfer(get(invoicePath).data)
+              && isOperationalInventoryEnabled(request.resource.data.tenantId)
+              && (!requireExplicitClass || request.resource.data.inventoryClass == 'OPERATIONAL')
+              && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'OPERATIONAL')
+              && exists(operationalItemPath)
+              && get(operationalItemPath).data.tenantId == request.resource.data.tenantId)
+            || (!isOperationalTransfer(get(invoicePath).data)
+              && (!requireExplicitClass || request.resource.data.inventoryClass == 'SELLABLE')
+              && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'SELLABLE')
+              && exists(sellableItemPath)
+              && get(sellableItemPath).data.tenantId == request.resource.data.tenantId));
+      }
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isStockOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && validTransferLineClass(true);
+      allow update: if isStockOperator()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
+        && validTransferLineClass(false);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+    match /hq_order_drafts/{draftId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewProcurement();
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && isProcurement();
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && isProcurement();
+      allow delete: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isProcurement();
+    }
+    match /billable_services/{serviceId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /sales/{saleId} {
+      function isLegacySale(sale) {
+        return !("engineVersion" in sale) || sale.engineVersion != 2;
+      }
+
+      function hasValidV2SaleLinks(saleId) {
+        let sale = request.resource.data;
+        let payment = getAfter(/databases/$(database)/documents/pos_payments/$(sale.canonicalPaymentId)).data;
+        let outbox = getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(sale.transactionOutboxEventId)).data;
+        return sale.canonicalPaymentId is string
+          && sale.transactionOutboxEventId is string
+          && payment.saleId == saleId
+          && payment.tenantId == sale.tenantId
+          && payment.branchId == sale.branchId
+          && payment.amount == sale.totalAmount
+          && outbox.saleId == saleId
+          && outbox.paymentId == sale.canonicalPaymentId;
+      }
+
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isPOSOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.branchId is string
+        && isAssignedToBranch(request.resource.data.branchId)
+        && request.resource.data.status == 'completed'
+        && (
+          isLegacySale(request.resource.data) ||
+          hasValidV2SaleLinks(saleId)
+        );
+      allow update: if isPOSOperator()
+        && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && ((isLegacySale(resource.data) && isLegacySale(request.resource.data)) || isAtomicOriginalUpdate(saleId));
+      // V2 sales are immutable to every client, including tenant administrators.
+      // The Batch 4 Admin SDK worker bypasses client rules for its controlled
+      // downstream-status fields. Reversal requires a separate durable event.
+      allow delete: if isAdmin()
+        && isTenantMember(resource.data.tenantId)
+        && isLegacySale(resource.data);
+    }
+
+    match /pos_payments/{paymentId} {
+      function hasValidPaymentIdentity(paymentId) {
+        let payment = request.resource.data;
+        return payment.paymentId == paymentId
+          && payment.operatorUid == request.auth.uid
+          && payment.branchId is string
+          && payment.source == 'POS'
+          && payment.engineVersion == 2
+          && payment.currency == 'UGX'
+          && payment.saleId is string
+          && payment.checkoutAttemptId is string
+          && payment.receiptNumber is string;
+      }
+
+      function hasValidPaymentSettlement() {
+        let payment = request.resource.data;
+        return payment.amount is number
+          && payment.amount >= 0
+          && payment.settledAmount is number
+          && payment.settledAmount >= 0
+          && payment.outstandingAmount is number
+          && payment.outstandingAmount >= 0
+          && payment.settledAmount + payment.outstandingAmount == payment.amount
+          && payment.status in ['completed', 'unpaid', 'partially_settled']
+          && payment.components is list;
+      }
+
+      function paymentMatchesSale(paymentId) {
+        let payment = request.resource.data;
+        let sale = getAfter(/databases/$(database)/documents/sales/$(payment.saleId)).data;
+        return sale.engineVersion == 2
+          && sale.tenantId == payment.tenantId
+          && sale.branchId == payment.branchId
+          && sale.operatorUid == request.auth.uid
+          && sale.receiptNumber == payment.receiptNumber
+          && sale.checkoutAttemptId == payment.checkoutAttemptId
+          && sale.totalAmount == payment.amount
+          && sale.canonicalPaymentId == paymentId;
+      }
+
+      allow get: if isAuthenticated()
+        && (resource == null || isTenantMember(resource.data.tenantId))
+        && (isPOSOperator() || canViewFinance() || isIT());
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
+      allow create: if isPOSOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && isAssignedToBranch(request.resource.data.branchId)
+        && hasValidPaymentIdentity(paymentId)
+        && hasValidPaymentSettlement()
+        && paymentMatchesSale(paymentId)
+        && (!request.resource.data.get('isRevisionReplacement', false) ||
+          !('executionMode' in getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(request.resource.data.revisionRequestId)).data) || atomicFinancialPostingChain());
+      allow update, delete: if false;
+    }
+
+    match /pos_transaction_outbox/{eventId} {
+      function hasValidOutboxEnvelope(eventId) {
+        let outbox = request.resource.data;
+        return outbox.eventId == eventId
+          && outbox.branchId is string
+          && outbox.source == 'POS'
+          && outbox.engineVersion == 2
+          && outbox.payloadVersion == 1
+          && outbox.eventType == 'POS_SALE_COMMITTED'
+          && outbox.aggregateType == 'POS_SALE'
+          && outbox.aggregateId == outbox.saleId
+          && outbox.saleId is string
+          && outbox.paymentId is string
+          && outbox.receiptNumber is string
+          && (outbox.status == 'PENDING' || (outbox.status == 'PROCESSED' && isFreshAtomicRevision(outbox.revisionRequestId)))
+          && outbox.attemptCount == 0
+          && outbox.payload.saleId == outbox.saleId
+          && outbox.payload.paymentId == outbox.paymentId;
+      }
+
+      function outboxMatchesSale(eventId) {
+        let outbox = request.resource.data;
+        let sale = getAfter(/databases/$(database)/documents/sales/$(outbox.saleId)).data;
+        return sale.engineVersion == 2
+          && sale.tenantId == outbox.tenantId
+          && sale.branchId == outbox.branchId
+          && sale.receiptNumber == outbox.receiptNumber
+          && sale.canonicalPaymentId == outbox.paymentId
+          && sale.transactionOutboxEventId == eventId;
+      }
+
+      function outboxMatchesPayment() {
+        let outbox = request.resource.data;
+        let payment = getAfter(/databases/$(database)/documents/pos_payments/$(outbox.paymentId)).data;
+        return payment.saleId == outbox.saleId
+          && payment.tenantId == outbox.tenantId
+          && payment.branchId == outbox.branchId;
+      }
+
+      allow get: if isAuthenticated()
+        && (resource == null || isTenantMember(resource.data.tenantId))
+        && (isPOSOperator() || canViewFinance() || isIT());
+      allow list: if isAuthenticated()
+        && isTenantMember(resource.data.tenantId)
+        && (canViewFinance() || isIT());
+      allow create: if isPOSOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && isAssignedToBranch(request.resource.data.branchId)
+        && hasValidOutboxEnvelope(eventId)
+        && outboxMatchesSale(eventId)
+        && outboxMatchesPayment();
+      allow update: if atomicOutboxSupersession(eventId);
+      allow delete: if false;
+    }
+
+    match /pos_checkout_attempts/{attemptDocumentId} {
+      function hasValidAttemptEnvelope() {
+        let attempt = request.resource.data;
+        return attempt.operatorUid == request.auth.uid
+          && attempt.branchId is string
+          && attempt.status == 'completed'
+          && attempt.attemptId is string
+          && attempt.fingerprint is string
+          && attempt.saleId is string
+          && attempt.paymentId is string
+          && attempt.outboxEventId is string;
+      }
+
+      function attemptMatchesSale() {
+        let attempt = request.resource.data;
+        let sale = getAfter(/databases/$(database)/documents/sales/$(attempt.saleId)).data;
+        return sale.engineVersion == 2
+          && sale.tenantId == attempt.tenantId
+          && sale.branchId == attempt.branchId
+          && sale.operatorUid == request.auth.uid
+          && sale.checkoutAttemptId == attempt.attemptId
+          && sale.checkoutIntentFingerprint == attempt.fingerprint
+          && sale.canonicalPaymentId == attempt.paymentId
+          && sale.transactionOutboxEventId == attempt.outboxEventId;
+      }
+
+      function attemptMatchesPayment() {
+        let attempt = request.resource.data;
+        let payment = getAfter(/databases/$(database)/documents/pos_payments/$(attempt.paymentId)).data;
+        return payment.saleId == attempt.saleId
+          && payment.checkoutAttemptId == attempt.attemptId
+          && payment.tenantId == attempt.tenantId
+          && payment.branchId == attempt.branchId;
+      }
+
+      function attemptMatchesOutbox() {
+        let attempt = request.resource.data;
+        let outbox = getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(attempt.outboxEventId)).data;
+        return outbox.saleId == attempt.saleId
+          && outbox.paymentId == attempt.paymentId
+          && outbox.tenantId == attempt.tenantId
+          && outbox.branchId == attempt.branchId
+          && (outbox.status == 'PENDING' || (outbox.status == 'PROCESSED' && isFreshAtomicRevision(attempt.revisionRequestId)));
+      }
+
+      allow get: if isPOSOperator() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if false;
+      allow create: if isPOSOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && isAssignedToBranch(request.resource.data.branchId)
+        && hasValidAttemptEnvelope()
+        && attemptMatchesSale()
+        && attemptMatchesPayment()
+        && attemptMatchesOutbox();
+      allow update, delete: if false;
+    }
+
+    match /pos_sale_revision_requests/{requestId} {
+      function hasValidRevisionRequestEnvelope() {
+        let revision = request.resource.data;
+        return revision.keys().hasOnly([
+            'requestType', 'engineVersion', 'payloadVersion', 'status',
+            'requestId', 'revisionId', 'tenantId', 'branchId',
+            'originalSaleId', 'originalReceiptNumber', 'originalSellerId', 'originalTimestamp',
+            'requestedBy', 'requestedByName', 'requestedByRole', 'reason', 'sequence',
+            'replacementAttemptId', 'replacementSaleId', 'pendingReplacementSaleId',
+            'replacementPaymentId', 'replacementOutboxEventId', 'reversalEventId', 'auditId',
+            'originalTotal', 'revisedTotal', 'monetaryDelta', 'adjustmentDirection',
+            'changeTypes', 'itemChanges', 'before', 'after', 'revisedItems', 'envelope'
+          ])
+          && revision.requestId == requestId
+          && revision.requestType == 'POS_SALE_REVISION_REQUESTED'
+          && revision.engineVersion == 2
+          && revision.payloadVersion == 1
+          && revision.status == 'PENDING'
+          && revision.revisionId is string
+          && revision.revisionId.size() > 0
+          && revision.tenantId is string
+          && revision.tenantId.size() > 0
+          && revision.branchId is string
+          && revision.branchId.size() > 0
+          && revision.originalSaleId is string
+          && revision.originalSaleId.size() > 0
+          && revision.originalReceiptNumber is string
+          && revision.originalReceiptNumber.size() > 0
+          && revision.requestedBy == request.auth.uid
+          && revision.requestedByName is string
+          && revision.requestedByName.size() > 0
+          && revision.reason is string
+          && revision.reason.size() >= 8
+          && revision.reason.size() <= 500
+          && revision.sequence is int
+          && revision.sequence >= 1
+          && revision.replacementAttemptId is string
+          && revision.replacementSaleId is string
+          && revision.pendingReplacementSaleId == revision.replacementSaleId
+          && revision.replacementPaymentId is string
+          && revision.replacementOutboxEventId is string
+          && revision.reversalEventId is string
+          && revision.auditId is string
+          && revision.originalTotal is number
+          && revision.revisedTotal is number
+          && revision.monetaryDelta is number
+          && revision.revisedTotal - revision.originalTotal == revision.monetaryDelta
+          && revision.adjustmentDirection in ['INCREASE', 'DECREASE', 'NO_VALUE_CHANGE']
+          && revision.changeTypes is list
+          && revision.itemChanges is list
+          && revision.revisedItems is list
+          && revision.revisedItems.size() > 0
+          && revision.before is map
+          && revision.after is map
+          && revision.envelope is map;
+      }
+
+      allow get: if isAuthenticated() && (
+        resource == null ||
+        (
+          isTenantMember(resource.data.tenantId)
+          && (
+            canViewGlobalRevisionLedger() ||
+            canViewBranchRevisionLedger(resource.data.branchId)
+          )
+        )
+      );
+      allow list: if isAuthenticated()
+        && isTenantMember(resource.data.tenantId)
+        && (
+          canViewGlobalRevisionLedger() ||
+          canViewBranchRevisionLedger(resource.data.branchId)
+        );
+      allow create: if isPOSOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && isAssignedToBranch(request.resource.data.branchId)
+        && (hasValidRevisionRequestEnvelope() || hasAtomicCorrectionChain(requestId));
+      // Revision lifecycle transitions are owned exclusively by the Admin SDK workers.
+      allow update, delete: if false;
+    }
+
+    match /pos_payment_reversals/{reversalId} {
+      allow get: if isPOSOperator() && (resource == null || resource.data.tenantId == getUserData().tenantId);
+      allow create: if request.resource.data.reversalId == reversalId && atomicPaymentReversal();
+      allow update, delete: if false;
+    }
+
+    match /welfare/{recordId} {
+      allow create: if atomicWelfareRecord(recordId, 'welfare');
+    }
+    match /cashTransfers/{recordId} {
+      allow create: if atomicWelfareRecord(recordId, 'cashTransfers');
+    }
+    match /clients/{clientId} {
+      allow update: if atomicWelfareBalance(clientId);
+    }
+    match /{collectionName}/{reversalId} {
+      allow get: if collectionName in ['pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals']
+        && isPOSOperator() && (resource == null || resource.data.tenantId == getUserData().tenantId);
+      allow create: if collectionName in ['pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals']
+        && atomicFinancialReversal(reversalId, collectionName);
+    }
+
+    match /audit_logs/{auditId} {
+      allow read: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId;
+      allow create: if isAuthenticated() && request.resource.data.tenantId == getUserData().tenantId
+        && (!('revisionRequestId' in request.resource.data) ||
+          (isFreshAtomicRevision(request.resource.data.revisionRequestId)
+          && request.resource.data.userId == request.auth.uid));
+      allow update: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId
+        && !('revisionRequestId' in resource.data) && !('revisionRequestId' in request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId && !('revisionRequestId' in resource.data);
+    }
+    match /sale_revisions/{revisionId} {
+      allow get: if isAuthenticated() && (resource == null || resource.data.tenantId == getUserData().tenantId);
+      allow list: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId;
+      allow create: if isAuthenticated() && request.resource.data.tenantId == getUserData().tenantId
+        && (!('revisionRequestId' in request.resource.data) || isFreshAtomicRevision(request.resource.data.revisionRequestId));
+      allow update: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId
+        && !('revisionRequestId' in resource.data) && !('revisionRequestId' in request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId && !('revisionRequestId' in resource.data);
+    }
+
+    match /welfare_records/{recordId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if isHR() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isHR() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if isHR() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /inventoryMovementEvents/{eventId} {
+      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update, delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    match /branchConsumptionDaily/{summaryId} {
+      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+    }
+
+    match /replenishmentEngineSettings/{settingsId} {
+      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+    }
+
+    match /branchReplenishmentSnapshots/{snapId} {
+      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+    }
+
+    match /inventoryTransferReservations/{resId} {
+      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+    }
+
+    match /autoGenerateOrderRuns/{runId} {
+      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+    }
+
+    match /autoGenerateOrderLines/{lineId} {
+      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow write: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+    }
+
+    match /pos_quotations/{quotationId} {
+      allow get: if isAuthenticated() && (resource == null || (isTenantMember(resource.data.tenantId) && (isAssignedToBranch(resource.data.branchId) || isAdmin())));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isAssignedToBranch(resource.data.branchId) || isAdmin());
+      allow create: if isPOSOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && isAssignedToBranch(request.resource.data.branchId)
+        && get(/databases/$(database)/documents/branches/$(request.resource.data.branchId)).data.tenantId == request.resource.data.tenantId
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.status == 'Draft';
+      allow update: if isPOSOperator()
+        && isTenantMember(resource.data.tenantId)
+        && isAssignedToBranch(resource.data.branchId)
+        && get(/databases/$(database)/documents/branches/$(resource.data.branchId)).data.tenantId == resource.data.tenantId
+        && request.resource.data.tenantId == resource.data.tenantId
+        && request.resource.data.branchId == resource.data.branchId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'convertedReceiptId', 'convertedAt', 'convertedValue', 'updatedAt'])
+        && (request.resource.data.status in ['Converted', 'Expired']);
+      allow delete: if false; // quotations are never hard-deleted
+    }
+
+    match /pos_quotation_counters/{counterId} {
+      allow get: if isAuthenticated() && (resource == null || (isTenantMember(resource.data.tenantId) && (isAssignedToBranch(resource.data.branchId) || isAdmin())));
+      allow create: if isPOSOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && isAssignedToBranch(request.resource.data.branchId)
+        && get(/databases/$(database)/documents/branches/$(request.resource.data.branchId)).data.tenantId == request.resource.data.tenantId;
+      allow update: if isPOSOperator()
+        && isTenantMember(resource.data.tenantId)
+        && isAssignedToBranch(resource.data.branchId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && request.resource.data.branchId == resource.data.branchId
+        && request.resource.data.branchCode == resource.data.branchCode
+        && request.resource.data.year == resource.data.year
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSequence', 'updatedAt'])
+        && request.resource.data.lastSequence > resource.data.lastSequence
+        && request.resource.data.lastSequence <= resource.data.lastSequence + 100;
+      allow delete: if false;
+    }
+
+
+
+    // Generic rule for all other collections to enforce tenant isolation
+    match /{collectionName}/{docId} {
+      allow get: if !(collectionName in ['supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if !(collectionName in ['supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if !(collectionName in ['supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if !(collectionName in ['supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if !(collectionName in ['supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+  }
+}
+
+)
+        && request.resource.data.supplier_id == 'SUP-' + supplierId
+        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time;
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && canMaintainSupplier() && validSupplier()
+        && (request.resource.data.supplier_id == resource.data.get('supplier_id', '')
+          || (resource.data.get('supplier_id', '') == '' && request.resource.data.supplier_id == 'SUP-' + supplierId))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['supplier_name','supplier_id','commercial_category','nda_wholesale_licence_number','nda_licence_expiry_date','nda_licence_status','payment_terms','tin','address','is_suspended','whtExempt','inventoryCapabilities','updatedBy','updatedAt','updatedAccessRole','updatedModule']);
+      // Suspend suppliers instead of destroying historical order references.
+      allow delete: if false;
+    }
+
     // Procurement, transfers, billing, and welfare collections
     match /stock_orders/{orderId} {
       function validOrderClass(data) {
@@ -2587,11 +3270,11 @@ service cloud.firestore {
 
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
-      allow get: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if !(collectionName in ['opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAdmin() && isTenantMember(resource.data.tenantId);
+      allow get: if !(collectionName in ['supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if !(collectionName in ['supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if !(collectionName in ['supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if !(collectionName in ['supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if !(collectionName in ['supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAdmin() && isTenantMember(resource.data.tenantId);
     }
   }
 }
