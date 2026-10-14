@@ -1258,7 +1258,8 @@ const OrderDetailsModal: React.FC<{ order: StockOrder; onClose: () => void }> = 
     const fetchLines = async () => {
       if (profile?.tenantId) {
         const data = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [
-          { field: 'order_id', operator: '==', value: order.id }
+          { field: 'order_id', operator: '==', value: order.id },
+          { field: 'tenantId', operator: '==', value: profile.tenantId }
         ]);
         setLines(data);
         setLoading(false);
