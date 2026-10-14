@@ -32,6 +32,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { firestoreService } from '../services/firestore';
 import { Client, InstitutionRegistry, Prescriber, Staff } from '../types';
+import { SupplierEditor } from '../components/procurement/SupplierEditor';
 import { toast } from 'sonner';
 import { deduplicateStaff } from '../utils/deduplicateStaff';
 import { twMerge } from 'tailwind-merge';
@@ -43,7 +44,7 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const Clients: React.FC = () => {
-  const { profile } = useAuth();
+  const { profile, hasPermission } = useAuth();
   const [activeTab, setActiveTab] = useState<'patients' | 'institutions' | 'prescribers' | 'suppliers' | 'reports'>('patients');
   const [patients, setPatients] = useState<Client[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
@@ -142,7 +143,8 @@ const Clients: React.FC = () => {
             setEditingItem(null);
             setIsModalOpen(true);
           }}
-          className="bg-zinc-900 hover:bg-zinc-800 text-white px-6 py-3 rounded-2xl font-bold transition-all flex items-center gap-2 w-fit shadow-lg shadow-zinc-900/20 uppercase text-xs tracking-widest"
+          disabled={activeTab === 'suppliers' && !hasPermission('clients', 'operate')}
+          className="bg-zinc-900 hover:bg-zinc-800 text-white px-6 py-3 rounded-2xl font-bold transition-all flex items-center gap-2 w-fit shadow-lg shadow-zinc-900/20 uppercase text-xs tracking-widest disabled:opacity-50"
         >
           <Plus size={20} />
           Add {activeTab === 'patients' ? 'Patient' : activeTab === 'institutions' ? 'Institution' : activeTab === 'suppliers' ? 'Supplier' : 'Prescriber'}
@@ -329,17 +331,18 @@ const Clients: React.FC = () => {
                             setEditingItem(item);
                             setIsModalOpen(true);
                           }}
-                          className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-all"
+                          disabled={activeTab === 'suppliers' && !hasPermission('clients', 'operate')}
+                          className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-all disabled:opacity-50"
                         >
                           <Edit2 size={16} />
                         </button>
-                        <button
+                        {activeTab !== 'suppliers' && <button
                           onClick={() => {
                             if (item.isStaff) {
                               toast.info('Staff customers are linked to HR records and cannot be deleted here.');
                               return;
                             }
-                            handleDelete(activeTab === 'patients' ? 'clients' : activeTab === 'institutions' ? 'institutions' : activeTab === 'suppliers' ? 'supplier_registry' : 'prescribers', item.id);
+                            handleDelete(activeTab === 'patients' ? 'clients' : activeTab === 'institutions' ? 'institutions' : 'prescribers', item.id);
                           }}
                           title={item.isStaff ? 'Manage this staff record in HR Admin' : 'Delete entry'}
                           className={cn(
@@ -348,7 +351,7 @@ const Clients: React.FC = () => {
                           )}
                         >
                           <Trash2 size={16} />
-                        </button>
+                        </button>}
                       </div>
                     </td>
                   </tr>
@@ -360,7 +363,7 @@ const Clients: React.FC = () => {
       )}
 
       {isModalOpen && (
-        <RegistryModal 
+        activeTab === 'suppliers' ? <SupplierEditor sourceModule="clients" supplier={editingItem} onClose={() => setIsModalOpen(false)} /> : <RegistryModal
           type={activeTab}
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
@@ -377,6 +380,7 @@ const Clients: React.FC = () => {
           type={activeTab}
           institutions={institutions}
           onEdit={(item) => {
+            if (activeTab === 'suppliers') setSelectedItemForDetails(null);
             setEditingItem(item);
             setIsModalOpen(true);
           }}
@@ -730,59 +734,6 @@ const RegistryModal: React.FC<{ type: string; isOpen: boolean; onClose: () => vo
               </>
             )}
 
-            {type === 'suppliers' && (
-              <>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Supplier Name *</label>
-                  <input required type="text" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.supplier_name || ''} onChange={(e) => setFormData({ ...formData, supplier_name: e.target.value })} />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Supplier ID / Code *</label>
-                  <input required type="text" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.supplier_id || ''} onChange={(e) => setFormData({ ...formData, supplier_id: e.target.value })} />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Commercial Category</label>
-                  <select className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.commercial_category || 'Wholesale'} onChange={(e) => setFormData({ ...formData, commercial_category: e.target.value })}>
-                    <option value="Wholesale">Wholesale</option>
-                    <option value="Manufacturer">Manufacturer</option>
-                    <option value="Importer">Importer</option>
-                    <option value="Local Distributor">Local Distributor</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">NDA Wholesale Licence No.</label>
-                  <input type="text" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.nda_wholesale_licence_number || ''} onChange={(e) => setFormData({ ...formData, nda_wholesale_licence_number: e.target.value })} />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Licence Expiry Date</label>
-                  <input type="date" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.nda_licence_expiry_date || ''} onChange={(e) => setFormData({ ...formData, nda_licence_expiry_date: e.target.value })} />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Licence Status</label>
-                  <select className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.nda_licence_status || 'valid'} onChange={(e) => setFormData({ ...formData, nda_licence_status: e.target.value })}>
-                    <option value="valid">Valid</option>
-                    <option value="expiring_soon">Expiring Soon</option>
-                    <option value="expired">Expired</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Supplier TIN</label>
-                  <input type="text" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.tin || ''} onChange={(e) => setFormData({ ...formData, tin: e.target.value })} />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Payment Terms</label>
-                  <input type="text" placeholder="e.g. Net 30" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.payment_terms || ''} onChange={(e) => setFormData({ ...formData, payment_terms: e.target.value })} />
-                </div>
-                <div className="flex items-center gap-2 pt-4">
-                  <input type="checkbox" id="whtExempt" className="rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500/20" checked={formData.whtExempt || false} onChange={(e) => setFormData({ ...formData, whtExempt: e.target.checked })} />
-                  <label htmlFor="whtExempt" className="text-xs font-bold text-zinc-500 uppercase tracking-widest">WHT Exempt (6%)</label>
-                </div>
-                <div className="flex items-center gap-2 pt-4">
-                  <input type="checkbox" id="is_suspended" className="rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500/20" checked={formData.is_suspended || false} onChange={(e) => setFormData({ ...formData, is_suspended: e.target.checked })} />
-                  <label htmlFor="is_suspended" className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Suspend Supplier</label>
-                </div>
-              </>
-            )}
           </div>
 
           <div className="space-y-1">

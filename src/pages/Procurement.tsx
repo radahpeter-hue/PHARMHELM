@@ -26,6 +26,8 @@ import { isBranchReturnToHq, isHqProcurementDelivery, receiveHqTransfer } from '
 import { isOperationalInventoryRecord } from '../services/inventoryClassification';
 import { useOperationalInventoryFeature } from '../hooks/useOperationalInventoryFeature';
 import OperationalHQStoreTab from '../components/procurement/OperationalHQStoreTab';
+import { SupplierEditor } from '../components/procurement/SupplierEditor';
+import { supplierEligibleForStream } from '../services/supplierRegistryPolicy';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -1090,7 +1092,7 @@ const SourcingTab: React.FC = () => {
       firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, data => {
         setOrders(data.filter(order => operationalInventoryEnabled || !isOperationalInventoryRecord(order)));
       });
-      firestoreService.subscribeToCollection<InstitutionRegistry>('supplier_registry', profile.tenantId, setSuppliers);
+      return firestoreService.subscribeToCollection<InstitutionRegistry>('supplier_registry', profile.tenantId, setSuppliers);
       firestoreService.subscribeToCollection<ProductBatch>('product_batches', profile.tenantId, (data) => {
         setHqBatches(data.filter(b => b.branchId === 'HQ'));
       });
@@ -1253,9 +1255,7 @@ const WholeOrderSourcingModal: React.FC<{
     setItemCosts(initialCosts);
   }, [allLines, order.id]);
 
-  const eligibleSuppliers = isOperationalOrder
-    ? suppliers.filter(supplier => supplier.inventoryCapabilities?.includes('NON_SELLABLE_OPERATIONAL'))
-    : suppliers;
+  const eligibleSuppliers = suppliers.filter(supplier => supplierEligibleForStream(supplier, isOperationalOrder ? 'OPERATIONAL' : 'SELLABLE'));
 
   // Helper: compute HQ stock total quantity for a product_id
   const getProductHqStock = (productId: string) => {
@@ -3766,7 +3766,8 @@ const DeferredTab: React.FC = () => {
 };
 
 const SupplierRegistryTab: React.FC = () => {
-  const { profile } = useAuth();
+  const { profile, hasPermission } = useAuth();
+  const canMaintainSupplier = hasPermission('procurement', 'operate');
   const [suppliers, setSuppliers] = useState<InstitutionRegistry[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -3779,20 +3780,10 @@ const SupplierRegistryTab: React.FC = () => {
   }, [profile?.tenantId]);
 
   const filtered = suppliers.filter(s => 
-    s.supplier_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    s.supplier_id.toLowerCase().includes(searchTerm.toLowerCase())
+    (s.supplier_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (s.supplier_id || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleDelete = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this supplier?')) {
-      try {
-        await firestoreService.deleteDocument('supplier_registry', id);
-        toast.success('Supplier deleted');
-      } catch (error) {
-        toast.error('Failed to delete supplier');
-      }
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -3812,7 +3803,8 @@ const SupplierRegistryTab: React.FC = () => {
             setEditingSupplier(null);
             setIsModalOpen(true);
           }}
-          className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl font-medium transition-colors flex items-center gap-2"
+          disabled={!canMaintainSupplier}
+          className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl font-medium transition-colors flex items-center gap-2 disabled:opacity-50"
         >
           <Plus size={20} />
           Add Supplier
@@ -3836,7 +3828,7 @@ const SupplierRegistryTab: React.FC = () => {
                 <tr key={supplier.id} className="hover:bg-zinc-50/50 transition-colors">
                   <td className="px-6 py-4">
                     <p className="font-bold text-zinc-900">{supplier.supplier_name}</p>
-                    <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{supplier.supplier_id}</p>
+                    <p className="break-all font-mono text-[10px] text-zinc-500">{supplier.supplier_id}</p>
                   </td>
                   <td className="px-6 py-4 text-sm text-zinc-600">
                     <div>{supplier.commercial_category}</div>
@@ -3854,7 +3846,7 @@ const SupplierRegistryTab: React.FC = () => {
                       supplier.nda_licence_status === 'valid' ? "bg-emerald-50 text-emerald-600" : 
                       supplier.nda_licence_status === 'expiring_soon' ? "bg-amber-50 text-amber-600" : "bg-red-50 text-red-600"
                     )}>
-                      {supplier.nda_licence_status.replace(/_/g, ' ')}
+                      {(supplier.nda_licence_status || 'Not recorded').replace(/_/g, ' ')}
                     </span>
                   </td>
                   <td className="px-6 py-4">
@@ -3871,15 +3863,11 @@ const SupplierRegistryTab: React.FC = () => {
                           setEditingSupplier(supplier);
                           setIsModalOpen(true);
                         }}
-                        className="text-zinc-400 hover:text-emerald-500 p-1"
+                        aria-label={`Edit supplier ${supplier.supplier_name}`}
+                        disabled={!canMaintainSupplier}
+                        className="text-zinc-400 hover:text-emerald-500 p-1 disabled:opacity-50"
                       >
                         <Edit2 size={16} />
-                      </button>
-                      <button 
-                        onClick={() => handleDelete(supplier.id)}
-                        className="text-zinc-400 hover:text-red-500 p-1"
-                      >
-                        <Trash2 size={16} />
                       </button>
                     </div>
                   </td>
@@ -3898,8 +3886,8 @@ const SupplierRegistryTab: React.FC = () => {
       </div>
 
       {isModalOpen && (
-        <SupplierModal 
-          isOpen={isModalOpen}
+        <SupplierEditor
+          sourceModule="procurement"
           onClose={() => setIsModalOpen(false)}
           supplier={editingSupplier}
         />
@@ -3908,209 +3896,6 @@ const SupplierRegistryTab: React.FC = () => {
   );
 };
 
-const SupplierModal: React.FC<{ isOpen: boolean, onClose: () => void, supplier: InstitutionRegistry | null }> = ({ isOpen, onClose, supplier }) => {
-  const { profile } = useAuth();
-  const [formData, setFormData] = useState({
-    supplier_name: supplier?.supplier_name || '',
-    supplier_id: supplier?.supplier_id || '',
-    commercial_category: supplier?.commercial_category || 'Wholesale',
-    nda_wholesale_licence_number: supplier?.nda_wholesale_licence_number || '',
-    nda_licence_expiry_date: supplier?.nda_licence_expiry_date || '',
-    nda_licence_status: supplier?.nda_licence_status || 'valid',
-    is_suspended: supplier?.is_suspended || false,
-    payment_terms: supplier?.payment_terms || '',
-    tin: supplier?.tin || '',
-    whtExempt: supplier?.whtExempt || false,
-    inventoryCapabilities: supplier?.inventoryCapabilities || []
-  });
-
-  const toggleInventoryCapability = (capability: NonNullable<InstitutionRegistry['inventoryCapabilities']>[number]) => {
-    setFormData(current => ({
-      ...current,
-      inventoryCapabilities: current.inventoryCapabilities.includes(capability)
-        ? current.inventoryCapabilities.filter(value => value !== capability)
-        : [...current.inventoryCapabilities, capability]
-    }));
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!profile) return;
-
-    try {
-      if (supplier) {
-        await firestoreService.updateDocument('supplier_registry', supplier.id, formData);
-        toast.success('Supplier updated');
-      } else {
-        await firestoreService.addDocument('supplier_registry', {
-          ...formData,
-          tenantId: profile.tenantId,
-          status: 'active'
-        });
-        toast.success('Supplier added');
-      }
-      onClose();
-    } catch (error) {
-      toast.error('Failed to save supplier');
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-[32px] w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
-        <div className="p-8">
-          <h2 className="text-2xl font-bold text-zinc-900 mb-6">{supplier ? 'Edit Supplier' : 'Add New Supplier'}</h2>
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Supplier Name</label>
-              <input 
-                type="text"
-                required
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.supplier_name}
-                onChange={(e) => setFormData({...formData, supplier_name: e.target.value})}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Supplier ID / Code</label>
-              <input 
-                type="text"
-                required
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.supplier_id}
-                onChange={(e) => setFormData({...formData, supplier_id: e.target.value})}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Category</label>
-              <select 
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.commercial_category}
-                onChange={(e) => setFormData({...formData, commercial_category: e.target.value})}
-              >
-                <option value="Wholesale">Wholesale</option>
-                <option value="Manufacturer">Manufacturer</option>
-                <option value="Distributor">Distributor</option>
-                <option value="Importer">Importer</option>
-              </select>
-            </div>
-            <div className="md:col-span-2 p-4 bg-zinc-50 border border-zinc-200 rounded-2xl space-y-3">
-              <div>
-                <p className="text-xs font-bold text-zinc-700 uppercase">Supply Capabilities</p>
-                <p className="mt-1 text-[11px] text-zinc-500">Operational requisitions are offered only to suppliers explicitly tagged for non-sellable operational items.</p>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {([
-                  ['DRUGS', 'Drugs'],
-                  ['COSMETICS', 'Cosmetics'],
-                  ['CONSUMABLES', 'Consumables'],
-                  ['DEVICES', 'Devices'],
-                  ['NON_SELLABLE_OPERATIONAL', 'Non-Sellable Operational Items']
-                ] as const).map(([capability, label]) => (
-                  <label key={capability} className="flex items-center gap-2 text-xs text-zinc-700">
-                    <input
-                      type="checkbox"
-                      checked={formData.inventoryCapabilities.includes(capability)}
-                      onChange={() => toggleInventoryCapability(capability)}
-                    />
-                    {label}
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">NDA Licence Number</label>
-              <input 
-                type="text"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.nda_wholesale_licence_number}
-                onChange={(e) => setFormData({...formData, nda_wholesale_licence_number: e.target.value})}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Licence Expiry</label>
-              <input 
-                type="date"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.nda_licence_expiry_date}
-                onChange={(e) => setFormData({...formData, nda_licence_expiry_date: e.target.value})}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Licence Status</label>
-              <select 
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.nda_licence_status}
-                onChange={(e) => setFormData({...formData, nda_licence_status: e.target.value as any})}
-              >
-                <option value="valid">Valid</option>
-                <option value="expiring_soon">Expiring Soon</option>
-                <option value="expired">Expired</option>
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Supplier TIN</label>
-              <input 
-                type="text"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                value={formData.tin}
-                onChange={(e) => setFormData({...formData, tin: e.target.value})}
-                placeholder="e.g., 1001234567"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Payment Terms</label>
-              <input 
-                type="text"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                placeholder="e.g., Net 30, Cash on Delivery"
-                value={formData.payment_terms}
-                onChange={(e) => setFormData({...formData, payment_terms: e.target.value})}
-              />
-            </div>
-            <div className="flex items-center gap-6 md:col-span-2">
-              <div className="flex items-center gap-2">
-                <input 
-                  type="checkbox"
-                  id="is_suspended"
-                  className="w-4 h-4 rounded border-zinc-300 text-emerald-500 focus:ring-emerald-500"
-                  checked={formData.is_suspended}
-                  onChange={(e) => setFormData({...formData, is_suspended: e.target.checked})}
-                />
-                <label htmlFor="is_suspended" className="text-sm font-medium text-zinc-700">Suspend Supplier</label>
-              </div>
-              <div className="flex items-center gap-2">
-                <input 
-                  type="checkbox"
-                  id="whtExempt"
-                  className="w-4 h-4 rounded border-zinc-300 text-emerald-500 focus:ring-emerald-500"
-                  checked={formData.whtExempt}
-                  onChange={(e) => setFormData({...formData, whtExempt: e.target.checked})}
-                />
-                <label htmlFor="whtExempt" className="text-sm font-medium text-zinc-700">WHT Exempt</label>
-              </div>
-            </div>
-            <div className="flex gap-3 pt-4 md:col-span-2">
-              <button 
-                type="button"
-                onClick={onClose}
-                className="flex-1 py-3 text-zinc-500 font-bold hover:bg-zinc-50 rounded-2xl transition-all"
-              >
-                Cancel
-              </button>
-              <button 
-                type="submit"
-                className="flex-1 py-3 bg-zinc-900 text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-900/20"
-              >
-                {supplier ? 'Update Supplier' : 'Add Supplier'}
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 // ==========================================
 // 1. HQ STORE INVENTORY TAB (REPLICA)

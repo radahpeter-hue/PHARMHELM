@@ -77,7 +77,7 @@ test('Procurement labels Operational orders and never offers Sellable HQ stock a
   assert.match(procurement, /Operational HQ Store Assessment/);
   assert.match(procurement, /Fulfill from Operational Store/);
   assert.match(procurement, /getOperationalHqItem/);
-  assert.match(procurement, /suppliers\.filter\(supplier => supplier\.inventoryCapabilities\?\.includes\('NON_SELLABLE_OPERATIONAL'\)\)/);
+  assert.match(procurement, /suppliers\.filter\(supplier => supplierEligibleForStream\(supplier, isOperationalOrder \? 'OPERATIONAL' : 'SELLABLE'\)\)/);
   assert.match(procurement, /setIsDetailModalOpen\(false\)/);
   assert.match(procurement, /setIsSourcingModalOpen\(false\)/);
 });

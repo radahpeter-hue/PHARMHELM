@@ -1,0 +1,40 @@
+import assert from 'node:assert/strict';
+import {readFileSync,rmSync} from 'node:fs';
+import {initializeTestEnvironment,assertSucceeds,assertFails} from '@firebase/rules-unit-testing';
+import {doc,setDoc,getDoc,getDocs,query,collection,where,updateDoc,deleteDoc} from 'firebase/firestore';
+import {build} from 'esbuild';
+const tenantId='supplier-tenant',tenantB='supplier-other';
+const env=await initializeTestEnvironment({projectId:'pharmhelm-operational-inventory-v2-rules',firestore:{rules:readFileSync(process.env.SUPPLIER_RULES_PATH||'firestore.rules','utf8')}});
+try {
+  await env.withSecurityRulesDisabled(async ctx=>{
+    for(const [id,role,secondaryRoles=[]] of [['buyer','Procurement Head'],['crm','Marketing Personnel'],['reader','IT Support Staff'],['secondary','HR Support Personnel',['Procurement Officer']],['custom-secondary','HR Support Personnel',['Custom CRM']],['custom','Custom CRM'],['custom-reader','Custom Reader']]) await setDoc(doc(ctx.firestore(),'staff',id),{tenantId,role,secondaryRoles});
+    for(const [role,level] of [['Custom CRM','view_functional'],['Custom Reader','view_only']]) await setDoc(doc(ctx.firestore(),'role_realms_of_operation',`${tenantId}_${role.replace(/\s+/g,'_').toLowerCase()}`),{tenantId,roleType:'custom',roleName:role,permissions:{clients:{accessLevel:level}}});
+    const readers=['Read One','Read Two','Read Three','Read Four','Read Five','Read Six'];
+    for(const role of readers) await setDoc(doc(ctx.firestore(),'role_realms_of_operation',`${tenantId}_${role.replace(/\s+/g,'_').toLowerCase()}`),{tenantId,roleType:'custom',roleName:role,permissions:{clients:{accessLevel:'view_only'}}});
+    await setDoc(doc(ctx.firestore(),'staff','late-secondary'),{tenantId,role:'HR Support Personnel',secondaryRoles:[...readers,'Custom CRM']});
+    await setDoc(doc(ctx.firestore(),'staff','other'),{tenantId:tenantB,role:'Procurement Head'});
+    await setDoc(doc(ctx.firestore(),'supplier_registry','legacy'),{tenantId,supplier_id:'001',supplier_name:'Existing supplier',inventoryCapabilities:[],paymentHistoryReference:'unchanged'});
+  });
+  const db=id=>env.authenticatedContext(id,{tenantId:id==='other'?tenantB:tenantId}).firestore();
+  await build({stdin:{contents:"export {saveSupplierRegistry} from './src/services/supplierRegistryService';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',packages:'external',outfile:'.supplier-registry-emulator.mjs'});
+  const {saveSupplierRegistry}=await import('../.supplier-registry-emulator.mjs');
+  const request={id:'generatedSupplier',tenantId,actorId:'buyer',isNew:true,sourceModule:'procurement',roles:['Procurement Head'],data:{supplier_name:'Office supplier',inventoryCapabilities:['NON_SELLABLE_OPERATIONAL']}};
+  const attempts=await Promise.all([saveSupplierRegistry(request,db('buyer')),saveSupplierRegistry(request,db('buyer'))]);
+  assert.equal(attempts[0].supplierCode,'SUP-generatedSupplier');assert.equal(attempts[1].supplierCode,attempts[0].supplierCode);
+  let rows=await getDocs(query(collection(db('crm'),'supplier_registry'),where('tenantId','==',tenantId)));
+  assert.equal(rows.docs.filter(d=>d.id==='generatedSupplier').length,1);
+  await assertSucceeds(saveSupplierRegistry({...request,isNew:false,actorId:'crm',sourceModule:'clients',roles:['Marketing Personnel'],data:{...request.data,supplier_name:'Edited from CRM',inventoryCapabilities:['NON_SELLABLE_OPERATIONAL','DRUGS']}},db('crm')));
+  assert.equal((await getDoc(doc(db('buyer'),'supplier_registry',request.id))).data().supplier_name,'Edited from CRM');
+  await assertSucceeds(saveSupplierRegistry({...request,id:'legacy',isNew:false,data:{supplier_name:'Edited legacy supplier',inventoryCapabilities:[]}},db('buyer')));
+  const legacy=(await getDoc(doc(db('buyer'),'supplier_registry','legacy'))).data();assert.equal(legacy.supplier_id,'001');assert.equal(legacy.paymentHistoryReference,'unchanged');
+  await assertSucceeds(saveSupplierRegistry({...request,id:'secondarySupplier',actorId:'secondary',roles:['HR Support Personnel','Procurement Officer']},db('secondary')));
+  await assertSucceeds(saveSupplierRegistry({...request,id:'customSupplier',actorId:'custom',sourceModule:'clients',roles:['Custom CRM']},db('custom')));
+  await assertSucceeds(saveSupplierRegistry({...request,id:'customSecondarySupplier',actorId:'custom-secondary',sourceModule:'clients',roles:['HR Support Personnel','Custom CRM']},db('custom-secondary')));
+  await assertSucceeds(saveSupplierRegistry({...request,id:'lateSecondarySupplier',actorId:'late-secondary',sourceModule:'clients',roles:['HR Support Personnel','Read One','Read Two','Read Three','Read Four','Read Five','Read Six','Custom CRM']},db('late-secondary')));
+  await assertFails(saveSupplierRegistry({...request,id:'readerSupplier',actorId:'reader'},db('reader')));
+  await assertFails(saveSupplierRegistry({...request,id:'customReaderSupplier',actorId:'custom-reader'},db('custom-reader')));
+  await assertFails(saveSupplierRegistry({...request,actorId:'other'},db('other')));
+  await assertFails(updateDoc(doc(db('buyer'),'supplier_registry','legacy'),{supplier_id:'changed',updatedBy:'buyer'}));
+  await assertFails(deleteDoc(doc(db('buyer'),'supplier_registry','legacy')));
+  console.log('Supplier register service, shared edits, retry, legacy identity and permissions passed.');
+} finally {await env.cleanup();rmSync('.supplier-registry-emulator.mjs',{force:true});}
