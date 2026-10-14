@@ -1,0 +1,33 @@
+name: Operational inventory UI checks
+on:
+  pull_request:
+    paths:
+      - 'src/components/inventory/**'
+      - 'src/components/procurement/OperationalHQStoreTab.tsx'
+      - 'src/utils/operationalStock.ts'
+      - 'scripts/operational-ui-smoke.mjs'
+      - '.github/workflows/operational-ui-checks.yml'
+jobs:
+  desktop-and-mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Install isolated browser verification runtime
+        run: |
+          npm install --prefix /tmp/browser-check --no-save playwright@1.51.1
+          /tmp/browser-check/node_modules/.bin/playwright install --with-deps chromium
+      - name: Check actual registration and catalogue components
+        env:
+          PLAYWRIGHT_MODULE: /tmp/browser-check/node_modules/playwright
+        run: node scripts/operational-ui-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: operational-ui-screenshots
+          path: /tmp/operational-ui-*/*.png

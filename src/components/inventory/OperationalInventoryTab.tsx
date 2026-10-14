@@ -12,6 +12,8 @@ import { twMerge } from 'tailwind-merge';
 import { isLegacyOperationalInventorySeed } from '../../utils/operationalInventory';
 import { operationalTypeForLegacyType } from '../../services/inventoryClassification';
 import { saveOperationalLocationItem } from '../../services/operationalInventoryMasterService';
+import { OperationalStockBalance } from './OperationalStockBalance';
+import { operationalIssueUnit, validateOperationalOpeningStock } from '../../utils/operationalStock';
 import { logOperationalUsage } from '../../services/operationalInventoryUsageService';
 
 function cn(...inputs: ClassValue[]) {
@@ -176,7 +178,7 @@ const OperationalInventoryTab: React.FC = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4 font-bold text-zinc-900">
-                      {item.quantityInStock} {item.unitOfIssue}
+                      <OperationalStockBalance quantity={item.quantityInStock} unit={item.unitOfIssue} />
                     </td>
                     <td className="px-6 py-4 text-xs font-medium text-zinc-600">
                       {(item.costPerPack || 0).toLocaleString()} UGX
@@ -321,7 +323,7 @@ const DetailsModal: React.FC<{
             </div>
             <div className="space-y-1">
               <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">In Stock</p>
-              <p className="font-bold text-zinc-900">{item.quantityInStock} {item.unitOfIssue}</p>
+              <OperationalStockBalance quantity={item.quantityInStock} unit={item.unitOfIssue} />
             </div>
             <div className="space-y-1">
               <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Supplier</p>
@@ -447,6 +449,8 @@ export const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void
   const { profile, activeBranchId } = useAuth();
   const [masters, setMasters] = useState<OperationalInventoryMaster[]>([]);
   const [linkExisting, setLinkExisting] = useState(false);
+  const [masterSearch, setMasterSearch] = useState('');
+  const [saving, setSaving] = useState(false);
   const [selectedMasterId, setSelectedMasterId] = useState('');
   const [formData, setFormData] = useState<Partial<OperationalInventory>>({
     name: '',
@@ -473,6 +477,7 @@ export const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void
 
   useEffect(() => {
     if (!isOpen) return;
+    setMasterSearch('');
     setFormData({
       name: '', type: 'non-fixed', category: '', unitPerPack: 1, costPerPack: 0,
       unitOfIssue: '', supplier: '', quantityInStock: 0, uniqueId: '', description: '',
@@ -504,9 +509,10 @@ export const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile?.tenantId) return;
+    if (!profile?.tenantId || saving) return;
 
     try {
+      setSaving(true);
       const branchId = locationId || activeBranchId || profile.branchId;
       if (!branchId) throw new Error('Select a branch or HQ location before registering the item.');
       const data = { 
@@ -524,9 +530,9 @@ export const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void
         data.uniqueId = `${prefix}-${randomNum}`;
       }
 
-      // Enforce quantity = 1 for fixed assets
-      if (data.type === 'fixed' && !linkExisting) {
-        data.quantityInStock = 1;
+      data.quantityInStock = validateOperationalOpeningStock(data.quantityInStock);
+      if (!identityLocked && !operationalIssueUnit(data.unitOfIssue)) {
+        throw new Error('Enter a named issue unit, such as piece, sheet or roll, rather than a number.');
       }
 
       if (item?.id) {
@@ -554,52 +560,62 @@ export const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void
       onClose();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to save item');
+    } finally {
+      setSaving(false);
     }
   };
 
   const nonFixedCategories = ['Stationery', 'Packaging', 'Cleaning & Hygiene', 'Kitchen & Canteen', 'Other'];
   const fixedCategories = ['Furniture & Fittings', 'IT Equipment', 'Office Equipment', 'Kitchen Equipment', 'Security Equipment', 'Medical Equipment', 'Other'];
   const identityLocked = Boolean((!item && linkExisting) || item?.masterItemId || (item && !item.masterItemId && linkExisting));
+  const selectedMaster = masters.find(master => master.id === selectedMasterId);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/40 backdrop-blur-sm">
-      <div className="bg-white w-full max-w-lg rounded-[32px] shadow-2xl overflow-hidden">
-        <div className="px-8 py-6 border-b border-zinc-100">
-          <h2 className="text-xl font-black text-zinc-900 uppercase tracking-tight">{item ? 'Edit Item' : 'Add Item'}</h2>
+      <div className="bg-white w-full max-w-3xl max-h-[calc(100dvh-2rem)] rounded-3xl shadow-2xl overflow-hidden flex flex-col text-zinc-900">
+        <div className="px-5 sm:px-8 py-5 border-b border-zinc-200 shrink-0 flex justify-between items-center">
+          <h2 className="text-xl font-black text-zinc-900 uppercase tracking-tight">{item ? 'Edit Item' : 'Add Item'}</h2><button type="button" onClick={onClose} disabled={saving} aria-label="Close item registration" className="p-2 text-zinc-700"><X size={20} /></button>
         </div>
-        <form onSubmit={handleSubmit} className="p-8 space-y-6 max-h-[80vh] overflow-y-auto">
+        <form onSubmit={handleSubmit} className="p-5 sm:p-8 space-y-5 overflow-y-auto min-h-0">
           {(!item || !item.masterItemId) && (
             <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4 space-y-3">
-              <p className="text-[10px] font-black uppercase tracking-widest text-sky-900">Tenant-wide Operational item identity</p>
+              <p className="text-xs font-black uppercase tracking-widest text-sky-900">Tenant-wide Operational item identity</p>
               <div className="flex flex-wrap gap-4 text-xs font-bold text-sky-900">
                 <label className="flex items-center gap-2"><input type="radio" checked={!linkExisting} onChange={() => { setLinkExisting(false); setSelectedMasterId(''); }} />Register a new item</label>
                 <label className="flex items-center gap-2"><input type="radio" checked={linkExisting} onChange={() => setLinkExisting(true)} />Link this location to an existing item</label>
               </div>
+              {linkExisting && <label className="block text-sm font-semibold text-zinc-700">Search catalogue<input type="search" value={masterSearch} onChange={event => setMasterSearch(event.target.value)} placeholder="Item name, category or ID" className="mt-1 w-full rounded-xl border border-sky-200 bg-white px-3 py-2.5 text-sm text-zinc-900" /></label>}
               {linkExisting && (
                 <select required value={selectedMasterId} onChange={event => selectMaster(event.target.value)} className="w-full rounded-xl border border-sky-200 bg-white px-3 py-2 text-sm">
                   <option value="">Select tenant Operational item</option>
-                  {masters.map(master => <option key={master.id} value={master.id}>{master.name} · {master.uniqueId}</option>)}
+                  {masters.filter(master => master.id === selectedMasterId || [master.name, master.category, master.uniqueId].some(value => String(value || '').toLowerCase().includes(masterSearch.toLowerCase()))).map(master => <option key={master.id} value={master.id}>{master.name} · {master.uniqueId} · {operationalIssueUnit(master.unitOfIssue) || 'Unit not specified'}</option>)}
                 </select>
               )}
-              <p className="text-[10px] text-sky-700">Use the same item identity at HQ and branches. Each location keeps its own on-hand balance.</p>
+              {linkExisting && selectedMaster && <div className="text-sm text-zinc-900 space-y-1 break-words">
+                <p className="font-semibold">{selectedMaster.name}</p>
+                <p>{selectedMaster.uniqueId} · {selectedMaster.category || 'Uncategorised'}</p>
+                <p>{selectedMaster.unitPerPack} issue units per pack · {operationalIssueUnit(selectedMaster.unitOfIssue) || 'Unit not specified'}</p>
+                {selectedMaster.supplier && <p>Supplier: {selectedMaster.supplier}</p>}
+              </div>}
+              <p className="text-xs text-sky-700">Use the same item identity at HQ and branches. Each location keeps its own on-hand balance.</p>
             </div>
           )}
-          {identityLocked && <p className="rounded-xl bg-amber-50 px-3 py-2 text-[10px] font-bold text-amber-800">This location is linked to the tenant-wide item identity. Its name, subtype and issue unit are controlled by that shared identity.</p>}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2 space-y-1">
-              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Item Name</label>
-              <input required disabled={identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
+          {identityLocked && <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">This location is linked to the tenant-wide item identity. Its name, subtype and issue unit are controlled by that shared identity.</p>}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="sm:col-span-2 space-y-1">
+              <label className="text-sm font-semibold text-zinc-700">Item Name</label>
+              <input required disabled={identityLocked} className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:bg-zinc-100 disabled:text-zinc-700" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Type</label>
-              <select disabled={Boolean(item) || identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.type || 'non-fixed'} onChange={e => setFormData({...formData, type: e.target.value as any, category: ''})}>
+              <label className="text-sm font-semibold text-zinc-700">Type</label>
+              <select disabled={Boolean(item) || identityLocked} className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:bg-zinc-100 disabled:text-zinc-700" value={formData.type || 'non-fixed'} onChange={e => setFormData({...formData, type: e.target.value as any, category: ''})}>
                 <option value="fixed">Fixed</option>
                 <option value="non-fixed">Non-fixed</option>
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Category</label>
-              <select required disabled={identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.category || ''} onChange={e => setFormData({...formData, category: e.target.value})}>
+              <label className="text-sm font-semibold text-zinc-700">Category</label>
+              <select required disabled={identityLocked} className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:bg-zinc-100 disabled:text-zinc-700" value={formData.category || ''} onChange={e => setFormData({...formData, category: e.target.value})}>
                 <option value="">Select Category</option>
                 {(formData.type === 'fixed' ? fixedCategories : nonFixedCategories).map(cat => (
                   <option key={cat} value={cat}>{cat}</option>
@@ -607,39 +623,45 @@ export const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Unit of Issue</label>
-              <input required disabled={identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.unitOfIssue || ''} onChange={e => setFormData({...formData, unitOfIssue: e.target.value})} placeholder="e.g., sheet, roll, bag" />
+              <label className="text-sm font-semibold text-zinc-700">Unit of Issue</label>
+              <input required disabled={identityLocked} className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:bg-zinc-100 disabled:text-zinc-700" list="operational-issue-units" value={formData.unitOfIssue || ''} onChange={e => setFormData({...formData, unitOfIssue: e.target.value})} placeholder="e.g., piece, sheet, roll" />
+              <datalist id="operational-issue-units">{['piece', 'sheet', 'roll', 'ream', 'bottle', 'bag', 'box', 'pack'].map(unit => <option key={unit} value={unit} />)}</datalist>
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Supplier</label>
-              <input disabled={identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.supplier || ''} onChange={e => setFormData({...formData, supplier: e.target.value})} />
+              <label className="text-sm font-semibold text-zinc-700">Supplier</label>
+              <input disabled={identityLocked} className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:bg-zinc-100 disabled:text-zinc-700" value={formData.supplier || ''} onChange={e => setFormData({...formData, supplier: e.target.value})} />
             </div>
 
+            <div className="sm:col-span-2 space-y-1">
+              <label className="text-sm font-semibold text-zinc-700">{item ? 'Stock on hand' : 'Opening stock at this location'}</label>
+              <input aria-label="Opening stock" required disabled={Boolean(item)} type="number" min="0" step={formData.type === 'fixed' ? '1' : 'any'} onFocus={event => event.target.select()} className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl disabled:bg-zinc-100" value={formData.quantityInStock ?? 0} onChange={event => setFormData({ ...formData, quantityInStock: Number(event.target.value) })} />
+              <p className="text-xs text-zinc-700">{item ? 'Stock changes are recorded through receipts, transfers, usage or an authorised stock adjustment.' : 'Leave at 0 when registering an item that has not been received. Enter only stock physically present at this location.'}</p>
+            </div>
             {formData.type === 'fixed' ? (
               <>
-                <div className="col-span-2 space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Description</label>
-                  <textarea className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none resize-none h-20" value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="Model, color, details..." />
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="text-sm font-semibold text-zinc-700">Description</label>
+                  <textarea className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none resize-none h-20" value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="Model, color, details..." />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Purchase Date</label>
-                  <input required type="date" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.purchaseDate || ''} onChange={e => setFormData({...formData, purchaseDate: e.target.value})} />
+                  <label className="text-sm font-semibold text-zinc-700">Purchase Date</label>
+                  <input type="date" className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.purchaseDate || ''} onChange={e => setFormData({...formData, purchaseDate: e.target.value})} />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Purchase Cost (UGX)</label>
-                  <input required type="number" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.cost ?? 0} onChange={e => setFormData({...formData, cost: Number(e.target.value)})} />
+                  <label className="text-sm font-semibold text-zinc-700">Purchase Cost (UGX)</label>
+                  <input required type="number" min="0" onFocus={event => event.target.select()} className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.cost ?? 0} onChange={e => setFormData({...formData, cost: Number(e.target.value)})} />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Condition</label>
-                  <select className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.condition || 'New'} onChange={e => setFormData({...formData, condition: e.target.value as any})}>
+                  <label className="text-sm font-semibold text-zinc-700">Condition</label>
+                  <select className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.condition || 'New'} onChange={e => setFormData({...formData, condition: e.target.value as any})}>
                     <option value="New">New</option>
                     <option value="Used - Good">Used - Good</option>
                     <option value="Used - Fair">Used - Fair</option>
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Status</label>
-                  <select className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.status || 'In Use'} onChange={e => setFormData({...formData, status: e.target.value as any})}>
+                  <label className="text-sm font-semibold text-zinc-700">Status</label>
+                  <select className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.status || 'In Use'} onChange={e => setFormData({...formData, status: e.target.value as any})}>
                     <option value="In Use">In Use</option>
                     <option value="Under Repair">Under Repair</option>
                     <option value="Decommissioned">Decommissioned</option>
@@ -647,38 +669,34 @@ export const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Warranty Expiry</label>
-                  <input type="date" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.warrantyExpiry || ''} onChange={e => setFormData({...formData, warrantyExpiry: e.target.value})} />
+                  <label className="text-sm font-semibold text-zinc-700">Warranty Expiry</label>
+                  <input type="date" className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.warrantyExpiry || ''} onChange={e => setFormData({...formData, warrantyExpiry: e.target.value})} />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Asset ID (Optional)</label>
-                  <input disabled={identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.uniqueId || ''} onChange={e => setFormData({...formData, uniqueId: e.target.value})} placeholder="Auto-generated if empty" />
+                  <label className="text-sm font-semibold text-zinc-700">Asset ID (Optional)</label>
+                  <input disabled={identityLocked} className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:bg-zinc-100 disabled:text-zinc-700" value={formData.uniqueId || ''} onChange={e => setFormData({...formData, uniqueId: e.target.value})} placeholder="Auto-generated if empty" />
                 </div>
               </>
             ) : (
               <>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Units Per Pack</label>
-                  <input required disabled={identityLocked} type="number" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.unitPerPack ?? 1} onChange={e => setFormData({...formData, unitPerPack: Number(e.target.value)})} />
+                  <label className="text-sm font-semibold text-zinc-700">Units Per Pack</label>
+                  <input required disabled={identityLocked} type="number" min="1" step="1" onFocus={event => event.target.select()} className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:bg-zinc-100 disabled:text-zinc-700" value={formData.unitPerPack ?? 1} onChange={e => setFormData({...formData, unitPerPack: Number(e.target.value)})} />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cost Per Pack</label>
-                  <input required type="number" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.costPerPack ?? 0} onChange={e => setFormData({...formData, costPerPack: Number(e.target.value)})} />
+                  <label className="text-sm font-semibold text-zinc-700">Cost Per Pack</label>
+                  <input required type="number" min="0" onFocus={event => event.target.select()} className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.costPerPack ?? 0} onChange={e => setFormData({...formData, costPerPack: Number(e.target.value)})} />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Initial Stock</label>
-                  <input required type="number" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.quantityInStock ?? 0} onChange={e => setFormData({...formData, quantityInStock: Number(e.target.value)})} />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Item ID (Optional)</label>
-                  <input disabled={identityLocked} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:opacity-60" value={formData.uniqueId || ''} onChange={e => setFormData({...formData, uniqueId: e.target.value})} placeholder="Auto-generated if empty" />
+                  <label className="text-sm font-semibold text-zinc-700">Item ID (Optional)</label>
+                  <input disabled={identityLocked} className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:bg-zinc-100 disabled:text-zinc-700" value={formData.uniqueId || ''} onChange={e => setFormData({...formData, uniqueId: e.target.value})} placeholder="Auto-generated if empty" />
                 </div>
               </>
             )}
           </div>
           <div className="flex justify-end gap-3 pt-4">
             <button type="button" onClick={onClose} className="px-6 py-2 border border-zinc-200 rounded-xl font-bold text-zinc-600 uppercase text-xs tracking-widest">Cancel</button>
-            <button type="submit" className="px-8 py-2 bg-zinc-900 text-white rounded-xl font-bold uppercase text-xs tracking-widest shadow-lg shadow-zinc-900/20">Save Item</button>
+            <button disabled={saving} type="submit" className="px-8 py-2 bg-zinc-900 text-white rounded-xl font-bold uppercase text-xs tracking-widest shadow-lg shadow-zinc-900/20">{saving ? 'Saving…' : 'Save Item'}</button>
           </div>
         </form>
       </div>
@@ -856,11 +874,11 @@ export const OperationalMasterCatalogue: React.FC<{ locationId: string; items: O
     return firestoreService.subscribeToCollection<OperationalInventoryMaster>('operational_inventory_masters', profile.tenantId, setMasters);
   }, [profile?.tenantId]);
   const available = masters.filter(master => master.inventoryClass === 'OPERATIONAL' && !items.some(item => item.masterItemId === master.id));
-  return <section className="rounded-3xl border border-zinc-200 bg-white p-5">
+  return <section className="rounded-3xl border border-zinc-200 bg-white text-zinc-900 p-5">
     <h3 className="font-black text-zinc-900">Item Catalogue</h3>
     <p className="mt-1 text-xs text-zinc-500">Register an existing item at this location.</p>
-    <div className="mt-3 space-y-2">{available.map(master => <div key={master.id} className="flex items-center justify-between gap-3 border-b border-zinc-100 py-2">
-      <span className="text-sm font-bold">{master.name}<span className="ml-2 text-xs font-normal text-zinc-500">{master.unitOfIssue}</span></span>
+    <div className="mt-3 space-y-2">{available.map(master => <div key={master.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-100 py-2">
+      <div className="min-w-0"><p className="text-sm font-semibold text-zinc-900 break-words">{master.name}</p><p className="mt-1 text-xs text-zinc-700 break-words">{master.uniqueId} · {master.category || 'Uncategorised'} · {operationalIssueUnit(master.unitOfIssue) || 'Unit not specified'}</p></div>
       <button disabled={!hasPermission('inventory', 'operate')} onClick={() => setSelected(master)} className="rounded-lg bg-sky-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">{locationId === 'HQ' ? 'Register at HQ' : 'Register Here'}</button>
     </div>)}{available.length === 0 && <p className="text-xs text-zinc-500">No additional items in the catalogue.</p>}</div>
     {selected && <InventoryItemModal isOpen onClose={() => setSelected(null)} item={null} initialMaster={selected} locationId={locationId} />}

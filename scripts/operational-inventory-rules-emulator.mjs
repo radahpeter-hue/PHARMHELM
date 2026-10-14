@@ -143,6 +143,18 @@ try {
   ]);
   assert.equal(registrationAttempts.filter(result => result.status === 'fulfilled').length, 1, JSON.stringify(registrationAttempts.map(result => result.status === 'rejected' ? { message: result.reason.message, stack: result.reason.stack } : result)));
   const registered = registrationAttempts.find(result => result.status === 'fulfilled').value;
+  // Fixed-item registration creates identity, not a phantom asset acquisition.
+  const fixedRegistration = await saveOperationalLocationItem({ ...registration, data: {
+    ...registration.data, name: 'Zero stock office desk', category: 'Furniture & Fittings',
+    type: 'fixed', operationalType: 'FIXED_ASSET', unitOfIssue: 'piece', quantityInStock: 0
+  } }, procurement);
+  assert.equal((await getDoc(doc(procurement, 'operational_inventory', fixedRegistration.itemId))).data().quantityInStock, 0);
+  await assert.rejects(saveOperationalLocationItem({ ...registration, data: { ...registration.data, name: 'Invalid issue unit', unitOfIssue: '01' } }, procurement), /named issue unit/);
+  await assert.rejects(saveOperationalLocationItem({ ...registration, data: { ...registration.data, name: 'Invalid stock quantity', quantityInStock: -1 } }, procurement), /non-negative/);
+  // A stale metadata form cannot overwrite a balance maintained by movements.
+  await saveOperationalLocationItem({ ...registration, itemId: registered.itemId, masterItemId: registered.masterItemId,
+    data: { ...registration.data, quantityInStock: 99 } }, procurement);
+  assert.equal((await getDoc(doc(procurement, 'operational_inventory', registered.itemId))).data().quantityInStock, 0);
   const branchRegistration = await saveOperationalLocationItem({ ...registration, branchId: branchA, actor: { uid: 'manager-a' },
     masterItemId: registered.masterItemId, data: { ...registration.data, branchId: branchA } }, branchManager);
   await assertFails(saveOperationalLocationItem({ ...registration, branchId: branchB, actor: { uid: 'manager-a' },
