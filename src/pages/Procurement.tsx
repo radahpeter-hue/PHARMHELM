@@ -933,7 +933,7 @@ const QueriesTab: React.FC = () => {
 
             <button 
               onClick={handleDownloadHandledQueriesReport}
-              className="bg-emerald-600 hover:bg-emerald-750 text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-sm transition-all"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-sm transition-all"
             >
               <Download size={14} />
               Download Audit Report
@@ -943,7 +943,7 @@ const QueriesTab: React.FC = () => {
           <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
-                <tr className="bg-zinc-50 border-b border-zinc-150 font-bold text-zinc-500">
+                <tr className="bg-zinc-50 border-b border-zinc-200 font-bold text-zinc-500">
                   <th className="px-6 py-4">Query Number</th>
                   <th className="px-6 py-4">From Branch</th>
                   <th className="px-6 py-4">Original Destination</th>
@@ -2206,7 +2206,7 @@ const GRNTab: React.FC = () => {
             {(grnDateRange.start || grnDateRange.end) && (
               <button 
                 onClick={() => setGrnDateRange({ start: '', end: '' })} 
-                className="text-zinc-400 hover:text-zinc-650 font-bold text-xs px-1"
+                className="text-zinc-400 hover:text-zinc-700 font-bold text-xs px-1"
               >
                 Clear
               </button>
@@ -2217,7 +2217,7 @@ const GRNTab: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           <button 
             onClick={handleDownloadAggregateGRN}
-            className="bg-emerald-600 hover:bg-emerald-750 text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-sm transition-all"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-sm transition-all"
             title="Download Aggregated Excel Report"
           >
             <Download size={14} />
@@ -2278,7 +2278,7 @@ const GRNTab: React.FC = () => {
                       </button>
                       <button 
                         onClick={() => handleDownloadGRN(grn)}
-                        className="px-3 py-1 bg-zinc-100 text-zinc-650 hover:bg-zinc-200 rounded-lg transition-colors flex items-center gap-1"
+                        className="px-3 py-1 bg-zinc-100 text-zinc-700 hover:bg-zinc-200 rounded-lg transition-colors flex items-center gap-1"
                         title="Download CSV"
                       >
                         <Download size={12} />
@@ -2302,54 +2302,54 @@ const GRNTab: React.FC = () => {
 
       {selectedGRN && (
         <div className="fixed inset-0 bg-neutral-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-zinc-105 font-sans leading-normal">
+          <div className="bg-white text-zinc-900 rounded-[2rem] w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-zinc-200 font-sans leading-normal">
             {/* Header */}
             <div className="p-6 bg-zinc-50 border-b border-zinc-100 flex justify-between items-center">
               <div>
-                <span className="text-[10px] uppercase font-black tracking-widest text-emerald-600 font-mono">Operations Audit Registry</span>
+                <span className="text-xs uppercase font-black tracking-widest text-emerald-600 font-mono">Operations Audit Registry</span>
                 <h2 className="text-xl font-bold text-zinc-900 mt-0.5">{isOperationalInventoryRecord(selectedGRN) ? 'Operational Goods Received Note' : 'Goods Received Note'} #{selectedGRN.grn_number}</h2>
               </div>
               <button 
                 onClick={() => setSelectedGRN(null)} 
-                className="text-zinc-400 hover:text-zinc-600 transition-colors p-2 hover:bg-zinc-100 rounded-full"
+                className="text-zinc-600 hover:text-zinc-600 transition-colors p-2 hover:bg-zinc-100 rounded-full"
               >
                 <X size={20} />
               </button>
             </div>
 
             {/* Body */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-6">
               {/* Meta information layout */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-zinc-50 p-6 rounded-[20px] border border-zinc-200 text-xs">
                 <div className="space-y-2">
                   <div>
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Source of Origin (Where it came from)</span>
+                    <span className="text-xs font-bold text-zinc-600 uppercase tracking-wider block">Source of Origin (Where it came from)</span>
                     <span className="font-bold text-zinc-800 text-sm mt-0.5 block">{selectedGRN.supplier_name || 'Registry Supplier'}</span>
                   </div>
                   <div className="pt-2 border-t border-zinc-200">
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Sent/Prepared By & When</span>
+                    <span className="text-xs font-bold text-zinc-600 uppercase tracking-wider block">Sent/Prepared By & When</span>
                     <span className="font-semibold text-zinc-700 mt-0.5 block">Supplier Dispatch Officers</span>
-                    <span className="text-zinc-500 font-mono text-[11px] block">{selectedGRN.invoice_date ? new Date(selectedGRN.invoice_date).toLocaleString() : 'N/A'}</span>
+                    <span className="text-zinc-500 font-mono text-xs block">{selectedGRN.invoice_date ? new Date(selectedGRN.invoice_date).toLocaleString() : 'N/A'}</span>
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <div>
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Destination (Where arrived)</span>
+                    <span className="text-xs font-bold text-zinc-600 uppercase tracking-wider block">Destination (Where arrived)</span>
                     <span className="font-bold text-zinc-800 text-sm mt-0.5 block">{selectedGRN.destination_store_id === 'HQ_OPERATIONAL' ? 'HQ Operational Store' : 'HQ Central Store / Main Depot'}</span>
                   </div>
                   <div className="pt-2 border-t border-zinc-200">
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Received/Verified By & When</span>
+                    <span className="text-xs font-bold text-zinc-600 uppercase tracking-wider block">Received/Verified By & When</span>
                     <span className="font-semibold text-zinc-700 mt-0.5 block">{selectedGRN.receivedBy || 'Staff Pharmacist'}</span>
-                    <span className="text-zinc-500 font-mono text-[11px] block">{new Date(selectedGRN.receivedAt).toLocaleString()}</span>
+                    <span className="text-zinc-500 font-mono text-xs block">{new Date(selectedGRN.receivedAt).toLocaleString()}</span>
                   </div>
                 </div>
               </div>
 
               {/* Items details table */}
               <div className="space-y-2">
-                <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider font-mono">Product Line Items</h4>
-                <div className="border border-zinc-200 rounded-[20px] overflow-hidden bg-white shadow-sm">
+                <h4 className="text-xs font-black uppercase text-zinc-600 tracking-wider font-mono">Product Line Items</h4>
+                <div className="border border-zinc-200 rounded-[20px] overflow-x-auto bg-white text-zinc-900 shadow-sm">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-zinc-50 border-b border-zinc-100 font-bold text-zinc-500 uppercase tracking-wider">
@@ -2365,11 +2365,11 @@ const GRNTab: React.FC = () => {
                     <tbody className="divide-y divide-zinc-100 font-medium">
                       {displayedGRNItems.map((item, idx) => (
                         <tr key={idx} className="hover:bg-zinc-50/20 text-zinc-700">
-                          <td className="px-4 py-3 font-bold text-zinc-900">{item.product_name}</td>
+                          <td className="px-4 py-3 font-bold text-zinc-900 break-words">{item.product_name}</td>
                           <td className="px-4 py-3 text-center font-mono text-zinc-500">{item.qty_ordered || 0}</td>
                           <td className="px-4 py-3 text-center font-mono font-bold text-emerald-600">{item.qty_received || 0}</td>
                           <td className="px-4 py-3 text-right font-mono">UGX {(item.unit_cost_ugx || 0).toLocaleString()}</td>
-                          {!isOperationalInventoryRecord(selectedGRN) && <td className="px-4 py-3 text-center font-mono font-semibold text-zinc-650">{item.batch_number || 'N/A'}</td>}
+                          {!isOperationalInventoryRecord(selectedGRN) && <td className="px-4 py-3 text-center font-mono font-semibold text-zinc-700">{item.batch_number || 'N/A'}</td>}
                           {!isOperationalInventoryRecord(selectedGRN) && <td className="px-4 py-3 text-center font-mono text-zinc-500">{item.expiry_date ? new Date(item.expiry_date).toLocaleDateString() : 'N/A'}</td>}
                           <td className="px-4 py-3 text-right font-mono font-bold text-zinc-900">
                             UGX {((item.qty_received || 0) * (item.unit_cost_ugx || 0)).toLocaleString()}
@@ -2383,7 +2383,7 @@ const GRNTab: React.FC = () => {
 
               {selectedGRN.notes && (
                 <div className="p-4 bg-zinc-50 rounded-xl text-xs border border-zinc-200">
-                  <span className="font-extrabold uppercase text-zinc-400 select-none block font-mono">Operational logs / Notes</span>
+                  <span className="font-extrabold uppercase text-zinc-600 select-none block font-mono">Operational logs / Notes</span>
                   <p className="mt-1 text-zinc-700 italic">{selectedGRN.notes}</p>
                 </div>
               )}
@@ -2391,7 +2391,7 @@ const GRNTab: React.FC = () => {
 
             {/* Footer */}
             <div className="p-6 bg-zinc-50 border-t border-zinc-100 flex justify-between items-center">
-              <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-widest font-mono">
+              <span className="text-xs text-zinc-600 font-semibold uppercase tracking-widest font-mono">
                 Verification state: {selectedGRN.status.toUpperCase()}
               </span>
               <div className="flex gap-3">
@@ -5341,7 +5341,7 @@ const HQStockInOutTab: React.FC = () => {
             />
 
             {orderMethod === 'manual' && (
-              <form onSubmit={handleAddManualLine} className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-zinc-50/50 p-5 rounded-2xl border border-zinc-150">
+              <form onSubmit={handleAddManualLine} className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-zinc-50/50 p-5 rounded-2xl border border-zinc-200">
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block mb-1">Select Product</label>
                   <input
@@ -5417,7 +5417,7 @@ const HQStockInOutTab: React.FC = () => {
                 <div className="flex items-end">
                   <button
                     type="submit"
-                    className="w-full py-2.5 bg-zinc-950 hover:bg-zinc-850 text-white rounded-xl text-xs font-bold uppercase transition-all"
+                    className="w-full py-2.5 bg-zinc-950 hover:bg-zinc-800 text-white rounded-xl text-xs font-bold uppercase transition-all"
                   >
                     Add Product Line
                   </button>
@@ -5532,14 +5532,14 @@ const HQStockInOutTab: React.FC = () => {
                 type="button"
                 onClick={handleSubmitReplenishOrder}
                 disabled={orderLines.length === 0}
-                className="px-8 py-3 bg-zinc-950 hover:bg-zinc-850 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all disabled:opacity-40"
+                className="px-8 py-3 bg-zinc-950 hover:bg-zinc-800 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all disabled:opacity-40"
               >
                 Submit Replenishment Order to Procurement
               </button>
             </div>
 
             {/* Saved Order Drafts Section */}
-            <div className="pt-6 border-t border-zinc-150 space-y-3">
+            <div className="pt-6 border-t border-zinc-200 space-y-3">
               <div className="flex items-center gap-2">
                 <span className="p-1 bg-amber-50 rounded-md text-amber-600">
                   <FileText size={16} />
@@ -5565,7 +5565,7 @@ const HQStockInOutTab: React.FC = () => {
                         <td className="px-6 py-4 font-bold text-zinc-900">{draft.title}</td>
                         <td className="px-6 py-4 text-zinc-500 font-mono">{(draft.lines || []).length} items</td>
                         <td className="px-6 py-4 text-zinc-400 font-mono">{new Date(draft.saved_at).toLocaleString()}</td>
-                        <td className="px-6 py-4 text-zinc-650 font-semibold">{draft.saved_by_name || 'Staff'}</td>
+                        <td className="px-6 py-4 text-zinc-700 font-semibold">{draft.saved_by_name || 'Staff'}</td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end gap-2 text-[10px] font-bold uppercase tracking-wider">
                             <button
@@ -5621,7 +5621,7 @@ const HQStockInOutTab: React.FC = () => {
                 ) : (
                   <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
                     {hqGrnDeliveries.map(transfer => (
-                      <div key={transfer.id} className="p-5 border border-zinc-155 rounded-3xl bg-white hover:border-zinc-300 transition-all shadow-sm">
+                      <div key={transfer.id} className="p-5 border border-zinc-200 rounded-3xl bg-white hover:border-zinc-300 transition-all shadow-sm">
                         <div className="flex justify-between items-start">
                           <div>
                             <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">GRN Shipment</span>
@@ -5629,7 +5629,7 @@ const HQStockInOutTab: React.FC = () => {
                           </div>
                           <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] uppercase font-black tracking-wider">Dispatched</span>
                         </div>
-                        <div className="my-4 text-xs font-semibold text-zinc-550 flex justify-between">
+                        <div className="my-4 text-xs font-semibold text-zinc-600 flex justify-between">
                           <span>Supplier: {transfer.source_branch_name || 'Procurement'}</span>
                           <span>Value: UGX {transfer.total_value_ugx?.toLocaleString()}</span>
                         </div>
@@ -5659,7 +5659,7 @@ const HQStockInOutTab: React.FC = () => {
                 ) : (
                   <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
                     {hqBranchReturns.map(t => (
-                      <div key={t.id} className="p-5 border border-zinc-155 rounded-3xl bg-white hover:border-zinc-300 transition-all shadow-sm">
+                      <div key={t.id} className="p-5 border border-zinc-200 rounded-3xl bg-white hover:border-zinc-300 transition-all shadow-sm">
                         <div className="flex justify-between items-start">
                           <div>
                             <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">Return Invoice</span>
@@ -5667,7 +5667,7 @@ const HQStockInOutTab: React.FC = () => {
                           </div>
                           <span className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-lg text-[10px] uppercase font-black tracking-wider">In Transit</span>
                         </div>
-                        <div className="my-4 text-xs font-semibold text-zinc-550 flex justify-between">
+                        <div className="my-4 text-xs font-semibold text-zinc-600 flex justify-between">
                           <span>From: {t.source_branch_name}</span>
                           <span>Value: UGX {t.total_value_ugx?.toLocaleString()}</span>
                         </div>
@@ -5688,22 +5688,22 @@ const HQStockInOutTab: React.FC = () => {
             {/* Transfer return modal */}
             {isTransferModalOpen && selectedTransfer && (
               <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 font-sans">
-                <div className="bg-white rounded-[2rem] w-full max-w-lg overflow-hidden shadow-2xl p-8 animate-fade-in leading-normal">
+                <div className="bg-white text-zinc-900 rounded-3xl w-full max-w-4xl max-h-[calc(100dvh-2rem)] overflow-y-auto shadow-2xl p-5 sm:p-8 animate-fade-in leading-normal">
                   <h3 className="text-xl font-bold text-zinc-950 mb-1">
                     {isHqProcurementDelivery(selectedTransfer) ? 'Verify Procurement GRN' : 'Verify Return Acceptance'}: {selectedTransfer.transfer_number}
                   </h3>
-                  <p className="text-xs text-zinc-550 mb-6">Review the dispatched batches before confirming. Confirmation posts this shipment to HQ inventory exactly once.</p>
+                  <p className="text-xs text-zinc-600 mb-6">Review the dispatched batches before confirming. Confirmation posts this shipment to HQ inventory exactly once.</p>
 
                   <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar mb-6">
                     {transferLinesDetail.map(line => (
-                      <div key={line.id} className="p-4 bg-zinc-50 rounded-2xl flex justify-between items-center border border-zinc-100">
+                      <div key={line.id} className="p-4 bg-zinc-50 rounded-2xl grid grid-cols-1 sm:grid-cols-2 gap-3 border border-zinc-200">
                         <div>
                           <p className="font-bold text-zinc-900 text-sm">{line.product_name}</p>
-                          <p className="text-[10px] text-zinc-400 font-mono mt-0.5">Batch: {line.batch_number} | Exp: {line.expiry_date}</p>
+                          <p className="text-xs text-zinc-700 font-mono mt-0.5 break-words">Batch: {line.batch_number} | Exp: {line.expiry_date}</p>
                         </div>
                         <div className="text-right">
                           <p className="font-bold text-zinc-900">{line.qty_dispatched} Packs</p>
-                          <p className="text-[10px] text-zinc-400 font-mono">Cost: UGX {line.unit_cost_ugx?.toLocaleString()}</p>
+                          <p className="text-xs text-zinc-700 font-mono">Cost: UGX {line.unit_cost_ugx?.toLocaleString()}</p>
                         </div>
                       </div>
                     ))}
@@ -5717,7 +5717,7 @@ const HQStockInOutTab: React.FC = () => {
                         setSelectedTransfer(null);
                       }}
                       disabled={submittingTransferReturn}
-                      className="flex-1 py-3 text-zinc-400 hover:text-zinc-650 font-bold text-sm"
+                      className="flex-1 py-3 text-zinc-600 hover:text-zinc-700 font-bold text-sm"
                     >
                       Cancel / Close
                     </button>
@@ -5725,7 +5725,7 @@ const HQStockInOutTab: React.FC = () => {
                       type="button" 
                       onClick={handleAcceptTransferReturn}
                       disabled={submittingTransferReturn}
-                      className="flex-1 py-3 bg-zinc-950 hover:bg-zinc-850 font-bold text-white rounded-2xl text-sm shadow-md"
+                      className="flex-1 py-3 bg-zinc-950 hover:bg-zinc-800 font-bold text-white rounded-2xl text-sm shadow-md"
                     >
                       {submittingTransferReturn ? 'Updating Database...' : isHqProcurementDelivery(selectedTransfer) ? 'Confirm GRN Receipt' : 'Confirm Return Goods'}
                     </button>
@@ -5748,7 +5748,7 @@ const HQStockInOutTab: React.FC = () => {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               
               {/* Dispatch form panel */}
-              <div className="lg:col-span-1 bg-zinc-50 p-6 rounded-3xl border border-zinc-150 space-y-4 h-fit">
+              <div className="lg:col-span-1 bg-zinc-50 p-6 rounded-3xl border border-zinc-200 space-y-4 h-fit">
                 <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider font-mono">Draft Stock Line</h4>
                 
                 <div className="space-y-1">
@@ -5827,7 +5827,7 @@ const HQStockInOutTab: React.FC = () => {
 
                   <button
                     type="submit"
-                    className="w-full py-2.5 bg-zinc-950 hover:bg-zinc-850 text-white rounded-xl text-xs font-bold uppercase transition-all flex items-center justify-center gap-2"
+                    className="w-full py-2.5 bg-zinc-950 hover:bg-zinc-800 text-white rounded-xl text-xs font-bold uppercase transition-all flex items-center justify-center gap-2"
                   >
                     <Plus size={14} />
                     Add Dispatch Line
@@ -5837,17 +5837,17 @@ const HQStockInOutTab: React.FC = () => {
 
               {/* Draft list table */}
               <div className="lg:col-span-2 space-y-4">
-                <div className="p-4 border border-zinc-150 rounded-2xl bg-zinc-50/20 flex justify-between items-center">
+                <div className="p-4 border border-zinc-200 rounded-2xl bg-zinc-50/20 flex justify-between items-center">
                   <h4 className="text-xs font-black uppercase text-zinc-400 tracking-wider font-mono">Dispatched Lines ({transferOutLines.length})</h4>
                   <div className="text-xs font-bold text-zinc-500">
                     Grand Total Sourced Value: <span className="text-emerald-600 font-mono font-black">UGX {transferOutLines.reduce((sum, l) => sum + l.total_cost_ugx, 0).toLocaleString()}</span>
                   </div>
                 </div>
 
-                <div className="border border-zinc-200 rounded-[20px] overflow-hidden bg-white shadow-sm">
+                <div className="border border-zinc-200 rounded-[20px] overflow-x-auto bg-white text-zinc-900 shadow-sm">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
-                      <tr className="bg-zinc-50 border-b border-zinc-150 font-bold text-zinc-500">
+                      <tr className="bg-zinc-50 border-b border-zinc-200 font-bold text-zinc-500">
                         <th className="px-4 py-3">Product Description</th>
                         <th className="px-4 py-3 text-center">Batch ID</th>
                         <th className="px-4 py-3 text-center">Qty Dispatch</th>
@@ -5915,7 +5915,7 @@ const HQStockInOutTab: React.FC = () => {
                 </div>
 
                 {/* Saved Transfer Drafts Section */}
-                <div className="pt-6 border-t border-zinc-150 space-y-3">
+                <div className="pt-6 border-t border-zinc-200 space-y-3">
                   <div className="flex items-center gap-2">
                     <span className="p-1 bg-amber-50 rounded-md text-amber-600">
                       <FileText size={16} />
@@ -5945,7 +5945,7 @@ const HQStockInOutTab: React.FC = () => {
                               <td className="px-6 py-4 text-zinc-500 font-semibold">{targetBranch}</td>
                               <td className="px-6 py-4 text-zinc-500 font-mono">{(draft.lines || []).length} items</td>
                               <td className="px-6 py-4 text-zinc-400 font-mono">{new Date(draft.saved_at).toLocaleString()}</td>
-                              <td className="px-6 py-4 text-zinc-650 font-semibold">{draft.saved_by_name || 'Staff'}</td>
+                              <td className="px-6 py-4 text-zinc-700 font-semibold">{draft.saved_by_name || 'Staff'}</td>
                               <td className="px-6 py-4 text-right">
                                 <div className="flex justify-end gap-2 text-[10px] font-bold uppercase tracking-wider">
                                   <button
@@ -5995,7 +5995,7 @@ const HQStockInOutTab: React.FC = () => {
                 <button 
                   onClick={handleDownloadHqTransferAggregate}
                   disabled={isAggregating}
-                  className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600 text-white text-xs font-black uppercase tracking-wider rounded-xl hover:bg-emerald-750 transition-all shadow-sm disabled:opacity-50"
+                  className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600 text-white text-xs font-black uppercase tracking-wider rounded-xl hover:bg-emerald-700 transition-all shadow-sm disabled:opacity-50"
                   title="Download Aggregate Excel"
                 >
                   <Download size={13} />
@@ -6040,7 +6040,7 @@ const HQStockInOutTab: React.FC = () => {
             <div className="border border-zinc-200 rounded-[2rem] overflow-hidden shadow-sm bg-white">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-zinc-50 border-b border-zinc-150 font-bold text-zinc-500">
+                  <tr className="bg-zinc-50 border-b border-zinc-200 font-bold text-zinc-500">
                     <th className="px-6 py-4">Transfer Number</th>
                     <th className="px-6 py-4">Destination Branch</th>
                     <th className="px-6 py-4">Dispatch Timestamp</th>
@@ -6071,7 +6071,7 @@ const HQStockInOutTab: React.FC = () => {
                       <td className="px-6 py-4 text-right flex justify-end gap-2">
                         <button
                           onClick={() => handleOpenHistoryDetail(t, 'transfer')}
-                          className="px-3 py-1.5 bg-zinc-50 hover:bg-zinc-100 rounded-lg text-zinc-650 flex items-center gap-1 font-bold transition-all border border-zinc-200"
+                          className="px-3 py-1.5 bg-zinc-50 hover:bg-zinc-100 rounded-lg text-zinc-700 flex items-center gap-1 font-bold transition-all border border-zinc-200"
                         >
                           <Eye size={12} />
                           Details
@@ -6112,7 +6112,7 @@ const HQStockInOutTab: React.FC = () => {
                 <button 
                   onClick={handleDownloadHqReceptionAggregate}
                   disabled={isAggregating}
-                  className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600 text-white text-xs font-black uppercase tracking-wider rounded-xl hover:bg-emerald-750 transition-all shadow-sm disabled:opacity-50"
+                  className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600 text-white text-xs font-black uppercase tracking-wider rounded-xl hover:bg-emerald-700 transition-all shadow-sm disabled:opacity-50"
                   title="Download Aggregate Excel"
                 >
                   <Download size={13} />
@@ -6157,7 +6157,7 @@ const HQStockInOutTab: React.FC = () => {
             <div className="border border-zinc-200 rounded-[2rem] overflow-hidden shadow-sm bg-white">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-zinc-50 border-b border-zinc-150 font-bold text-zinc-500">
+                  <tr className="bg-zinc-50 border-b border-zinc-200 font-bold text-zinc-500">
                     <th className="px-6 py-4">Reference ID</th>
                     <th className="px-6 py-4">Stock Source / Branch</th>
                     <th className="px-6 py-4">Received Date</th>
@@ -6213,41 +6213,41 @@ const HQStockInOutTab: React.FC = () => {
       {/* History item viewer modal */}
       {viewHistoryModal && viewHistoryModal.isOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 font-sans text-xs">
-          <div className="bg-white rounded-[2rem] w-full max-w-xl overflow-hidden shadow-2xl p-8 animate-fade-in leading-normal">
-            <div className="flex justify-between items-start border-b border-zinc-150 pb-4">
+          <div className="bg-white text-zinc-900 rounded-3xl w-full max-w-4xl max-h-[calc(100dvh-2rem)] overflow-y-auto shadow-2xl p-5 sm:p-8 animate-fade-in leading-normal">
+            <div className="flex justify-between items-start border-b border-zinc-200 pb-4">
               <div>
-                <span className="text-[10px] uppercase font-black tracking-widest text-emerald-600 font-mono">HQ Store Audit Ledger Record</span>
+                <span className="text-xs uppercase font-black tracking-widest text-emerald-600 font-mono">HQ Store Audit Ledger Record</span>
                 <h3 className="text-xl font-bold text-zinc-950 mt-1">{viewHistoryModal.title}</h3>
               </div>
               <button 
                 onClick={() => setViewHistoryModal(null)}
-                className="text-zinc-400 hover:text-zinc-600 p-1.5 hover:bg-zinc-100 rounded-full transition-colors"
+                className="text-zinc-600 hover:text-zinc-600 p-1.5 hover:bg-zinc-100 rounded-full transition-colors"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="my-5 grid grid-cols-2 gap-4 bg-zinc-50 p-4 rounded-2xl border border-zinc-150">
+            <div className="my-5 grid grid-cols-1 sm:grid-cols-2 gap-4 bg-zinc-50 p-4 rounded-2xl border border-zinc-200">
               <div>
-                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">Metadata Stream</span>
+                <span className="text-xs font-black text-zinc-600 uppercase tracking-widest block">Metadata Stream</span>
                 <span className="font-bold text-zinc-800 text-xs mt-1 block">{viewHistoryModal.meta.originDest}</span>
-                <span className="text-zinc-500 font-mono text-[10px] mt-0.5 block">{viewHistoryModal.meta.date}</span>
+                <span className="text-zinc-500 font-mono text-xs mt-0.5 block break-all">{viewHistoryModal.meta.date}</span>
               </div>
               <div>
-                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">Authorized Signatory</span>
+                <span className="text-xs font-black text-zinc-600 uppercase tracking-widest block">Authorized Signatory</span>
                 <span className="font-bold text-zinc-800 text-xs mt-1 block">Officer ID: {viewHistoryModal.meta.operator}</span>
                 {viewHistoryModal.meta.notes && (
-                  <span className="text-zinc-400 italic text-[10px] mt-0.5 block">"{viewHistoryModal.meta.notes}"</span>
+                  <span className="text-zinc-600 italic text-xs mt-0.5 block">"{viewHistoryModal.meta.notes}"</span>
                 )}
               </div>
             </div>
 
             <div className="space-y-2">
-              <h4 className="text-[10px] font-black uppercase text-zinc-400 tracking-wider font-mono">Cataloged Items ({viewHistoryModal.items.length})</h4>
-              <div className="border border-zinc-200 rounded-2xl overflow-hidden max-h-[220px] overflow-y-auto">
+              <h4 className="text-xs font-black uppercase text-zinc-600 tracking-wider font-mono">Cataloged Items ({viewHistoryModal.items.length})</h4>
+              <div className="border border-zinc-200 rounded-2xl overflow-auto max-h-[50dvh]">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
-                    <tr className="bg-zinc-50 border-b border-zinc-150 font-bold text-zinc-500 text-[10px] tracking-wider uppercase">
+                    <tr className="bg-zinc-50 border-b border-zinc-200 font-bold text-zinc-500 text-xs tracking-wider uppercase">
                       <th className="px-4 py-2">Item</th>
                       <th className="px-4 py-2 text-center">Batch ID</th>
                       <th className="px-4 py-2 text-center">Qty</th>
@@ -6268,11 +6268,11 @@ const HQStockInOutTab: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex justify-end pt-5 border-t border-zinc-150 mt-5">
+            <div className="flex justify-end pt-5 border-t border-zinc-200 mt-5">
               <button
                 type="button"
                 onClick={() => setViewHistoryModal(null)}
-                className="px-6 py-2.5 bg-zinc-950 hover:bg-zinc-850 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors"
+                className="px-6 py-2.5 bg-zinc-950 hover:bg-zinc-800 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors"
               >
                 Close Audit Record
               </button>

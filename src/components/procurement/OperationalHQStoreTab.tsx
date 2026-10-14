@@ -1,3 +1,4 @@
+import { OperationalStockBalance } from '../inventory/OperationalStockBalance';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Search, ArrowDownToLine, ArrowUpFromLine, History, Package, X, ShoppingCart } from 'lucide-react';
 import { format } from 'date-fns';
@@ -119,7 +120,7 @@ const OperationalHQStoreTab: React.FC = () => {
   if (!enabled) return null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 text-zinc-900">
       <div className="rounded-3xl border border-sky-100 bg-sky-50 p-5 flex items-start gap-3">
         <Package className="text-sky-700 mt-0.5" size={20} />
         <div>
@@ -173,7 +174,7 @@ const OperationalHQStoreTab: React.FC = () => {
                     </td>
                     <td className="px-5 py-4 text-xs text-zinc-600">{item.type === 'fixed' ? 'Fixed asset' : 'Consumable'}</td>
                     <td className="px-5 py-4 text-xs text-zinc-600">{item.supplier || '—'}</td>
-                    <td className="px-5 py-4 text-right font-black text-zinc-900">{Number(item.quantityInStock || 0).toLocaleString()} <span className="text-[10px] text-zinc-500 font-medium">{item.unitOfIssue}</span></td>
+                    <td className="px-5 py-4 text-right font-black text-zinc-900"><OperationalStockBalance quantity={item.quantityInStock} unit={item.unitOfIssue} /></td>
                     <td className="px-5 py-4 text-right text-xs text-zinc-600">UGX {(Number(item.costPerPack || 0) / Math.max(1, Number(item.unitPerPack || 1))).toLocaleString()}</td>
                     <td className="px-5 py-4 text-right">
                       <div className="inline-flex gap-1"><button onClick={() => setSelectedItem(item)} disabled={!canManage || !item.masterItemId} title={!item.masterItemId ? 'Link this legacy item in Inventory first' : undefined} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-zinc-900 text-white disabled:bg-zinc-200 disabled:text-zinc-500">{item.masterItemId ? 'Adjust' : 'Link in Inventory'}</button><button onClick={() => { setDistributionItem(item); setDistributionQuantity(''); setDistributionRequestId(globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`); }} disabled={!canDistribute || !item.masterItemId || Number(item.quantityInStock || 0) <= 0} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-sky-200 text-sky-800 disabled:opacity-40">Send to Branch</button></div>
@@ -217,7 +218,7 @@ const OperationalHQStoreTab: React.FC = () => {
       </div>
 
       {selectedItem && <StockAdjustmentModal item={selectedItem} onClose={() => setSelectedItem(null)} />}
-      {distributionItem && <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"><form onSubmit={submitDistribution} className="bg-white w-full max-w-md rounded-3xl shadow-xl p-6 space-y-4"><div className="flex justify-between"><div><p className="text-[10px] font-black uppercase text-sky-700">Operational HQ Store</p><h3 className="text-xl font-black mt-1">Transfer to branch</h3><p className="text-xs text-zinc-500">{distributionItem.name}</p></div><button type="button" onClick={() => setDistributionItem(null)} className="p-2 rounded-lg hover:bg-zinc-100"><X size={16} /></button></div><label className="block text-xs font-bold text-zinc-600">Destination branch<select required value={destinationBranchId} onChange={event => setDestinationBranchId(event.target.value)} className="mt-1 w-full border rounded-xl px-3 py-2 text-sm"><option value="">Select branch</option>{branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label><label className="block text-xs font-bold text-zinc-600">Quantity ({distributionItem.unitOfIssue})<input type="number" min="0.001" max={Number(distributionItem.quantityInStock || 0)} step="any" required value={distributionQuantity} onChange={event => setDistributionQuantity(event.target.value)} className="mt-1 w-full border rounded-xl px-3 py-2 text-sm" /></label><div className="flex gap-3"><button type="button" onClick={() => setDistributionItem(null)} className="flex-1 py-2 rounded-xl bg-zinc-100 text-sm font-bold">Cancel</button><button disabled={distributionSaving} className="flex-1 py-2 rounded-xl bg-sky-700 text-white text-sm font-bold disabled:opacity-50">{distributionSaving ? 'Dispatching…' : 'Create & dispatch'}</button></div></form></div>}
+      {distributionItem && <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"><form onSubmit={submitDistribution} className="bg-white text-zinc-900 w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-3xl shadow-xl p-5 sm:p-6 space-y-4"><div className="flex justify-between"><div><p className="text-[10px] font-black uppercase text-sky-700">Operational HQ Store</p><h3 className="text-xl font-black mt-1">Transfer to branch</h3><p className="text-xs text-zinc-500">{distributionItem.name}</p></div><button type="button" onClick={() => setDistributionItem(null)} className="p-2 rounded-lg hover:bg-zinc-100"><X size={16} /></button></div><label className="block text-xs font-bold text-zinc-600">Destination branch<select required value={destinationBranchId} onChange={event => setDestinationBranchId(event.target.value)} className="mt-1 w-full border rounded-xl px-3 py-2 text-sm"><option value="">Select branch</option>{branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label><label className="block text-xs font-bold text-zinc-600">Quantity ({distributionItem.unitOfIssue})<input type="number" min="0.001" max={Number(distributionItem.quantityInStock || 0)} step="any" required value={distributionQuantity} onChange={event => setDistributionQuantity(event.target.value)} className="mt-1 w-full border rounded-xl px-3 py-2 text-sm" /></label><div className="flex gap-3"><button type="button" onClick={() => setDistributionItem(null)} className="flex-1 py-2 rounded-xl bg-zinc-100 text-sm font-bold">Cancel</button><button disabled={distributionSaving} className="flex-1 py-2 rounded-xl bg-sky-700 text-white text-sm font-bold disabled:opacity-50">{distributionSaving ? 'Dispatching…' : 'Create & dispatch'}</button></div></form></div>}
     </div>
   );
 };
@@ -297,7 +298,7 @@ const StockAdjustmentModal: React.FC<{ item: OperationalInventory; onClose: () =
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-      <form onSubmit={handleSubmit} className="bg-white w-full max-w-md rounded-3xl shadow-xl p-6 space-y-4">
+      <form onSubmit={handleSubmit} className="bg-white text-zinc-900 w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-3xl shadow-xl p-5 sm:p-6 space-y-4">
         <div className="flex items-start justify-between">
           <div><p className="text-[10px] font-black uppercase tracking-wider text-sky-700">Operational HQ Store</p><h3 className="font-black text-xl text-zinc-900 mt-1">Adjust stock</h3><p className="text-xs text-zinc-500 mt-1">{item.name}</p></div>
           <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-zinc-100"><X size={16} /></button>

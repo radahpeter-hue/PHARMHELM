@@ -1,3 +1,4 @@
+import { operationalIssueUnit, validateOperationalOpeningStock } from '../utils/operationalStock';
 import type { Firestore } from 'firebase/firestore';
 import { collection, doc, getDocs, query, runTransaction, where } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -47,6 +48,10 @@ export async function saveOperationalLocationItem(input: SaveOperationalLocation
     throw new Error('Operational item classification is required.');
   }
 
+  const openingStock = validateOperationalOpeningStock(input.data.quantityInStock);
+  if (!input.itemId && !input.masterItemId && !operationalIssueUnit(input.data.unitOfIssue)) {
+    throw new Error('Use a named issue unit such as piece, sheet or roll, not a numeric quantity.');
+  }
   const fingerprint = operationalIdentityFingerprint(input.data);
   const requestedMasterId = input.masterItemId || input.itemId || deterministicOperationalMasterId(tenantId, fingerprint);
   const itemRef = input.itemId
@@ -141,6 +146,8 @@ export async function saveOperationalLocationItem(input: SaveOperationalLocation
     const resolvedIdentity = currentMaster || ({ id: masterItemId, ...masterData } as OperationalInventoryMaster);
     const locationData = {
       ...input.data,
+      quantityInStock: itemSnapshot.exists() ? itemSnapshot.data().quantityInStock : openingStock,
+      ...(itemSnapshot.exists() && itemSnapshot.data().lastMovementId ? { lastMovementId: itemSnapshot.data().lastMovementId } : {}),
       ...(!itemSnapshot.exists() && Number(input.data.quantityInStock || 0) > 0 ? { lastMovementId: openingMovementRef.id } : {}),
       tenantId,
       branchId,

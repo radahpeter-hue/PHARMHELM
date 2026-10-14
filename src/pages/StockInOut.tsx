@@ -874,7 +874,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
             <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-4 animate-fade-in">
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
                 <span className="text-xs text-zinc-600 font-bold uppercase tracking-wider">Replenishment Engine:</span>
-                <span className="text-xs text-zinc-550 block">Calculate stock requirements using core deterministic forecasting model.</span>
+                <span className="text-xs text-zinc-600 block">Calculate stock requirements using core deterministic forecasting model.</span>
               </div>
               <button 
                 onClick={() => setShowAutoGenerateModal(true)}
@@ -2112,7 +2112,7 @@ return (
                           <p className="text-[10px] text-zinc-500">ID: {String(line.product_id || 'N/A').slice(0, 8)}</p>
                         </td>
                         <td className="px-4 py-3">
-                          <p className="text-zinc-650 font-mono font-semibold">{line.batch_number}</p>
+                          <p className="text-zinc-700 font-mono font-semibold">{line.batch_number}</p>
                           <p className="text-[10px] text-zinc-400">
                             {line.expiry_date ? new Date(line.expiry_date).toLocaleDateString() : 'N/A'}
                           </p>
@@ -3295,7 +3295,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
                           </button>
                           <button 
                             onClick={() => handleDownloadTransfer(transfer)}
-                            className="px-3 py-1 bg-zinc-100 text-zinc-650 hover:bg-zinc-200 rounded-lg transition-colors flex items-center gap-1 font-sans"
+                            className="px-3 py-1 bg-zinc-100 text-zinc-700 hover:bg-zinc-200 rounded-lg transition-colors flex items-center gap-1 font-sans"
                           >
                             <Download size={12} />
                             CSV
@@ -3329,7 +3329,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               </div>
               <button 
                 onClick={() => setSelectedTransfer(null)} 
-                className="text-zinc-400 hover:text-zinc-650 transition-colors p-2 hover:bg-zinc-100 rounded-full"
+                className="text-zinc-400 hover:text-zinc-700 transition-colors p-2 hover:bg-zinc-100 rounded-full"
               >
                 <X size={20} />
               </button>
@@ -3452,14 +3452,14 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               </div>
               <button 
                 onClick={() => setShowPreviewModal(false)} 
-                className="text-zinc-400 hover:text-zinc-650 transition-colors p-2 hover:bg-zinc-100 rounded-full"
+                className="text-zinc-400 hover:text-zinc-700 transition-colors p-2 hover:bg-zinc-100 rounded-full"
               >
                 <Plus className="rotate-45" size={24} />
               </button>
             </div>
 
             <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto text-zinc-800">
-              <div className="grid grid-cols-2 gap-4 bg-zinc-50 p-4 rounded-2xl border border-zinc-150 text-xs">
+              <div className="grid grid-cols-2 gap-4 bg-zinc-50 p-4 rounded-2xl border border-zinc-200 text-xs">
                 <div>
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block font-mono">Source Branch (Origin)</span>
                   <span className="font-bold text-zinc-800 text-sm mt-0.5 block">
@@ -3514,7 +3514,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               <button
                 type="button"
                 onClick={() => setShowPreviewModal(false)}
-                className="px-6 py-2 border border-zinc-200 hover:bg-zinc-100 rounded-xl font-bold text-zinc-650 text-xs uppercase tracking-wider transition-colors"
+                className="px-6 py-2 border border-zinc-200 hover:bg-zinc-100 rounded-xl font-bold text-zinc-700 text-xs uppercase tracking-wider transition-colors"
                 disabled={isDispatching}
               >
                 Go Back / Edit
