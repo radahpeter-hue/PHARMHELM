@@ -707,34 +707,71 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         orderData.submitted_at = new Date().toISOString();
       }
 
-      let orderId = selectedDraftId;
-      if (!orderId) {
-        pendingNewOrder.current ||= {
-          id: doc(collection(db, 'stock_orders')).id,
-          orderNumber: `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
-          createdAt: new Date().toISOString()
-        };
-        const pending = pendingNewOrder.current;
-        await persistNewManualStockOrder(pending.id, {
-          ...orderData,
-          order_number: pending.orderNumber,
-          requesting_branch_id: branchId,
-          requesting_branch_name: activeBranch?.name || branches.find(b => b.id === branchId)?.name || 'Unknown Branch',
-          createdAt: pending.createdAt,
-          updatedAt: new Date().toISOString()
-        }, orderLines.map(line => ({ ...line, tenantId: profile.tenantId, inventoryClass: expectedClass })));
-        pendingNewOrder.current = null;
+      if (expectedClass === 'OPERATIONAL') {
+        let orderId = selectedDraftId;
+        if (!orderId) {
+          pendingNewOrder.current ||= {
+            id: doc(collection(db, 'stock_orders')).id,
+            orderNumber: `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
+            createdAt: new Date().toISOString()
+          };
+          const pending = pendingNewOrder.current;
+          await persistNewManualStockOrder(pending.id, {
+            ...orderData,
+            order_number: pending.orderNumber,
+            requesting_branch_id: branchId,
+            requesting_branch_name: activeBranch?.name || branches.find(b => b.id === branchId)?.name || 'Unknown Branch',
+            createdAt: pending.createdAt,
+            updatedAt: new Date().toISOString()
+          }, orderLines.map(line => ({ ...line, tenantId: profile.tenantId, inventoryClass: expectedClass })));
+          pendingNewOrder.current = null;
+          toast.success(`Order ${status === 'submitted' ? 'submitted' : 'saved as draft'}.`);
+          setOrderLines([]);
+          setSelectedDraftId(null);
+          return;
+        }
+        const existingLines = await firestoreService.getDocumentsByQuery<any>('stock_order_lines', [{ field: 'order_id', operator: '==', value: orderId }, { field: 'tenantId', operator: '==', value: profile.tenantId }]);
+        await persistManualStockOrderDraft(orderId, orderData, existingLines,
+          orderLines.map(line => ({ ...line, tenantId: profile.tenantId, inventoryClass: expectedClass })));
         toast.success(`Order ${status === 'submitted' ? 'submitted' : 'saved as draft'}.`);
         setOrderLines([]);
         setSelectedDraftId(null);
         return;
       }
-      const existingLines = await firestoreService.getDocumentsByQuery<any>('stock_order_lines', [{ field: 'order_id', operator: '==', value: orderId }, { field: 'tenantId', operator: '==', value: profile.tenantId }]);
-      await persistManualStockOrderDraft(orderId, orderData, existingLines,
-        orderLines.map(line => ({ ...line, tenantId: profile.tenantId, inventoryClass: expectedClass })));
-      toast.success(`Order ${status === 'submitted' ? 'submitted' : 'saved as draft'}.`);
-      setOrderLines([]);
-      setSelectedDraftId(null);
+      let orderId = selectedDraftId;
+      if (orderId) {
+        // Update existing draft's order metadata
+        await firestoreService.updateDocument('stock_orders', orderId, orderData);
+
+        // Delete previous lines of the draft
+        const existingLines = await firestoreService.getDocumentsByQuery<any>('stock_order_lines', [{ field: 'order_id', operator: '==', value: orderId }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
+        for (const line of existingLines) {
+          await firestoreService.deleteDocument('stock_order_lines', line.id);
+        }
+      } else {
+        // Create new draft / order
+        orderData.order_number = `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
+        orderData.requesting_branch_id = branchId;
+        orderData.requesting_branch_name = activeBranch?.name || branches.find(b => b.id === branchId)?.name || 'Unknown Branch';
+
+        orderId = await firestoreService.addDocument('stock_orders', orderData);
+      }
+
+      if (orderId) {
+        for (const line of orderLines) {
+          const { id, ...lineToSave } = line as any; // Strip out id if updating existing draft lines
+          await firestoreService.addDocument('stock_order_lines', {
+            ...lineToSave,
+            tenantId: profile.tenantId,
+            inventoryClass: inventoryClassForOrderCategory(category),
+            order_id: orderId,
+            line_status: 'ordered'
+          });
+        }
+        toast.success(`Order ${status === 'submitted' ? 'submitted' : 'saved as draft'}.`);
+        setOrderLines([]);
+        setSelectedDraftId(null);
+      }
     } catch (error) {
       toast.error("Failed to save/submit order.");
     } finally {
