@@ -13,7 +13,7 @@ test('manual orders reject mixed tenant/class, duplicate and unlinked items',()=
   assert.throws(()=>manualStockOrderWrites('request',order,[line,line]));
 });
 test('new manual orders write the header and all lines in one batch',()=>{
-  const service=readFileSync(new URL('../src/services/manualStockOrderService.ts',import.meta.url),'utf8');
+  const service=readFileSync(new URL('../src/services/manualStockOrderService.ts',import.meta.url),'utf8').split('export async function persistManualStockOrderDraft')[0];
   assert.match(service,/writeBatch\(connection\)/);
   assert.match(service,/batch\.set\(doc\(connection, 'stock_orders'/);
   assert.match(service,/batch\.set\(doc\(connection, 'stock_order_lines'/);
