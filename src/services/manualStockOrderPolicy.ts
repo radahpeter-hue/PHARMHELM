@@ -1,6 +1,6 @@
 // The caller retains orderId until acknowledgement. Stable line IDs make an
 // identical retry overwrite the same batch, never append another requisition.
-export function manualStockOrderWrites(orderId: string, order: Record<string, any>, lines: Record<string, any>[]) {
+export function manualStockOrderWrites(orderId: string, order: Record<string, any>, lines: Record<string, any>[]): { id: string; data: Record<string, any> }[] {
   if (!orderId || !order.tenantId || !lines.length || lines.length > 100) throw new Error('A manual order requires between 1 and 100 lines.');
   const seen = new Set<string>();
   return lines.map(line => {
