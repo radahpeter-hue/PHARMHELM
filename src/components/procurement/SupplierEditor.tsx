@@ -38,7 +38,8 @@ export const SupplierEditor: React.FC<{supplier: any; onClose: () => void; sourc
         <h2 id="supplier-editor-title" className="text-xl font-bold">{supplier ? 'Edit Supplier' : 'Add Supplier'}</h2>
         <button aria-label="Close supplier form" type="button" disabled={saving} onClick={onClose} className="p-2"><X size={20}/></button>
       </header>
-      <fieldset disabled={saving || !permitted} data-testid="supplier-editor-scroll" className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 [touch-action:pan-y]">
+      <div data-testid="supplier-editor-scroll" className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 [touch-action:pan-y]">
+        <fieldset disabled={saving || !permitted} className="min-w-0">
         <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
           {textField('supplier_name','Supplier Name')}
           <label className="min-w-0 space-y-1"><span className="text-sm font-medium text-zinc-600">Supplier ID</span><input aria-label="Supplier ID" readOnly value={supplier?.supplier_id || 'Generated automatically on save'} className={inputClass}/></label>
@@ -59,7 +60,8 @@ export const SupplierEditor: React.FC<{supplier: any; onClose: () => void; sourc
           <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={Boolean(form.is_suspended)} onChange={event=>field('is_suspended',event.target.checked)}/>Suspend Supplier</label>
           <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={Boolean(form.whtExempt)} onChange={event=>field('whtExempt',event.target.checked)}/>WHT Exempt</label>
         </div>
-      </fieldset>
+        </fieldset>
+      </div>
       <footer className="flex shrink-0 gap-3 border-t bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:px-6">
         <button type="button" disabled={saving} onClick={onClose} className="flex-1 rounded-xl border py-3 font-semibold">Cancel</button>
         <button type="submit" disabled={saving || !permitted} className="flex-1 rounded-xl bg-zinc-900 py-3 font-semibold text-white disabled:opacity-50">{saving ? 'Saving…' : 'Save Supplier'}</button>
