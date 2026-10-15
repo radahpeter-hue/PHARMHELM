@@ -52,6 +52,7 @@ on:
       - 'scripts/system-identity-rules-emulator.mjs'
       - 'scripts/identity-backfill-preview.mjs'
       - 'scripts/audit-system-identities.mjs'
+      - 'scripts/initialize-identity-counters.mjs'
       - 'tests/system-identity-*.test.ts'
       - 'src/services/systemIdentityService.ts'
       - 'scripts/migrate-operational-inventory-v2.mjs'
@@ -220,3 +221,12 @@ jobs:
           else
             echo "Hosted Firebase compiler accepted the minimal control and firestore.rules."
           fi
+      - name: Seed audited identity counter baselines (counter documents only)
+        shell: bash
+        env:
+          GOOGLE_CLOUD_PROJECT: gen-lang-client-0911422817
+        run: |
+          set -euo pipefail
+          npm install --no-save --ignore-scripts firebase-admin
+          node scripts/initialize-identity-counters.mjs --apply
+
