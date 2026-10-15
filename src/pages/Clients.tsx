@@ -1,3 +1,4 @@
+import { createScopedIdentity, type ScopedIdentityCollection } from '../services/systemIdentityService';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
@@ -437,10 +438,8 @@ const RegistryModal: React.FC<{ type: string; isOpen: boolean; onClose: () => vo
         await firestoreService.updateDocument(collection, item.id, formData);
         toast.success('Updated successfully');
       } else {
-        await firestoreService.addDocument(collection, {
-          ...formData,
-          tenantId: profile.tenantId,
-        });
+        if (!['clients', 'institutions', 'prescribers'].includes(collection)) throw new Error('Unsupported identity collection.');
+        await createScopedIdentity(collection as ScopedIdentityCollection, profile.tenantId, formData);
         toast.success('Added successfully');
       }
       onClose();
