@@ -754,7 +754,10 @@ service cloud.firestore {
         && request.resource.data.status in ['Active', 'Inactive', 'Closed'];
       }
 
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      // Checkout and quotation validation point-read missing branch IDs before
+      // reporting an invalid branch. Never expose existing cross-tenant records.
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
       allow create: if isCEO() && isTenantMember(request.resource.data.tenantId) && hasValidBranchShape();
       allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
