@@ -759,7 +759,7 @@ const MaintenanceLogModal: React.FC<{ isOpen: boolean; onClose: () => void; item
           <h2 className="text-xl font-black text-zinc-900 uppercase tracking-tight">Log Maintenance</h2>
           <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">{item.name}</p>
         </div>
-        <form onSubmit={handleSubmit} className="p-8 space-y-6">
+        <form onSubmit={handleSubmit} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 sm:p-8 space-y-6">
           <div className="space-y-4">
             <div className="space-y-1">
               <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Date</label>
@@ -793,8 +793,7 @@ const UsageLogModal: React.FC<{ isOpen: boolean; onClose: () => void; inventory:
     issuedAmount: 0,
     department: '',
     recipient: '',
-    purpose: '',
-    reference: ''
+    purpose: ''
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -812,7 +811,7 @@ const UsageLogModal: React.FC<{ isOpen: boolean; onClose: () => void; inventory:
         tenantId: profile.tenantId, branchId: activeBranchId || item.branchId,
         itemId: item.id, quantity: formData.issuedAmount,
         department: formData.department, recipient: formData.recipient,
-        purpose: formData.purpose, reference: formData.reference,
+        purpose: formData.purpose,
         requestId: idempotencyRequest,
         actor: { uid: profile.uid, name: profile.displayName || profile.full_name || profile.name || profile.uid }
       });
@@ -828,7 +827,7 @@ const UsageLogModal: React.FC<{ isOpen: boolean; onClose: () => void; inventory:
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/40 backdrop-blur-sm">
-      <div className="bg-white w-full max-w-lg rounded-[32px] shadow-2xl overflow-hidden">
+      <div className="flex max-h-[calc(100dvh-1rem)] w-full max-w-lg flex-col overflow-hidden rounded-[24px] bg-white text-zinc-900 shadow-2xl">
         <div className="px-8 py-6 border-b border-zinc-100">
           <h2 className="text-xl font-black text-zinc-900 uppercase tracking-tight">Log Usage</h2>
         </div>
@@ -838,10 +837,10 @@ const UsageLogModal: React.FC<{ isOpen: boolean; onClose: () => void; inventory:
               <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Select Item</label>
               <select required className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.inventoryId} onChange={e => { setFormData({...formData, inventoryId: e.target.value}); setRequestId(''); }}>
                 <option value="">Select Item</option>
-                {inventory.filter(i => i.operationalType === 'CONSUMABLE_OPERATIONAL' || (!i.operationalType && i.type === 'non-fixed')).map(i => <option key={i.id} value={i.id}>{i.name} ({i.quantityInStock} {i.unitOfIssue} left)</option>)}
+                {inventory.filter(i => i.operationalType === 'CONSUMABLE_OPERATIONAL' || (!i.operationalType && i.type === 'non-fixed')).map(i => <option key={i.id} value={i.id}>{i.name} ({i.quantityInStock} {operationalIssueUnit(i.unitOfIssue) || 'units'} available)</option>)}
               </select>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1">
                 <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Amount Issued</label>
                 <input required type="number" min="0.001" max={Number(inventory.find(item => item.id === formData.inventoryId)?.quantityInStock || 0)} step="any" className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.issuedAmount || ''} onChange={e => { setFormData({...formData, issuedAmount: Number(e.target.value)}); setRequestId(''); }} />
@@ -849,7 +848,6 @@ const UsageLogModal: React.FC<{ isOpen: boolean; onClose: () => void; inventory:
               <label className="space-y-1 block"><span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Department</span><input required maxLength={120} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.department} onChange={e => { setFormData({...formData, department: e.target.value}); setRequestId(''); }} /></label>
               <label className="space-y-1 block"><span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Recipient (optional)</span><input maxLength={120} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.recipient} onChange={e => { setFormData({...formData, recipient: e.target.value}); setRequestId(''); }} /></label>
               <label className="space-y-1 block"><span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Purpose</span><input required maxLength={300} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.purpose} onChange={e => { setFormData({...formData, purpose: e.target.value}); setRequestId(''); }} /></label>
-              <label className="space-y-1 block"><span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Reference</span><input required maxLength={120} className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" value={formData.reference} onChange={e => { setFormData({...formData, reference: e.target.value}); setRequestId(''); }} placeholder="Issue voucher or internal reference" /></label>
             </div>
           </div>
           <div className="flex justify-end gap-3 pt-4">
