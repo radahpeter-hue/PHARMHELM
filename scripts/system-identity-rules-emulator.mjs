@@ -17,6 +17,7 @@ try {
       tenantId, role:'cashier', assigned_branches:['identity-branch'], status:'active', active:true
     });
     await setDoc(doc(db,'tenants',tenantId), {name:'Identity Test Tenant', slug:'identity-tenant'});
+    await setDoc(doc(db,'identity_sequence_counters','platform_tenants'), {scope:'platform',kind:'tenants',lastSequence:1,updatedAt:'2026-10-15'});
   });
   const owner = env.authenticatedContext('identity-owner',{tenantId,role:'CEO'}).firestore();
   const cashier = env.authenticatedContext('identity-cashier',{tenantId,role:'cashier'}).firestore();
