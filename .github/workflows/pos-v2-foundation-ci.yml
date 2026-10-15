@@ -51,6 +51,7 @@ on:
       - 'scripts/operational-inventory*.mjs'
       - 'scripts/system-identity-rules-emulator.mjs'
       - 'scripts/identity-backfill-preview.mjs'
+      - 'scripts/audit-system-identities.mjs'
       - 'tests/system-identity-*.test.ts'
       - 'src/services/systemIdentityService.ts'
       - 'scripts/migrate-operational-inventory-v2.mjs'
@@ -130,6 +131,23 @@ jobs:
 
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v3
+
+      - name: Audit live named Firestore identity codes (read only)
+        env:
+          GOOGLE_CLOUD_PROJECT: gen-lang-client-0911422817
+        run: |
+          set -euo pipefail
+          npm install --no-save --ignore-scripts firebase-admin
+          node scripts/audit-system-identities.mjs /tmp/pharmhelm-identity-audit-summary.json
+
+      - name: Upload identity audit summary (no patient or staff details)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pharmhelm-identity-audit-summary
+          path: /tmp/pharmhelm-identity-audit-summary.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Validate rules with the hosted Firebase compiler
         shell: bash
