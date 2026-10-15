@@ -16,6 +16,10 @@ on:
 permissions:
   contents: read
   id-token: write
+  deployments: write
+  checks: write
+  pull-requests: write
+  issues: write
 
 jobs:
   masaka_preview:
