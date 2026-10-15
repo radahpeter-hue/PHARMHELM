@@ -35,7 +35,7 @@ export function usageTimestampDate(value: unknown): Date | null {
   return null;
 }
 
-export function filterOperationalUsageByDate<T extends Pick<OperationalInventoryUsage, 'timestamp'>>(logs: T[], range: UsageDateRange): T[] {
+export function filterOperationalUsageByDate(logs: OperationalInventoryUsage[], range: UsageDateRange): OperationalInventoryUsage[] {
   if (!validUsageDateRange(range)) return [];
   return logs.filter(log => {
     const date = usageTimestampDate(log.timestamp);
