@@ -15,7 +15,7 @@ export function defaultUsageDateRange(now = new Date()): UsageDateRange {
 }
 
 export function validUsageDateRange(range: UsageDateRange): boolean {
-  const pattern = /^\\d{4}-\\d{2}-\\d{2}$/;
+  const pattern = /^\d{4}-\d{2}-\d{2}$/;
   return pattern.test(range.start) && pattern.test(range.end)
     && !Number.isNaN(new Date(range.start).getTime())
     && !Number.isNaN(new Date(range.end).getTime())
@@ -76,14 +76,14 @@ export function operationalUsageReportRows(logs: OperationalInventoryUsage[], it
 function csvValue(value: string | number): string {
   let text = String(value ?? '');
   // Keep spreadsheet applications from evaluating user-provided values as formulas.
-  if (/^[\\s]*[=+@-]/.test(text)) text = "'" + text;
+  if (/^[\s]*[=+@-]/.test(text)) text = "'" + text;
   return '"' + text.replace(/"/g, '""') + '"';
 }
 
 export function operationalUsageCSV(rows: UsageReportRow[]): string {
   const headings = ['Date & Time', 'Item', 'Department', 'Recipient', 'Purpose', 'Reference', 'Quantity Issued', 'Unit', 'Usage Value (UGX)', 'Recorded By'];
-  return '\\uFEFF' + [headings, ...rows.map(row => [
+  return '\uFEFF' + [headings, ...rows.map(row => [
     row.timestamp, row.item, row.department, row.recipient, row.purpose, row.reference,
     row.issued, row.unit, row.cost, row.recordedBy
-  ])].map(fields => fields.map(csvValue).join(',')).join('\\r\\n');
+  ])].map(fields => fields.map(csvValue).join(',')).join('\r\n');
 }
