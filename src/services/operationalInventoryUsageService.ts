@@ -11,7 +11,7 @@ export interface LogOperationalUsageInput {
   department: string;
   recipient?: string;
   purpose: string;
-  reference: string;
+  reference?: string;
   requestId: string;
   actor: { uid: string; name: string };
 }
@@ -36,10 +36,10 @@ export async function logOperationalUsage(input: LogOperationalUsageInput): Prom
   const quantity = Number(input.quantity);
   const department = input.department.trim();
   const purpose = input.purpose.trim();
-  const reference = input.reference.trim();
+  const reference = input.reference?.trim() || `OPU-${safeId(input.requestId)}`;
   const recipient = input.recipient?.trim() || '';
-  if (!tenantId || !branchId || !itemId || !actor.uid || !actor.name.trim() || !department || !purpose || !reference) {
-    throw new Error('Tenant, location, item, user, department, purpose and reference are required.');
+  if (!tenantId || !branchId || !itemId || !actor.uid || !actor.name.trim() || !department || !purpose) {
+    throw new Error('Tenant, location, item, user, department and purpose are required.');
   }
   const requestId = safeId(input.requestId);
   const usageId = `opusage_${requestId}`;
