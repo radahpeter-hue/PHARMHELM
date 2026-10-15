@@ -15,7 +15,7 @@ test('selected usage period includes both boundary dates and excludes invalid ti
     { timestamp: '2026-10-15T23:59:59' },
     { timestamp: '2026-10-16T00:00:00' },
     { timestamp: 'invalid' }
-  ];
+  ] as any;
   const result = filterOperationalUsageByDate(logs, { start: '2026-10-09', end: '2026-10-15' });
   assert.equal(result.length, 3);
   assert.equal(result[0].timestamp, '2026-10-15T23:59:59');
