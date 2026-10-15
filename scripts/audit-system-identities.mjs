@@ -16,7 +16,7 @@ export const definitions = {
   prescribers: { prefix: 'PRE', field: 'prescriber_code', kind: 'prescribers' },
   institutions: { prefix: 'INS', field: 'institution_code', kind: 'institutions' },
   products: { prefix: 'PRD', field: 'productId', kind: 'products' },
-  staff: { prefix: 'STF', field: 'employee_id', kind: 'staff' }
+  staff: { prefix: 'STF', field: 'staff_code', kind: 'staff' }
 };
 
 export function analyseIdentitySnapshot(records, counters = []) {
@@ -52,6 +52,9 @@ export function analyseIdentitySnapshot(records, counters = []) {
     return summaries.get(key);
   };
   const usedSku = new Map();
+  const usedLegacyEmployees = new Map();
+  let legacyEmployeeIdMissing = 0;
+  let duplicateLegacyEmployeeIds = 0;
 
   // Pass 1: establish maxima for ALL records before predicting counter baselines.
   for (const entry of all) {
@@ -72,6 +75,13 @@ export function analyseIdentitySnapshot(records, counters = []) {
       sum.duplicate++;
       result.blockers.push({type:'DUPLICATE_CODE',collection:collectionName,kind});
     } else knownCodes.set(uniqueKey,true);
+  }
+  for(const member of records.staff || []) {
+    const legacy = String(member.employee_id || '').trim();
+    if (!legacy) { legacyEmployeeIdMissing++; continue; }
+    const key = `${member.tenantId}|${legacy.toUpperCase()}`;
+    if (usedLegacyEmployees.has(key)) duplicateLegacyEmployeeIds++;
+    else usedLegacyEmployees.set(key, true);
   }
   for(const p of records.products || []) {
     const sum=getSum(p.tenantId||'UNKNOWN','products','products');
@@ -110,6 +120,9 @@ export function analyseIdentitySnapshot(records, counters = []) {
       tenant:isMartin?'Martin Pharma':title || '(unnamed tenant)',
       isMartinPharma:isMartin,
       records:buckets.reduce((v,s)=>v+s.count,0),
+      masakaBranchFound: (records.branches||[]).some(b=>b.tenantId===t.id && /masaka/i.test(String(b.name||''))),
+      legacyStaffMissing: (records.staff||[]).filter(m=>m.tenantId===t.id && !String(m.employee_id||'').trim()).length,
+      legacyStaffDuplicates: (()=> {const seen=new Set();let n=0;for(const m of records.staff||[]){if(m.tenantId!==t.id)continue;const code=String(m.employee_id||'').trim().toUpperCase();if(!code)continue;if(seen.has(code))n++;else seen.add(code);}return n;})(),
       missing:buckets.reduce((v,s)=>v+s.missing,0),
       duplicates:buckets.reduce((v,s)=>v+s.duplicate+s.skuDuplicate,0),
       kinds:Object.fromEntries(buckets.map(s=>[s.kind,{count:s.count,missing:s.missing,duplicates:s.duplicate,
@@ -117,6 +130,7 @@ export function analyseIdentitySnapshot(records, counters = []) {
         safeStartingSequence:s.safeStartingSequence,nextCandidate:s.nextCandidate}]))
     });
   }
+  result.legacyStaffIdentity = {missingEmployeeIds:legacyEmployeeIdMissing, duplicateEmployeeIdOccurrences:duplicateLegacyEmployeeIds};
   result.totalTenants=tenants.length;
   result.martinPharmaFound=result.tenants.some(t=>t.isMartinPharma);
   result.blockerCounts=Object.fromEntries([...new Set(result.blockers.map(b=>b.type))].map(type=>[type,result.blockers.filter(b=>b.type===type).length]));
@@ -138,6 +152,8 @@ async function main() {
     if(name!=='tenants')fields.add('tenantId');
     if(name==='tenants'){fields.add('name');fields.add('slug');}
     if(name==='products')fields.add('sku');
+    if(name==='staff')fields.add('employee_id');
+    if(name==='branches')fields.add('name');
     const snaps=await db.collection(name).select(...fields).get();
     records[name]=snaps.docs.map(d=>({id:d.id,...d.data()}));
   }
@@ -151,6 +167,7 @@ async function main() {
   console.log(JSON.stringify({status:'AUDIT_COMPLETED_READ_ONLY',database:databaseId,totalTenants:report.totalTenants,
     martinPharmaFound:report.martinPharmaFound,collections:report.collections,
     blockerCounts:report.blockerCounts,
+    legacyStaffIdentity:report.legacyStaffIdentity,
     martinPharma:report.tenants.find(t=>t.isMartinPharma)||null},null,2));
 }
 if(process.argv[1] && import.meta.url===new URL('file://'+process.argv[1]).href) {
