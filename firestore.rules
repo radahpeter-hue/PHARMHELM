@@ -2178,13 +2178,14 @@ service cloud.firestore {
         && (!('internal_fulfillment_transfer_id' in resource.data) || request.resource.data.internal_fulfillment_transfer_id == resource.data.internal_fulfillment_transfer_id)
         && (!('operational_external_transfer_id' in resource.data) || request.resource.data.operational_external_transfer_id == resource.data.operational_external_transfer_id)
         && hasValidLineClass(false);
-      // Only unsubmitted drafts may remove lines. Read the pre-commit parent
-      // so submitting an edited draft and removing its old lines is atomic.
-      allow delete: if isTenantMember(resource.data.tenantId)
-        && (isAdmin() || (isBranchManager()
+      // A submitted draft may remove omitted items in the SAME atomic batch.
+      // Inspect the pre-commit order, never allow deletion of submitted/sourcing lines.
+      allow delete: if isAuthenticated()
+        && isTenantMember(resource.data.tenantId)
+        && (isAdmin() || ((isBranchManager() || isProcurement())
           && get(/databases/$(database)/documents/stock_orders/$(resource.data.order_id)).data.tenantId == resource.data.tenantId
           && get(/databases/$(database)/documents/stock_orders/$(resource.data.order_id)).data.status == 'draft'
-          && isAssignedToBranch(get(/databases/$(database)/documents/stock_orders/$(resource.data.order_id)).data.requesting_branch_id)));
+          && (isAssignedToBranch(get(/databases/$(database)/documents/stock_orders/$(resource.data.order_id)).data.requesting_branch_id) || isProcurement())));
     }
     match /transfer_invoices/{invoiceId} {
       function isOperationalTransfer(data) {
