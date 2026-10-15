@@ -1762,7 +1762,12 @@ service cloud.firestore {
     }
 
     match /operational_inventory_usage/{usageId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+      // First-time idempotent usage transactions must be able to check a missing
+      // deterministic usage ID. Existing documents stay tenant/branch scoped.
+      allow get: if isAuthenticated() && (resource == null ||
+        (isTenantMember(resource.data.tenantId)
+          && (isProcurement() || isAssignedToBranch(resource.data.branchId))));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId)
         && (isProcurement() || isAssignedToBranch(resource.data.branchId));
       allow create: if isAuthenticated()
         && isInventoryOperator()
