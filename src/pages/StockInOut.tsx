@@ -714,6 +714,9 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         category: category,
         generation_method: genMethod,
         status: status,
+        ...(selectedDraftId && status === 'submitted'
+          ? { requesting_branch_name: activeBranch?.name || branches.find(b => b.id === branchId)?.name || 'Unknown Branch' }
+          : {}),
         is_emergency: orderType === 'emergency',
         submitted_by: profile.uid || '',
         total_order_value_ugx: totalValue

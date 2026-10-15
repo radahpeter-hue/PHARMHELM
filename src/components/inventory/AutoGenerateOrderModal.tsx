@@ -721,8 +721,8 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
     : 0;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl w-full max-w-[1400px] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-zinc-100 animate-scale-up">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
+      <div className="relative bg-white rounded-2xl sm:rounded-3xl w-full max-w-[1400px] max-h-[95dvh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-zinc-100 animate-scale-up">
         
         {/* Header */}
         <div className="px-8 py-5 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
@@ -1223,11 +1223,11 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
               </div>
             </div>
             {/* Bottom Actions */}
-            <div className="p-6 border-t flex justify-between items-center bg-zinc-50">
-              <span className="text-xs text-zinc-500 font-bold uppercase">
+            <div className="px-4 sm:px-6 py-4 border-t flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-zinc-50">
+              <span className="text-xs text-zinc-500 font-bold uppercase break-all">
                 CALCULATION RUN KEY: <span className="font-mono text-zinc-800">{runId}</span>
               </span>
-              <div className="flex gap-3">
+              <div className="flex flex-wrap gap-2 sm:gap-3 justify-end">
                 <button onClick={() => setStep('config')} className="px-5 py-2.5 border rounded-xl font-bold text-sm text-zinc-700 hover:bg-white transition-colors bg-transparent">
                   Back Configuration
                 </button>
@@ -1261,7 +1261,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
         {/* Manual Add Product dialog overlay */}
         {showAddProduct && (
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-55 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-3 sm:p-4">
             <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 shadow-xl border animate-scale-up">
               <div className="flex justify-between items-center border-b pb-2">
                 <h4 className="font-bold text-zinc-800 text-base">Add Product Manually</h4>
@@ -1314,16 +1314,34 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
           </div>
         )}
 
-        {/* Confirmation is separate from editing and revalidation. */}
+        {/* Always show both actions within a scroll-safe, responsive dialog. */}
         {showSubmitConfirmation && (
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-55 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 shadow-xl">
-              <h4 className="font-bold text-zinc-900">Confirm replenishment submission</h4>
-              <p className="text-sm text-zinc-600">Submit {lines.filter(line => line.finalPurchasePacks > 0).length} external purchase lines and {lines.filter(line => line.finalDonorAllocations?.some(a => a.qtyBaseUnits > 0)).length} lines with donor allocations? All reviewed lines are included, regardless of page or search filter.</p>
-              <p className="text-sm font-bold">External order value: UGX {totalExternalCost.toLocaleString()}</p>
-              <div className="flex justify-end gap-2 border-t pt-3">
-                <button type="button" onClick={() => setShowSubmitConfirmation(false)} disabled={submitting} className="px-4 py-2 border rounded-lg text-sm">Continue editing</button>
-                <button type="button" onClick={executeFinalSubmission} disabled={submitting} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold text-sm disabled:opacity-50">{submitting ? 'Submitting...' : 'Confirm submission'}</button>
+          <div role="presentation" className="absolute inset-0 z-[60] bg-black/55 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6">
+            <div role="dialog" aria-modal="true" aria-labelledby="replenishment-confirm-title" className="bg-white rounded-2xl w-full max-w-lg max-h-[85dvh] flex flex-col overflow-hidden shadow-2xl border border-zinc-200">
+              <div className="px-5 sm:px-6 py-4 border-b">
+                <h4 id="replenishment-confirm-title" className="text-lg font-bold text-zinc-900">Confirm replenishment submission</h4>
+                <p className="text-sm text-zinc-500 mt-1">Review the entire replenishment run before creating its draft orders and transfers.</p>
+              </div>
+              <div className="px-5 sm:px-6 py-5 overflow-y-auto space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-xl bg-zinc-50 border p-3">
+                    <span className="text-xs text-zinc-500 block">External purchase lines</span>
+                    <span className="text-xl font-bold text-zinc-900">{lines.filter(line => line.finalPurchasePacks > 0).length}</span>
+                  </div>
+                  <div className="rounded-xl bg-zinc-50 border p-3">
+                    <span className="text-xs text-zinc-500 block">Donor allocation lines</span>
+                    <span className="text-xl font-bold text-zinc-900">{lines.filter(line => line.finalDonorAllocations?.some(a => a.qtyBaseUnits > 0)).length}</span>
+                  </div>
+                </div>
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                  <span className="text-xs text-zinc-600 block">Total external order value</span>
+                  <span className="text-xl sm:text-2xl font-bold text-emerald-800">UGX {totalExternalCost.toLocaleString()}</span>
+                </div>
+                <p className="text-sm text-zinc-600">All reviewed products are included, including products on other pages or hidden by the current search filter. Branch purchase orders will be saved to Draft Orders for review and later submission to Procurement.</p>
+              </div>
+              <div className="shrink-0 border-t px-5 sm:px-6 py-4 flex flex-col-reverse sm:flex-row sm:justify-end gap-2 bg-white">
+                <button type="button" onClick={() => setShowSubmitConfirmation(false)} disabled={submitting} className="w-full sm:w-auto px-4 py-2.5 border border-zinc-300 rounded-lg text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50">Continue editing</button>
+                <button type="button" onClick={executeFinalSubmission} disabled={submitting} className="w-full sm:w-auto px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-sm disabled:opacity-50">{submitting ? 'Submitting...' : 'Confirm submission'}</button>
               </div>
             </div>
           </div>

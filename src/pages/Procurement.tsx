@@ -173,7 +173,16 @@ const NewRequisitions: React.FC = () => {
   const { profile } = useAuth();
   const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [orders, setOrders] = useState<StockOrder[]>([]);
+  const [branchNames, setBranchNames] = useState<Record<string, string>>({});
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
+  useEffect(() => {
+    if (!profile?.tenantId) return;
+    return firestoreService.subscribeToCollection<Branch>('branches', profile.tenantId, records => {
+      setBranchNames(Object.fromEntries(records.map(branch => [branch.id, branch.name])));
+    });
+  }, [profile?.tenantId]);
+  const displayBranch = (order: StockOrder): string =>
+    branchNames[order.requesting_branch_id] || displayBranch(order);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
   useEffect(() => {
@@ -215,7 +224,7 @@ const NewRequisitions: React.FC = () => {
           ];
           const rows = lines.map(line => [
             order.order_number || '',
-            order.requesting_branch_name || order.requesting_branch_id || '',
+            displayBranch(order),
             order.order_type || '',
             isOperationalInventoryRecord(order) ? 'Operational Inventory' : 'Sellable Inventory',
             order.submitted_at ? new Date(order.submitted_at).toLocaleDateString() : '--',
@@ -285,7 +294,7 @@ const NewRequisitions: React.FC = () => {
                 <div class="meta-grid">
                   <div>
                     <div class="meta-title">Requesting Branch</div>
-                    <div class="meta-value">${order.requesting_branch_name || order.requesting_branch_id}</div>
+                    <div class="meta-value">${displayBranch(order)}</div>
                   </div>
                   <div>
                     <div class="meta-title">Order Type</div>
@@ -409,7 +418,7 @@ const NewRequisitions: React.FC = () => {
                     <span className="ml-2 px-2 py-0.5 bg-red-500 text-white text-[10px] rounded-full uppercase font-black">Emergency</span>
                   )}
                 </td>
-                <td className="px-6 py-4 text-sm text-zinc-600">{order.requesting_branch_name || order.requesting_branch_id}</td>
+                <td className="px-6 py-4 text-sm text-zinc-600">{displayBranch(order)}</td>
                 <td className="px-6 py-4 text-sm capitalize text-zinc-600">{order.order_type}</td>
                 <td className="px-6 py-4 text-sm text-zinc-600">{order.category.replace(/_/g, ' ')}</td>
                 <td className="px-6 py-4 text-sm text-zinc-500">

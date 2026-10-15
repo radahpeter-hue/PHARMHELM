@@ -231,6 +231,14 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
   const tenantId = run.tenantId;
   const destinationBranchId = run.branchId;
   if (!tenantId || !destinationBranchId || !userId) throw new Error('Missing authenticated order submission context.');
+  // Resolve the real branch display name from the tenant-owned branch master.
+  // Never substitute a raw document ID as a display name in new requisitions.
+  const destinationSnap = run.configuration.demandScope !== 'all_branches'
+    ? await getDoc(doc(database, 'branches', destinationBranchId))
+    : null;
+  if (destinationSnap && (!destinationSnap.exists() || destinationSnap.data().tenantId !== tenantId))
+    throw new Error('The requesting branch is missing or belongs to another tenant.');
+  const destinationBranchName = destinationSnap?.data()?.name || 'HQ Central Store';
 
   const linesSnap = await getDocs(query(collection(database, 'autoGenerateOrderLines'),
     where('tenantId', '==', tenantId), where('runId', '==', runId)));
@@ -291,7 +299,7 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
       sum + item.finalPurchasePacks * Number(item.calculationInputs?.costPricePerPack || 0), 0);
     plannedOrders.push({ ref: orderRef, data: {
       tenantId, inventoryClass, order_number: orderNumber, requesting_branch_id: destinationBranchId,
-      requesting_branch_name: aggregate ? 'HQ Central Store' : '',
+      requesting_branch_name: aggregate ? 'HQ Central Store' : destinationBranchName,
       supplier_id: supplierId, order_type: emergency ? 'emergency' : 'monthly',
       category: inventoryClass === 'OPERATIONAL' ? 'non_sellable' : 'sellable_non_cosmetic',
       generation_method: 'auto_generated', status: aggregate ? 'submitted' : 'draft',

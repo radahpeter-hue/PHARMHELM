@@ -15,6 +15,7 @@ const roleDb = uid => env.authenticatedContext(uid, { tenantId }).firestore();
 try {
   await env.withSecurityRulesDisabled(async ctx => {
     const db = ctx.firestore();
+    await setDoc(doc(db, 'branches', branchId), { tenantId, name: 'Masaka', status: 'active' });
     await setDoc(doc(db, 'staff', 'manager'), { tenantId, role: 'Branch Manager', assigned_branches: [branchId], status: 'active', active: true });
     await setDoc(doc(db, 'staff', 'viewer'), { tenantId, role: 'HR Support Personnel', assigned_branches: [branchId], status: 'active', active: true });
     await setDoc(doc(db, 'products', 'product-a'), { tenantId, inventoryClass: 'SELLABLE', category: 'drug/medicine', productName: 'Medicine A', isOperational: false });
