@@ -92,6 +92,7 @@ const Clients: React.FC = () => {
       ...staff.map(staffMember => ({
         id: staffMember.id,
         uid: staffMember.uid,
+        employee_id: staffMember.employee_id,
         tenantId: staffMember.tenantId,
         full_name: staffMember.full_name || staffMember.username || 'Unknown Staff',
         phone_number: staffMember.phone_number || 'N/A',
@@ -118,11 +119,11 @@ const Clients: React.FC = () => {
   const filteredData = () => {
     const term = searchTerm.toLowerCase();
     if (activeTab === 'patients') {
-      return combinedPatients.filter(p => (p.full_name || '').toLowerCase().includes(term) || (p.phone_number || '').includes(term));
+      return combinedPatients.filter(p => (p.full_name || '').toLowerCase().includes(term) || (p.phone_number || '').includes(term) || (p.patient_code || p.employee_id || '').toLowerCase().includes(term));
     } else if (activeTab === 'institutions') {
-      return institutions.filter(i => i.supplier_name.toLowerCase().includes(term));
+      return institutions.filter(i => i.supplier_name.toLowerCase().includes(term) || (i.institution_code || '').toLowerCase().includes(term));
     } else if (activeTab === 'prescribers') {
-      return prescribers.filter(p => p.full_name.toLowerCase().includes(term) || p.specialty.toLowerCase().includes(term));
+      return prescribers.filter(p => p.full_name.toLowerCase().includes(term) || p.specialty.toLowerCase().includes(term) || (p.prescriber_code || '').toLowerCase().includes(term));
     } else if (activeTab === 'suppliers') {
       return suppliers.filter(s => (s.supplier_name || '').toLowerCase().includes(term) || (s.supplier_id || '').toLowerCase().includes(term));
     }
@@ -279,6 +280,15 @@ const Clients: React.FC = () => {
                             </>
                           )}
                         </div>
+                        {activeTab !== 'suppliers' && (
+                          <div className="break-all text-xs font-bold text-zinc-700">
+                            {activeTab === 'patients'
+                              ? (item.isStaff ? `Staff ID: ${item.employee_id || 'Legacy record'}` : `Patient ID: ${item.patient_code || 'Legacy record'}`)
+                              : activeTab === 'institutions'
+                                ? `Institution ID: ${item.institution_code || 'Legacy record'}`
+                                : `Prescriber ID: ${item.prescriber_code || 'Legacy record'}`}
+                          </div>
+                        )}
                         {activeTab === 'suppliers' && item.payment_terms && (
                           <div className="text-[10px] text-zinc-400">
                             Payment Terms: {item.payment_terms}
