@@ -47,7 +47,7 @@ import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { deduplicateStaff } from '../utils/deduplicateStaff';
-import { createTenantIdentity, createBranchIdentity } from '../services/systemIdentityService';
+import { createTenantIdentity, createBranchIdentity, createScopedIdentity } from '../services/systemIdentityService';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -3634,7 +3634,7 @@ const CreateTenantModal = ({ onClose, onSuccess, logAction }: { onClose: () => v
       if (!initialUserUid) {
         throw new Error('Initial IT Head authentication account was not created. Tenant staff provisioning stopped.');
       }
-      await setDoc(doc(db, 'staff', initialUserUid), {
+      await createScopedIdentity('staff', tenantId, {
         id: initialUserUid,
         uid: initialUserUid,
         tenantId: tenantId,
@@ -3652,7 +3652,7 @@ const CreateTenantModal = ({ onClose, onSuccess, logAction }: { onClose: () => v
         assigned_branches: [branchRef.id],
         default_branch_id: branchRef.id,
         created_at: now.toISOString()
-      });
+      }, db, initialUserUid);
       
       // 4. Create default system settings
       await setDoc(doc(db, 'system_settings', tenantId), {
