@@ -47,6 +47,7 @@ import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { deduplicateStaff } from '../utils/deduplicateStaff';
+import { createTenantIdentity } from '../services/systemIdentityService';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -3591,7 +3592,7 @@ const CreateTenantModal = ({ onClose, onSuccess, logAction }: { onClose: () => v
       expiry.setMonth(expiry.getMonth() + 1);
 
       // 1. Create Tenant
-      const tenantRef = await addDoc(collection(db, 'tenants'), {
+      const createdTenant = await createTenantIdentity({
         ...formData,
         subscription_status: 'inactive',
         subscription_start: '',
@@ -3602,7 +3603,7 @@ const CreateTenantModal = ({ onClose, onSuccess, logAction }: { onClose: () => v
         created_by: 'system'
       });
 
-      const tenantId = tenantRef.id;
+      const tenantId = createdTenant.id;
 
       // 2. Create HQ Branch
       const branchRef = await addDoc(collection(db, 'branches'), {
