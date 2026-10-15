@@ -56,9 +56,10 @@ try {
   await assertSucceeds(runTransaction(owner,async tx=>{
     await tx.get(staffCounter);
     tx.set(staffCounter,{tenantId,kind:'staff',lastSequence:1,updatedAt:'2026-10-15'});
-    tx.set(doc(owner,'staff','new-employee'),{tenantId,role:'Staff',employee_id:'STF-000001',status:'pending'});
+    tx.set(doc(owner,'staff','new-employee'),{tenantId,role:'Staff',staff_code:'STF-000001',employee_id:'LEGACY-09',status:'pending'});
   }));
   await assertFails(updateDoc(doc(owner,'staff','new-employee'),{employee_id:'STF-123456'}));
+  await assertFails(updateDoc(doc(owner,'staff','new-employee'),{staff_code:'STF-123456'}));
   console.log('[system-identity-rules] PASS: permitted sequential creation and forbidden sequence/code hijacks');
 } finally {
   await env.cleanup();
