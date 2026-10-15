@@ -790,6 +790,7 @@ service cloud.firestore {
       allow update: if atomicWelfareBalance(staffId);
       allow update: if isAuthenticated()
         && (!('employee_id' in resource.data) || request.resource.data.employee_id == resource.data.employee_id)
+        && (!('staff_code' in resource.data) || request.resource.data.staff_code == resource.data.staff_code)
         && (
         isAdmin() || isHR() ||
         (isITPersonnel() &&
@@ -2699,6 +2700,8 @@ service cloud.firestore {
       allow update: if !(collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
         && (collectionName != 'staff' || !('employee_id' in resource.data)
           || request.resource.data.employee_id == resource.data.employee_id)
+        && (collectionName != 'staff' || !('staff_code' in resource.data)
+          || request.resource.data.staff_code == resource.data.staff_code)
         && (collectionName != 'clients' || !('patient_code' in resource.data)
           || request.resource.data.patient_code == resource.data.patient_code)
         && (collectionName != 'prescribers' || !('prescriber_code' in resource.data)
