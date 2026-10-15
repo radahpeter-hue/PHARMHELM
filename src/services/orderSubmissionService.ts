@@ -216,11 +216,11 @@ export async function revalidateOrderRun(runId: string): Promise<RevalidationRes
  * Atomically convert accepted calculations to PO drafts, transfer requests, and log audit entries.
  */
 
-export async function submitOrderRun(runId: string, userId: string, userEmail: string): Promise<{
+export async function submitOrderRun(runId: string, userId: string, userEmail: string, database = db): Promise<{
   orderIds: string[];
   transferIds: string[];
 }> {
-  const runRef = doc(db, 'autoGenerateOrderRuns', runId);
+  const runRef = doc(database, 'autoGenerateOrderRuns', runId);
   const runSnap = await getDoc(runRef);
   if (!runSnap.exists()) throw new Error('Run snapshot does not exist');
   const run = runSnap.data() as AutoGenerateOrderRun;
@@ -232,7 +232,7 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
   const destinationBranchId = run.branchId;
   if (!tenantId || !destinationBranchId || !userId) throw new Error('Missing authenticated order submission context.');
 
-  const linesSnap = await getDocs(query(collection(db, 'autoGenerateOrderLines'),
+  const linesSnap = await getDocs(query(collection(database, 'autoGenerateOrderLines'),
     where('tenantId', '==', tenantId), where('runId', '==', runId)));
   const lines = linesSnap.docs.map(snapshot => ({
     ...snapshot.data(), id: snapshot.id
@@ -283,7 +283,7 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
     const supplierId = group.split('::').slice(1).join('::');
     const inventoryClass = isOperationalAutoLine(items[0]) ? 'OPERATIONAL' : 'SELLABLE';
     const stablePart = (runId + '_' + group).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
-    const orderRef = doc(db, 'stock_orders', getHqAutoOrderId(runId, group));
+    const orderRef = doc(database, 'stock_orders', getHqAutoOrderId(runId, group));
     const suffix = supplierId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'GEN';
     const orderNumber = (aggregate ? 'HQR-' : 'ORD-') + runId.slice(-6) + '-' + suffix;
     const emergency = Number(run.configuration.temporaryDemandMultiplier || 1) > 1;
@@ -301,7 +301,7 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
     } });
     orderIds.push(orderRef.id);
     for (const item of items) {
-      const lineRef = doc(db, 'stock_order_lines',
+      const lineRef = doc(database, 'stock_order_lines',
         ('auto_line_' + stablePart + '_' + item.id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100)).slice(0, 480));
       plannedOrderLines.push({ ref: lineRef, data: {
         tenantId, inventoryClass,
@@ -322,7 +322,7 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
     const inventoryClass = group.slice(sep + 2) === 'OPERATIONAL' ? 'OPERATIONAL' : 'SELLABLE';
     const stablePart = (runId + '_' + donorId + '_' + destinationBranchId + '_' + inventoryClass)
       .replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
-    const transferRef = doc(db, 'transfer_invoices', 'auto_transfer_' + stablePart);
+    const transferRef = doc(database, 'transfer_invoices', 'auto_transfer_' + stablePart);
     plannedTransfers.push({ ref: transferRef, data: {
       tenantId, inventoryClass,
       transfer_number: 'TRF-' + runId.slice(-6) + '-' +
@@ -333,7 +333,7 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
     } });
     transferIds.push(transferRef.id);
     for (const { line, quantity } of items) {
-      plannedTransferLines.push({ ref: doc(db, 'transfer_invoice_lines',
+      plannedTransferLines.push({ ref: doc(database, 'transfer_invoice_lines',
         ('auto_transfer_line_' + stablePart + '_' +
           String(line.id || line.productId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100)).slice(0, 480)),
         data: {
@@ -345,7 +345,7 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
         }
       });
     }
-    const reservations = await getDocs(query(collection(db, 'inventoryTransferReservations'),
+    const reservations = await getDocs(query(collection(database, 'inventoryTransferReservations'),
       where('tenantId', '==', tenantId), where('autoGenerateRunId', '==', runId),
       where('sourceBranchId', '==', donorId)));
     const productIds = new Set(items.map(item => item.line.productId));
@@ -361,12 +361,12 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
   if (refs.length + 2 > 450) throw new Error('Order is too large for one atomic submission. Split the run into smaller orders.');
   if (new Set(refs.map(ref => ref.path)).size !== refs.length)
     throw new Error('Duplicate generated document identity; order submission cancelled.');
-  const auditRef = doc(db, 'global_audit_logs',
+  const auditRef = doc(database, 'global_audit_logs',
     'auto_order_submit_' + runId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180));
 
   // All reads precede writes and every document is committed atomically.
   // A denied write leaves no partial orders, transfers, reservations, or success status.
-  await runTransaction(db, async tx => {
+  await runTransaction(database, async tx => {
     // The run is the sole idempotency gate. Security rules permit its read for tenant members;
     // they do not permit reading missing purchase-order / transfer IDs as ordinary branch users.
     const latest = await tx.get(runRef);
