@@ -31,6 +31,7 @@ test('protected business IDs cannot be overwritten in normal Firestore updates',
     assert.ok(rules.includes(`request.resource.data.${field} == resource.data.${field}`), field);
   }
   assert.ok(rules.includes("kind in ['patients', 'prescribers', 'institutions', 'products', 'staff', 'operational_assets', 'operational_consumables']"));
+  assert.ok(rules.includes('&& (platformCounter() || branchCounter() || scopedCounter());'), 'Scoped counters must also be incrementable');
 });
 
 test('employee number is not manually editable and product codes are not random', () => {
