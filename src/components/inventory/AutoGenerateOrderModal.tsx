@@ -660,10 +660,27 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
     toast.success(`${product.name} added manually.`);
   };
 
+  // Persist the edited draft before live revalidation so checks use the actual intended quantities.
+  const persistEditedRunLines = async () => {
+    if (!profile?.tenantId || !runId) throw new Error('Missing tenant or replenishment run.');
+    const existing = await getDocs(query(collection(db, 'autoGenerateOrderLines'),
+      where('tenantId', '==', profile.tenantId), where('runId', '==', runId)));
+    const ids = new Map(existing.docs.map(snapshot => [String(snapshot.data().productId), snapshot.id]));
+    for (const line of lines) {
+      const id = ids.get(line.productId);
+      if (id) {
+        await setDoc(doc(db, 'autoGenerateOrderLines', id), line);
+      } else {
+        await addDoc(collection(db, 'autoGenerateOrderLines'), line);
+      }
+    }
+  };
+
   // Live Revalidation trigger
   const triggerRevalidation = async () => {
     setRevalidating(true);
     try {
+      await persistEditedRunLines();
       const res = await revalidateOrderRun(runId);
       if (res.hasChanges) {
         setRevalChanges(res.warnings);
@@ -672,7 +689,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
         setShowSubmitConfirmation(true);
       }
     } catch (e: any) {
-      toast.error('Revalidation failed.');
+      toast.error('Could not save and revalidate this order: ' + (e?.message || 'Unknown error'));
     } finally {
       setRevalidating(false);
     }
@@ -682,22 +699,6 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   const executeFinalSubmission = async () => {
     setSubmitting(true);
     try {
-      for (const line of lines) {
-        const linesSnap = await getDocs(
-          query(
-            collection(db, 'autoGenerateOrderLines'),
-            where('runId', '==', runId),
-            where('productId', '==', line.productId)
-          )
-        );
-        if (!linesSnap.empty) {
-          const docId = linesSnap.docs[0].id;
-          await setDoc(doc(db, 'autoGenerateOrderLines', docId), line);
-        } else {
-          await addDoc(collection(db, 'autoGenerateOrderLines'), line);
-        }
-      }
-
       await submitOrderRun(runId, profile?.uid || '', profile?.email || '');
       toast.success('Replenishments submitted successfully!');
       setStep('success');
