@@ -29,6 +29,7 @@ export type UserRole =
 
 export interface Tenant {
   id: string;
+  tenant_code?: string;
   name: string;
   slug: string;
   country: string;
@@ -803,6 +804,7 @@ export interface SaleRevision {
 
 export interface Client {
   id: string;
+  patient_code?: string;
   tenantId: string;
   name: string;
   phone: string;
@@ -825,6 +827,7 @@ export interface Client {
 
 export interface InstitutionRegistry {
   id: string;
+  institution_code?: string;
   tenantId: string;
   name: string;
   type: string;
@@ -839,6 +842,7 @@ export interface InstitutionRegistry {
 
 export interface Prescriber {
   id: string;
+  prescriber_code?: string;
   tenantId: string;
   name: string;
   licenseNumber: string;
