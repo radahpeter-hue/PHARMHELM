@@ -1173,6 +1173,7 @@ const PlatformAdmin = () => {
                               <Globe size={10} />
                               {tenant.slug}.pharmhelm.com
                             </div>
+                            <p className="mt-1 break-all text-xs font-semibold text-zinc-700">Tenant ID: {tenant.tenant_code || 'Legacy record — code pending'}</p>
                           </div>
                         </div>
 
