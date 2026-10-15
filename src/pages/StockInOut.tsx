@@ -754,42 +754,49 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         setSelectedDraftId(null);
         return;
       }
-      let orderId = selectedDraftId;
-      if (orderId) {
-        // Update existing draft's order metadata
-        await firestoreService.updateDocument('stock_orders', orderId, orderData);
-
-        // Delete previous lines of the draft
-        const existingLines = await firestoreService.getDocumentsByQuery<any>('stock_order_lines', [{ field: 'order_id', operator: '==', value: orderId }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-        for (const line of existingLines) {
-          await firestoreService.deleteDocument('stock_order_lines', line.id);
+      // Sellable orders must use the same atomic draft lifecycle as Operational orders.
+      // In particular, do NOT update the header to submitted before replacing draft lines.
+      const requestedLines = orderLines.map(line => ({
+        ...line, tenantId: profile.tenantId, inventoryClass: expectedClass
+      }));
+      if (selectedDraftId) {
+        const selected = drafts.find(draft => draft.id === selectedDraftId);
+        if (!selected || selected.status !== 'draft' || selected.tenantId !== profile.tenantId
+          || selected.requesting_branch_id !== branchId) {
+          throw new Error('The selected draft is no longer available for this branch. Refresh before submitting.');
         }
+        const existingLines = await firestoreService.getDocumentsByQuery<StockOrderLine>(
+          'stock_order_lines', [
+            { field: 'order_id', operator: '==', value: selectedDraftId },
+            { field: 'tenantId', operator: '==', value: profile.tenantId }
+          ]);
+        await persistManualStockOrderDraft(selectedDraftId, orderData, existingLines, requestedLines);
       } else {
-        // Create new draft / order
-        orderData.order_number = `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
-        orderData.requesting_branch_id = branchId;
-        orderData.requesting_branch_name = activeBranch?.name || branches.find(b => b.id === branchId)?.name || 'Unknown Branch';
-
-        orderId = await firestoreService.addDocument('stock_orders', orderData);
+        pendingNewOrder.current ||= {
+          id: doc(collection(db, 'stock_orders')).id,
+          orderNumber: `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
+          createdAt: new Date().toISOString()
+        };
+        const pending = pendingNewOrder.current;
+        await persistNewManualStockOrder(pending.id, {
+          ...orderData,
+          order_number: pending.orderNumber,
+          requesting_branch_id: branchId,
+          requesting_branch_name: activeBranch?.name || branches.find(b => b.id === branchId)?.name || 'Unknown Branch',
+          createdAt: pending.createdAt,
+          updatedAt: new Date().toISOString()
+        }, requestedLines);
+        pendingNewOrder.current = null;
       }
+      toast.success(status === 'submitted'
+        ? 'Order submitted to Procurement → New Requisitions.'
+        : 'Order saved in Draft Orders.');
+      setOrderLines([]);
+      setSelectedDraftId(null);
 
-      if (orderId) {
-        for (const line of orderLines) {
-          const { id, ...lineToSave } = line as any; // Strip out id if updating existing draft lines
-          await firestoreService.addDocument('stock_order_lines', {
-            ...lineToSave,
-            tenantId: profile.tenantId,
-            inventoryClass: inventoryClassForOrderCategory(category),
-            order_id: orderId,
-            line_status: 'ordered'
-          });
-        }
-        toast.success(`Order ${status === 'submitted' ? 'submitted' : 'saved as draft'}.`);
-        setOrderLines([]);
-        setSelectedDraftId(null);
-      }
     } catch (error) {
-      toast.error("Failed to save/submit order.");
+      console.error('Draft order save/submission failed:', error);
+      toast.error('Failed to save/submit order: ' + (error instanceof Error ? error.message : 'Please retry.'));
     } finally {
       setIsSubmitting(false);
     }
