@@ -717,13 +717,13 @@ service cloud.firestore {
           && isTenantMember(request.resource.data.tenantId);
       }
       function scopedCounter() {
-        return request.resource.data.kind in ['patients', 'prescribers', 'institutions', 'products', 'staff']
+        return request.resource.data.kind in ['patients', 'prescribers', 'institutions', 'products', 'staff', 'operational_assets', 'operational_consumables']
           && request.resource.data.tenantId is string
           && counterId == request.resource.data.tenantId + '_' + request.resource.data.kind
           && isTenantMember(request.resource.data.tenantId)
           && (request.resource.data.kind == 'staff'
             ? (isHR() || isIT())
-            : request.resource.data.kind == 'products'
+            : request.resource.data.kind in ['products', 'operational_assets', 'operational_consumables']
               ? isInventoryOperator()
               : isAuthenticated());
       }
