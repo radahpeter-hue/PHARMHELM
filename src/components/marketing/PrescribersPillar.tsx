@@ -1,3 +1,4 @@
+import { createScopedIdentity } from '../../services/systemIdentityService';
 import React, { useState, useEffect } from 'react';
 import { 
   Award, 
@@ -280,7 +281,7 @@ export const PrescribersPillar: React.FC<PrescribersPillarProps> = ({ tenantId, 
         return;
       }
       try {
-        await firestoreService.addDocument('prescribers', {
+        await createScopedIdentity('prescribers', tenantId, {
           tenantId,
           full_name: name,
           professional_licence_number: lic,
