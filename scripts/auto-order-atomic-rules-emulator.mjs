@@ -88,6 +88,50 @@ try {
     assert.equal((await getDoc(doc(managerDb, 'autoGenerateOrderRuns', 'run-service'))).data().status, 'SUBMITTED');
     const retry = await assertSucceeds(submitOrderRun('run-service', 'manager', 'manager@example.org', managerDb));
     assert.deepEqual(retry, first);
+
+    // Independent second tenant verifies system-wide behavior without access to tenant A.
+    const tenantB = 'tenant-b';
+    const branchB = 'branch-b';
+    await env.withSecurityRulesDisabled(async ctx => {
+      const adminDb = ctx.firestore();
+      await setDoc(doc(adminDb, 'staff', 'manager-b'), {
+        tenantId: tenantB, role: 'Branch Manager', assigned_branches: [branchB],
+        status: 'active', active: true
+      });
+      await setDoc(doc(adminDb, 'branches', branchB), {
+        tenantId: tenantB, name: 'Second Tenant Branch', status: 'active'
+      });
+      await setDoc(doc(adminDb, 'products', 'product-b'), {
+        tenantId: tenantB, inventoryClass: 'SELLABLE', category: 'drug/medicine',
+        productName: 'Medicine B', isOperational: false
+      });
+      await setDoc(doc(adminDb, 'autoGenerateOrderRuns', 'run-tenant-b'), {
+        tenantId: tenantB, branchId: branchB, runId: 'run-tenant-b', status: 'READY',
+        configuration: { demandScope: 'branch', temporaryDemandMultiplier: 1 }
+      });
+      await setDoc(doc(adminDb, 'autoGenerateOrderLines', 'line-tenant-b'), {
+        tenantId: tenantB, runId: 'run-tenant-b', productId: 'product-b',
+        productName: 'Medicine B', inventoryClass: 'SELLABLE',
+        finalPurchasePacks: 3, finalInternalAllocation: 0, finalDonorAllocations: [],
+        calculationInputs: { supplierId: 'supplier-b', costPricePerPack: 1200 }
+      });
+    });
+    const tenantBDb = env.authenticatedContext('manager-b', { tenantId: tenantB }).firestore();
+    const second = await assertSucceeds(submitOrderRun(
+      'run-tenant-b', 'manager-b', 'manager-b@example.org', tenantBDb
+    ));
+    assert.equal(second.orderIds.length, 1);
+    const secondOrder = (await getDoc(doc(tenantBDb, 'stock_orders', second.orderIds[0]))).data();
+    assert.equal(secondOrder.tenantId, tenantB);
+    assert.equal(secondOrder.requesting_branch_name, 'Second Tenant Branch');
+    assert.equal(secondOrder.status, 'draft');
+    // Tenant B must not be able to read tenant A's submitted order and vice versa.
+    await assertFails(getDoc(doc(tenantBDb, 'stock_orders', first.orderIds[0])));
+    await assertFails(getDoc(doc(managerDb, 'stock_orders', second.orderIds[0])));
+    assert.deepEqual(await assertSucceeds(submitOrderRun(
+      'run-tenant-b', 'manager-b', 'manager-b@example.org', tenantBDb
+    )), second);
+    console.log('Independent second tenant order creation and cross-tenant isolation passed.');
   } finally {
     rmSync(outputFile, { force: true });
   }
