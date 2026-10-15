@@ -1,3 +1,4 @@
+import { createScopedIdentity } from '../../services/systemIdentityService';
 import React, { useState, useEffect } from 'react';
 import { 
   Users, 
@@ -76,7 +77,7 @@ export const ConsentNudgesPillar: React.FC<ConsentNudgesPillarProps> = ({ tenant
     e.preventDefault();
     if (!newClientName || !newClientPhone) return;
     try {
-      await firestoreService.addDocument('clients', {
+      await createScopedIdentity('clients', tenantId, {
         tenantId,
         name: newClientName,
         phone: newClientPhone,
