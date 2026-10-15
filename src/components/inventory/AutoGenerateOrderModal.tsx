@@ -119,6 +119,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [revalChanges, setRevalChanges] = useState<any[]>([]);
   const [showRevalDialog, setShowRevalDialog] = useState(false);
+  const [showSubmitConfirmation, setShowSubmitConfirmation] = useState(false);
 
   // Sync initial state values carried forward from parent InitiateOrder screen
   useEffect(() => {
@@ -668,7 +669,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
         setRevalChanges(res.warnings);
         setShowRevalDialog(true);
       } else {
-        await executeFinalSubmission();
+        setShowSubmitConfirmation(true);
       }
     } catch (e: any) {
       toast.error('Revalidation failed.');
@@ -701,10 +702,14 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
       toast.success('Replenishments submitted successfully!');
       setStep('success');
     } catch (e: any) {
-      toast.error('Submission failed: ' + e.message);
+      const denied = e?.code === 'permission-denied' || /permission[- ]denied|insufficient permissions/i.test(String(e?.message || ''));
+      toast.error(denied
+        ? 'Submission blocked by access permissions. No orders were committed. Ask an authorized branch manager or procurement/stock operator to submit this run.'
+        : 'Submission failed: ' + (e?.message || 'Unknown error'));
     } finally {
       setSubmitting(false);
       setShowRevalDialog(false);
+      setShowSubmitConfirmation(false);
     }
   };
 
@@ -1303,6 +1308,21 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                 <button onClick={handleManualAddProduct} className="px-4 py-2 bg-emerald-600 text-white font-bold rounded-lg text-xs hover:bg-emerald-700">
                   Confirm Add
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confirmation is separate from editing and revalidation. */}
+        {showSubmitConfirmation && (
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-55 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 shadow-xl">
+              <h4 className="font-bold text-zinc-900">Confirm replenishment submission</h4>
+              <p className="text-sm text-zinc-600">Submit {lines.filter(line => line.finalPurchasePacks > 0).length} external purchase lines and {lines.filter(line => line.finalDonorAllocations?.some(a => a.qtyBaseUnits > 0)).length} lines with donor allocations? All reviewed lines are included, regardless of page or search filter.</p>
+              <p className="text-sm font-bold">External order value: UGX {totalExternalCost.toLocaleString()}</p>
+              <div className="flex justify-end gap-2 border-t pt-3">
+                <button type="button" onClick={() => setShowSubmitConfirmation(false)} disabled={submitting} className="px-4 py-2 border rounded-lg text-sm">Continue editing</button>
+                <button type="button" onClick={executeFinalSubmission} disabled={submitting} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold text-sm disabled:opacity-50">{submitting ? 'Submitting...' : 'Confirm submission'}</button>
               </div>
             </div>
           </div>
