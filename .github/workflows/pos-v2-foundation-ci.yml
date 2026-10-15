@@ -221,12 +221,12 @@ jobs:
           else
             echo "Hosted Firebase compiler accepted the minimal control and firestore.rules."
           fi
-      - name: Seed audited identity counter baselines (counter documents only)
+      - name: Verify audited identity counter baselines (read only)
         shell: bash
         env:
           GOOGLE_CLOUD_PROJECT: gen-lang-client-0911422817
         run: |
           set -euo pipefail
           npm install --no-save --ignore-scripts firebase-admin
-          node scripts/initialize-identity-counters.mjs --apply
+          node scripts/initialize-identity-counters.mjs --require-ready
 
