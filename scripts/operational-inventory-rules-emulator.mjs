@@ -327,6 +327,36 @@ try {
     tenantId, featureToggles: { enableOperationalInventory: true }
   }));
 
+  // First usage transaction must read a missing deterministic usage record,
+  // then commit one branch-scoped stock deduction, movement, and immutable usage.
+  await assertSucceeds(getDoc(doc(branchManager, 'operational_inventory_usage', 'opusage_validusage')));
+  await assertFails(getDoc(doc(unauthenticated, 'operational_inventory_usage', 'opusage_validusage')));
+  const validUsageBatch = writeBatch(branchManager);
+  validUsageBatch.update(doc(branchManager, 'operational_inventory', 'op-item-a'), {
+    quantityInStock: 7, lastMovementId: 'opm_usage_validusage', updatedAt: new Date().toISOString()
+  });
+  validUsageBatch.set(doc(branchManager, 'operational_inventory_movements', 'opm_usage_validusage'), {
+    tenantId, inventoryClass: 'OPERATIONAL', itemId: 'op-item-a', masterItemId: 'op-master',
+    itemName: 'Paper', locationId: `BRANCH_${branchA}`, branchId: branchA, movementType: 'USAGE',
+    quantityDelta: -3, balanceBefore: 10, balanceAfter: 7, unitCostUGX: 0, totalValueUGX: 0,
+    reference: 'OPU-validusage', reason: 'Dispensing', idempotencyKey: 'usage_validusage',
+    actorId: 'manager-a', actorName: 'Branch Manager',
+    sourceTransactionId: 'opusage_validusage', sourceLineId: 'opusage_validusage',
+    createdAt: new Date().toISOString()
+  });
+  validUsageBatch.set(doc(branchManager, 'operational_inventory_usage', 'opusage_validusage'), {
+    tenantId, inventoryClass: 'OPERATIONAL', operationalType: 'CONSUMABLE_OPERATIONAL',
+    idempotencyKey: 'validusage', branchId: branchA, inventoryId: 'op-item-a',
+    itemName: 'Paper', issuedAmount: 3, unitOfIssue: 'ream',
+    unitCostUGX: 0, cost: 0, timestamp: new Date().toISOString(), period: 'daily',
+    department: 'Dispensing', recipient: '', purpose: 'Dispensing', reference: 'OPU-validusage',
+    remainingStock: 7, movementId: 'opm_usage_validusage',
+    staffId: 'manager-a', staffName: 'Branch Manager'
+  });
+  await assertSucceeds(validUsageBatch.commit());
+  assert.equal((await getDoc(doc(branchManager, 'operational_inventory', 'op-item-a'))).data().quantityInStock, 7);
+  await assertFails(setDoc(doc(branchManager, 'operational_inventory_usage', 'opusage_validusage'), { purpose: 'Overwrite' }, { merge: true }));
+
   const usageBatch = writeBatch(branchManager);
   const usageId = 'opusage_branch-scope';
   const movementId = 'opm_branch-scope';
