@@ -6,8 +6,8 @@ test('historical IDs and references stay unchanged; reserve above existing and a
   const records = {
     tenants: [{ id: 't-old', tenant_code:'TEN-000012' }, { id: 't-new' }],
     staff: [
-      { id:'z-existing', tenantId:'t-old', employee_id:'STF-000025' },
-      { id:'a-missing', tenantId:'t-old' },
+      { id:'z-existing', tenantId:'t-old', staff_code:'STF-000025', employee_id:'LEGACY-09' },
+      { id:'a-missing', tenantId:'t-old', employee_id:'LEGACY-09' },
       { id:'b-different-tenant', tenantId:'t-new' }
     ],
     branches: [{ id:'branch-hq', tenantId:'t-old', branch_code:'HQ-001' }]
@@ -16,6 +16,7 @@ test('historical IDs and references stay unchanged; reserve above existing and a
   assert.equal(plan.find(p => p.id === 't-old').status, 'PRESERVE');
   assert.equal(plan.find(p => p.id === 't-new').proposedCode, 'TEN-000013');
   assert.equal(plan.find(p => p.id === 'a-missing').proposedCode, 'STF-000026');
+  assert.equal(records.staff[1].employee_id, 'LEGACY-09'); // no legacy rewrites
   assert.equal(plan.find(p => p.id === 'b-different-tenant').proposedCode, 'STF-000001');
   assert.equal(plan.find(p => p.id === 'branch-hq').existingCode, 'HQ-001');
 });
