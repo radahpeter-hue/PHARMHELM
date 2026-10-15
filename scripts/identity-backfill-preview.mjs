@@ -16,25 +16,51 @@ const DEFINITIONS = {
 function plan(records, counters = []) {
   const plans = [];
   const nextByCounter = new Map(counters.map(c => [c.id, Number(c.lastSequence || 0)]));
-  const groups = Object.keys(DEFINITIONS);
-  for (const collectionName of groups) {
-    const definition = DEFINITIONS[collectionName];
-    for (const record of [...(records[collectionName] || [])].sort((a, b) => String(a.id).localeCompare(String(b.id)))) {
-      if (!record.id) throw new Error(`Record in ${collectionName} lacks a Firestore document ID`);
+  const all = [];
+  for (const [collectionName, definition] of Object.entries(DEFINITIONS)) {
+    for (const record of records[collectionName] || []) {
       const scope = definition.scope === 'platform' ? 'platform' : record.tenantId;
-      if (!scope) throw new Error(`Record ${collectionName}/${record.id} has no tenantId`);
-      const counterId = definition.scope === 'platform' ? 'platform_tenants' : `${scope}_${definition.kind}`;
-      const existing = String(record[definition.field] || '').trim();
-      const match = new RegExp(`^${definition.prefix}-(\\d+)$`).exec(existing);
-      if (match) nextByCounter.set(counterId, Math.max(nextByCounter.get(counterId) || 0, Number(match[1])));
-      if (existing) {
-        plans.push({ collection: collectionName, id: record.id, tenantId: record.tenantId || '', status: 'PRESERVE', field: definition.field, existingCode: existing });
-        continue;
-      }
-      const next = (nextByCounter.get(counterId) || 0) + 1;
-      nextByCounter.set(counterId, next);
-      plans.push({ collection: collectionName, id: record.id, tenantId: record.tenantId || '', status: 'PROPOSE', field: definition.field, proposedCode: `${definition.prefix}-${String(next).padStart(6, '0')}`, counterId });
+      if (!record.id || !scope) throw new Error(`Missing document ID or tenant scope for ${collectionName}`);
+      all.push({
+        collectionName, record, scope,
+        definition,
+        counterId: definition.scope === 'platform' ? 'platform_tenants' : `${scope}_${definition.kind}`
+      });
     }
+  }
+  for (const record of records.operational_inventory_masters || []) {
+    if (!record.id || !record.tenantId) throw new Error('Operational master is missing ID or tenant');
+    const isAsset = record.operationalType === 'FIXED_ASSET' || record.type === 'fixed';
+    const kind = isAsset ? 'operational_assets' : 'operational_consumables';
+    all.push({ collectionName: 'operational_inventory_masters', record, scope: record.tenantId,
+      definition: { field: 'uniqueId', prefix: isAsset ? 'AST' : 'OPS' },
+      counterId: `${record.tenantId}_${kind}` });
+  }
+  // Resolve all existing codes before proposing even the first missing record.
+  const used = new Map();
+  for (const entry of all) {
+    const { record, definition, counterId, scope } = entry;
+    const existing = String(record[definition.field] || '').trim();
+    if (!existing) continue;
+    const match = new RegExp(`^${definition.prefix}-(\\d+)$`).exec(existing);
+    if (match) nextByCounter.set(counterId, Math.max(nextByCounter.get(counterId) || 0, Number(match[1])));
+    const uniquenessKey = `${counterId}|${existing}`;
+    const conflicting = used.get(uniquenessKey);
+    if (conflicting && conflicting !== record.id) {
+      plans.push({ collection: entry.collectionName, id: record.id, tenantId: record.tenantId || '', status: 'DUPLICATE_EXISTING', field: definition.field, existingCode: existing, conflictsWith: conflicting });
+    } else used.set(uniquenessKey, record.id);
+  }
+  all.sort((a, b) => a.collectionName.localeCompare(b.collectionName) || String(a.scope).localeCompare(String(b.scope)) || String(a.record.id).localeCompare(String(b.record.id)));
+  for (const { collectionName, record, definition, counterId } of all) {
+    const existing = String(record[definition.field] || '').trim();
+    if (existing) {
+      plans.push({ collection: collectionName, id: record.id, tenantId: record.tenantId || '', status: 'PRESERVE', field: definition.field, existingCode: existing });
+      continue;
+    }
+    const next = (nextByCounter.get(counterId) || 0) + 1;
+    nextByCounter.set(counterId, next);
+    plans.push({ collection: collectionName, id: record.id, tenantId: record.tenantId || '', status: 'PROPOSE', field: definition.field,
+      proposedCode: `${definition.prefix}-${String(next).padStart(6, '0')}`, counterId });
   }
   return plans;
 }
