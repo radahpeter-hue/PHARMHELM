@@ -1,5 +1,14 @@
 name: Masaka PR63 Hosting Preview
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/masaka-pr63-preview.yml'
+      - 'src/components/inventory/**'
+      - 'src/pages/StockInOut.tsx'
+      - 'src/services/orderSubmissionService.ts'
+      - 'firestore.rules'
   push:
     branches:
       - fix/auto-order-review-submission-20261015
