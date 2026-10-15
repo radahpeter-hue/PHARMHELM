@@ -54,7 +54,7 @@ export const SCOPED_IDENTITY_KINDS = {
   prescribers: { kind: 'prescribers', field: 'prescriber_code', prefix: 'PRE' },
   institutions: { kind: 'institutions', field: 'institution_code', prefix: 'INS' },
   products: { kind: 'products', field: 'productId', prefix: 'PRD' },
-  staff: { kind: 'staff', field: 'employee_id', prefix: 'STF' }
+  staff: { kind: 'staff', field: 'staff_code', prefix: 'STF' }
 } as const;
 
 export type ScopedIdentityCollection = keyof typeof SCOPED_IDENTITY_KINDS;
@@ -82,8 +82,11 @@ export async function createScopedIdentity(
     const next = Number(current.data()?.lastSequence || 0) + 1;
     const code = formatSystemIdentity(definition.prefix, next);
     transaction.set(counterRef, { tenantId, kind: definition.kind, lastSequence: next, updatedAt: new Date().toISOString() });
-    const payload = { ...data, tenantId, [definition.field]: code };
-    if (collectionName === 'products') payload['sku'] = `SKU-${code.slice(4)}`;
+    const payload: Record<string, unknown> = { ...data, tenantId, [definition.field]: code };
+    if (collectionName === 'products') payload.sku = `SKU-${code.slice(4)}`;
+    // Retain compatibility for newly registered staff while preserving every
+    // existing historical employee_id during later staff-code backfills.
+    if (collectionName === 'staff' && !String(data.employee_id || '').trim()) payload.employee_id = code;
     transaction.set(recordRef, payload);
     return { id: recordRef.id, code };
   });
