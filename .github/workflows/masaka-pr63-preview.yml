@@ -1,0 +1,49 @@
+name: Masaka PR63 Hosting Preview
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/masaka-pr63-preview.yml'
+      - 'src/components/inventory/**'
+      - 'src/pages/StockInOut.tsx'
+      - 'src/services/orderSubmissionService.ts'
+      - 'firestore.rules'
+  push:
+    branches:
+      - fix/auto-order-review-submission-20261015
+
+permissions:
+  contents: read
+  id-token: write
+  deployments: write
+  checks: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  masaka_preview:
+    if: github.repository == 'radahpeter-hue/PHARMHELM'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+        env:
+          VITE_BUILD_SHA: ${{ github.sha }}
+      # Hosting preview only. This workflow MUST NOT deploy Firestore rules,
+      # write tenant data, or update the Firebase live Hosting channel.
+      - name: Publish isolated Hosting preview channel
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          channelId: masaka-pr63
+          projectId: gen-lang-client-0911422817
+          expires: 7d

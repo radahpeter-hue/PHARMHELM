@@ -2237,15 +2237,15 @@ service cloud.firestore {
         let invoicePath = transferPath();
         let operationalItemPath = /databases/$(database)/documents/operational_inventory/$(request.resource.data.product_id);
         let sellableItemPath = /databases/$(database)/documents/products/$(request.resource.data.product_id);
-        return exists(invoicePath)
-          && get(invoicePath).data.tenantId == request.resource.data.tenantId
-          && ((isOperationalTransfer(get(invoicePath).data)
+        return existsAfter(invoicePath)
+          && getAfter(invoicePath).data.tenantId == request.resource.data.tenantId
+          && ((isOperationalTransfer(getAfter(invoicePath).data)
               && isOperationalInventoryEnabled(request.resource.data.tenantId)
               && (!requireExplicitClass || request.resource.data.inventoryClass == 'OPERATIONAL')
               && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'OPERATIONAL')
               && exists(operationalItemPath)
               && get(operationalItemPath).data.tenantId == request.resource.data.tenantId)
-            || (!isOperationalTransfer(get(invoicePath).data)
+            || (!isOperationalTransfer(getAfter(invoicePath).data)
               && (!requireExplicitClass || request.resource.data.inventoryClass == 'SELLABLE')
               && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'SELLABLE')
               && exists(sellableItemPath)

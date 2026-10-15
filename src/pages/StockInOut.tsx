@@ -363,6 +363,21 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const [operationalInventory, setOperationalInventory] = useState<OperationalInventory[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [orderLines, setOrderLines] = useState<Partial<StockOrderLine>[]>([]);
+  const [orderReviewSearch, setOrderReviewSearch] = useState('');
+  const [orderReviewPage, setOrderReviewPage] = useState(1);
+  const [orderReviewPageSize, setOrderReviewPageSize] = useState(20);
+  const [orderReviewSort, setOrderReviewSort] = useState<'name' | 'cost_desc'>('name');
+  const filteredOrderLines = useMemo(() => orderLines.filter(line =>
+    String(line.product_name || '').toLowerCase().includes(orderReviewSearch.trim().toLowerCase())
+  ).sort((a, b) => orderReviewSort === 'cost_desc'
+    ? Number(b.line_total_ugx || 0) - Number(a.line_total_ugx || 0)
+    : String(a.product_name || '').localeCompare(String(b.product_name || ''))),
+    [orderLines, orderReviewSearch, orderReviewSort]);
+  const orderReviewPageCount = Math.max(1, Math.ceil(filteredOrderLines.length / orderReviewPageSize));
+  const visibleOrderLines = filteredOrderLines.slice(
+    (Math.min(orderReviewPage, orderReviewPageCount) - 1) * orderReviewPageSize,
+    Math.min(orderReviewPage, orderReviewPageCount) * orderReviewPageSize
+  );
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAutoGenerateModal, setShowAutoGenerateModal] = useState(false);
@@ -912,6 +927,12 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               Total Value: <span className="text-emerald-600">UGX {orderLines.reduce((sum, l) => sum + (l.line_total_ugx || 0), 0).toLocaleString()}</span>
             </div>
           </div>
+          <div className="p-4 flex flex-wrap items-center gap-3 border-b">
+            <input aria-label="Search manual order lines" value={orderReviewSearch} onChange={e => { setOrderReviewSearch(e.target.value); setOrderReviewPage(1); }} placeholder="Search order lines..." className="min-w-0 flex-1 border rounded-lg px-3 py-2 text-sm" />
+            <select aria-label="Sort manual order lines" value={orderReviewSort} onChange={e => { setOrderReviewSort(e.target.value as 'name' | 'cost_desc'); setOrderReviewPage(1); }} className="border rounded-lg px-3 py-2 text-sm"><option value="name">Product name</option><option value="cost_desc">Highest cost</option></select>
+            <select aria-label="Manual order rows per page" value={orderReviewPageSize} onChange={e => { setOrderReviewPageSize(Number(e.target.value)); setOrderReviewPage(1); }} className="border rounded-lg px-3 py-2 text-sm"><option value={20}>20 per page</option><option value={50}>50 per page</option><option value={100}>100 per page</option></select>
+            <span className="text-xs text-zinc-500">{filteredOrderLines.length} matching of {orderLines.length} total</span>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -924,7 +945,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {orderLines.map((line) => {
+                {visibleOrderLines.map((line) => {
                   const product = line.isOperational 
                     ? operationalInventory.find(op => op.id === line.product_id)
                     : products.find(p => p.id === line.product_id);
@@ -980,6 +1001,13 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
                 )}
               </tbody>
             </table>
+          </div>
+          <div className="px-6 py-3 border-t flex justify-between items-center text-sm">
+            <span>Page {Math.min(orderReviewPage, orderReviewPageCount)} of {orderReviewPageCount}</span>
+            <div className="flex gap-2">
+              <button type="button" disabled={orderReviewPage <= 1} onClick={() => setOrderReviewPage(p => Math.max(1, p - 1))} className="border rounded-lg px-3 py-1 disabled:opacity-40">Previous</button>
+              <button type="button" disabled={orderReviewPage >= orderReviewPageCount} onClick={() => setOrderReviewPage(p => Math.min(orderReviewPageCount, p + 1))} className="border rounded-lg px-3 py-1 disabled:opacity-40">Next</button>
+            </div>
           </div>
           <div className="p-6 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/30">
             <button 

@@ -100,6 +100,10 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   const [runData, setRunData] = useState<AutoGenerateOrderRun | null>(null);
   const [lines, setLines] = useState<AutoGenerateOrderLine[]>([]);
   const [activeTab, setActiveTab] = useState<'external' | 'internal' | 'review' | 'excluded'>('external');
+  const [reviewSearch, setReviewSearch] = useState('');
+  const [reviewPage, setReviewPage] = useState(1);
+  const [reviewPageSize, setReviewPageSize] = useState(20);
+  const [reviewSort, setReviewSort] = useState<'name' | 'cost_desc'>('name');
   
   // Manual add product state
   const [showAddProduct, setShowAddProduct] = useState(false);
@@ -115,6 +119,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [revalChanges, setRevalChanges] = useState<any[]>([]);
   const [showRevalDialog, setShowRevalDialog] = useState(false);
+  const [showSubmitConfirmation, setShowSubmitConfirmation] = useState(false);
 
   // Sync initial state values carried forward from parent InitiateOrder screen
   useEffect(() => {
@@ -529,19 +534,34 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
     }
   };
 
+  // Keep all draft lines in memory across filtering and pages; only the review view is paginated.
+  const reviewRows = lines.filter(line => {
+    const matchesTab = activeTab === 'external' ? line.finalPurchasePacks > 0 :
+      activeTab === 'internal' ? line.finalInternalAllocation > 0 :
+      activeTab === 'review' ? line.confidenceScore < 55 || !line.calculationOutputs?.calculationAllowed :
+      line.finalPurchasePacks === 0 && line.finalInternalAllocation === 0;
+    return matchesTab && line.productName.toLowerCase().includes(reviewSearch.trim().toLowerCase());
+  }).sort((a, b) => reviewSort === 'cost_desc'
+    ? (b.finalPurchasePacks * Number(b.calculationInputs?.costPricePerPack || 0)) - (a.finalPurchasePacks * Number(a.calculationInputs?.costPricePerPack || 0))
+    : a.productName.localeCompare(b.productName));
+  const reviewPageCount = Math.max(1, Math.ceil(reviewRows.length / reviewPageSize));
+  const pagedReviewRows = reviewRows.slice((Math.min(reviewPage, reviewPageCount) - 1) * reviewPageSize, Math.min(reviewPage, reviewPageCount) * reviewPageSize);
+  const changeReviewTab = (tab: 'external' | 'internal' | 'review' | 'excluded') => {
+    setActiveTab(tab);
+    setReviewPage(1);
+  };
+
   // Override Quantity Packs
   const handleQtyOverride = (lineId: string, packs: number) => {
     const updated = lines.map(line => {
       if (line.productId === lineId) {
-        const reason = window.prompt('Specify override reason code:', line.overrideReason || '');
-        if (reason === null) return line; // Cancelled
-        
+        if (!Number.isFinite(packs) || packs < 0 || !Number.isInteger(packs)) return line;
         return {
           ...line,
           finalPurchasePacks: packs,
           finalRecommendationBaseUnits: packs * line.unitsPerPack,
           wasOverridden: true,
-          overrideReason: reason || 'Manual user adjustments',
+          overrideReason: 'Draft quantity adjustment',
           overriddenBy: profile?.email || 'User',
           overriddenAt: new Date().toISOString()
         };
@@ -553,8 +573,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
 
   // Remove Product Line
   const handleRemoveLine = (lineId: string) => {
-    const reason = window.prompt('Enter reason for exclusion:');
-    if (reason !== null) {
+    {
       const updated = lines.map(line => {
         if (line.productId === lineId) {
           return {
@@ -565,7 +584,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
             finalCentralAllocation: 0,
             finalDonorAllocations: [],
             wasOverridden: true,
-            overrideReason: reason || 'Excluded by operator',
+            overrideReason: 'Excluded during draft review',
             overriddenBy: profile?.email || 'User',
             overriddenAt: new Date().toISOString()
           };
@@ -641,19 +660,36 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
     toast.success(`${product.name} added manually.`);
   };
 
+  // Persist the edited draft before live revalidation so checks use the actual intended quantities.
+  const persistEditedRunLines = async () => {
+    if (!profile?.tenantId || !runId) throw new Error('Missing tenant or replenishment run.');
+    const existing = await getDocs(query(collection(db, 'autoGenerateOrderLines'),
+      where('tenantId', '==', profile.tenantId), where('runId', '==', runId)));
+    const ids = new Map(existing.docs.map(snapshot => [String(snapshot.data().productId), snapshot.id]));
+    for (const line of lines) {
+      const id = ids.get(line.productId);
+      if (id) {
+        await setDoc(doc(db, 'autoGenerateOrderLines', id), line);
+      } else {
+        await addDoc(collection(db, 'autoGenerateOrderLines'), line);
+      }
+    }
+  };
+
   // Live Revalidation trigger
   const triggerRevalidation = async () => {
     setRevalidating(true);
     try {
+      await persistEditedRunLines();
       const res = await revalidateOrderRun(runId);
       if (res.hasChanges) {
         setRevalChanges(res.warnings);
         setShowRevalDialog(true);
       } else {
-        await executeFinalSubmission();
+        setShowSubmitConfirmation(true);
       }
     } catch (e: any) {
-      toast.error('Revalidation failed.');
+      toast.error('Could not save and revalidate this order: ' + (e?.message || 'Unknown error'));
     } finally {
       setRevalidating(false);
     }
@@ -663,30 +699,18 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
   const executeFinalSubmission = async () => {
     setSubmitting(true);
     try {
-      for (const line of lines) {
-        const linesSnap = await getDocs(
-          query(
-            collection(db, 'autoGenerateOrderLines'),
-            where('runId', '==', runId),
-            where('productId', '==', line.productId)
-          )
-        );
-        if (!linesSnap.empty) {
-          const docId = linesSnap.docs[0].id;
-          await setDoc(doc(db, 'autoGenerateOrderLines', docId), line);
-        } else {
-          await addDoc(collection(db, 'autoGenerateOrderLines'), line);
-        }
-      }
-
       await submitOrderRun(runId, profile?.uid || '', profile?.email || '');
       toast.success('Replenishments submitted successfully!');
       setStep('success');
     } catch (e: any) {
-      toast.error('Submission failed: ' + e.message);
+      const denied = e?.code === 'permission-denied' || /permission[- ]denied|insufficient permissions/i.test(String(e?.message || ''));
+      toast.error(denied
+        ? 'Submission blocked by access permissions. No orders were committed. Ask an authorized branch manager or procurement/stock operator to submit this run.'
+        : 'Submission failed: ' + (e?.message || 'Unknown error'));
     } finally {
       setSubmitting(false);
       setShowRevalDialog(false);
+      setShowSubmitConfirmation(false);
     }
   };
 
@@ -972,25 +996,25 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
             <div className="px-6 py-2 border-b flex items-center justify-between">
               <div className="flex gap-2">
                 <button 
-                  onClick={() => setActiveTab('external')}
+                  onClick={() => changeReviewTab('external')}
                   className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${activeTab === 'external' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'}`}
                 >
                   A. External Purchase Required ({lines.filter(l => l.finalPurchasePacks > 0).length})
                 </button>
                 <button 
-                  onClick={() => setActiveTab('internal')}
+                  onClick={() => changeReviewTab('internal')}
                   className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${activeTab === 'internal' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'}`}
                 >
                   B. Available Internally ({lines.filter(l => l.finalInternalAllocation > 0).length})
                 </button>
                 <button 
-                  onClick={() => setActiveTab('review')}
+                  onClick={() => changeReviewTab('review')}
                   className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${activeTab === 'review' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'}`}
                 >
                   C. Manual Review ({lines.filter(l => l.confidenceScore < 55 || !l.calculationOutputs?.calculationAllowed).length})
                 </button>
                 <button 
-                  onClick={() => setActiveTab('excluded')}
+                  onClick={() => changeReviewTab('excluded')}
                   className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${activeTab === 'excluded' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'}`}
                 >
                   D. Excluded Products ({lines.filter(l => l.finalPurchasePacks === 0 && l.finalInternalAllocation === 0).length})
@@ -1007,8 +1031,20 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
               </div>
             </div>
 
+            {/* Shared review controls: all four views use the same search, sorting and pagination. */}
+            <div className="px-6 py-3 flex flex-wrap items-center gap-3 border-b bg-white">
+              <input aria-label="Search order review products" value={reviewSearch} onChange={e => { setReviewSearch(e.target.value); setReviewPage(1); }} placeholder="Search products..." className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm" />
+              <select aria-label="Sort review lines" value={reviewSort} onChange={e => { setReviewSort(e.target.value as 'name' | 'cost_desc'); setReviewPage(1); }} className="rounded-lg border px-3 py-2 text-sm">
+                <option value="name">Product name</option>
+                <option value="cost_desc">Highest cost</option>
+              </select>
+              <select aria-label="Rows per page" value={reviewPageSize} onChange={e => { setReviewPageSize(Number(e.target.value)); setReviewPage(1); }} className="rounded-lg border px-3 py-2 text-sm">
+                <option value={20}>20 per page</option><option value={50}>50 per page</option><option value={100}>100 per page</option>
+              </select>
+              <span className="text-xs text-zinc-500">{reviewRows.length} matching of {lines.length} total lines</span>
+            </div>
             {/* Tab tables */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6">
               {activeTab === 'external' && (
                 <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
                   <table className="w-full text-left border-collapse text-sm">
@@ -1027,7 +1063,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                       </tr>
                     </thead>
                     <tbody>
-                      {lines.filter(l => l.finalPurchasePacks > 0).map(line => {
+                      {pagedReviewRows.map(line => {
                         const cost = line.finalPurchasePacks * ((line.calculationInputs as any)?.costPricePerPack || 0);
                         return (
                           <tr key={line.productId} className="border-b border-zinc-150 hover:bg-zinc-50/50">
@@ -1089,7 +1125,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                       </tr>
                     </thead>
                     <tbody>
-                      {lines.filter(l => l.finalInternalAllocation > 0).map(line => (
+                      {pagedReviewRows.map(line => (
                         <tr key={line.productId} className="border-b border-zinc-150 hover:bg-zinc-50/50">
                           <td className="p-3 font-semibold text-zinc-900">{line.productName}</td>
                           <td className="p-3 font-bold text-zinc-700">{line.calculationOutputs?.grossNetRequirement || 0}</td>
@@ -1125,7 +1161,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                       </tr>
                     </thead>
                     <tbody>
-                      {lines.filter(l => l.confidenceScore < 55 || !l.calculationOutputs?.calculationAllowed).map(line => (
+                      {pagedReviewRows.map(line => (
                         <tr key={line.productId} className="border-b border-zinc-150 hover:bg-zinc-50/50 bg-yellow-50/10">
                           <td className="p-3 font-semibold text-zinc-900">{line.productName}</td>
                           <td className="p-3">
@@ -1164,7 +1200,7 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                       </tr>
                     </thead>
                     <tbody>
-                      {lines.filter(l => l.finalPurchasePacks === 0 && l.finalInternalAllocation === 0).map(line => (
+                      {pagedReviewRows.map(line => (
                         <tr key={line.productId} className="border-b border-zinc-150 hover:bg-zinc-50/20 bg-zinc-50/10">
                           <td className="p-3 text-zinc-500 font-semibold">{line.productName}</td>
                           <td className="p-3 text-zinc-400">{line.calculationOutputs?.expiryAdjustedUsableStock || 0}</td>
@@ -1179,6 +1215,13 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
               )}
             </div>
 
+            <div className="px-6 py-3 border-t flex items-center justify-between gap-3 text-sm">
+              <span>Page {Math.min(reviewPage, reviewPageCount)} of {reviewPageCount}</span>
+              <div className="flex gap-2">
+                <button type="button" disabled={reviewPage <= 1} onClick={() => setReviewPage(p => Math.max(1, p - 1))} className="border rounded-lg px-3 py-1 disabled:opacity-40">Previous</button>
+                <button type="button" disabled={reviewPage >= reviewPageCount} onClick={() => setReviewPage(p => Math.min(reviewPageCount, p + 1))} className="border rounded-lg px-3 py-1 disabled:opacity-40">Next</button>
+              </div>
+            </div>
             {/* Bottom Actions */}
             <div className="p-6 border-t flex justify-between items-center bg-zinc-50">
               <span className="text-xs text-zinc-500 font-bold uppercase">
@@ -1266,6 +1309,21 @@ export const AutoGenerateOrderModal: React.FC<AutoGenerateOrderModalProps> = ({
                 <button onClick={handleManualAddProduct} className="px-4 py-2 bg-emerald-600 text-white font-bold rounded-lg text-xs hover:bg-emerald-700">
                   Confirm Add
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confirmation is separate from editing and revalidation. */}
+        {showSubmitConfirmation && (
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-55 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 shadow-xl">
+              <h4 className="font-bold text-zinc-900">Confirm replenishment submission</h4>
+              <p className="text-sm text-zinc-600">Submit {lines.filter(line => line.finalPurchasePacks > 0).length} external purchase lines and {lines.filter(line => line.finalDonorAllocations?.some(a => a.qtyBaseUnits > 0)).length} lines with donor allocations? All reviewed lines are included, regardless of page or search filter.</p>
+              <p className="text-sm font-bold">External order value: UGX {totalExternalCost.toLocaleString()}</p>
+              <div className="flex justify-end gap-2 border-t pt-3">
+                <button type="button" onClick={() => setShowSubmitConfirmation(false)} disabled={submitting} className="px-4 py-2 border rounded-lg text-sm">Continue editing</button>
+                <button type="button" onClick={executeFinalSubmission} disabled={submitting} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold text-sm disabled:opacity-50">{submitting ? 'Submitting...' : 'Confirm submission'}</button>
               </div>
             </div>
           </div>

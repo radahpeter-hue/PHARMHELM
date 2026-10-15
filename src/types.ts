@@ -1932,6 +1932,8 @@ export interface AutoGenerateOrderRun {
   updatedAt: string;
   submissionIdempotencyKey: string | null;
   submittedAt: string | null;
+  submittedOrderIds?: string[];
+  submittedTransferIds?: string[];
 }
 
 export interface AutoGenerateOrderLine {
