@@ -49,6 +49,10 @@ on:
       - 'src/pages/Settings.tsx'
       - 'src/pages/StockInOut.tsx'
       - 'scripts/operational-inventory*.mjs'
+      - 'scripts/system-identity-rules-emulator.mjs'
+      - 'scripts/identity-backfill-preview.mjs'
+      - 'tests/system-identity-*.test.ts'
+      - 'src/services/systemIdentityService.ts'
       - 'scripts/migrate-operational-inventory-v2.mjs'
       - 'tests/operational-*.test.ts'
       - 'src/types.ts'
@@ -117,7 +121,7 @@ jobs:
         run: npx firebase emulators:exec --only firestore --project pharmhelm-pos-v2-revision-rbac "node scripts/pos-v2-revision-rbac-rules-emulator.mjs"
 
       - name: Enforce Operational Inventory class and branch boundaries in Firestore emulator
-        run: npx firebase emulators:exec --only firestore --project pharmhelm-operational-inventory-v2-rules "node scripts/operational-inventory-rules-emulator.mjs && node scripts/operational-manual-order-regression.mjs && node scripts/supplier-registry-rules-emulator.mjs" && touch /tmp/pharmhelm-firestore-emulator-passed
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-operational-inventory-v2-rules "node scripts/operational-inventory-rules-emulator.mjs && node scripts/operational-manual-order-regression.mjs && node scripts/supplier-registry-rules-emulator.mjs && node scripts/system-identity-rules-emulator.mjs" && touch /tmp/pharmhelm-firestore-emulator-passed
 
       - name: Authenticate for hosted Firestore rules compilation
         uses: google-github-actions/auth@v2
