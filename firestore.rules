@@ -737,7 +737,7 @@ service cloud.firestore {
       allow update: if validIncrement()
         && request.resource.data.lastSequence == resource.data.lastSequence + 1
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSequence', 'updatedAt'])
-        && (platformCounter() || branchCounter());
+        && (platformCounter() || branchCounter() || scopedCounter());
       allow delete: if false;
     }
 
