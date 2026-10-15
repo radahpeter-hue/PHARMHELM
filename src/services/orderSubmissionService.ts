@@ -376,6 +376,20 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
       throw new Error('Run scope changed; recalculate before submission.');
     if (liveRun.status === 'SUBMITTED') return;
     if (liveRun.status !== 'READY') throw new Error('Replenishment run is no longer ready.');
+    const reservationSnapshots = await Promise.all(reservationRefs.map(ref => tx.get(ref)));
+    for (let index = 0; index < reservationRefs.length; index++) {
+      const snapshot = reservationSnapshots[index];
+      if (!snapshot.exists()) throw new Error('A transfer reservation expired or was removed. Recalculate first.');
+      const reservation = snapshot.data();
+      const source = reservationSources.get(reservationRefs[index].path);
+      const matchedTransfer = plannedTransfers.find(item =>
+        item.data.source_branch_id === source?.donorId && item.data.inventoryClass === source?.inventoryClass);
+      if (!matchedTransfer) throw new Error('Reservation cannot be matched to a transfer.');
+      if (reservation.status === 'CONVERTED' || reservation.convertedTransferRequestId)
+        throw new Error('A transfer reservation was already converted. Reconcile before retrying.');
+      if (!['ACTIVE', 'PENDING'].includes(reservation.status))
+        throw new Error('A transfer reservation is no longer active. Recalculate the order.');
+    }
 
     // These writes, the reservation conversions, status change and audit record are atomic.
     for (const item of documents) tx.set(item.ref, item.data);
