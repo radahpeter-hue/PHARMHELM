@@ -259,6 +259,7 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
   const plannedTransfers: PlannedWrite[] = [];
   const plannedTransferLines: PlannedWrite[] = [];
   const reservationRefs: Array<ReturnType<typeof doc>> = [];
+  const reservationSources = new Map<string, { donorId: string; inventoryClass: string }>();
   const orderIds: string[] = [];
   const transferIds: string[] = [];
   const timestamp = new Date().toISOString();
@@ -348,8 +349,10 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
       where('tenantId', '==', tenantId), where('autoGenerateRunId', '==', runId),
       where('sourceBranchId', '==', donorId)));
     const productIds = new Set(items.map(item => item.line.productId));
-    reservationRefs.push(...reservations.docs.filter(snapshot =>
-      productIds.has(String(snapshot.data().productId))).map(snapshot => snapshot.ref));
+    for (const snapshot of reservations.docs.filter(snapshot => productIds.has(String(snapshot.data().productId)))) {
+      reservationRefs.push(snapshot.ref);
+      reservationSources.set(snapshot.ref.path, { donorId, inventoryClass });
+    }
   }
 
   const documents = [...plannedOrders, ...plannedOrderLines, ...plannedTransfers, ...plannedTransferLines];
@@ -364,37 +367,28 @@ export async function submitOrderRun(runId: string, userId: string, userEmail: s
   // All reads precede writes and every document is committed atomically.
   // A denied write leaves no partial orders, transfers, reservations, or success status.
   await runTransaction(db, async tx => {
-    const snapshots = await Promise.all([
-      tx.get(runRef), tx.get(auditRef), ...refs.map(ref => tx.get(ref))
-    ]);
-    const latest = snapshots[0];
+    // The run is the sole idempotency gate. Security rules permit its read for tenant members;
+    // they do not permit reading missing purchase-order / transfer IDs as ordinary branch users.
+    const latest = await tx.get(runRef);
     if (!latest.exists()) throw new Error('Run disappeared before submission.');
     const liveRun = latest.data() as AutoGenerateOrderRun;
     if (liveRun.tenantId !== tenantId || liveRun.branchId !== destinationBranchId)
       throw new Error('Run scope changed; recalculate before submission.');
     if (liveRun.status === 'SUBMITTED') return;
     if (liveRun.status !== 'READY') throw new Error('Replenishment run is no longer ready.');
-    if (snapshots[1].exists()) throw new Error('Submission audit already exists for a non-submitted run.');
 
-    for (let index = 0; index < documents.length; index++) {
-      const snapshot = snapshots[2 + index];
-      if (snapshot.exists()) throw new Error('Existing staged order detected. Resolve the previous partial submission before retrying.');
-      tx.set(documents[index].ref, documents[index].data);
+    // These writes, the reservation conversions, status change and audit record are atomic.
+    for (const item of documents) tx.set(item.ref, item.data);
+    for (const ref of reservationRefs) {
+      const path = ref.path;
+      // The reservation query already bound donor groups; select the matching transfer
+      // from the planned transfer set, rather than deriving a transfer from a document ID.
+      const selected = plannedTransfers.find(item => item.data.source_branch_id ===
+        reservationSources.get(path)?.donorId && item.data.inventoryClass ===
+        reservationSources.get(path)?.inventoryClass);
+      if (!selected) throw new Error('Reservation has no matching planned transfer.');
+      tx.update(ref, { status: 'CONVERTED', convertedTransferRequestId: selected.ref.id, updatedAt: timestamp });
     }
-    reservationRefs.forEach((ref, index) => {
-      const snapshot = snapshots[2 + documents.length + index];
-      if (!snapshot.exists()) return;
-      const reservation = snapshot.data();
-      if (reservation.status === 'CONVERTED' && reservation.convertedTransferRequestId)
-        throw new Error('Reservation already converted; retry requires reconciliation.');
-      if (['ACTIVE', 'PENDING'].includes(reservation.status)) {
-        const donorId = reservation.sourceBranchId;
-        const inventoryClass = reservation.inventoryClass === 'OPERATIONAL' ? 'OPERATIONAL' : 'SELLABLE';
-        const stablePart = (runId + '_' + donorId + '_' + destinationBranchId + '_' + inventoryClass)
-          .replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
-        tx.update(ref, { status: 'CONVERTED', convertedTransferRequestId: 'auto_transfer_' + stablePart, updatedAt: timestamp });
-      }
-    });
     tx.update(runRef, { status: 'SUBMITTED', submittedAt: timestamp, updatedAt: timestamp,
       submittedOrderIds: orderIds, submittedTransferIds: transferIds });
     tx.set(auditRef, {
