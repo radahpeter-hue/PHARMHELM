@@ -47,6 +47,7 @@ import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { deduplicateStaff } from '../utils/deduplicateStaff';
+import { createTenantIdentity, createBranchIdentity } from '../services/systemIdentityService';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -3591,7 +3592,7 @@ const CreateTenantModal = ({ onClose, onSuccess, logAction }: { onClose: () => v
       expiry.setMonth(expiry.getMonth() + 1);
 
       // 1. Create Tenant
-      const tenantRef = await addDoc(collection(db, 'tenants'), {
+      const createdTenant = await createTenantIdentity({
         ...formData,
         subscription_status: 'inactive',
         subscription_start: '',
@@ -3602,12 +3603,10 @@ const CreateTenantModal = ({ onClose, onSuccess, logAction }: { onClose: () => v
         created_by: 'system'
       });
 
-      const tenantId = tenantRef.id;
+      const tenantId = createdTenant.id;
 
       // 2. Create HQ Branch
-      const branchRef = await addDoc(collection(db, 'branches'), {
-        tenantId: tenantId,
-        branch_code: 'HQ-001',
+      const branchRef = await createBranchIdentity(tenantId, {
         name: `${formData.name} HQ`,
         type: 'HQ',
         address: 'Main Office',
@@ -3671,7 +3670,7 @@ const CreateTenantModal = ({ onClose, onSuccess, logAction }: { onClose: () => v
       toast.success('Tenant provisioned successfully');
       await logAction(
         'Tenant Environment Provisioned',
-        `Successfully provisioned new tenant ${formData.name} (${formData.slug}) with initial IT Head account ${username}. HQ branch HQ-001 created.`,
+        `Successfully provisioned new tenant ${formData.name} (${formData.slug}) with initial IT Head account ${username}. HQ branch ${branchRef.code} created.`,
         tenantId
       );
     } catch (error: any) {
