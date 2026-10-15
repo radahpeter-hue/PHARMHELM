@@ -64,14 +64,18 @@ export async function createScopedIdentity(
   collectionName: ScopedIdentityCollection,
   tenantId: string,
   data: Record<string, unknown>,
-  connection: Firestore = db
+  connection: Firestore = db,
+  documentId?: string
 ): Promise<{ id: string; code: string }> {
   if (!tenantId) throw new Error('Tenant is required to register an identity.');
+  if (documentId && collectionName !== 'staff') throw new Error('Only a staff record may use its existing Auth UID as document ID.');
   const definition = SCOPED_IDENTITY_KINDS[collectionName];
   const counterRef = doc(connection, 'identity_sequence_counters', `${tenantId}_${definition.kind}`);
-  const recordRef = doc(collection(connection, collectionName));
+  const recordRef = documentId ? doc(connection, collectionName, documentId) : doc(collection(connection, collectionName));
   return runTransaction(connection, async transaction => {
     const current = await transaction.get(counterRef);
+    const existingRecord = documentId ? await transaction.get(recordRef) : null;
+    if (existingRecord?.exists()) throw new Error('A record already exists for this staff authentication identity.');
     if (current.exists() && (current.data().tenantId !== tenantId || current.data().kind !== definition.kind)) {
       throw new Error('Identity sequence has a different tenant or record type.');
     }
