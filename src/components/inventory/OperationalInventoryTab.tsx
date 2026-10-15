@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { where } from 'firebase/firestore';
-import { Plus, Search, Package, Settings, History, Trash2, Edit2, X } from 'lucide-react';
+import { Plus, Search, Package, Settings, History, Trash2, Edit2, X, Download } from 'lucide-react';
 import { OperationalInventory, OperationalInventoryMaster, OperationalInventoryUsage, OperationalInventoryMaintenance } from '../../types';
 import { firestoreService } from '../../services/firestore';
 import { useAuth } from '../../contexts/AuthContext';
@@ -15,6 +15,7 @@ import { saveOperationalLocationItem } from '../../services/operationalInventory
 import { OperationalStockBalance } from './OperationalStockBalance';
 import { operationalIssueUnit, validateOperationalOpeningStock } from '../../utils/operationalStock';
 import { logOperationalUsage } from '../../services/operationalInventoryUsageService';
+import { defaultUsageDateRange, filterOperationalUsageByDate, operationalUsageCSV, operationalUsageReportRows, validUsageDateRange, usageTimestampDate } from '../../utils/operationalUsageReport';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -25,6 +26,8 @@ const OperationalInventoryTab: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<'registry' | 'usage'>('registry');
   const [inventory, setInventory] = useState<OperationalInventory[]>([]);
   const [usageLogs, setUsageLogs] = useState<OperationalInventoryUsage[]>([]);
+  const [usageDateRange, setUsageDateRange] = useState(defaultUsageDateRange);
+  const [exportingUsage, setExportingUsage] = useState(false);
   const [maintenanceLogs, setMaintenanceLogs] = useState<OperationalInventoryMaintenance[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isUsageModalOpen, setIsUsageModalOpen] = useState(false);
@@ -67,6 +70,68 @@ const OperationalInventoryTab: React.FC = () => {
     setUsageLogs([]);
     setMaintenanceLogs([]);
   }, [profile?.tenantId, activeBranchId]);
+
+  const selectedUsageLogs = filterOperationalUsageByDate(usageLogs.filter(log => log.branchId === activeBranchId), usageDateRange);
+  const usageReportRows = () => operationalUsageReportRows(selectedUsageLogs, Object.fromEntries(inventory.map(item => [item.id, item.name])));
+
+  const downloadUsageCSV = () => {
+    if (!validUsageDateRange(usageDateRange) || selectedUsageLogs.length === 0) return;
+    const blob = new Blob([operationalUsageCSV(usageReportRows())], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `operational-usage_${usageDateRange.start}_to_${usageDateRange.end}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadUsagePDF = async () => {
+    if (!validUsageDateRange(usageDateRange) || selectedUsageLogs.length === 0 || exportingUsage) return;
+    setExportingUsage(true);
+    try {
+      const { jsPDF } = await import('jspdf');
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const rows = usageReportRows();
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const widths = [29, 38, 30, 48, 28, 16, 38, 42];
+      const headers = ['Date / Time', 'Item', 'Department', 'Purpose / Recipient', 'Qty / Unit', 'UGX Value', 'Reference', 'Recorded By'];
+      const left = 10;
+      const drawHeading = (page: number) => {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(15);
+        pdf.text('Operational Inventory Usage Report', left, 14);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(9);
+        pdf.text(`Period: ${usageDateRange.start} to ${usageDateRange.end}  |  Branch: ${activeBranchId || 'Unknown'}  |  Records: ${rows.length}`, left, 21);
+        pdf.text(`Page ${page}`, pageWidth - 24, 21);
+        pdf.setFillColor(235, 238, 241);
+        pdf.rect(left, 26, pageWidth - 20, 9, 'F');
+        pdf.setFont('helvetica', 'bold');
+        let x = left;
+        headers.forEach((h, index) => { pdf.text(h, x + 1, 32); x += widths[index]; });
+      };
+      let y = 37;
+      let page = 1;
+      drawHeading(page);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8);
+      rows.forEach((row, index) => {
+        const cells = [row.timestamp, row.item, row.department, [row.purpose, row.recipient ? `For ${row.recipient}` : ''].filter(Boolean).join(' | '), `${row.issued} ${row.unit}`, row.cost.toLocaleString('en-UG'), row.reference, row.recordedBy];
+        const lines = cells.map((cell, i) => pdf.splitTextToSize(String(cell), widths[i] - 3));
+        const height = Math.max(8, Math.max(...lines.map(line => line.length)) * 4 + 2);
+        if (y + height > pdf.internal.pageSize.getHeight() - 12) { pdf.addPage(); page += 1; drawHeading(page); y = 37; pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); }
+        if (index % 2 === 0) { pdf.setFillColor(249, 250, 251); pdf.rect(left, y - 1, pageWidth - 20, height, 'F'); }
+        let x = left;
+        lines.forEach((line, i) => { pdf.text(line, x + 1, y + 3); x += widths[i]; });
+        y += height;
+      });
+      pdf.save(`operational-usage_${usageDateRange.start}_to_${usageDateRange.end}.pdf`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to generate usage report PDF.');
+    } finally { setExportingUsage(false); }
+  };
 
   const filteredInventory = inventory.filter(item => 
     item.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
@@ -212,43 +277,50 @@ const OperationalInventoryTab: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-zinc-50/50 border-b border-zinc-100">
-                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Time</th>
-                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Item</th>
-                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Department / Purpose</th>
-                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Qty Issued</th>
-                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Cost</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {usageLogs
-                .filter(l => l.branchId === activeBranchId)
-                .map(log => {
-                const item = inventory.find(i => i.id === log.inventoryId);
-                return (
-                  <tr key={log.id} className="hover:bg-zinc-50/50 transition-colors">
-                    <td className="px-6 py-4 text-xs font-medium text-zinc-600">
-                      {format(new Date(log.timestamp), 'MMM dd, HH:mm')}
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="font-bold text-zinc-900">{item?.name || 'Unknown'}</p>
-                    </td>
-                    <td className="px-6 py-4 text-xs text-zinc-600"><strong>{log.department || log.period}</strong>{log.purpose && <p className="mt-1 text-[10px] text-zinc-400">{log.purpose}{log.recipient ? ` · For ${log.recipient}` : ''}</p>}</td>
-                    <td className="px-6 py-4 text-xs font-black text-zinc-900 text-right">
-                      {log.issuedAmount}
-                    </td>
-                    <td className="px-6 py-4 text-xs font-bold text-zinc-900 text-right">
-                      {(log.cost || 0).toLocaleString()} UGX
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <section className="overflow-hidden rounded-3xl border border-zinc-200 bg-white text-zinc-900 shadow-sm">
+          <div className="flex flex-col gap-4 border-b border-zinc-200 p-4 sm:p-5">
+            <div>
+              <h3 className="text-lg font-bold text-zinc-900">Operational Usage Ledger</h3>
+              <p className="mt-1 text-sm text-zinc-700">Showing the last 7 calendar days by default. Choose dates to view or export another period.</p>
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex min-w-[145px] flex-col gap-1 text-sm font-semibold text-zinc-800">Start date
+                <input aria-label="Usage start date" type="date" value={usageDateRange.start} max={usageDateRange.end} onChange={event => setUsageDateRange(range => ({ ...range, start: event.target.value }))} className="rounded-lg border border-zinc-400 bg-white px-3 py-2 text-sm text-zinc-900" />
+              </label>
+              <label className="flex min-w-[145px] flex-col gap-1 text-sm font-semibold text-zinc-800">End date
+                <input aria-label="Usage end date" type="date" value={usageDateRange.end} min={usageDateRange.start} onChange={event => setUsageDateRange(range => ({ ...range, end: event.target.value }))} className="rounded-lg border border-zinc-400 bg-white px-3 py-2 text-sm text-zinc-900" />
+              </label>
+              <button type="button" onClick={() => setUsageDateRange(defaultUsageDateRange())} className="rounded-lg border border-zinc-400 bg-white px-4 py-2 text-sm font-semibold text-zinc-900">Last 7 days</button>
+              <button type="button" disabled={!validUsageDateRange(usageDateRange) || selectedUsageLogs.length === 0} onClick={downloadUsageCSV} className="flex items-center gap-2 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"><Download size={15} /> CSV</button>
+              <button type="button" disabled={!validUsageDateRange(usageDateRange) || selectedUsageLogs.length === 0 || exportingUsage} onClick={() => void downloadUsagePDF()} className="flex items-center gap-2 rounded-lg bg-emerald-800 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"><Download size={15} /> {exportingUsage ? 'Preparing PDF…' : 'PDF'}</button>
+            </div>
+            {!validUsageDateRange(usageDateRange) && <p role="alert" className="text-sm font-semibold text-red-700">Select a valid date range (start must be on or before end).</p>}
+            <p className="text-sm font-semibold text-zinc-800">{selectedUsageLogs.length} usage record{selectedUsageLogs.length === 1 ? '' : 's'} for the selected period</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[730px] border-collapse text-left">
+              <thead><tr className="border-b border-zinc-200 bg-zinc-100 text-xs font-bold uppercase text-zinc-800">
+                <th className="px-4 py-3">Date &amp; time</th><th className="px-4 py-3">Item</th><th className="px-4 py-3">Department / purpose</th>
+                <th className="px-4 py-3">Reference</th><th className="px-4 py-3 text-right">Qty issued</th><th className="px-4 py-3 text-right">Value (UGX)</th>
+              </tr></thead>
+              <tbody className="divide-y divide-zinc-200">
+                {selectedUsageLogs.map(log => {
+                  const item = inventory.find(i => i.id === log.inventoryId);
+                  const date = usageTimestampDate(log.timestamp);
+                  return <tr key={log.id} className="hover:bg-zinc-50">
+                    <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-800">{date ? format(date, 'dd MMM yyyy, HH:mm') : 'Unknown date'}</td>
+                    <td className="px-4 py-3 text-sm font-bold text-zinc-900">{log.itemName || item?.name || 'Unknown item'}</td>
+                    <td className="px-4 py-3 text-sm text-zinc-800"><strong>{log.department || 'Not specified'}</strong><p className="mt-1 break-words text-sm text-zinc-700">{log.purpose || ''}{log.recipient ? ` · For ${log.recipient}` : ''}</p></td>
+                    <td className="break-all px-4 py-3 text-xs text-zinc-700">{log.reference || '—'}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-bold text-zinc-900">{log.issuedAmount} {operationalIssueUnit(log.unitOfIssue) || 'units'}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-bold text-zinc-900">{Number(log.cost || 0).toLocaleString('en-UG')}</td>
+                  </tr>;
+                })}
+                {selectedUsageLogs.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-zinc-700">No operational usage recorded for this date range.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
 
       {isModalOpen && (
