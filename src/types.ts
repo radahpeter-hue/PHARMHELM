@@ -109,6 +109,7 @@ export interface Staff {
   id: string;
   uid: string;
   legacyStaffId?: string | null;
+  staff_code?: string;
   tenantId: string;
   username: string;
   full_name: string;
