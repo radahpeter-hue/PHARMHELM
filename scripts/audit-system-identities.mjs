@@ -5,6 +5,7 @@
  * No create/update/delete/batch/transaction operations.
  */
 import { writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 const projectId = 'gen-lang-client-0911422817';
 const databaseId = 'ai-studio-f7d8654b-e089-425a-a506-38159afe1e75';
@@ -92,7 +93,7 @@ export function analyseIdentitySnapshot(records, counters = []) {
       result.blockers.push({type:'COUNTER_BELOW_EXISTING_SEQUENCE',kind:sum.kind,collection:sum.collection});
     if (sum.legacyOrInvalidFormat>0)
       result.blockers.push({type:'LEGACY_CODE_FORMAT',kind:sum.kind,collection:sum.collection});
-    result.counterBaselines.push({scope:sum.scope==='platform'?'platform':'tenant',kind:sum.kind,
+    result.counterBaselines.push({scope:sum.scope==='platform'?'platform':createHash('sha256').update(sum.scope).digest('hex').slice(0,12),kind:sum.kind,
       current:sum.currentCounter,minimumSafeStartingSequence:sum.safeStartingSequence,nextCandidate:sum.nextCandidate});
     const acc=result.collections[sum.collection] ||= {total:0,missing:0,duplicates:0,legacyFormat:0,missingTenant:0,skuMissing:0,skuDuplicates:0};
     acc.total+=sum.count; acc.missing+=sum.missing;acc.duplicates+=sum.duplicate;
@@ -120,7 +121,7 @@ export function analyseIdentitySnapshot(records, counters = []) {
   result.martinPharmaFound=result.tenants.some(t=>t.isMartinPharma);
   result.blockerCounts=Object.fromEntries([...new Set(result.blockers.map(b=>b.type))].map(type=>[type,result.blockers.filter(b=>b.type===type).length]));
   // Do not include raw tenant Firestore identifiers, only summary counts.
-  result.counterBaselines = result.counterBaselines.map(({scope,...other})=>other);
+  result.counterBaselines.sort((a,b)=>a.scope.localeCompare(b.scope)||a.kind.localeCompare(b.kind));
   result.blockers=[]; // full unredacted occurrences remain inside the process only
   return result;
 }
