@@ -48,3 +48,39 @@ export async function createBranchIdentity(
     return { id: branchRef.id, code };
   });
 }
+
+export const SCOPED_IDENTITY_KINDS = {
+  clients: { kind: 'patients', field: 'patient_code', prefix: 'PAT' },
+  prescribers: { kind: 'prescribers', field: 'prescriber_code', prefix: 'PRE' },
+  institutions: { kind: 'institutions', field: 'institution_code', prefix: 'INS' },
+  products: { kind: 'products', field: 'productId', prefix: 'PRD' },
+  staff: { kind: 'staff', field: 'employee_id', prefix: 'STF' }
+} as const;
+
+export type ScopedIdentityCollection = keyof typeof SCOPED_IDENTITY_KINDS;
+
+/** Register a new tenant-wide identity without accepting a caller-supplied business ID. */
+export async function createScopedIdentity(
+  collectionName: ScopedIdentityCollection,
+  tenantId: string,
+  data: Record<string, unknown>,
+  connection: Firestore = db
+): Promise<{ id: string; code: string }> {
+  if (!tenantId) throw new Error('Tenant is required to register an identity.');
+  const definition = SCOPED_IDENTITY_KINDS[collectionName];
+  const counterRef = doc(connection, 'identity_sequence_counters', `${tenantId}_${definition.kind}`);
+  const recordRef = doc(collection(connection, collectionName));
+  return runTransaction(connection, async transaction => {
+    const current = await transaction.get(counterRef);
+    if (current.exists() && (current.data().tenantId !== tenantId || current.data().kind !== definition.kind)) {
+      throw new Error('Identity sequence has a different tenant or record type.');
+    }
+    const next = Number(current.data()?.lastSequence || 0) + 1;
+    const code = formatSystemIdentity(definition.prefix, next);
+    transaction.set(counterRef, { tenantId, kind: definition.kind, lastSequence: next, updatedAt: new Date().toISOString() });
+    const payload = { ...data, tenantId, [definition.field]: code };
+    if (collectionName === 'products') payload['sku'] = `SKU-${code.slice(4)}`;
+    transaction.set(recordRef, payload);
+    return { id: recordRef.id, code };
+  });
+}
