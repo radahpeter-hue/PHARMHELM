@@ -215,222 +215,194 @@ export async function revalidateOrderRun(runId: string): Promise<RevalidationRes
 /**
  * Atomically convert accepted calculations to PO drafts, transfer requests, and log audit entries.
  */
+
 export async function submitOrderRun(runId: string, userId: string, userEmail: string): Promise<{
   orderIds: string[];
   transferIds: string[];
 }> {
-  const orderIds: string[] = [];
-  const transferIds: string[] = [];
+  const runRef = doc(db, 'autoGenerateOrderRuns', runId);
+  const runSnap = await getDoc(runRef);
+  if (!runSnap.exists()) throw new Error('Run snapshot does not exist');
+  const run = runSnap.data() as AutoGenerateOrderRun;
+  if (run.status === 'SUBMITTED') {
+    return { orderIds: run.submittedOrderIds || [], transferIds: run.submittedTransferIds || [] };
+  }
+  if (run.status !== 'READY') throw new Error('The replenishment run is not ready for submission.');
+  const tenantId = run.tenantId;
+  const destinationBranchId = run.branchId;
+  if (!tenantId || !destinationBranchId || !userId) throw new Error('Missing authenticated order submission context.');
 
-  // Run everything in a secure single db transaction or sequence of operations
-  try {
-    const runRef = doc(db, 'autoGenerateOrderRuns', runId);
-    const runSnap = await getDoc(runRef);
-    if (!runSnap.exists()) {
-      throw new Error('Run snapshot does not exist');
+  const linesSnap = await getDocs(query(collection(db, 'autoGenerateOrderLines'),
+    where('tenantId', '==', tenantId), where('runId', '==', runId)));
+  const lines = linesSnap.docs.map(snapshot => ({
+    ...snapshot.data(), id: snapshot.id
+  } as AutoGenerateOrderLine & { id: string }));
+  if (lines.length === 0) throw new Error('Cannot submit an empty replenishment run.');
+  if (lines.some(isOperationalAutoLine)) {
+    await requireOperationalInventoryEnabled(tenantId);
+    const unmapped = lines.find(line => isOperationalAutoLine(line) && !line.masterItemId);
+    if (unmapped) throw new Error('Operational item ' + unmapped.productName + ' requires a tenant-wide identity.');
+  }
+  for (const line of lines) {
+    if (!Number.isSafeInteger(line.finalPurchasePacks) || line.finalPurchasePacks < 0 ||
+        !Number.isFinite(line.finalInternalAllocation) || line.finalInternalAllocation < 0) {
+      throw new Error('Invalid replenishment quantities for ' + line.productName);
     }
-    const run = runSnap.data() as AutoGenerateOrderRun;
-    if (run.status === 'SUBMITTED') {
-      return { orderIds: [], transferIds: [] };
+    if (line.finalPurchasePacks > 0 && !(line.calculationInputs as any)?.supplierId) {
+      throw new Error('Select a supplier for ' + line.productName + ' before submission.');
     }
-    const tenantId = run.tenantId;
-    const destinationBranchId = run.branchId;
-
-    // Load lines
-    const linesSnap = await getDocs(
-      query(
-        collection(db, 'autoGenerateOrderLines'),
-        where('tenantId', '==', tenantId),
-        where('runId', '==', runId)
-      )
-    );
-    const lines = linesSnap.docs.map(d => ({ id: d.id, ...d.data() } as AutoGenerateOrderLine & { id: string }));
-    if (lines.some(isOperationalAutoLine)) {
-      await requireOperationalInventoryEnabled(tenantId);
-      const unmappedOperationalLine = lines.find(line => isOperationalAutoLine(line) && !line.masterItemId);
-      if (unmappedOperationalLine) {
-        throw new Error(`Operational item ${unmappedOperationalLine.productName} must be linked to a tenant-wide identity before ordering.`);
-      }
-    }
-
-    // Group external orders and internal transfers by both supplier/location and inventory class.
-    const externalBySupplier: Record<string, typeof lines> = {};
-    const transfersByDonor: Record<string, typeof lines> = {};
-
-    lines.forEach(line => {
-      // External draft (requires positive purchase quantity)
-      if (line.finalPurchasePacks > 0) {
-        const supplierId = (line.calculationInputs as any)?.supplierId || 'unknown_supplier';
-        const isOperational = isOperationalAutoLine(line);
-        const groupKey = `${isOperational ? 'operational' : 'sellable'}::${supplierId}`;
-        if (!externalBySupplier[groupKey]) {
-          externalBySupplier[groupKey] = [];
-        }
-        externalBySupplier[groupKey].push(line);
-      }
-
-      // Internal transfer draft
-      if (line.finalInternalAllocation > 0) {
-        // Group by donor allocations
-        const allocations = line.finalDonorAllocations || [];
-        allocations.forEach(alloc => {
-          if (alloc.qtyBaseUnits > 0) {
-            const donorId = alloc.branchId;
-            const donorKey = `${donorId}::${isOperationalAutoLine(line) ? 'OPERATIONAL' : 'SELLABLE'}`;
-            if (!transfersByDonor[donorKey]) {
-              transfersByDonor[donorKey] = [];
-            }
-            // Create a fake cloned line specific to this donor for splitting
-            const donorLine = {
-              ...line,
-              qtyToTransferBaseUnits: alloc.qtyBaseUnits
-            };
-            (transfersByDonor[donorKey] as any).push(donorLine);
-          }
-        });
-      }
-    });
-
-    // Write all documents in a transaction sequence
-    // 1. Create External Purchase Orders
-    for (const groupKey in externalBySupplier) {
-      const items = externalBySupplier[groupKey];
-      if (items.length === 0) continue;
-      const supplierId = groupKey.split('::').slice(1).join('::');
-
-      const isHqAggregate = run.configuration.demandScope === 'all_branches';
-      const stableOrderPart = `${runId}_${groupKey}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
-      const orderRef = doc(db, 'stock_orders', getHqAutoOrderId(runId, groupKey));
-      const supplierSuffix = supplierId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'GEN';
-      const orderNumber = isHqAggregate ? `HQR-${runId.slice(-6)}-${supplierSuffix}` : `ORD-${runId.slice(-6)}-${supplierSuffix}`;
-      const totalCost = items.reduce((sum, item) => sum + item.finalPurchasePacks * ((item.calculationInputs as any)?.costPricePerPack || 0), 0);
-      const now = new Date().toISOString();
-      const isEmergency = Number(run.configuration.temporaryDemandMultiplier || 1) > 1;
-      const inventoryClass = isOperationalAutoLine(items[0]) ? 'OPERATIONAL' : 'SELLABLE';
-
-      const poData = {
-        tenantId,
-        inventoryClass,
-        order_number: orderNumber,
-        requesting_branch_id: destinationBranchId,
-        requesting_branch_name: isHqAggregate ? 'HQ Central Store' : '', // Will populate on read fallback
-        supplier_id: supplierId,
-        order_type: isEmergency ? 'emergency' : 'monthly',
-        category: inventoryClass === 'OPERATIONAL' ? 'non_sellable' : 'sellable_non_cosmetic',
-        generation_method: 'auto_generated',
-        status: isHqAggregate ? 'submitted' : 'draft',
-        is_emergency: isEmergency,
-        submitted_by: userId,
-        total_order_value_ugx: totalCost,
-        createdAt: now,
-        created_at: now,
-        submitted_at: isHqAggregate ? now : null,
-        created_by: userId,
-        autoGenerateRunId: runId
-      };
-
-      await runTransaction(db, async (tx) => {
-        const lineRefs = items.map(item =>
-          doc(db, 'stock_order_lines', `auto_line_${stableOrderPart}_${item.id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100)}`)
-        );
-        const snapshots = await Promise.all([
-          tx.get(orderRef),
-          ...lineRefs.map(lineRef => tx.get(lineRef))
-        ]);
-        if (!snapshots[0].exists()) tx.set(orderRef, poData);
-        items.forEach((item, index) => {
-          if (snapshots[index + 1].exists()) return;
-          tx.set(lineRefs[index], {
-            tenantId,
-            inventoryClass: isOperationalAutoLine(item) ? 'OPERATIONAL' : 'SELLABLE',
-            ...(isOperationalAutoLine(item) && item.masterItemId ? { masterItemId: item.masterItemId } : {}),
-            order_id: orderRef.id,
-            product_id: item.productId,
-            product_name: item.productName,
-            qty_ordered: item.finalPurchasePacks,
-            unit_cost_ugx: (item.calculationInputs as any)?.costPricePerPack || 0,
-            line_total_ugx: item.finalPurchasePacks * ((item.calculationInputs as any)?.costPricePerPack || 0),
-            line_status: isHqAggregate ? 'pending' : 'ordered',
-            isOperational: isOperationalAutoLine(item),
-            createdAt: now
-          });
-        });
-      });
-      orderIds.push(orderRef.id);
-    }
-
-    // 2. Create Internal Transfer Invoices
-    for (const donorKey in transfersByDonor) {
-      const splitAt = donorKey.lastIndexOf('::');
-      const donorId = donorKey.slice(0, splitAt);
-      const inventoryClass = donorKey.slice(splitAt + 2) === 'OPERATIONAL' ? 'OPERATIONAL' : 'SELLABLE';
-      const items = transfersByDonor[donorKey] as any[];
-      if (items.length === 0) continue;
-
-      const stableTransferPart = `${runId}_${donorId}_${destinationBranchId}_${inventoryClass}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
-      const transferRef = doc(db, 'transfer_invoices', `auto_transfer_${stableTransferPart}`);
-      const transferNumber = `TRF-${runId.slice(-6)}-${donorId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'SRC'}`;
-
-      const transferData = {
-        tenantId,
-        inventoryClass,
-        transfer_number: transferNumber,
-        source_branch_id: donorId,
-        destination_branch_id: destinationBranchId,
-        status: 'pending_approval',
-        created_by: userId,
-        dispatched_by: '',
-        received_by: '',
-        createdAt: new Date().toISOString(),
-        autoGenerateRunId: runId
-      };
-
-      const lineRefs = items.map(item => doc(db, 'transfer_invoice_lines', `auto_transfer_line_${stableTransferPart}_${String(item.id || item.productId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100)}`));
-      const reservationsSnap = await getDocs(query(
-        collection(db, 'inventoryTransferReservations'),
-        where('tenantId', '==', tenantId), where('autoGenerateRunId', '==', runId), where('sourceBranchId', '==', donorId)
-      ));
-      const groupedProductIds = new Set(items.map(item => String(item.productId)));
-      const reservationRefs = reservationsSnap.docs
-        .filter(snapshot => groupedProductIds.has(String(snapshot.data().productId)))
-        .map(snapshot => snapshot.ref);
-
-      await runTransaction(db, async tx => {
-        const snapshots = await Promise.all([tx.get(transferRef), ...lineRefs.map(ref => tx.get(ref)), ...reservationRefs.map(ref => tx.get(ref))]);
-        if (!snapshots[0].exists()) tx.set(transferRef, transferData);
-        items.forEach((item, index) => {
-          if (snapshots[index + 1].exists()) return;
-          const cost = (item.calculationInputs as any)?.costPricePerPack || 0;
-          tx.set(lineRefs[index], { tenantId, inventoryClass, transfer_id: transferRef.id, product_id: item.productId, product_name: item.productName, qty_requested: item.qtyToTransferBaseUnits, qty_dispatched: 0, qty_received: 0, unit_cost_ugx: cost, createdAt: new Date().toISOString() });
-        });
-        reservationRefs.forEach((ref, index) => {
-          const snapshot = snapshots[1 + lineRefs.length + index];
-          if (!snapshot.exists()) return;
-          const reservation = snapshot.data();
-          if (reservation.status === 'CONVERTED' && reservation.convertedTransferRequestId && reservation.convertedTransferRequestId !== transferRef.id) throw new Error('A stock reservation was already converted into a different transfer request.');
-          if (['ACTIVE', 'PENDING', 'CONVERTED'].includes(reservation.status)) tx.update(ref, { status: 'CONVERTED', convertedTransferRequestId: transferRef.id, updatedAt: new Date().toISOString() });
-        });
-      });
-
-      transferIds.push(transferRef.id);
-    }
-
-    const submittedAt = new Date().toISOString();
-    await runTransaction(db, async tx => {
-      const latestRun = await tx.get(runRef);
-      if (!latestRun.exists()) throw new Error('Run snapshot disappeared during submission.');
-      tx.update(runRef, { status: 'SUBMITTED', submittedAt, updatedAt: submittedAt, submittedOrderIds: orderIds, submittedTransferIds: transferIds });
-      tx.set(doc(db, 'global_audit_logs', `auto_order_submit_${runId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180)}`), {
-        tenantId, action: 'AUTO_GENERATE_ORDER_SUBMITTED', category: 'PROCUREMENT',
-        description: `Auto-generated order run ${runId} submitted. Created ${orderIds.length} purchase orders and ${transferIds.length} interbranch transfers.`,
-        actor: userEmail, timestamp: submittedAt, ipAddress: 'client-side', device: 'PharmHelm Pro ERP Console'
-      }, { merge: true });
-    });
-
-  } catch (e: any) {
-    console.error('Order submission failed:', e);
-    throw e;
   }
 
+  type PlannedWrite = { ref: ReturnType<typeof doc>; data: Record<string, unknown> };
+  const plannedOrders: PlannedWrite[] = [];
+  const plannedOrderLines: PlannedWrite[] = [];
+  const plannedTransfers: PlannedWrite[] = [];
+  const plannedTransferLines: PlannedWrite[] = [];
+  const reservationRefs: Array<ReturnType<typeof doc>> = [];
+  const orderIds: string[] = [];
+  const transferIds: string[] = [];
+  const timestamp = new Date().toISOString();
+  const aggregate = run.configuration.demandScope === 'all_branches';
+  const externalGroups = new Map<string, typeof lines>();
+  const transferGroups = new Map<string, Array<{ line: typeof lines[number]; quantity: number }>>();
+
+  for (const line of lines) {
+    if (line.finalPurchasePacks > 0) {
+      const group = (isOperationalAutoLine(line) ? 'operational' : 'sellable') + '::' + (line.calculationInputs as any).supplierId;
+      externalGroups.set(group, [...(externalGroups.get(group) || []), line]);
+    }
+    for (const allocation of line.finalDonorAllocations || []) {
+      if (allocation.qtyBaseUnits <= 0) continue;
+      const group = allocation.branchId + '::' + (isOperationalAutoLine(line) ? 'OPERATIONAL' : 'SELLABLE');
+      transferGroups.set(group, [...(transferGroups.get(group) || []), { line, quantity: allocation.qtyBaseUnits }]);
+    }
+  }
+
+  for (const [group, items] of externalGroups) {
+    const supplierId = group.split('::').slice(1).join('::');
+    const inventoryClass = isOperationalAutoLine(items[0]) ? 'OPERATIONAL' : 'SELLABLE';
+    const stablePart = (runId + '_' + group).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+    const orderRef = doc(db, 'stock_orders', getHqAutoOrderId(runId, group));
+    const suffix = supplierId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'GEN';
+    const orderNumber = (aggregate ? 'HQR-' : 'ORD-') + runId.slice(-6) + '-' + suffix;
+    const emergency = Number(run.configuration.temporaryDemandMultiplier || 1) > 1;
+    const total = items.reduce((sum, item) =>
+      sum + item.finalPurchasePacks * Number(item.calculationInputs?.costPricePerPack || 0), 0);
+    plannedOrders.push({ ref: orderRef, data: {
+      tenantId, inventoryClass, order_number: orderNumber, requesting_branch_id: destinationBranchId,
+      requesting_branch_name: aggregate ? 'HQ Central Store' : '',
+      supplier_id: supplierId, order_type: emergency ? 'emergency' : 'monthly',
+      category: inventoryClass === 'OPERATIONAL' ? 'non_sellable' : 'sellable_non_cosmetic',
+      generation_method: 'auto_generated', status: aggregate ? 'submitted' : 'draft',
+      is_emergency: emergency, submitted_by: userId, total_order_value_ugx: total,
+      createdAt: timestamp, created_at: timestamp, submitted_at: aggregate ? timestamp : null,
+      created_by: userId, autoGenerateRunId: runId
+    } });
+    orderIds.push(orderRef.id);
+    for (const item of items) {
+      const lineRef = doc(db, 'stock_order_lines',
+        ('auto_line_' + stablePart + '_' + item.id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100)).slice(0, 480));
+      plannedOrderLines.push({ ref: lineRef, data: {
+        tenantId, inventoryClass,
+        ...(isOperationalAutoLine(item) && item.masterItemId ? { masterItemId: item.masterItemId } : {}),
+        order_id: orderRef.id, product_id: item.productId, product_name: item.productName,
+        qty_ordered: item.finalPurchasePacks,
+        unit_cost_ugx: Number(item.calculationInputs?.costPricePerPack || 0),
+        line_total_ugx: item.finalPurchasePacks * Number(item.calculationInputs?.costPricePerPack || 0),
+        line_status: aggregate ? 'pending' : 'ordered', isOperational: isOperationalAutoLine(item),
+        createdAt: timestamp
+      } });
+    }
+  }
+
+  for (const [group, items] of transferGroups) {
+    const sep = group.lastIndexOf('::');
+    const donorId = group.slice(0, sep);
+    const inventoryClass = group.slice(sep + 2) === 'OPERATIONAL' ? 'OPERATIONAL' : 'SELLABLE';
+    const stablePart = (runId + '_' + donorId + '_' + destinationBranchId + '_' + inventoryClass)
+      .replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+    const transferRef = doc(db, 'transfer_invoices', 'auto_transfer_' + stablePart);
+    plannedTransfers.push({ ref: transferRef, data: {
+      tenantId, inventoryClass,
+      transfer_number: 'TRF-' + runId.slice(-6) + '-' +
+        (donorId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'SRC'),
+      source_branch_id: donorId, destination_branch_id: destinationBranchId,
+      status: 'pending_approval', created_by: userId, dispatched_by: '', received_by: '',
+      createdAt: timestamp, autoGenerateRunId: runId
+    } });
+    transferIds.push(transferRef.id);
+    for (const { line, quantity } of items) {
+      plannedTransferLines.push({ ref: doc(db, 'transfer_invoice_lines',
+        ('auto_transfer_line_' + stablePart + '_' +
+          String(line.id || line.productId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100)).slice(0, 480)),
+        data: {
+          tenantId, inventoryClass, transfer_id: transferRef.id, product_id: line.productId,
+          product_name: line.productName, qty_requested: quantity,
+          qty_dispatched: 0, qty_received: 0,
+          unit_cost_ugx: Number(line.calculationInputs?.costPricePerPack || 0),
+          createdAt: timestamp
+        }
+      });
+    }
+    const reservations = await getDocs(query(collection(db, 'inventoryTransferReservations'),
+      where('tenantId', '==', tenantId), where('autoGenerateRunId', '==', runId),
+      where('sourceBranchId', '==', donorId)));
+    const productIds = new Set(items.map(item => item.line.productId));
+    reservationRefs.push(...reservations.docs.filter(snapshot =>
+      productIds.has(String(snapshot.data().productId))).map(snapshot => snapshot.ref));
+  }
+
+  const documents = [...plannedOrders, ...plannedOrderLines, ...plannedTransfers, ...plannedTransferLines];
+  const refs = [...documents.map(item => item.ref), ...reservationRefs];
+  // Leave room for the run and immutable audit record. Firestore transactions are limited to 500 writes.
+  if (refs.length + 2 > 450) throw new Error('Order is too large for one atomic submission. Split the run into smaller orders.');
+  if (new Set(refs.map(ref => ref.path)).size !== refs.length)
+    throw new Error('Duplicate generated document identity; order submission cancelled.');
+  const auditRef = doc(db, 'global_audit_logs',
+    'auto_order_submit_' + runId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180));
+
+  // All reads precede writes and every document is committed atomically.
+  // A denied write leaves no partial orders, transfers, reservations, or success status.
+  await runTransaction(db, async tx => {
+    const snapshots = await Promise.all([
+      tx.get(runRef), tx.get(auditRef), ...refs.map(ref => tx.get(ref))
+    ]);
+    const latest = snapshots[0];
+    if (!latest.exists()) throw new Error('Run disappeared before submission.');
+    const liveRun = latest.data() as AutoGenerateOrderRun;
+    if (liveRun.tenantId !== tenantId || liveRun.branchId !== destinationBranchId)
+      throw new Error('Run scope changed; recalculate before submission.');
+    if (liveRun.status === 'SUBMITTED') return;
+    if (liveRun.status !== 'READY') throw new Error('Replenishment run is no longer ready.');
+    if (snapshots[1].exists()) throw new Error('Submission audit already exists for a non-submitted run.');
+
+    for (let index = 0; index < documents.length; index++) {
+      const snapshot = snapshots[2 + index];
+      if (snapshot.exists()) throw new Error('Existing staged order detected. Resolve the previous partial submission before retrying.');
+      tx.set(documents[index].ref, documents[index].data);
+    }
+    reservationRefs.forEach((ref, index) => {
+      const snapshot = snapshots[2 + documents.length + index];
+      if (!snapshot.exists()) return;
+      const reservation = snapshot.data();
+      if (reservation.status === 'CONVERTED' && reservation.convertedTransferRequestId)
+        throw new Error('Reservation already converted; retry requires reconciliation.');
+      if (['ACTIVE', 'PENDING'].includes(reservation.status)) {
+        const donorId = reservation.sourceBranchId;
+        const inventoryClass = reservation.inventoryClass === 'OPERATIONAL' ? 'OPERATIONAL' : 'SELLABLE';
+        const stablePart = (runId + '_' + donorId + '_' + destinationBranchId + '_' + inventoryClass)
+          .replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+        tx.update(ref, { status: 'CONVERTED', convertedTransferRequestId: 'auto_transfer_' + stablePart, updatedAt: timestamp });
+      }
+    });
+    tx.update(runRef, { status: 'SUBMITTED', submittedAt: timestamp, updatedAt: timestamp,
+      submittedOrderIds: orderIds, submittedTransferIds: transferIds });
+    tx.set(auditRef, {
+      tenantId, action: 'AUTO_GENERATE_ORDER_SUBMITTED', category: 'PROCUREMENT',
+      description: 'Auto-generated order run ' + runId + ' submitted. Created ' +
+        orderIds.length + ' purchase orders and ' + transferIds.length + ' interbranch transfers.',
+      actor: userEmail, timestamp, ipAddress: 'client-side', device: 'PharmHelm Pro ERP Console'
+    });
+  });
   return { orderIds, transferIds };
 }
