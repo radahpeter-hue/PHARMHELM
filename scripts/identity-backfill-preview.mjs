@@ -10,7 +10,7 @@ const DEFINITIONS = {
   prescribers: { prefix: 'PRE', field: 'prescriber_code', kind: 'prescribers' },
   institutions: { prefix: 'INS', field: 'institution_code', kind: 'institutions' },
   products: { prefix: 'PRD', field: 'productId', kind: 'products' },
-  staff: { prefix: 'STF', field: 'employee_id', kind: 'staff' }
+  staff: { prefix: 'STF', field: 'staff_code', kind: 'staff' }
 };
 
 function plan(records, counters = []) {
