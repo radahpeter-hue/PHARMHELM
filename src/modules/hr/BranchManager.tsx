@@ -11,6 +11,7 @@ import { Branch, Staff } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
 import { hasAnyRole } from '../../utils/roles';
+import { createBranchIdentity } from '../../services/systemIdentityService';
 
 export const BranchManager: React.FC = () => {
   const { profile } = useAuth();
@@ -73,13 +74,12 @@ export const BranchManager: React.FC = () => {
           return;
         }
 
-        const addedRefId = await firestoreService.addDocument('branches', {
+        const created = await createBranchIdentity(profile.tenantId, {
           ...branchData,
-          branch_code: `BR-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
           created_at: new Date().toISOString(),
           created_by: profile.uid
         });
-        branchId = addedRefId;
+        branchId = created.id;
         toast.success('Branch added successfully');
       }
 
@@ -160,10 +160,8 @@ export const BranchManager: React.FC = () => {
       for (const branch of defaults) {
         const exists = branches.some(b => b.type === branch.type);
         if (!exists) {
-          await firestoreService.addDocument('branches', {
+          await createBranchIdentity(profile.tenantId, {
             ...branch,
-            tenantId: profile.tenantId,
-            branch_code: `BR-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
             created_at: new Date().toISOString(),
             created_by: profile.uid
           });
