@@ -716,12 +716,24 @@ service cloud.firestore {
           && isCEO()
           && isTenantMember(request.resource.data.tenantId);
       }
+      function scopedCounter() {
+        return request.resource.data.kind in ['patients', 'prescribers', 'institutions', 'products', 'staff']
+          && request.resource.data.tenantId is string
+          && counterId == request.resource.data.tenantId + '_' + request.resource.data.kind
+          && isTenantMember(request.resource.data.tenantId)
+          && (request.resource.data.kind == 'staff'
+            ? (isHR() || isIT())
+            : request.resource.data.kind == 'products'
+              ? isInventoryOperator()
+              : isAuthenticated());
+      }
       allow get: if isAuthenticated() && (resource == null
         || (resource.data.get('scope', '') == 'platform' && isAdmin())
-        || (resource.data.get('kind', '') == 'branches' && isTenantMember(resource.data.tenantId)));
+        || (resource.data.get('tenantId', '') is string
+          && isTenantMember(resource.data.tenantId)));
       allow list: if false;
       allow create: if validIncrement() && request.resource.data.lastSequence == 1
-        && (platformCounter() || branchCounter());
+        && (platformCounter() || branchCounter() || scopedCounter());
       allow update: if validIncrement()
         && request.resource.data.lastSequence == resource.data.lastSequence + 1
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSequence', 'updatedAt'])
