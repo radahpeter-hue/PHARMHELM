@@ -34,6 +34,7 @@ import { twMerge } from 'tailwind-merge';
 import { format } from 'date-fns';
 import { AutoGenerateOrderModal } from '../components/inventory/AutoGenerateOrderModal';
 import { isLegacyOperationalInventorySeed } from '../utils/operationalInventory';
+import { operationalIssueUnit } from '../utils/operationalStock';
 import { inventoryClassForOrderCategory } from '../services/inventoryClassification';
 import { useOperationalInventoryFeature } from '../hooks/useOperationalInventoryFeature';
 import { createOperationalBranchReturn, receiveOperationalTransferLine } from '../services/operationalTransferService';
@@ -2381,26 +2382,26 @@ const OperationalBranchReceiptQueue: React.FC = () => {
       </div>
 
       {selectedTransfer && <div className="fixed inset-0 z-[70] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-        <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-3xl bg-white shadow-2xl flex flex-col">
-          <div className="p-5 border-b border-zinc-100"><p className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Operational Inventory Transfer</p><h3 className="mt-1 text-xl font-black text-zinc-900">{selectedTransfer.transferNumber}</h3><p className="text-xs text-zinc-500">{selectedTransfer.sourceOrderNumber || 'HQ distribution'} → {selectedTransfer.destinationBranchName || activeBranchId}</p></div>
-          <div className="p-5 overflow-y-auto flex-1">
-            {loading ? <p className="py-8 text-center text-sm text-zinc-500">Loading transfer lines…</p> : <div className="overflow-x-auto border border-zinc-200 rounded-xl">
-              <table className="w-full text-left"><thead className="bg-zinc-50 text-[10px] uppercase text-zinc-500"><tr><th className="p-3">Operational item</th><th className="p-3">Dispatched</th><th className="p-3">Accepted</th><th className="p-3">Queried</th><th className="p-3">Reason</th></tr></thead>
+        <div className="flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl min-w-0 flex-col overflow-hidden rounded-2xl bg-white text-zinc-900 shadow-2xl sm:max-h-[calc(100dvh-2rem)]">
+          <div className="shrink-0 border-b border-zinc-200 p-4 sm:p-5"><p className="text-xs font-bold uppercase tracking-wide text-emerald-800">Operational Inventory Transfer</p><h3 className="mt-1 break-all text-lg font-black text-zinc-900 sm:text-xl">{selectedTransfer.transferNumber}</h3><p className="mt-1 text-sm font-medium text-zinc-700">HQ Operational Store → {selectedTransfer.destinationBranchName || activeBranchId}</p><p className="mt-1 text-sm text-zinc-700">Source: {selectedTransfer.sourceOrderNumber || 'HQ distribution'}</p></div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-5">
+            {loading ? <p className="py-8 text-center text-sm text-zinc-500">Loading transfer lines…</p> : <div className="overflow-x-auto rounded-xl border border-zinc-300">
+              <table className="w-full min-w-[700px] text-left"><thead className="bg-zinc-100 text-xs font-bold uppercase text-zinc-800"><tr><th className="p-3">Operational item</th><th className="p-3">Dispatched</th><th className="p-3">Accepted</th><th className="p-3">Queried</th><th className="p-3">Reason</th></tr></thead>
                 <tbody className="divide-y divide-zinc-100">{lines.map(line => {
                   const values = receiptValues[line.id] || { accepted: 0, queried: 0, reason: '' };
                   const readOnly = showHistory || line.status !== 'dispatched' || !canReceive;
                   return <tr key={line.id}>
-                    <td className="p-3"><p className="font-bold text-sm text-zinc-900">{line.itemName}</p><p className="text-[10px] text-zinc-500">{line.masterItemId}</p></td>
-                    <td className="p-3 text-sm font-bold">{line.quantityDispatched} {line.unitOfIssue}</td>
-                    <td className="p-3"><input aria-label={`Accepted quantity ${line.itemName}`} type="number" min="0" max={line.quantityDispatched} step="any" disabled={readOnly} value={values.accepted} onChange={event => { const accepted = Math.max(0, Number(event.target.value)); setReceiptValues(prev => ({ ...prev, [line.id]: { ...prev[line.id], accepted, queried: Math.max(0, line.quantityDispatched - accepted) } })); }} className="w-24 rounded-lg border border-zinc-200 px-2 py-1.5 text-sm" /></td>
-                    <td className="p-3"><input aria-label={`Queried quantity ${line.itemName}`} type="number" readOnly disabled={readOnly} value={values.queried} className="w-24 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm" /></td>
-                    <td className="p-3">{values.queried > 0 && <select disabled={readOnly} value={values.reason} onChange={event => setReceiptValues(prev => ({ ...prev, [line.id]: { ...prev[line.id], reason: event.target.value } }))} className="max-w-48 rounded-lg border border-zinc-200 px-2 py-1.5 text-xs"><option value="">Select reason</option><option value="wrong_item">Wrong item</option><option value="damaged">Damaged</option><option value="short_quantity">Short quantity</option><option value="quality_query">Quality query</option><option value="other">Other</option></select>}</td>
+                    <td className="p-3"><p className="font-bold text-sm text-zinc-900">{line.itemName}</p><p className="mt-1 break-all text-xs text-zinc-600">Item ID: {line.masterItemId}</p></td>
+                    <td className="p-3 text-sm font-bold">{line.quantityDispatched} {operationalIssueUnit(line.unitOfIssue) || 'units'}</td>
+                    <td className="p-3"><input aria-label={`Accepted quantity ${line.itemName}`} type="number" min="0" max={line.quantityDispatched} step="any" disabled={readOnly} value={values.accepted} onChange={event => { const accepted = Math.max(0, Number(event.target.value)); setReceiptValues(prev => ({ ...prev, [line.id]: { ...prev[line.id], accepted, queried: Math.max(0, line.quantityDispatched - accepted) } })); }} className="w-24 rounded-lg border border-zinc-400 bg-white px-2 py-2 text-sm font-semibold text-zinc-900 disabled:bg-zinc-100" /></td>
+                    <td className="p-3"><input aria-label={`Queried quantity ${line.itemName}`} type="number" readOnly disabled={readOnly} value={values.queried} className="w-24 rounded-lg border border-zinc-300 bg-zinc-100 px-2 py-2 text-sm font-semibold text-zinc-900" /></td>
+                    <td className="p-3">{values.queried > 0 && <select disabled={readOnly} value={values.reason} onChange={event => setReceiptValues(prev => ({ ...prev, [line.id]: { ...prev[line.id], reason: event.target.value } }))} className="w-44 rounded-lg border border-zinc-400 bg-white px-2 py-2 text-sm font-medium text-zinc-900"><option value="">Select reason</option><option value="wrong_item">Wrong item</option><option value="damaged">Damaged</option><option value="short_quantity">Short quantity</option><option value="quality_query">Quality query</option><option value="other">Other</option></select>}</td>
                   </tr>;
                 })}</tbody>
               </table>
             </div>}
           </div>
-          <div className="p-4 border-t border-zinc-100 bg-zinc-50 flex justify-between items-center gap-3"><p className="text-[11px] text-zinc-500">Queried units are excluded from branch SOH and remain linked to this transfer.</p><div className="flex gap-2"><button onClick={() => setSelectedTransfer(null)} disabled={submitting} className="px-4 py-2 rounded-xl border border-zinc-200 text-xs font-bold">Close</button>{!showHistory && <button onClick={() => void submitReceipt()} disabled={!canReceive || loading || submitting || lines.every(line => line.status !== 'dispatched')} className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-black disabled:opacity-40">{submitting ? 'Saving…' : 'Confirm Operational receipt'}</button>}</div></div>
+          <div className="flex shrink-0 flex-col gap-3 border-t border-zinc-200 bg-zinc-50 p-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm text-zinc-700">Queried units are excluded from branch stock on hand and remain linked to this transfer.</p><div className="flex flex-wrap gap-2"><button onClick={() => setSelectedTransfer(null)} disabled={submitting} className="rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-bold text-zinc-900">Close</button>{!showHistory && <button onClick={() => void submitReceipt()} disabled={!canReceive || loading || submitting || lines.every(line => line.status !== 'dispatched')} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-black text-white disabled:opacity-40">{submitting ? 'Saving…' : 'Confirm Operational receipt'}</button>}</div></div>
         </div>
       </div>}
     </section>
