@@ -1,3 +1,4 @@
+import { createScopedIdentity } from '../../services/systemIdentityService';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, Plus, Filter, Mail, Phone, MapPin, 
@@ -56,7 +57,7 @@ export const StaffDirectory: React.FC = () => {
   const filteredStaff = dedupedStaff.filter(s => {
     const matchesSearch = s.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          s.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         s.employee_id?.toLowerCase().includes(searchTerm.toLowerCase());
+                         (s.staff_code || s.employee_id || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesFilter = activeFilter === 'all' || s.status === activeFilter;
     return matchesSearch && matchesFilter;
   });
@@ -175,7 +176,7 @@ export const StaffDirectory: React.FC = () => {
                       </div>
                       <div>
                         <p className="font-bold text-slate-900 group-hover:text-indigo-600 group-hover:underline">{member.full_name}</p>
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">ID: {member.employee_id || member.id.slice(0, 8)}</p>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">ID: {member.staff_code || member.employee_id || member.id.slice(0, 8)}</p>
                       </div>
                     </div>
                   </td>
@@ -290,7 +291,7 @@ export const StaffDirectory: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Staff ID</span>
-                  <span className="text-xs font-bold text-slate-800">{viewingStaffCard.employee_id || 'n/a'}</span>
+                  <span className="text-xs font-bold text-slate-800">{viewingStaffCard.staff_code || viewingStaffCard.employee_id || 'Pending ID backfill'}</span>
                 </div>
                 <div>
                   <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">NDA License Status</span>
@@ -485,7 +486,7 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
         toast.success('Staff member updated');
       } else {
         // Save staff record to Firestore as pending activation
-        const staffId = await firestoreService.addDocument('staff', {
+        const createdStaff = await createScopedIdentity('staff', profile.tenantId, {
           ...formData,
           roleRealmId: primaryRoleRealmId,
           username: '',
@@ -500,10 +501,10 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
           uid: ''
         });
 
-        if (staffId) {
+        if (createdStaff.id) {
           await firestoreService.addDocument('pending_activations', {
             tenantId: profile.tenantId,
-            staffId: staffId,
+            staffId: createdStaff.id,
             name: formData.full_name,
             role: formData.role,
             status: 'pending',
@@ -561,8 +562,8 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Employee ID</label>
-                  <input type="text" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl" value={formData.employee_id || ''} onChange={(e) => setFormData({ ...formData, employee_id: e.target.value })} />
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">System Staff ID</label>
+                  <input type="text" readOnly className="w-full px-4 py-2 bg-slate-100 border border-slate-200 rounded-xl text-slate-800" value={formData.staff_code || (staff ? 'Pending system ID backfill' : 'Generated automatically on registration')} />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Status</label>

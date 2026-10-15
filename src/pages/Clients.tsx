@@ -1,3 +1,4 @@
+import { createScopedIdentity, type ScopedIdentityCollection } from '../services/systemIdentityService';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
@@ -91,6 +92,8 @@ const Clients: React.FC = () => {
       ...staff.map(staffMember => ({
         id: staffMember.id,
         uid: staffMember.uid,
+        employee_id: staffMember.employee_id,
+        staff_code: staffMember.staff_code,
         tenantId: staffMember.tenantId,
         full_name: staffMember.full_name || staffMember.username || 'Unknown Staff',
         phone_number: staffMember.phone_number || 'N/A',
@@ -117,11 +120,11 @@ const Clients: React.FC = () => {
   const filteredData = () => {
     const term = searchTerm.toLowerCase();
     if (activeTab === 'patients') {
-      return combinedPatients.filter(p => (p.full_name || '').toLowerCase().includes(term) || (p.phone_number || '').includes(term));
+      return combinedPatients.filter(p => (p.full_name || '').toLowerCase().includes(term) || (p.phone_number || '').includes(term) || (p.patient_code || p.staff_code || p.employee_id || '').toLowerCase().includes(term));
     } else if (activeTab === 'institutions') {
-      return institutions.filter(i => i.supplier_name.toLowerCase().includes(term));
+      return institutions.filter(i => i.supplier_name.toLowerCase().includes(term) || (i.institution_code || '').toLowerCase().includes(term));
     } else if (activeTab === 'prescribers') {
-      return prescribers.filter(p => p.full_name.toLowerCase().includes(term) || p.specialty.toLowerCase().includes(term));
+      return prescribers.filter(p => p.full_name.toLowerCase().includes(term) || p.specialty.toLowerCase().includes(term) || (p.prescriber_code || '').toLowerCase().includes(term));
     } else if (activeTab === 'suppliers') {
       return suppliers.filter(s => (s.supplier_name || '').toLowerCase().includes(term) || (s.supplier_id || '').toLowerCase().includes(term));
     }
@@ -278,6 +281,15 @@ const Clients: React.FC = () => {
                             </>
                           )}
                         </div>
+                        {activeTab !== 'suppliers' && (
+                          <div className="break-all text-xs font-bold text-zinc-700">
+                            {activeTab === 'patients'
+                              ? (item.isStaff ? `Staff ID: ${item.staff_code || item.employee_id || 'Legacy record'}` : `Patient ID: ${item.patient_code || 'Legacy record'}`)
+                              : activeTab === 'institutions'
+                                ? `Institution ID: ${item.institution_code || 'Legacy record'}`
+                                : `Prescriber ID: ${item.prescriber_code || 'Legacy record'}`}
+                          </div>
+                        )}
                         {activeTab === 'suppliers' && item.payment_terms && (
                           <div className="text-[10px] text-zinc-400">
                             Payment Terms: {item.payment_terms}
@@ -437,10 +449,8 @@ const RegistryModal: React.FC<{ type: string; isOpen: boolean; onClose: () => vo
         await firestoreService.updateDocument(collection, item.id, formData);
         toast.success('Updated successfully');
       } else {
-        await firestoreService.addDocument(collection, {
-          ...formData,
-          tenantId: profile.tenantId,
-        });
+        if (!['clients', 'institutions', 'prescribers'].includes(collection)) throw new Error('Unsupported identity collection.');
+        await createScopedIdentity(collection as ScopedIdentityCollection, profile.tenantId, formData);
         toast.success('Added successfully');
       }
       onClose();

@@ -1,3 +1,4 @@
+import { createScopedIdentity } from '../../services/systemIdentityService';
 import React, { useState, useEffect } from 'react';
 import { 
   Users, Search, Plus, Filter, FileText, CheckCircle2, XCircle, X,
@@ -250,7 +251,7 @@ export const RecruitmentManager: React.FC<{ supervisorOnly?: boolean }> = ({ sup
       const baseUsername = `${cleanName}${uniqueSuffix}`;
       const generatedUsername = acronym ? `${baseUsername}@${acronym}` : baseUsername;
 
-      const staffId = await firestoreService.addDocument('staff', {
+      const createdStaff = await createScopedIdentity('staff', profile.tenantId, {
         tenantId: profile.tenantId,
         full_name: app.full_name,
         username: generatedUsername,
@@ -268,10 +269,10 @@ export const RecruitmentManager: React.FC<{ supervisorOnly?: boolean }> = ({ sup
       });
 
       // 3. Setup activation request for safety
-      if (staffId) {
+      if (createdStaff.id) {
         await firestoreService.addDocument('pending_activations', {
           tenantId: profile.tenantId,
-          staffId: staffId,
+          staffId: createdStaff.id,
           name: app.full_name,
           role: app.position_applied,
           status: 'pending',

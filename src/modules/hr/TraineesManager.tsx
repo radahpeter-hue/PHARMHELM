@@ -1,3 +1,4 @@
+import { createScopedIdentity } from '../../services/systemIdentityService';
 import React, { useState, useEffect } from 'react';
 import { 
   Briefcase, Search, FileText, CheckCircle2, Award, ClipboardCheck,
@@ -186,7 +187,7 @@ export const TraineesManager: React.FC<{ supervisorOnly?: boolean }> = ({ superv
       const baseUsername = `${cleanName}${uniqueSuffix}`;
       const generatedUsername = acronym ? `${baseUsername}@${acronym}` : baseUsername;
 
-      const staffId = await firestoreService.addDocument('staff', {
+      const createdStaff = await createScopedIdentity('staff', profile.tenantId, {
         tenantId: profile.tenantId,
         full_name: trainee.full_name,
         username: generatedUsername,
@@ -202,10 +203,10 @@ export const TraineesManager: React.FC<{ supervisorOnly?: boolean }> = ({ superv
         joinedDate: new Date().toISOString().split('T')[0]
       });
 
-      if (staffId) {
+      if (createdStaff.id) {
         await firestoreService.addDocument('pending_activations', {
           tenantId: profile.tenantId,
-          staffId: staffId,
+          staffId: createdStaff.id,
           name: trainee.full_name,
           role: trainee.position_applied || 'Graduate Officer',
           status: 'pending',

@@ -14,6 +14,7 @@ import {
   VOLUME_WEIGHT_UNITS 
 } from '../../constants';
 import { firestoreService } from '../../services/firestore';
+import { createScopedIdentity } from '../../services/systemIdentityService';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'sonner';
 
@@ -109,15 +110,14 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
         ...editableFields,
         inventoryClass: 'SELLABLE' as const,
         tenantId: profile.tenantId,
-        productId: mirroredDraft.productId || `PRD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
-        sku: mirroredDraft.sku || `SKU-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+        ...(product?.id ? { productId: product.productId, sku: product.sku } : {}),
       };
 
       if (product?.id) {
         await firestoreService.updateDocument('products', product.id, productData);
         toast.success('Product updated successfully');
       } else {
-        await firestoreService.addDocument('products', productData);
+        await createScopedIdentity('products', profile.tenantId, productData);
         toast.success('Product registered successfully');
       }
     } catch (error) {

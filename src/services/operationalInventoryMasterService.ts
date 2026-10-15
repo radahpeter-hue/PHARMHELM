@@ -4,6 +4,7 @@ import { collection, doc, getDocs, query, runTransaction, where } from 'firebase
 import { db } from '../firebase';
 import { OperationalInventory, OperationalInventoryMaster } from '../types';
 import { deterministicOperationalIdentityClaimId, deterministicOperationalLocationId, deterministicOperationalMasterId, operationalIdentityFingerprint } from './operationalIdentity';
+import { formatSystemIdentity } from './systemIdentityService';
 
 type OperationalItemWrite = Omit<OperationalInventory, 'id' | 'masterItemId'>;
 
@@ -64,6 +65,9 @@ export async function saveOperationalLocationItem(input: SaveOperationalLocation
   const identityAuditRef = doc(connection, 'operational_inventory_identity_events', `opidentity_${itemRef.id}`);
   const openingMovementKey = `op_opening_${itemRef.id}`;
   const openingMovementRef = doc(connection, 'operational_inventory_movements', `opm_${openingMovementKey}`);
+  const codeKind = input.data.operationalType === 'FIXED_ASSET' ? 'operational_assets' : 'operational_consumables';
+  const codePrefix = codeKind === 'operational_assets' ? 'AST' : 'OPS';
+  const counterRef = doc(connection, 'identity_sequence_counters', `${tenantId}_${codeKind}`);
   const settingsRef = doc(connection, 'system_settings', tenantId);
   const identityStateRef = doc(connection, 'operational_inventory_identity_state', tenantId);
   const now = new Date().toISOString();
@@ -79,14 +83,15 @@ export async function saveOperationalLocationItem(input: SaveOperationalLocation
   }
 
   await runTransaction(connection, async transaction => {
-    const [settingsSnapshot, itemSnapshot, masterSnapshot, identityClaimSnapshot, openingMovementSnapshot, identityAuditSnapshot, identityStateSnapshot] = await Promise.all([
+    const [settingsSnapshot, itemSnapshot, masterSnapshot, identityClaimSnapshot, openingMovementSnapshot, identityAuditSnapshot, identityStateSnapshot, counterSnapshot] = await Promise.all([
       transaction.get(settingsRef),
       transaction.get(itemRef),
       transaction.get(masterRef),
       transaction.get(identityClaimRef),
       transaction.get(openingMovementRef),
       transaction.get(identityAuditRef),
-      transaction.get(identityStateRef)
+      transaction.get(identityStateRef),
+      transaction.get(counterRef)
     ]);
 
     const settings = settingsSnapshot.data();
@@ -136,10 +141,25 @@ export async function saveOperationalLocationItem(input: SaveOperationalLocation
       throw new Error('This Operational item already has an HQ location record. Link the existing record instead of creating another.');
     }
     const shouldUpdateMaster = !currentMaster;
+    const isBrandNewIdentity = !currentMaster && !input.itemId && !input.masterItemId;
+    const generatedCode = isBrandNewIdentity
+      ? formatSystemIdentity(codePrefix, Number(counterSnapshot.data()?.lastSequence || 0) + 1)
+      : (currentMaster?.uniqueId || input.data.uniqueId || '');
+    if (isBrandNewIdentity) {
+      if (counterSnapshot.exists() && (counterSnapshot.data().tenantId !== tenantId || counterSnapshot.data().kind !== codeKind)) {
+        throw new Error('Operational ID counter does not match this tenant and item class.');
+      }
+      transaction.set(counterRef, {
+        tenantId, kind: codeKind,
+        lastSequence: Number(counterSnapshot.data()?.lastSequence || 0) + 1,
+        updatedAt: now
+      });
+    }
     const masterData: Omit<OperationalInventoryMaster, 'id'> = {
       tenantId,
       identityClaimId,
       ...masterFields(input.data, now),
+      uniqueId: generatedCode,
       ...(branchId === 'HQ' ? { hqLocationItemId: itemRef.id } : {}),
       createdAt: currentMaster?.createdAt || now
     };
@@ -159,7 +179,7 @@ export async function saveOperationalLocationItem(input: SaveOperationalLocation
       category: resolvedIdentity.category,
       unitPerPack: resolvedIdentity.unitPerPack,
       unitOfIssue: resolvedIdentity.unitOfIssue,
-      uniqueId: resolvedIdentity.uniqueId || input.data.uniqueId || '',
+      uniqueId: generatedCode,
       supplier: resolvedIdentity.supplier || input.data.supplier,
       updatedAt: now,
       ...(itemSnapshot.exists() ? {} : { createdAt: now })

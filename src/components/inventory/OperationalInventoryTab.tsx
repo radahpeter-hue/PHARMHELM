@@ -595,12 +595,7 @@ export const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void
         branchId
       };
 
-      // Auto-generate ID if missing
-      if (!data.uniqueId && !(linkExisting && selectedMasterId)) {
-        const prefix = data.type === 'fixed' ? 'AST' : 'OPS';
-        const randomNum = Math.floor(100000 + Math.random() * 900000);
-        data.uniqueId = `${prefix}-${randomNum}`;
-      }
+      // The master service generates the identity code atomically when a new master is registered.
 
       data.quantityInStock = validateOperationalOpeningStock(data.quantityInStock);
       if (!identityLocked && !operationalIssueUnit(data.unitOfIssue)) {
@@ -746,7 +741,7 @@ export const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void
                 </div>
                 <div className="space-y-1">
                   <label className="text-sm font-semibold text-zinc-700">Asset ID (Optional)</label>
-                  <input disabled={identityLocked} className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:bg-zinc-100 disabled:text-zinc-700" value={formData.uniqueId || ''} onChange={e => setFormData({...formData, uniqueId: e.target.value})} placeholder="Auto-generated if empty" />
+                  <input readOnly className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-100 border border-zinc-200 rounded-xl" value={formData.uniqueId || 'Generated automatically on registration'} />
                 </div>
               </>
             ) : (
@@ -761,7 +756,7 @@ export const InventoryItemModal: React.FC<{ isOpen: boolean; onClose: () => void
                 </div>
                 <div className="space-y-1">
                   <label className="text-sm font-semibold text-zinc-700">Item ID (Optional)</label>
-                  <input disabled={identityLocked} className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-50 border border-zinc-200 rounded-xl outline-none disabled:bg-zinc-100 disabled:text-zinc-700" value={formData.uniqueId || ''} onChange={e => setFormData({...formData, uniqueId: e.target.value})} placeholder="Auto-generated if empty" />
+                  <input readOnly className="w-full px-4 py-2.5 text-sm text-zinc-900 bg-zinc-100 border border-zinc-200 rounded-xl" value={formData.uniqueId || 'Generated automatically on registration'} />
                 </div>
               </>
             )}

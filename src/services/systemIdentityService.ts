@@ -48,3 +48,46 @@ export async function createBranchIdentity(
     return { id: branchRef.id, code };
   });
 }
+
+export const SCOPED_IDENTITY_KINDS = {
+  clients: { kind: 'patients', field: 'patient_code', prefix: 'PAT' },
+  prescribers: { kind: 'prescribers', field: 'prescriber_code', prefix: 'PRE' },
+  institutions: { kind: 'institutions', field: 'institution_code', prefix: 'INS' },
+  products: { kind: 'products', field: 'productId', prefix: 'PRD' },
+  staff: { kind: 'staff', field: 'staff_code', prefix: 'STF' }
+} as const;
+
+export type ScopedIdentityCollection = keyof typeof SCOPED_IDENTITY_KINDS;
+
+/** Register a new tenant-wide identity without accepting a caller-supplied business ID. */
+export async function createScopedIdentity(
+  collectionName: ScopedIdentityCollection,
+  tenantId: string,
+  data: Record<string, unknown>,
+  connection: Firestore = db,
+  documentId?: string
+): Promise<{ id: string; code: string }> {
+  if (!tenantId) throw new Error('Tenant is required to register an identity.');
+  if (documentId && collectionName !== 'staff') throw new Error('Only a staff record may use its existing Auth UID as document ID.');
+  const definition = SCOPED_IDENTITY_KINDS[collectionName];
+  const counterRef = doc(connection, 'identity_sequence_counters', `${tenantId}_${definition.kind}`);
+  const recordRef = documentId ? doc(connection, collectionName, documentId) : doc(collection(connection, collectionName));
+  return runTransaction(connection, async transaction => {
+    const current = await transaction.get(counterRef);
+    const existingRecord = documentId ? await transaction.get(recordRef) : null;
+    if (existingRecord?.exists()) throw new Error('A record already exists for this staff authentication identity.');
+    if (current.exists() && (current.data().tenantId !== tenantId || current.data().kind !== definition.kind)) {
+      throw new Error('Identity sequence has a different tenant or record type.');
+    }
+    const next = Number(current.data()?.lastSequence || 0) + 1;
+    const code = formatSystemIdentity(definition.prefix, next);
+    transaction.set(counterRef, { tenantId, kind: definition.kind, lastSequence: next, updatedAt: new Date().toISOString() });
+    const payload: Record<string, unknown> = { ...data, tenantId, [definition.field]: code };
+    if (collectionName === 'products') payload.sku = `SKU-${code.slice(4)}`;
+    // Retain compatibility for newly registered staff while preserving every
+    // existing historical employee_id during later staff-code backfills.
+    if (collectionName === 'staff' && !String(data.employee_id || '').trim()) payload.employee_id = code;
+    transaction.set(recordRef, payload);
+    return { id: recordRef.id, code };
+  });
+}

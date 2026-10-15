@@ -49,6 +49,13 @@ on:
       - 'src/pages/Settings.tsx'
       - 'src/pages/StockInOut.tsx'
       - 'scripts/operational-inventory*.mjs'
+      - 'scripts/system-identity-rules-emulator.mjs'
+      - 'scripts/identity-backfill-preview.mjs'
+      - 'scripts/audit-system-identities.mjs'
+      - 'scripts/initialize-identity-counters.mjs'
+      - 'scripts/martin-pharma-identity-staging-emulator.mjs'
+      - 'tests/system-identity-*.test.ts'
+      - 'src/services/systemIdentityService.ts'
       - 'scripts/migrate-operational-inventory-v2.mjs'
       - 'tests/operational-*.test.ts'
       - 'src/types.ts'
@@ -117,7 +124,7 @@ jobs:
         run: npx firebase emulators:exec --only firestore --project pharmhelm-pos-v2-revision-rbac "node scripts/pos-v2-revision-rbac-rules-emulator.mjs"
 
       - name: Enforce Operational Inventory class and branch boundaries in Firestore emulator
-        run: npx firebase emulators:exec --only firestore --project pharmhelm-operational-inventory-v2-rules "node scripts/operational-inventory-rules-emulator.mjs && node scripts/operational-manual-order-regression.mjs && node scripts/supplier-registry-rules-emulator.mjs" && touch /tmp/pharmhelm-firestore-emulator-passed
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-operational-inventory-v2-rules "node scripts/operational-inventory-rules-emulator.mjs && node scripts/operational-manual-order-regression.mjs && node scripts/supplier-registry-rules-emulator.mjs && node scripts/system-identity-rules-emulator.mjs && node scripts/martin-pharma-identity-staging-emulator.mjs" && touch /tmp/pharmhelm-firestore-emulator-passed
 
       - name: Authenticate for hosted Firestore rules compilation
         uses: google-github-actions/auth@v2
@@ -126,6 +133,23 @@ jobs:
 
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v3
+
+      - name: Audit live named Firestore identity codes (read only)
+        env:
+          GOOGLE_CLOUD_PROJECT: gen-lang-client-0911422817
+        run: |
+          set -euo pipefail
+          npm install --no-save --ignore-scripts firebase-admin
+          node scripts/audit-system-identities.mjs /tmp/pharmhelm-identity-audit-summary.json
+
+      - name: Upload identity audit summary (no patient or staff details)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pharmhelm-identity-audit-summary
+          path: /tmp/pharmhelm-identity-audit-summary.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Validate rules with the hosted Firebase compiler
         shell: bash
@@ -198,3 +222,12 @@ jobs:
           else
             echo "Hosted Firebase compiler accepted the minimal control and firestore.rules."
           fi
+      - name: Verify audited identity counter baselines (read only)
+        shell: bash
+        env:
+          GOOGLE_CLOUD_PROJECT: gen-lang-client-0911422817
+        run: |
+          set -euo pipefail
+          npm install --no-save --ignore-scripts firebase-admin
+          node scripts/initialize-identity-counters.mjs --require-ready
+
