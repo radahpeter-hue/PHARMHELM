@@ -39,4 +39,5 @@ test('employee number is not manually editable and product codes are not random'
   const product = source('src/components/inventory/ProductModal.tsx');
   assert.match(hr, /readOnly className=.*Generated automatically on registration/);
   assert.doesNotMatch(product, /productId: mirroredDraft.productId \|\|/);
+  assert.match(source('src/pages/Clients.tsx'), /item\.staff_code \|\| item\.employee_id/);
 });
