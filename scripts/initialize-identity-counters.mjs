@@ -65,7 +65,7 @@ async function main() {
     const ref=db.collection('identity_sequence_counters').doc(counterId);
     const snap=await ref.get();
     const existing=Number(snap.data()?.lastSequence||0);
-    if(snap.exists() && (snap.data().kind!==info.kind || (info.tenantId && snap.data().tenantId!==info.tenantId)))
+    if(snap.exists && (snap.data().kind!==info.kind || (info.tenantId && snap.data().tenantId!==info.tenantId)))
       throw new Error('Counter scope mismatch: refusing to initialize');
     if(existing>=info.lastSequence){unchanged++;continue;}
     planned++;
@@ -73,7 +73,7 @@ async function main() {
     const didWrite=await db.runTransaction(async tx=>{
       const current=await tx.get(ref);
       const value=Number(current.data()?.lastSequence||0);
-      if(current.exists() && (current.data().kind!==info.kind || (info.tenantId && current.data().tenantId!==info.tenantId)))throw new Error('Counter scope changed: aborting.');
+      if(current.exists && (current.data().kind!==info.kind || (info.tenantId && current.data().tenantId!==info.tenantId)))throw new Error('Counter scope changed: aborting.');
       if(value>=info.lastSequence)return false;
       const payload={kind:info.kind,lastSequence:info.lastSequence,updatedAt:new Date().toISOString(),
         ...(info.tenantId?{tenantId:info.tenantId}:{scope:'platform'})};
