@@ -46,6 +46,8 @@ export function safeIdentityCounterBaselines(records) {
 async function main() {
   if(process.env.FIRESTORE_EMULATOR_HOST)throw new Error('Named production Firestore only; emulator detected.');
   const apply=process.argv.includes('--apply');
+  const requireReady=process.argv.includes('--require-ready');
+  if (requireReady && apply) throw new Error('Read-only readiness check cannot also apply changes.');
   const {initializeApp,applicationDefault}=await import('firebase-admin/app');
   const {getFirestore}=await import('firebase-admin/firestore');
   const app=initializeApp({credential:applicationDefault(),projectId},'identity-counter-baseline');
@@ -82,7 +84,8 @@ async function main() {
     });
     if(didWrite)changed++;else unchanged++;
   }
-  console.log(JSON.stringify({mode:apply?'COUNTERS_ONLY_APPLIED':'READ_ONLY_PREVIEW',database:databaseId,
+  if (requireReady && planned > 0) throw new Error('Uninitialized identity counters remain: '+planned);
+  console.log(JSON.stringify({mode:apply?'COUNTERS_ONLY_APPLIED':requireReady?'COUNTERS_READY_VERIFIED':'READ_ONLY_PREVIEW',database:databaseId,
     distinctCounterBaselines:maxima.size,aboveCurrent:planned,countersUpdated:changed,unchanged},null,2));
 }
 if(process.argv[1] && import.meta.url===new URL('file://'+process.argv[1]).href){
