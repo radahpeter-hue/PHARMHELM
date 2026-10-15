@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
+import { build } from 'esbuild';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { doc, getDoc, runTransaction, setDoc } from 'firebase/firestore';
 
@@ -19,6 +20,8 @@ try {
     await setDoc(doc(db, 'products', 'product-a'), { tenantId, inventoryClass: 'SELLABLE', category: 'drug/medicine', productName: 'Medicine A', isOperational: false });
     await setDoc(doc(db, 'autoGenerateOrderRuns', 'run-good'), { tenantId, branchId, runId: 'run-good', status: 'READY' });
     await setDoc(doc(db, 'autoGenerateOrderRuns', 'run-denied'), { tenantId, branchId, runId: 'run-denied', status: 'READY' });
+    await setDoc(doc(db, 'autoGenerateOrderRuns', 'run-service'), { tenantId, branchId, runId: 'run-service', status: 'READY', configuration: { demandScope: 'branch', temporaryDemandMultiplier: 1 } });
+    await setDoc(doc(db, 'autoGenerateOrderLines', 'run-service-line'), { tenantId, runId: 'run-service', productId: 'product-a', productName: 'Medicine A', inventoryClass: 'SELLABLE', finalPurchasePacks: 2, finalInternalAllocation: 0, finalDonorAllocations: [], calculationInputs: { supplierId: 'supplier-a', costPricePerPack: 1000 } });
   });
 
   const submit = (db, runId) => runTransaction(db, async tx => {
@@ -69,7 +72,25 @@ try {
     }
     assert.equal((await getDoc(doc(db, 'autoGenerateOrderRuns', 'run-denied'))).data().status, 'READY');
   });
-  console.log('Auto-generated order Firestore atomicity and role boundary smoke tests passed.');
+  // Exercise the production submission service rather than only an equivalent transaction.
+  const outputFile = '.auto-order-production-emulator.mjs';
+  try {
+    await build({ stdin: {
+      contents: "export { submitOrderRun } from './src/services/orderSubmissionService';",
+      resolveDir: process.cwd()
+    }, bundle: true, platform: 'node', format: 'esm', packages: 'external', outfile: outputFile });
+    const { submitOrderRun } = await import('../' + outputFile);
+    const managerDb = roleDb('manager');
+    const first = await assertSucceeds(submitOrderRun('run-service', 'manager', 'manager@example.org', managerDb));
+    assert.equal(first.orderIds.length, 1);
+    assert.equal(first.transferIds.length, 0);
+    assert.equal((await getDoc(doc(managerDb, 'autoGenerateOrderRuns', 'run-service'))).data().status, 'SUBMITTED');
+    const retry = await assertSucceeds(submitOrderRun('run-service', 'manager', 'manager@example.org', managerDb));
+    assert.deepEqual(retry, first);
+  } finally {
+    rmSync(outputFile, { force: true });
+  }
+  console.log('Auto-generated production service, atomicity, idempotency and role boundary tests passed.');
 } finally {
   await env.cleanup();
 }
