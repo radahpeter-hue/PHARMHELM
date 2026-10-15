@@ -4,8 +4,6 @@
  * Requires authenticated service-account access to named Firestore.
  */
 import { definitions } from './audit-system-identities.mjs';
-import { initializeApp, applicationDefault } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
 
 const projectId = 'gen-lang-client-0911422817';
 const databaseId = 'ai-studio-f7d8654b-e089-425a-a506-38159afe1e75';
@@ -48,6 +46,8 @@ export function safeIdentityCounterBaselines(records) {
 async function main() {
   if(process.env.FIRESTORE_EMULATOR_HOST)throw new Error('Named production Firestore only; emulator detected.');
   const apply=process.argv.includes('--apply');
+  const {initializeApp,applicationDefault}=await import('firebase-admin/app');
+  const {getFirestore}=await import('firebase-admin/firestore');
   const app=initializeApp({credential:applicationDefault(),projectId},'identity-counter-baseline');
   const db=getFirestore(app,databaseId);
   const records={};
