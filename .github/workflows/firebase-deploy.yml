@@ -234,6 +234,24 @@ jobs:
             --field-config=field-path=tenantId,order=ascending \
             --field-config=field-path=branchId,order=ascending \
             --field-config=field-path=originalTimestamp,order=descending
+          # Pending Stock In movement recovery is strictly tenant + branch scoped.
+          set +e
+          stockin_index_output=$(gcloud firestore indexes composite create \
+            --project="$FIREBASE_PROJECT_ID" \
+            --database="$FIRESTORE_DATABASE_ID" \
+            --collection-group=sellable_receipt_movement_outbox \
+            --query-scope=collection \
+            --field-config=field-path=tenantId,order=ascending \
+            --field-config=field-path=branchId,order=ascending \
+            --async --quiet 2>&1)
+          stockin_index_status=$?
+          set -e
+          echo "$stockin_index_output"
+          if [ "$stockin_index_status" -ne 0 ] && ! echo "$stockin_index_output" | grep -Eqi 'already exists|ALREADY_EXISTS'; then
+            echo "::error title=Stock In reconciliation index failed::Deployment stopped before Hosting."
+            exit "$stockin_index_status"
+          fi
+
 
       - name: Verify revision-ledger indexes are ready
         timeout-minutes: 15
