@@ -20,6 +20,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { processProcurementGrn } from '../services/procurementFinanceService';
 import { dispatchPreparedSellableGrn } from '../services/grnDispatchService';
+import { grnReceivedDateKey } from '../utils/grnDates';
 import { processOperationalGrn } from '../services/operationalGrnService';
 import { confirmProcurementApproval } from '../services/procurementApprovalService';
 import type { ApprovalAddition, ApprovalQuantityEdit } from '../services/procurementApprovalPolicy';
@@ -2111,14 +2112,6 @@ const FinancialApprovalModal: React.FC<{
   );
 };
 
-export function grnReceivedDateKey(value: unknown): string {
-  if (!value) return '';
-  const raw = value as { toDate?: () => Date; seconds?: number };
-  const date = typeof raw.toDate === 'function' ? raw.toDate()
-    : typeof raw.seconds === 'number' ? new Date(raw.seconds * 1000)
-      : value instanceof Date ? value : new Date(String(value));
-  return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : '';
-}
 
 const GRNTab: React.FC = () => {
   const { profile } = useAuth();
