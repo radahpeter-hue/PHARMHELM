@@ -3257,6 +3257,7 @@ const DispatchTab: React.FC = () => {
   const [dispatchingOperationalOrderId, setDispatchingOperationalOrderId] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
   const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
+  const [detailsOrder, setDetailsOrder] = useState<StockOrder | null>(null);
 
   useEffect(() => {
     if (!profile?.tenantId) {
@@ -3458,7 +3459,7 @@ const DispatchTab: React.FC = () => {
         </div>
         <div className="divide-y divide-zinc-100">
           {operationalOrders.map(order => <div key={order.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div><p className="font-bold text-zinc-900">{order.order_number}</p><p className="text-xs text-zinc-500">{order.requesting_branch_name || order.requesting_branch_id} · Operational Inventory</p></div>
+            <div><button type="button" onClick={() => setDetailsOrder(order)} className="font-bold text-left text-emerald-800 underline hover:text-emerald-950">{order.order_number}</button><p className="text-xs text-zinc-500">{order.requesting_branch_name || order.requesting_branch_id} · Operational Inventory</p></div>
             <button onClick={() => handleOperationalDispatch(order)} disabled={dispatchingOperationalOrderId !== null} className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-black disabled:opacity-50">
               {dispatchingOperationalOrderId === order.id ? 'Dispatching…' : 'Dispatch Operational Stock'}
             </button>
@@ -3485,7 +3486,7 @@ const DispatchTab: React.FC = () => {
         <div className="divide-y divide-zinc-100">
           {preparedSellableOrders.map(order => <div key={order.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="font-bold text-zinc-900">{order.order_number}</p>
+              <button type="button" onClick={() => setDetailsOrder(order)} className="font-bold text-left text-emerald-800 underline hover:text-emerald-950">{order.order_number}</button>
               <p className="text-xs text-zinc-700">{order.requesting_branch_name || order.requesting_branch_id} · GRN prepared for dispatch</p>
             </div>
             <button type="button" onClick={() => handlePreparedDispatch(order)} disabled={dispatchingPreparedId !== null}
@@ -3509,7 +3510,7 @@ const DispatchTab: React.FC = () => {
         <tbody className="divide-y divide-zinc-100">
           {approvedOrders.map((order) => (
             <tr key={order.id} className="hover:bg-zinc-50/50 transition-colors">
-              <td className="px-6 py-4 font-bold text-zinc-900">{order.order_number}</td>
+              <td className="px-6 py-4 font-bold text-emerald-800"><button type="button" className="underline" onClick={() => setDetailsOrder(order)}>{order.order_number}</button></td>
               <td className="px-6 py-4 text-sm text-zinc-600">{order.requesting_branch_name || order.requesting_branch_id}</td>
               <td className="px-6 py-4 text-sm capitalize text-zinc-600">{order.order_type}</td>
               <td className="px-6 py-4 text-sm text-zinc-600">{order.category.replace(/_/g, ' ')}</td>
@@ -3564,6 +3565,7 @@ const DispatchTab: React.FC = () => {
         </tbody>
       </table>
 
+      {detailsOrder && <DispatchOrderDetails order={detailsOrder} onClose={() => setDetailsOrder(null)} />}
       {isDispatchModalOpen && selectedOrder && (
         <DispatchModal 
           order={selectedOrder}
@@ -3574,6 +3576,33 @@ const DispatchTab: React.FC = () => {
       </div>
     </div>
   );
+};
+
+const DispatchOrderDetails: React.FC<{ order: StockOrder; onClose: () => void }> = ({ order, onClose }) => {
+  const [lines, setLines] = useState<StockOrderLine[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [
+      { field: 'tenantId', operator: '==', value: order.tenantId },
+      { field: 'order_id', operator: '==', value: order.id }
+    ]).then(rows => { if (active) setLines(rows); })
+      .catch(() => toast.error('Unable to load the order item details.'))
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [order.id, order.tenantId]);
+  return <div className="fixed inset-0 z-50 bg-black/50 p-4 flex items-center justify-center">
+    <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 space-y-4">
+      <div className="flex justify-between gap-4">
+        <div><h3 className="text-xl font-bold">{order.order_number}</h3>
+          <p className="text-sm text-zinc-500">{isOperationalInventoryRecord(order) ? 'Operational' : 'Sellable'} Inventory • {order.requesting_branch_name || order.requesting_branch_id} • {order.status}</p></div>
+        <button type="button" onClick={onClose} className="px-3 py-2 rounded-lg border">Close</button>
+      </div>
+      {loading ? <p>Loading item details…</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-2">Item</th><th className="p-2">Ordered</th><th className="p-2">Received</th><th className="p-2">Batch</th><th className="p-2">Expiry</th></tr></thead>
+        <tbody>{lines.map(line => <tr key={line.id} className="border-b"><td className="p-2">{line.product_name || line.product_id}</td><td className="p-2">{line.qty_ordered}</td><td className="p-2">{line.qty_received ?? '—'}</td><td className="p-2">{line.batch_number || '—'}</td><td className="p-2">{line.expiry_date || '—'}</td></tr>)}</tbody>
+      </table>{lines.length === 0 && <p className="p-3 text-zinc-500">No linked order lines found.</p>}</div>}
+    </div>
+  </div>;
 };
 
 const DispatchModal: React.FC<{ 
