@@ -1145,7 +1145,33 @@ service cloud.firestore {
     }
 
     match /management_expenses/{expenseId} {
+      // Procurement can only read deterministic GRN cash drafts for atomic
+      // collision checks. Ordinary management expenses remain Finance/HR only.
+      allow get: if isProcurement()
+        && expenseId.matches('management_payment_draft_(grn_|op_grn_).*')
+        && (resource == null || isTenantMember(resource.data.tenantId));
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (canViewFinance() || isHR());
+      // A cash GRN creates a payment DRAFT, never a disbursement.
+      // The linked completed GRN and invoice must exist after the same commit.
+      allow create: if isProcurement()
+        && isTenantMember(request.resource.data.tenantId)
+        && expenseId == 'management_payment_draft_' + request.resource.data.grnId
+        && request.resource.data.source == 'procurement_cash_grn'
+        && request.resource.data.status == 'draft'
+        && request.resource.data.paymentStatus == 'pending_payment'
+        && request.resource.data.excludeFromOpexRollup == true
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.amount == request.resource.data.amount_ugx
+        && request.resource.data.amount > 0
+        && existsAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId))
+        && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId)).data.tenantId == request.resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId)).data.payment_type == 'cash'
+        && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId)).data.payment_status == 'pending_payment'
+        && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId)).data.invoice_id == request.resource.data.invoiceId
+        && existsAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId))
+        && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.tenantId == request.resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.invoiceValue == request.resource.data.amount
+        && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.paymentStatus == 'Pending Payment';
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isFinance() || isHR());
       allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && isFinance();
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
@@ -2225,6 +2251,27 @@ service cloud.firestore {
         && isTenantMember(request.resource.data.tenantId)
         && (!isOperationalTransfer(request.resource.data) || isOperationalInventoryEnabled(request.resource.data.tenantId))
         && hasValidTransferClass(request.resource.data, true);
+      // Only the canonical GRN dispatch action can advance a prepared transfer.
+      allow update: if isProcurement()
+        && isTenantMember(resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && resource.data.inventoryClass == 'SELLABLE'
+        && resource.data.status == 'ready_for_dispatch'
+        && request.resource.data.status == 'dispatched'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'dispatchedAt', 'dispatched_at', 'dispatched_by',
+          'dispatched_by_name', 'updatedAt'
+        ])
+        && request.resource.data.dispatched_by == request.auth.uid
+        && resource.data.grn_id is string
+        && resource.data.order_id is string
+        && existsAfter(/databases/$(database)/documents/grn_records/$(resource.data.grn_id))
+        && getAfter(/databases/$(database)/documents/grn_records/$(resource.data.grn_id)).data.tenantId == resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/grn_records/$(resource.data.grn_id)).data.transfer_id == invoiceId
+        && getAfter(/databases/$(database)/documents/grn_records/$(resource.data.grn_id)).data.dispatch_status == 'dispatched'
+        && existsAfter(/databases/$(database)/documents/stock_orders/$(resource.data.order_id))
+        && getAfter(/databases/$(database)/documents/stock_orders/$(resource.data.order_id)).data.tenantId == resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/stock_orders/$(resource.data.order_id)).data.status == 'dispatched';
       allow update: if isStockOperator()
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
@@ -2635,6 +2682,37 @@ service cloud.firestore {
       allow delete: if isHR() && isTenantMember(resource.data.tenantId);
     }
 
+    // Stock In physical receipt and its movement intent are committed together.
+    // Branch operators can only create pending intents; analytics replay is
+    // a restricted pending -> processed transition for the same tenant/branch.
+    match /sellable_receipt_movement_outbox/{intentId} {
+      allow get: if isStockOperator() &&
+        (resource == null || (isTenantMember(resource.data.tenantId) && isAssignedToBranch(resource.data.branchId)));
+      allow list: if isStockOperator() && isTenantMember(resource.data.tenantId)
+        && isAssignedToBranch(resource.data.branchId);
+      allow create: if isStockOperator() && isInventoryOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && isAssignedToBranch(request.resource.data.branchId)
+        && request.resource.data.status == 'pending'
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.quantityBaseUnits is int
+        && request.resource.data.quantityBaseUnits > 0
+        && request.resource.data.transferId is string
+        && request.resource.data.lineId is string
+        && intentId == 'sellable_stockin_' + request.resource.data.transferId + '_' + request.resource.data.lineId
+        && existsAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId))
+        && getAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId)).data.tenantId == request.resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId)).data.destination_branch_id == request.resource.data.branchId
+        && getAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId)).data.status in ['fully_accepted', 'queried'];
+      allow update: if isStockOperator() && isInventoryOperator()
+        && isTenantMember(resource.data.tenantId)
+        && isAssignedToBranch(resource.data.branchId)
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'processed'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'processedAt']);
+      allow delete: if false;
+    }
+
     match /inventoryMovementEvents/{eventId} {
       allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
@@ -2731,10 +2809,10 @@ service cloud.firestore {
 
     // Generic rule for all other collections to enforce tenant isolation
     match /{collectionName}/{docId} {
-      allow get: if !(collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if !(collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if !(collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
-      allow update: if !(collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
+      allow get: if !(collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if !(collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create: if !(collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(request.resource.data.tenantId);
+      allow update: if !(collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox']) && !isProtectedFinanceCollection(collectionName) && isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
         && (collectionName != 'staff' || !('employee_id' in resource.data)
           || request.resource.data.employee_id == resource.data.employee_id)
         && (collectionName != 'staff' || !('staff_code' in resource.data)
@@ -2745,7 +2823,7 @@ service cloud.firestore {
           || request.resource.data.prescriber_code == resource.data.prescriber_code)
         && (collectionName != 'institutions' || !('institution_code' in resource.data)
           || request.resource.data.institution_code == resource.data.institution_code);
-      allow delete: if !(collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit']) && !isProtectedFinanceCollection(collectionName) && isAdmin() && isTenantMember(resource.data.tenantId);
+      allow delete: if !(collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','product_batches','products','sales','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','role_realms_of_operation','hr_roles','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox']) && !isProtectedFinanceCollection(collectionName) && isAdmin() && isTenantMember(resource.data.tenantId);
     }
   }
 }

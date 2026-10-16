@@ -5,6 +5,7 @@ import { db } from '../firebase';
 import { OperationalInventory, OperationalInventoryMaster, StockOrder, StockOrderLine } from '../types';
 import { GrnLineEdit } from './procurementFinanceService';
 import { planOperationalGrnFinanceEvents } from './operationalGrnFinancePolicy';
+import { planCentralGrnFinance, type SupplierPaymentTerms } from './centralGrnFinanceContract';
 
 export interface ProcessOperationalGrnInput {
   tenantId: string;
@@ -13,6 +14,7 @@ export interface ProcessOperationalGrnInput {
   editedLines: Record<string, GrnLineEdit & { unitCostUGX?: number }>;
   invoiceNumber: string;
   invoiceDate: string;
+  paymentType: SupplierPaymentTerms;
   inputVat: number;
   whtAmount: number;
   notes: string;
@@ -46,6 +48,7 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
   const tenantId = input.tenantId.trim();
   const invoiceNumber = input.invoiceNumber.trim();
   const invoiceTimestamp = validInvoiceDate(input.invoiceDate);
+  if (!['cash', 'credit'].includes(input.paymentType)) throw new Error('Choose Cash or Credit at Central Operational GRN.');
   if (!tenantId || !input.order?.id || !invoiceNumber || !input.user.uid) {
     throw new Error('Tenant, Operational order, supplier invoice and receiving user are required.');
   }
@@ -91,6 +94,7 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
     supplierId,
     invoiceNumber,
     invoiceDate: input.invoiceDate,
+    paymentType: input.paymentType,
     items: receivedInput.map(row => ({ lineId: row.line.id, qty: row.quantity, unitCost: row.cost })).sort((a, b) => a.lineId.localeCompare(b.lineId))
   }));
   const grnId = `op_grn_${hash(`${tenantId}|${input.order.id}|${supplierId}|${invoiceNumber.toLowerCase()}`)}`;
@@ -108,9 +112,14 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
   const grnLineRefs = receivingLines.map(row => doc(connection, 'operational_grn_lines', `${grnId}_${hash(row.line.id)}`));
   const financeEventIds = ['CONSUMABLE_OPERATIONAL', 'FIXED_ASSET'].map(type => `opfin_${hash(`${grnId}|${type}`)}`);
   const financeEventRefs = financeEventIds.map(id => doc(connection, 'operational_finance_events', id));
+  const financeInvoiceId = `procurement_invoice_${grnId}`;
+  const invoiceRef = doc(connection, 'invoices', financeInvoiceId);
+  const registerRef = doc(connection, 'procurement_invoices', `procurement_register_${grnId}`);
+  const creditRef = doc(connection, 'creditLedger', `supplier_credit_${grnId}`);
+  const cashDraftRef = doc(connection, 'management_expenses', `management_payment_draft_${grnId}`);
 
   return runTransaction(connection, async transaction => {
-    const [settingsSnapshot, orderSnapshot, grnSnapshot, lineSnapshots, sourceSnapshots, masterSnapshots, movementSnapshots, grnLineSnapshots, financeEventSnapshots] = await Promise.all([
+    const [settingsSnapshot, orderSnapshot, grnSnapshot, lineSnapshots, sourceSnapshots, masterSnapshots, movementSnapshots, grnLineSnapshots, financeEventSnapshots, invoiceSnap, registerSnap, creditSnap, cashDraftSnap] = await Promise.all([
       transaction.get(settingsRef),
       transaction.get(orderRef),
       transaction.get(grnRef),
@@ -119,7 +128,8 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
       Promise.all(masterRefs.map(ref => transaction.get(ref))),
       Promise.all(movementRefs.map(ref => transaction.get(ref))),
       Promise.all(grnLineRefs.map(ref => transaction.get(ref))),
-      Promise.all(financeEventRefs.map(ref => transaction.get(ref)))
+      Promise.all(financeEventRefs.map(ref => transaction.get(ref))),
+      transaction.get(invoiceRef), transaction.get(registerRef), transaction.get(creditRef), transaction.get(cashDraftRef)
     ]);
 
     const settings = settingsSnapshot.data();
@@ -139,6 +149,9 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
     }
     if (!['approved', 'fully_received'].includes(orderSnapshot.data().status)) {
       throw new Error('The Operational order must be approved before receiving a supplier delivery.');
+    }
+    if (invoiceSnap.exists() || registerSnap.exists() || creditSnap.exists() || cashDraftSnap.exists()) {
+      throw new Error('Operational supplier invoice posting already exists without matching GRN. Reconcile before retry.');
     }
     if (movementSnapshots.some(snapshot => snapshot.exists()) || grnLineSnapshots.some(snapshot => snapshot.exists())) {
       throw new Error('An Operational GRN movement already exists without its parent GRN. Reconcile before retrying.');
@@ -263,6 +276,67 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
     }
 
     if (receivedLines.length === 0) throw new Error('At least one Operational line must be received.');
+    const financePlan = planCentralGrnFinance({
+      tenantId, orderId: input.order.id, grnId, invoiceRef: invoiceNumber,
+      supplierId, inventoryClass: 'OPERATIONAL', paymentType: input.paymentType,
+      lines: receivedLines.map(line => ({
+        orderLineId: line.source_order_line_id, supplierId,
+        quantity: line.qty_received, unitCostUGX: line.unit_cost_ugx,
+        operationalType: line.operationalType
+      }))
+    });
+    if (financePlan.invoiceAmountUGX !== totalValueUGX) {
+      throw new Error('Operational GRN invoice total is inconsistent with received quantities.');
+    }
+    const invoiceData = {
+      tenantId, inventoryClass: 'OPERATIONAL', invoiceId: financeInvoiceId,
+      grnId, grnRef: grnNumber, invoiceRef: invoiceNumber,
+      supplierInvoiceNumber: invoiceNumber, invoiceDate: invoiceTimestamp,
+      supplierId, supplierName, branchId: input.order.requesting_branch_id,
+      branchName: input.order.requesting_branch_name || 'Requesting Branch',
+      invoiceValue: totalValueUGX, paymentType: input.paymentType,
+      paymentStatus: financePlan.paymentStatus, paidAmountUGX: 0,
+      creditBalance: totalValueUGX, status: 'Unpaid',
+      amount: totalValueUGX, total_amount_ugx: totalValueUGX,
+      paid_amount_ugx: 0, branch_id: input.order.requesting_branch_id,
+      supplier_id: supplierId, supplier_name: supplierName,
+      invoice_number: invoiceNumber, grn_number: grnNumber,
+      invoice_date: input.invoiceDate, created_at: now.toDate().toISOString(),
+      items: receivedLines, type: 'payable',
+      accountingClassification: financePlan.expenseRecognition,
+      createdAt: now, updatedAt: now
+    };
+    transaction.set(invoiceRef, invoiceData);
+    transaction.set(registerRef, invoiceData);
+    if (input.paymentType === 'credit') {
+      transaction.set(creditRef, {
+        tenantId, inventoryClass: 'OPERATIONAL', invoiceId: financeInvoiceId,
+        invoiceRef: invoiceNumber, grnId, grnRef: grnNumber,
+        supplierId, supplierName, branchId: input.order.requesting_branch_id,
+        branchName: input.order.requesting_branch_name || 'Requesting Branch',
+        originalCreditAmount: totalValueUGX, remainingCreditBalance: totalValueUGX,
+        balance: totalValueUGX, amount: totalValueUGX,
+        status: 'outstanding', creditAccruedAt: invoiceTimestamp,
+        createdAt: now, updatedAt: now, paymentHistoryIds: []
+      });
+    } else {
+      transaction.set(cashDraftRef, {
+        tenantId, source: 'procurement_cash_grn', sourceType: 'procurement',
+        sourceRef: grnId, sourceRefId: grnId, grnId,
+        invoiceId: financeInvoiceId, invoiceRef: invoiceNumber,
+        supplierId, supplierName, branchId: input.order.requesting_branch_id,
+        branch_id: input.order.requesting_branch_id,
+        inventoryClass: 'OPERATIONAL', category: 'Procurement Cash Invoice',
+        department: 'HQ',
+        description: `Operational supplier invoice awaiting Finance settlement: ${invoiceNumber}`,
+        amount: totalValueUGX, amount_ugx: totalValueUGX, originalAmount: totalValueUGX,
+        expense_date: input.invoiceDate, payment_method: 'Management Petty Cash',
+        status: 'draft', paymentStatus: 'pending_payment',
+        excludeFromOpexRollup: true, accountingRecognitionSource: 'OPERATIONAL_GRN',
+        createdBy: input.user.uid, logged_by: input.user.name,
+        createdAt: now, created_at: now.toDate().toISOString()
+      });
+    }
     const operationalTypes = new Set(receivedLines.map(line => line.operationalType));
     transaction.set(grnRef, {
       tenantId, id: grnId, inventoryClass: 'OPERATIONAL',
@@ -271,8 +345,11 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
       supplier_id: supplierId, supplier_name: supplierName, invoice_number: invoiceNumber,
       invoice_date: input.invoiceDate, receivedAt: now.toDate().toISOString(), receivedBy: input.user.uid,
       destination_branch_id: 'HQ', destination_store_id: 'HQ_OPERATIONAL', status: 'completed',
-      grn_status: 'completed', financial_posting_status: 'event_created',
-      payment_status: 'pending', total_value_ugx: totalValueUGX, transfer_value_ugx: 0,
+      grn_status: 'completed', financial_posting_status: 'event_created', invoice_posting_status: 'posted',
+      invoice_id: financeInvoiceId, procurement_invoice_id: registerRef.id,
+      credit_ledger_id: input.paymentType === 'credit' ? creditRef.id : null,
+      payment_type: input.paymentType,
+      payment_status: input.paymentType === 'cash' ? 'pending_payment' : 'outstanding', total_value_ugx: totalValueUGX, transfer_value_ugx: 0,
       inputVat: input.inputVat, whtAmount: input.whtAmount, itemCount: receivedLines.length,
       notes: input.notes, idempotencyFingerprint: fingerprint, createdAt: now, updatedAt: now
     });

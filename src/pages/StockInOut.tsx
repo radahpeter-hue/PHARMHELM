@@ -26,8 +26,9 @@ import { hasAnyRole } from '../utils/roles';
 import { firestoreService } from '../services/firestore';
 import { Product, StockOrder, StockOrderLine, TransferInvoice, Branch, ProductBatch, TransferInvoiceLine, Sale, OperationalInventory, OperationalTransfer, OperationalTransferLine } from '../types';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, runTransaction, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, runTransaction, writeBatch, increment } from 'firebase/firestore';
 import { logMovementAndAggregateInTx, getBranchProductBatchRefs } from '../services/consumptionService';
+import { replaySellableReceiptMovement, reconcilePendingSellableReceipts, sellableReceiptMovementId } from '../services/sellableReceiptRecoveryService';
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -1463,6 +1464,15 @@ const StockInWorkspace: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   );
 };
 
+/** Legacy transfers without an explicit inventoryClass remain Sellable only when
+ * their order is not marked Operational. Operational transfers live in a separate ledger.
+ * The Sellable UI must never render an explicit Operational transfer.
+ */
+export function isSellableStockInInvoice(invoice: Pick<TransferInvoice, 'inventoryClass' | 'transfer_type' | 'status'>): boolean {
+  return invoice.inventoryClass !== 'OPERATIONAL'
+    && invoice.status !== 'ready_for_dispatch';
+}
+
 const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const { profile, activeBranchId, hasPermission } = useAuth();
   const [invoices, setInvoices] = useState<TransferInvoice[]>([]);
@@ -1479,6 +1489,12 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const [invoiceLinesLoading, setInvoiceLinesLoading] = useState(false);
   const [invoiceLinesError, setInvoiceLinesError] = useState<string | null>(null);
   const canOperateReception = hasPermission('stock', 'operate') && hasPermission('inventory', 'operate');
+  useEffect(() => {
+    if (!profile?.tenantId || !activeBranchId || !canOperateReception) return;
+    reconcilePendingSellableReceipts(profile.tenantId, activeBranchId)
+      .catch(error => console.error('Pending Stock In analytics recovery:', error));
+  }, [profile?.tenantId, activeBranchId, canOperateReception]);
+
 
   useEffect(() => {
     if (profile?.tenantId) {
@@ -1622,10 +1638,11 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         profile.tenantId,
         [where('destination_branch_id', '==', activeBranchId)],
         (filtered) => {
+        const sellableInvoices = filtered.filter(isSellableStockInInvoice);
         if (showHistory) {
-          setInvoices(filtered.filter(i => i.status === 'fully_accepted' || i.status === 'queried'));
+          setInvoices(sellableInvoices.filter(i => i.status === 'fully_accepted' || i.status === 'queried'));
         } else {
-          setInvoices(filtered.filter(i => i.status !== 'fully_accepted' && i.status !== 'queried'));
+          setInvoices(sellableInvoices.filter(i => ['dispatched', 'receiving'].includes(i.status)));
         }
         }
       );
@@ -1675,6 +1692,14 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       toast.error('This invoice is not assigned to the active branch.');
       return;
     }
+    if (!isSellableStockInInvoice(invoice)) {
+      toast.error('Operational stock must be received in Operational Stock In, not Sellable Stock In.');
+      return;
+    }
+    if (!['dispatched', 'fully_accepted', 'queried'].includes(invoice.status)) {
+      toast.error('Only physically dispatched Sellable transfers can be opened for reception.');
+      return;
+    }
 
     setSelectedInvoice(invoice);
     setInvoiceLines([]);
@@ -1721,18 +1746,42 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       toast.error('This invoice is not assigned to the active branch.');
       return;
     }
+    if (!isSellableStockInInvoice(selectedInvoice)) {
+      toast.error('Operational transfers cannot be posted through Sellable Stock In.');
+      return;
+    }
+    if (invoiceLines.some(line => line.inventoryClass === 'OPERATIONAL')) {
+      toast.error('An Operational product was found in this Sellable invoice. Reception is blocked.');
+      return;
+    }
+    if (invoiceLines.some(line => {
+      const values = receivingData[line.id];
+      return !values || !Number.isSafeInteger(values.accepted) || !Number.isSafeInteger(values.queried)
+        || values.accepted < 0 || values.queried < 0
+        || values.accepted + values.queried !== line.qty_dispatched;
+    })) {
+      toast.error('All dispatched quantities must be accounted for as accepted or queried.');
+      return;
+    }
 
     const selectedInvoiceRef = doc(db, 'transfer_invoices', selectedInvoice.id);
     let receptionClaimed = false;
+    let receptionCommitted = false;
     try {
       await runTransaction(db, async transaction => {
         const current = await transaction.get(selectedInvoiceRef);
         if (!current.exists()) throw new Error('The dispatch no longer exists.');
+        if (current.data().tenantId !== profile.tenantId ||
+            current.data().destination_branch_id !== activeBranchId ||
+            current.data().inventoryClass === 'OPERATIONAL') {
+          throw new Error('Sellable reception must match the active tenant, branch and inventory class.');
+        }
         const status = current.data().status;
         if (status === 'fully_accepted' || status === 'queried' || status === 'received') {
           throw new Error('This dispatch has already been received. No stock was added again.');
         }
         if (status === 'receiving') throw new Error('This dispatch is already being received by another session.');
+        if (status !== 'dispatched') throw new Error('This transfer has not been physically dispatched. Reception cannot begin.');
         transaction.update(selectedInvoiceRef, {
           status: 'receiving',
           reception_claimed_by: profile.uid,
@@ -1769,16 +1818,6 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
           productMap[line.product_id as string] = productResults[index];
         }
       });
-
-      const uniqueProductIds = (Array.from(new Set(invoiceLines.map(line => String(line.product_id)))) as string[]);
-      const branchBatchRefsMap: Record<string, any> = {};
-      for (const pId of uniqueProductIds) {
-        branchBatchRefsMap[pId] = await getBranchProductBatchRefs(
-          profile.tenantId,
-          activeBranchId,
-          pId
-        );
-      }
 
       const batch = writeBatch(db);
 
@@ -1836,11 +1875,16 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
           if (existingBatch) {
             const batchRef = doc(db, 'product_batches', existingBatch.id);
             batch.update(batchRef, {
-              quantity: (existingBatch.quantity || 0) + totalUnitsAccepted,
+              quantity: increment(totalUnitsAccepted),
               lastUpdated: new Date().toISOString()
             });
           } else {
-            const newBatchRef = doc(collection(db, 'product_batches'));
+            // Stable identity: concurrent first receipts for one product batch
+            // must increment the same document rather than create duplicates.
+            const newBatchId = ['stockin', profile.tenantId, activeBranchId, line.product_id,
+              line.batch_number || 'N/A', line.expiry_date || '']
+              .map(value => encodeURIComponent(String(value))).join('_');
+            const newBatchRef = doc(db, 'product_batches', newBatchId);
             const purchasePricePerUnit = (line.unit_cost_ugx || 0) / unitsPerPack;
             const sellingPricePerUnit = product?.sellingPricePerUnit || (purchasePricePerUnit * 1.3);
             
@@ -1856,21 +1900,31 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               batch_status: 'active',
               lastUpdated: new Date().toISOString()
             };
-            batch.set(newBatchRef, { ...newBatch, createdAt: new Date().toISOString() });
+            // merge + increment preserves simultaneous first receipts of the
+            // same canonical batch even when neither caller saw it in a query.
+            batch.set(newBatchRef, {
+              ...newBatch, quantity: increment(totalUnitsAccepted),
+              createdAt: new Date().toISOString()
+            }, { merge: true });
           }
 
           if (product) {
             const productRef = doc(db, 'products', line.product_id);
             batch.update(productRef, {
-              quantityInStock: (product.quantityInStock || 0) + totalUnitsAccepted,
+              quantityInStock: increment(totalUnitsAccepted),
               updatedAt: new Date().toISOString()
             });
           }
 
-          successfulMovements.push({
-            line,
-            totalUnitsAccepted
+          const movementId = sellableReceiptMovementId(selectedInvoice.id, line.id);
+          batch.set(doc(db, 'sellable_receipt_movement_outbox', movementId), {
+            tenantId: profile.tenantId, branchId: activeBranchId,
+            productId: line.product_id, transferId: selectedInvoice.id,
+            lineId: line.id, quantityBaseUnits: totalUnitsAccepted,
+            actorId: profile.uid, effectiveAt: new Date().toISOString(),
+            status: 'pending', createdAt: new Date().toISOString()
           });
+          successfulMovements.push(movementId);
         }
       }
 
@@ -1892,41 +1946,27 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       }
 
       await batch.commit();
+      receptionCommitted = true;
 
-      for (const movement of successfulMovements) {
-        const { line, totalUnitsAccepted } = movement;
-        const batchRefs = branchBatchRefsMap[line.product_id] || [];
-        
+      let analyticsOutstanding = false;
+      for (const movementId of successfulMovements) {
         try {
-          await firestoreService.runTransaction(async (transaction) => {
-            await logMovementAndAggregateInTx(transaction, batchRefs, {
-              tenantId: profile.tenantId,
-              branchId: activeBranchId,
-              productId: line.product_id,
-              eventType: 'TRANSFER_IN',
-              quantityDeltaBaseUnits: totalUnitsAccepted,
-              consumptionDeltaBaseUnits: 0,
-              isExceptional: false,
-              exceptionalReason: null,
-              sourceCollection: 'transfer_invoices',
-              sourceDocumentId: selectedInvoice.id,
-              sourceLineId: line.id,
-              reversalOfEventId: null,
-              createdBy: profile.uid || 'system',
-              effectiveAt: new Date(),
-              timezone: 'Africa/Kampala'
-            });
-          });
+          await replaySellableReceiptMovement(movementId, profile.tenantId, activeBranchId);
         } catch (logErr) {
-          console.error("Failed to log movement for product", line.product_id, logErr);
+          analyticsOutstanding = true;
+          console.error('Receipt recorded; movement reconciliation will retry on next Stock In visit.', movementId, logErr);
         }
+      }
+      if (analyticsOutstanding) {
+        toast.warning('Stock received successfully. Some analytics records will automatically retry on the next Stock In visit.');
       }
 
       toast.success("Stock verified and inventory updated.");
       setSelectedInvoice(null);
     } catch (error: any) {
       console.error(error);
-      if (receptionClaimed) {
+      // Never reopen an already committed receipt when a later analytics write fails.
+      if (receptionClaimed && !receptionCommitted) {
         try {
           await updateDoc(selectedInvoiceRef, {
             status: 'dispatched',

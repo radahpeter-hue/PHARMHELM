@@ -1117,7 +1117,7 @@ export interface StockOrder {
   order_type: 'monthly' | 'weekly' | 'emergency';
   category: 'sellable_non_cosmetic' | 'sellable_cosmetic' | 'non_sellable';
   generation_method: 'manual' | 'auto_generated';
-  status: 'draft' | 'submitted' | 'in_triage' | 'sourcing' | 'awaiting_finance_approval' | 'approved' | 'dispatched' | 'fully_received' | 'closed';
+  status: 'draft' | 'submitted' | 'in_triage' | 'sourcing' | 'awaiting_finance_approval' | 'approved' | 'ready_for_dispatch' | 'dispatched' | 'fully_received' | 'closed';
   total_order_value_ugx: number;
   is_emergency: boolean;
   created_at: string;
@@ -1146,7 +1146,7 @@ export interface StockOrderLine {
   unit_cost_ugx: number;
   quoted_price_ugx?: number;
   line_total_ugx: number;
-  line_status: 'pending' | 'sourcing' | 'unsupplied' | 'awaiting_finance_approval' | 'approved' | 'dispatched' | 'received' | 'queried' | 'deferred' | 'rejected';
+  line_status: 'pending' | 'sourcing' | 'unsupplied' | 'awaiting_finance_approval' | 'approved' | 'ready_for_dispatch' | 'dispatched' | 'received' | 'queried' | 'deferred' | 'rejected';
   supplier_id?: string;
   supplier_name?: string;
   supplier_type?: 'external' | 'internal_hq' | 'internal_warehouse';
@@ -1241,10 +1241,10 @@ export interface TransferInvoice {
   destination_branch_id: string;
   destination_branch_name?: string;
   transfer_type: 'branch_to_branch' | 'central_to_branch' | 'branch_to_central' | 'query_return' | 'procurement_grn';
-  status: 'draft' | 'dispatched' | 'receiving' | 'received' | 'cancelled' | 'fully_accepted' | 'queried';
-  dispatched_by: string;
+  status: 'draft' | 'ready_for_dispatch' | 'dispatched' | 'receiving' | 'received' | 'cancelled' | 'fully_accepted' | 'queried';
+  dispatched_by?: string;
   dispatched_by_name?: string;
-  dispatched_at: string;
+  dispatched_at?: string;
   received_by?: string;
   received_by_name?: string;
   received_at?: string;
@@ -1265,7 +1265,7 @@ export interface TransferInvoiceLine {
   qty_accepted?: number;
   qty_queried?: number;
   query_reason?: string;
-  line_status?: 'dispatched' | 'received' | 'returned';
+  line_status?: 'ready_for_dispatch' | 'dispatched' | 'received' | 'returned';
   unit_cost_ugx: number;
   total_cost_ugx: number;
   batch_number?: string;
