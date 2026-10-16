@@ -19,6 +19,7 @@ import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { processProcurementGrn } from '../services/procurementFinanceService';
+import { dispatchPreparedSellableGrn } from '../services/grnDispatchService';
 import { processOperationalGrn } from '../services/operationalGrnService';
 import { confirmProcurementApproval } from '../services/procurementApprovalService';
 import type { ApprovalAddition, ApprovalQuantityEdit } from '../services/procurementApprovalPolicy';
@@ -3247,6 +3248,8 @@ const DispatchTab: React.FC = () => {
   const { profile } = useAuth();
   const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [approvedOrders, setApprovedOrders] = useState<StockOrder[]>([]);
+  const [preparedSellableOrders, setPreparedSellableOrders] = useState<StockOrder[]>([]);
+  const [dispatchingPreparedId, setDispatchingPreparedId] = useState<string | null>(null);
   const [operationalOrders, setOperationalOrders] = useState<StockOrder[]>([]);
   const [pendingOperationalTransfers, setPendingOperationalTransfers] = useState<OperationalTransfer[]>([]);
   const [dispatchingOperationalOrderId, setDispatchingOperationalOrderId] = useState<string | null>(null);
@@ -3259,6 +3262,11 @@ const DispatchTab: React.FC = () => {
       return;
     }
     const unsubscribeOrders = firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
+      setPreparedSellableOrders(data.filter(o =>
+        o.status === 'ready_for_dispatch' &&
+        Boolean((o as any).grn_id && (o as any).transfer_id) &&
+        !isOperationalInventoryRecord(o)
+      ));
       setApprovedOrders(data.filter(o =>
         o.status === 'fully_received' &&
         !(o as any).transfer_id &&
@@ -3290,6 +3298,28 @@ const DispatchTab: React.FC = () => {
       setIsDispatchModalOpen(false);
     }
   }, [operationalInventoryEnabled, selectedOrder]);
+
+  const handlePreparedDispatch = async (order: StockOrder) => {
+    if (!profile?.tenantId || !profile.uid || dispatchingPreparedId) return;
+    const grnId = (order as any).grn_id;
+    const transferId = (order as any).transfer_id;
+    if (!grnId || !transferId) {
+      toast.error('Missing prepared GRN or transfer reference. Dispatch has been blocked.');
+      return;
+    }
+    setDispatchingPreparedId(order.id);
+    try {
+      const result = await dispatchPreparedSellableGrn({
+        tenantId: profile.tenantId, grnId, transferId, orderId: order.id,
+        actor: { uid: profile.uid, name: profile.fullName || profile.displayName || profile.email || profile.uid }
+      });
+      toast.success(result.alreadyDispatched ? 'This GRN transfer was already dispatched.' : 'GRN transfer dispatched. The destination branch can now verify receipt.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not dispatch this prepared GRN.');
+    } finally {
+      setDispatchingPreparedId(null);
+    }
+  };
 
   const handleDispatch = async (order: StockOrder, lines: StockOrderLine[]) => {
     try {
@@ -3442,6 +3472,24 @@ const DispatchTab: React.FC = () => {
           {pendingOperationalTransfers.map(transfer => <div key={transfer.id} className="p-4 flex items-center justify-between gap-3">
             <div><p className="font-bold text-zinc-900">{transfer.transferNumber}</p><p className="text-xs text-zinc-500">{transfer.destinationBranchName || transfer.destinationBranchId} · {transfer.sourceOrderNumber || transfer.sourceOrderId}</p></div>
             <button onClick={() => handleResumeOperationalTransfer(transfer)} disabled={dispatchingOperationalOrderId !== null} className="px-4 py-2 rounded-xl bg-amber-700 text-white text-xs font-black disabled:opacity-50">{dispatchingOperationalOrderId === transfer.id ? 'Resuming…' : 'Resume Dispatch'}</button>
+          </div>)}
+        </div>
+      </section>}
+      {preparedSellableOrders.length > 0 && <section className="rounded-2xl border border-blue-200 bg-white overflow-hidden">
+        <div className="px-4 py-3 bg-blue-50 border-b border-blue-100">
+          <h3 className="text-sm font-black text-blue-950">Sellable GRNs Awaiting Physical Dispatch</h3>
+          <p className="text-xs text-blue-800">Receiving a supplier delivery does not dispatch it. Branch stock changes only on verified Stock In reception.</p>
+        </div>
+        <div className="divide-y divide-zinc-100">
+          {preparedSellableOrders.map(order => <div key={order.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="font-bold text-zinc-900">{order.order_number}</p>
+              <p className="text-xs text-zinc-700">{order.requesting_branch_name || order.requesting_branch_id} · GRN prepared for dispatch</p>
+            </div>
+            <button type="button" onClick={() => handlePreparedDispatch(order)} disabled={dispatchingPreparedId !== null}
+              className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
+              {dispatchingPreparedId === order.id ? 'Dispatching…' : 'Confirm Physical Dispatch'}
+            </button>
           </div>)}
         </div>
       </section>}
