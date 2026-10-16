@@ -235,7 +235,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
       destination_branch_id: branchId, destination_branch_name: branchName,
       invoice_number: invoiceRefValue, invoice_date: input.invoiceDate,
       receivedAt: now, receivedBy: user.uid, status: 'completed',
-      grn_status: 'completed', dispatch_status: 'dispatched', reception_status: 'awaiting_receipt',
+      grn_status: 'completed', dispatch_status: 'ready_for_dispatch', reception_status: 'not_dispatched',
       financial_posting_status: financeValue > 0 ? 'posted' : 'not_applicable',
       payment_type: paymentType, payment_status: paymentType === 'cash' ? 'pending_payment' : 'outstanding',
       total_value_ugx: financeValue, transfer_value_ugx: transferValue,
@@ -290,7 +290,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
     unsupplied.forEach(item => transaction.set(doc(db, 'unsupplied_lines', item.id), item.data, { merge: true }));
     lineUpdates.forEach((line, index) => transaction.update(lineRefs[index], line.data));
     transaction.update(refs.order, {
-      status: 'dispatched', grn_id: ids.grnId, transfer_id: ids.transferId,
+      status: 'ready_for_dispatch', grn_id: ids.grnId, transfer_id: ids.transferId,
       financial_posting_status: financeValue > 0 ? 'posted' : 'not_applicable', updatedAt: now
     });
 
@@ -301,8 +301,8 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
         source_branch_id: isHqDestination ? 'PROCUREMENT' : 'HQ',
         source_branch_name: isHqDestination ? supplierName : 'Central HQ',
         destination_branch_id: branchId, destination_branch_name: branchName,
-        transfer_type: isHqDestination ? 'procurement_grn' : 'central_to_branch', status: 'dispatched', dispatched_at: now.toDate().toISOString(),
-        dispatchedAt: now, dispatched_by: user.uid, dispatched_by_name: user.name,
+        transfer_type: isHqDestination ? 'procurement_grn' : 'central_to_branch', status: 'ready_for_dispatch',
+        preparedAt: now, prepared_by: user.uid, prepared_by_name: user.name,
         total_items: receivedItems.length, total_value_ugx: transferValue, createdAt: now, updatedAt: now
       }, { merge: true });
       receivedItems.forEach(item => {
@@ -312,7 +312,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
           source_line_id: item.line_id, product_id: item.product_id, product_name: item.product_name,
           qty_dispatched: item.qty_received, unit_cost_ugx: item.unit_cost_ugx,
           total_cost_ugx: item.total_cost_ugx, batch_number: item.batch_number,
-          expiry_date: item.expiry_date, line_status: 'dispatched', createdAt: now, updatedAt: now
+          expiry_date: item.expiry_date, line_status: 'ready_for_dispatch', createdAt: now, updatedAt: now
         }, { merge: true });
       });
     }
