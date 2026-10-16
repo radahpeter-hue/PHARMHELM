@@ -30,6 +30,7 @@ import { useOperationalInventoryFeature } from '../hooks/useOperationalInventory
 import OperationalHQStoreTab from '../components/procurement/OperationalHQStoreTab';
 import { SupplierEditor } from '../components/procurement/SupplierEditor';
 import { supplierEligibleForStream } from '../services/supplierRegistryPolicy';
+import { procurementRequestingBranchLabel } from '../services/procurementBranchDisplay';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -184,7 +185,7 @@ const NewRequisitions: React.FC = () => {
     });
   }, [profile?.tenantId]);
   const displayBranch = (order: StockOrder): string =>
-    branchNames[order.requesting_branch_id] || displayBranch(order);
+    procurementRequestingBranchLabel(order, branchNames);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
   useEffect(() => {
@@ -1651,8 +1652,17 @@ const FinancialApprovalTab: React.FC = () => {
   const { profile } = useAuth();
   const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [orders, setOrders] = useState<StockOrder[]>([]);
+  const [branchNames, setBranchNames] = useState<Record<string, string>>({});
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const displayBranch = (order: StockOrder): string => procurementRequestingBranchLabel(order, branchNames);
+
+  useEffect(() => {
+    if (!profile?.tenantId) return;
+    return firestoreService.subscribeToCollection<Branch>('branches', profile.tenantId, records => {
+      setBranchNames(Object.fromEntries(records.map(branch => [branch.id, branch.name])));
+    });
+  }, [profile?.tenantId]);
 
   useEffect(() => {
     if (profile?.tenantId) {
@@ -1678,7 +1688,7 @@ const FinancialApprovalTab: React.FC = () => {
           <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
             <th className="px-6 py-4">Order #</th>
             <th className="px-6 py-4">Total Value</th>
-            <th className="px-6 py-4">Branch</th>
+            <th className="px-6 py-4">Requesting Branch (Origin)</th>
             <th className="px-6 py-4 text-right">Actions</th>
           </tr>
         </thead>
@@ -1687,7 +1697,7 @@ const FinancialApprovalTab: React.FC = () => {
             <tr key={order.id} className="hover:bg-zinc-50/50 transition-colors">
               <td className="px-6 py-4 font-bold text-zinc-900">{order.order_number}</td>
               <td className="px-6 py-4 font-bold text-zinc-900">UGX {order.total_order_value_ugx.toLocaleString()}</td>
-              <td className="px-6 py-4 text-sm text-zinc-600">{order.requesting_branch_name || order.requesting_branch_id}</td>
+              <td className="px-6 py-4 text-sm text-zinc-600">{displayBranch(order)}</td>
               <td className="px-6 py-4 text-right">
                 <div className="flex justify-end gap-2">
                   <button 
@@ -1744,6 +1754,7 @@ const FinancialApprovalTab: React.FC = () => {
           order={selectedOrder}
           onClose={() => setIsModalOpen(false)}
           onApprove={handleApprove}
+          originBranchName={displayBranch(selectedOrder)}
         />
       )}
     </div>
@@ -1754,7 +1765,8 @@ const FinancialApprovalModal: React.FC<{
   order: StockOrder;
   onClose: () => void;
   onApprove: (id: string) => void;
-}> = ({ order, onClose, onApprove }) => {
+  originBranchName: string;
+}> = ({ order, onClose, onApprove, originBranchName }) => {
   const { profile, hasPermission } = useAuth();
   const operationalInventoryEnabled = useOperationalInventoryFeature();
   const operational = isOperationalInventoryRecord(order);
@@ -1892,7 +1904,7 @@ const FinancialApprovalModal: React.FC<{
         <div className="p-4 sm:p-6 border-b border-zinc-100 flex justify-between items-start gap-3">
           <div>
             <h2 className="text-xl font-bold text-zinc-900">Financial Approval — Review & Adjust</h2>
-            <p className="text-sm text-zinc-500">{order.order_number} · {order.requesting_branch_name || order.requesting_branch_id}</p>
+            <p className="text-sm text-zinc-500">{order.order_number} · Requested by: {originBranchName}</p>
             <p className="text-xs mt-1 text-emerald-700 font-semibold">{operational ? 'Operational Inventory' : 'Sellable Inventory'} · Original requisition remains in audit history</p>
           </div>
           <button type="button" onClick={onClose} disabled={submitting} aria-label="Close approval" className="p-2 rounded-lg hover:bg-zinc-100"><X size={20} /></button>
