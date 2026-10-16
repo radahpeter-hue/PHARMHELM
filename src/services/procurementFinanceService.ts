@@ -267,7 +267,9 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
         }, { merge: true });
       } else {
         transaction.set(refs.cashDraft, {
-          tenantId, source: 'procurement_cash_grn', sourceRef: ids.grnId,
+          tenantId, source: 'procurement_cash_grn', sourceType: 'procurement',
+          sourceRef: ids.grnId, sourceRefId: ids.grnId, originalAmount: financeValue,
+          department: 'HQ',
           grnId: ids.grnId, invoiceId: ids.invoiceId,
           invoiceRef: invoiceRefValue, supplierId, supplierName,
           branchId, branch_id: branchId,
