@@ -1148,7 +1148,7 @@ service cloud.firestore {
       // Procurement can only read deterministic GRN cash drafts for atomic
       // collision checks. Ordinary management expenses remain Finance/HR only.
       allow get: if isProcurement()
-        && expenseId.matches('management_payment_draft_grn_.*')
+        && expenseId.matches('management_payment_draft_(grn_|op_grn_).*')
         && (resource == null || isTenantMember(resource.data.tenantId));
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (canViewFinance() || isHR());
       // A cash GRN creates a payment DRAFT, never a disbursement.
