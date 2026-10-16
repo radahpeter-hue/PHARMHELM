@@ -200,7 +200,7 @@ const StockInOut: React.FC = () => {
         {activeTab === 'opening-stock' && <OpeningStockTab branches={branches} />}
         {activeTab === 'initiate' && <InitiateOrder branches={branches} />}
         {activeTab === 'tracker' && <OrderTracker />}
-        {activeTab === 'stock-in' && <StockInTab branches={branches} />}
+        {activeTab === 'stock-in' && <StockInWorkspace branches={branches} />}
         {activeTab === 'transfer-out' && <TransferOutTab branches={branches} />}
         {activeTab === 'queried' && <QueriedItemsTab />}
         {activeTab === 'reports' && <StockInOutReportsHub branches={branches} />}
@@ -1424,6 +1424,45 @@ const OrderDetailsModal: React.FC<{ order: StockOrder; onClose: () => void }> = 
   );
 };
 
+const StockInWorkspace: React.FC<{ branches: Branch[] }> = ({ branches }) => {
+  const operationalEnabled = useOperationalInventoryFeature();
+  const [inventoryView, setInventoryView] = useState<'sellable' | 'operational'>('sellable');
+
+  useEffect(() => {
+    if (!operationalEnabled && inventoryView === 'operational') {
+      setInventoryView('sellable');
+    }
+  }, [operationalEnabled, inventoryView]);
+
+  return (
+    <div className="space-y-5">
+      {operationalEnabled && (
+        <div className="bg-white border border-zinc-200 rounded-2xl p-3 sm:p-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="group" aria-label="Stock In inventory type">
+            <button type="button" aria-pressed={inventoryView === 'sellable'}
+              onClick={() => setInventoryView('sellable')}
+              className={cn('rounded-xl px-4 py-3 text-left border transition-colors', inventoryView === 'sellable'
+                ? 'bg-emerald-50 border-emerald-500 text-emerald-900' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50')}>
+              <div className="font-bold text-sm">Sellable Inventory</div>
+              <div className="text-xs mt-1">Sales stock receipts and history</div>
+            </button>
+            <button type="button" aria-pressed={inventoryView === 'operational'}
+              onClick={() => setInventoryView('operational')}
+              className={cn('rounded-xl px-4 py-3 text-left border transition-colors', inventoryView === 'operational'
+                ? 'bg-emerald-50 border-emerald-500 text-emerald-900' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50')}>
+              <div className="font-bold text-sm">Operational Inventory</div>
+              <div className="text-xs mt-1">Internal-use stock receipts and returns</div>
+            </button>
+          </div>
+        </div>
+      )}
+      {operationalEnabled && inventoryView === 'operational'
+        ? <div className="space-y-5"><OperationalBranchReturnForm /><OperationalBranchReceiptQueue /></div>
+        : <StockInTab branches={branches} />}
+    </div>
+  );
+};
+
 const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const { profile, activeBranchId, hasPermission } = useAuth();
   const [invoices, setInvoices] = useState<TransferInvoice[]>([]);
@@ -1904,8 +1943,6 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
 
 return (
     <div className="space-y-6">
-      <OperationalBranchReturnForm />
-      <OperationalBranchReceiptQueue />
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex gap-2 p-1 bg-zinc-100 rounded-xl w-fit">
           <button 
