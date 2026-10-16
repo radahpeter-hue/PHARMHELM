@@ -34,7 +34,7 @@ try {
       tenantId:tenant,branchId:branch,productId,batchNumber:'HISTORY',
       expiryDate:expiry,quantity:10,batch_status:'active'
     });
-    for(const id of ['transfer-one','transfer-two','transfer-three']){
+    for(const id of ['transfer-one','transfer-two','transfer-three','transfer-four']){
       await setDoc(doc(db,'transfer_invoices',id),{
         tenantId:tenant,inventoryClass:'SELLABLE',status:'dispatched',
         destination_branch_id:branch,source_branch_id:'HQ',
@@ -79,7 +79,7 @@ try {
   ]);
   assert.equal(outcomes.filter(x=>x.status==='fulfilled').length,1);
   assert.equal(outcomes.filter(x=>x.status==='rejected').length,1);
-  await assertFails(claim(user('unauthorized'),'transfer-one'));
+  await assertFails(claim(user('unauthorized'),'transfer-four'));
   assert.equal((await getDoc(doc(first,'products',productId))).data().quantityInStock,18);
   console.log('PASS: distinct concurrent receipts add 3+5 exactly; one canonical new batch; only one concurrent claim.');
 } finally {
