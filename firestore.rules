@@ -2682,6 +2682,37 @@ service cloud.firestore {
       allow delete: if isHR() && isTenantMember(resource.data.tenantId);
     }
 
+    // Stock In physical receipt and its movement intent are committed together.
+    // Branch operators can only create pending intents; analytics replay is
+    // a restricted pending -> processed transition for the same tenant/branch.
+    match /sellable_receipt_movement_outbox/{intentId} {
+      allow get: if isStockOperator() &&
+        (resource == null || (isTenantMember(resource.data.tenantId) && isAssignedToBranch(resource.data.branchId)));
+      allow list: if isStockOperator() && isTenantMember(resource.data.tenantId)
+        && isAssignedToBranch(resource.data.branchId);
+      allow create: if isStockOperator() && isInventoryOperator()
+        && isTenantMember(request.resource.data.tenantId)
+        && isAssignedToBranch(request.resource.data.branchId)
+        && request.resource.data.status == 'pending'
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.quantityBaseUnits is int
+        && request.resource.data.quantityBaseUnits > 0
+        && request.resource.data.transferId is string
+        && request.resource.data.lineId is string
+        && intentId == 'sellable_stockin_' + request.resource.data.transferId + '_' + request.resource.data.lineId
+        && existsAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId))
+        && getAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId)).data.tenantId == request.resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId)).data.destination_branch_id == request.resource.data.branchId
+        && getAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId)).data.status in ['fully_accepted', 'queried'];
+      allow update: if isStockOperator() && isInventoryOperator()
+        && isTenantMember(resource.data.tenantId)
+        && isAssignedToBranch(resource.data.branchId)
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'processed'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'processedAt']);
+      allow delete: if false;
+    }
+
     match /inventoryMovementEvents/{eventId} {
       allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId);
