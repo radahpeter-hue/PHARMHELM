@@ -44,6 +44,9 @@ on:
       - 'tests/supplier-registry.test.ts'
       - 'src/services/orderSubmissionService.ts'
       - 'src/services/procurementFinanceService.ts'
+      - 'src/services/procurementApproval*.ts'
+      - 'scripts/procurement-approval-rules-emulator.mjs'
+      - 'tests/procurement-approval-substitutions.test.ts'
       - 'src/pages/Inventory.tsx'
       - 'src/pages/Procurement.tsx'
       - 'src/pages/Settings.tsx'
@@ -125,7 +128,7 @@ jobs:
         run: npx firebase emulators:exec --only firestore --project pharmhelm-pos-v2-revision-rbac "node scripts/pos-v2-revision-rbac-rules-emulator.mjs"
 
       - name: Enforce Operational Inventory class and branch boundaries in Firestore emulator
-        run: npx firebase emulators:exec --only firestore --project pharmhelm-operational-inventory-v2-rules "node scripts/operational-inventory-rules-emulator.mjs && node scripts/operational-manual-order-regression.mjs && node scripts/auto-order-atomic-rules-emulator.mjs && node scripts/supplier-registry-rules-emulator.mjs && node scripts/system-identity-rules-emulator.mjs && node scripts/martin-pharma-identity-staging-emulator.mjs" && touch /tmp/pharmhelm-firestore-emulator-passed
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-operational-inventory-v2-rules "node scripts/operational-inventory-rules-emulator.mjs && node scripts/operational-manual-order-regression.mjs && node scripts/auto-order-atomic-rules-emulator.mjs && node scripts/procurement-approval-rules-emulator.mjs && node scripts/supplier-registry-rules-emulator.mjs && node scripts/system-identity-rules-emulator.mjs && node scripts/martin-pharma-identity-staging-emulator.mjs" && touch /tmp/pharmhelm-firestore-emulator-passed
 
       - name: Authenticate for hosted Firestore rules compilation
         uses: google-github-actions/auth@v2

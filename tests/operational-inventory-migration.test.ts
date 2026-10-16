@@ -95,7 +95,9 @@ test('migration runner is tenant-scoped, preview-only by default and stops apply
   assert.match(movementRule, /request\.resource\.data\.balanceBefore == 0/);
   const auditRule = rules.slice(rules.indexOf('match /operational_inventory_migration_audit/'), rules.indexOf('match /grn_records/'));
   assert.match(auditRule, /allow create, update, delete: if false/);
-  assert.match(rules, /'operational_inventory_migration_audit','operational_inventory_identity_events'\]\)/);
+  assert.ok(rules.includes("'operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit'])"));
+  assert.ok(rules.includes('match /procurement_approval_audit/{approvalId}'));
+  assert.match(rules, /allow update, delete: if false/);
   const masterService = readFileSync(new URL('../src/services/operationalInventoryMasterService.ts', import.meta.url), 'utf8');
   assert.match(masterService, /openingMovementRef/);
   assert.match(masterService, /movementType: 'ADJUSTMENT'/);

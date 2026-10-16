@@ -20,6 +20,8 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { processProcurementGrn } from '../services/procurementFinanceService';
 import { processOperationalGrn } from '../services/operationalGrnService';
+import { confirmProcurementApproval } from '../services/procurementApprovalService';
+import type { ApprovalAddition, ApprovalQuantityEdit } from '../services/procurementApprovalPolicy';
 import { dispatchOperationalOrderToBranch, dispatchPreparedOperationalHqTransfer, fulfillOperationalOrderFromHqStore } from '../services/operationalTransferService';
 import { AutoGenerateOrderModal } from '../components/inventory/AutoGenerateOrderModal';
 import { isBranchReturnToHq, isHqProcurementDelivery, receiveHqTransfer } from '../services/hqStockReceiptService';
@@ -28,6 +30,7 @@ import { useOperationalInventoryFeature } from '../hooks/useOperationalInventory
 import OperationalHQStoreTab from '../components/procurement/OperationalHQStoreTab';
 import { SupplierEditor } from '../components/procurement/SupplierEditor';
 import { supplierEligibleForStream } from '../services/supplierRegistryPolicy';
+import { procurementRequestingBranchLabel } from '../services/procurementBranchDisplay';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -182,7 +185,7 @@ const NewRequisitions: React.FC = () => {
     });
   }, [profile?.tenantId]);
   const displayBranch = (order: StockOrder): string =>
-    branchNames[order.requesting_branch_id] || displayBranch(order);
+    procurementRequestingBranchLabel(order, branchNames);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
   useEffect(() => {
@@ -1649,8 +1652,17 @@ const FinancialApprovalTab: React.FC = () => {
   const { profile } = useAuth();
   const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [orders, setOrders] = useState<StockOrder[]>([]);
+  const [branchNames, setBranchNames] = useState<Record<string, string>>({});
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const displayBranch = (order: StockOrder): string => procurementRequestingBranchLabel(order, branchNames);
+
+  useEffect(() => {
+    if (!profile?.tenantId) return;
+    return firestoreService.subscribeToCollection<Branch>('branches', profile.tenantId, records => {
+      setBranchNames(Object.fromEntries(records.map(branch => [branch.id, branch.name])));
+    });
+  }, [profile?.tenantId]);
 
   useEffect(() => {
     if (profile?.tenantId) {
@@ -1667,30 +1679,7 @@ const FinancialApprovalTab: React.FC = () => {
     }
   }, [operationalInventoryEnabled, selectedOrder]);
 
-  const handleApprove = async (id: string) => {
-    try {
-      await firestoreService.updateDocument('stock_orders', id, { 
-        status: 'approved',
-        approved_by: profile?.uid,
-        approved_at: new Date().toISOString()
-      });
-      
-      // Update all lines to approved
-      const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-      for (const line of lines) {
-        if (line.line_status === 'awaiting_finance_approval') {
-          await firestoreService.updateDocument('stock_order_lines', line.id, {
-            line_status: 'approved'
-          });
-        }
-      }
-
-      toast.success('Order approved');
-      setIsModalOpen(false);
-    } catch (error) {
-      toast.error('Failed to approve order');
-    }
-  };
+  const handleApprove = () => setIsModalOpen(false);
 
   return (
     <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
@@ -1699,7 +1688,7 @@ const FinancialApprovalTab: React.FC = () => {
           <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
             <th className="px-6 py-4">Order #</th>
             <th className="px-6 py-4">Total Value</th>
-            <th className="px-6 py-4">Branch</th>
+            <th className="px-6 py-4">Requesting Branch (Origin)</th>
             <th className="px-6 py-4 text-right">Actions</th>
           </tr>
         </thead>
@@ -1708,7 +1697,7 @@ const FinancialApprovalTab: React.FC = () => {
             <tr key={order.id} className="hover:bg-zinc-50/50 transition-colors">
               <td className="px-6 py-4 font-bold text-zinc-900">{order.order_number}</td>
               <td className="px-6 py-4 font-bold text-zinc-900">UGX {order.total_order_value_ugx.toLocaleString()}</td>
-              <td className="px-6 py-4 text-sm text-zinc-600">{order.requesting_branch_name || order.requesting_branch_id}</td>
+              <td className="px-6 py-4 text-sm text-zinc-600">{displayBranch(order)}</td>
               <td className="px-6 py-4 text-right">
                 <div className="flex justify-end gap-2">
                   <button 
@@ -1765,195 +1754,294 @@ const FinancialApprovalTab: React.FC = () => {
           order={selectedOrder}
           onClose={() => setIsModalOpen(false)}
           onApprove={handleApprove}
+          originBranchName={displayBranch(selectedOrder)}
         />
       )}
     </div>
   );
 };
 
-const FinancialApprovalModal: React.FC<{ 
-  order: StockOrder, 
-  onClose: () => void,
-  onApprove: (id: string) => void
-}> = ({ order, onClose, onApprove }) => {
-  const { profile } = useAuth();
+const FinancialApprovalModal: React.FC<{
+  order: StockOrder;
+  onClose: () => void;
+  onApprove: (id: string) => void;
+  originBranchName: string;
+}> = ({ order, onClose, onApprove, originBranchName }) => {
+  const { profile, hasPermission } = useAuth();
+  const operationalInventoryEnabled = useOperationalInventoryFeature();
+  const operational = isOperationalInventoryRecord(order);
+  const inventoryClass = operational ? 'OPERATIONAL' : 'SELLABLE';
   const [lines, setLines] = useState<StockOrderLine[]>([]);
-  const [editedLines, setEditedLines] = useState<Record<string, { qty: number, removed: boolean }>>({});
+  const [editedLines, setEditedLines] = useState<Record<string, ApprovalQuantityEdit>>({});
+  const [products, setProducts] = useState<Product[]>([]);
+  const [operationalItems, setOperationalItems] = useState<OperationalInventory[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [additions, setAdditions] = useState<ApprovalAddition[]>([]);
+  const [productSearch, setProductSearch] = useState('');
+  const [selectedProductId, setSelectedProductId] = useState('');
+  const [selectedSupplierId, setSelectedSupplierId] = useState('');
+  const [additionQuantity, setAdditionQuantity] = useState(1);
+  const [additionCost, setAdditionCost] = useState(0);
+  const [additionReason, setAdditionReason] = useState('');
+  const [replacesLineId, setReplacesLineId] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const canApprove = hasPermission('procurement', 'operate');
 
   useEffect(() => {
+    if (!profile?.tenantId) return;
+    let cancelled = false;
+    setLoading(true);
     const fetchLines = async () => {
-      const data = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-      setLines(data.filter(l => l.line_status === 'awaiting_finance_approval'));
-      const initialEdits: Record<string, { qty: number, removed: boolean }> = {};
-      data.forEach(l => {
-        initialEdits[l.id] = { qty: l.qty_ordered, removed: false };
-      });
-      setEditedLines(initialEdits);
+      try {
+        const data = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [
+          { field: 'order_id', operator: '==', value: order.id },
+          { field: 'tenantId', operator: '==', value: profile.tenantId }
+        ]);
+        if (cancelled) return;
+        const pending = data.filter(line => line.line_status === 'awaiting_finance_approval');
+        setLines(pending);
+        setEditedLines(Object.fromEntries(pending.map(line => [line.id, { qty: line.qty_ordered, removed: false }])));
+      } catch (error) {
+        if (!cancelled) toast.error('Could not load order lines for financial review.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     };
-    fetchLines();
-  }, [order.id]);
+    void fetchLines();
+    const unsubProducts = firestoreService.subscribeToCollection<Product>('products', profile.tenantId, records => setProducts(records));
+    const unsubOperational = operationalInventoryEnabled
+      ? firestoreService.subscribeToCollection<OperationalInventory>('operational_inventory', profile.tenantId, records => {
+        setOperationalItems(records.filter(item =>
+          item.branchId === order.requesting_branch_id &&
+          item.inventoryClass === 'OPERATIONAL' && Boolean(item.masterItemId)
+        ));
+      }) : undefined;
+    const unsubSuppliers = firestoreService.subscribeToCollection<any>('supplier_registry', profile.tenantId, records => setSuppliers(records));
+    return () => {
+      cancelled = true;
+      unsubProducts();
+      unsubOperational?.();
+      unsubSuppliers();
+    };
+  }, [profile?.tenantId, order.id, order.requesting_branch_id, operationalInventoryEnabled]);
 
-  const handleQtyChange = (id: string, qty: number) => {
-    setEditedLines(prev => ({
-      ...prev,
-      [id]: { ...prev[id], qty: Math.max(0, qty) }
-    }));
-  };
+  const eligibleSuppliers = suppliers.filter(supplier => supplierEligibleForStream(supplier, inventoryClass));
+  const availableProducts = operational
+    ? operationalItems.map(item => ({ id: item.id, name: item.name, code: item.sku || item.uniqueId || '', defaultCost: item.costPerPack || 0 }))
+    : products.filter(product => (product as any).isOperational !== true &&
+        product.category !== 'non_sellable')
+      .map(product => ({ id: product.id, name: product.name, code: `${product.sku || ''} ${product.productId || ''} ${product.genericName || ''}`, defaultCost: product.costPricePerPack || 0 }));
+  const filteredProducts = availableProducts.filter(product =>
+    `${product.name} ${product.code}`.toLowerCase().includes(productSearch.trim().toLowerCase()) &&
+    !additions.some(addition => addition.productId === product.id)
+  ).slice(0, 15);
+  const selectedProduct = availableProducts.find(product => product.id === selectedProductId);
+  const existingTotal = lines.reduce((sum, line) => {
+    const edit = editedLines[line.id] || { qty: line.qty_ordered, removed: false };
+    return sum + (edit.removed ? 0 : edit.qty * line.unit_cost_ugx);
+  }, 0);
+  const addedTotal = additions.reduce((sum, addition) => sum + addition.quantity * addition.unitCostUGX, 0);
 
-  const handleToggleRemove = (id: string) => {
-    setEditedLines(prev => ({
-      ...prev,
-      [id]: { ...prev[id], removed: !prev[id].removed }
+  const handleAddProduct = () => {
+    if (!selectedProduct || !selectedSupplierId || !additionReason.trim() ||
+        !Number.isSafeInteger(additionQuantity) || additionQuantity <= 0 ||
+        !Number.isSafeInteger(additionCost) || additionCost <= 0) {
+      toast.error('Choose a master product and supplier, enter a positive quantity, quoted cost and reason.');
+      return;
+    }
+    if (lines.some(line => line.product_id === selectedProductId)) {
+      toast.error('This product already exists on the order. Edit its quantity instead.');
+      return;
+    }
+    const supplier = eligibleSuppliers.find(item => item.id === selectedSupplierId);
+    if (!supplier) {
+      toast.error('Select an eligible supplier from the supplier registry.');
+      return;
+    }
+    if (replacesLineId && additions.some(item => item.replacesLineId === replacesLineId)) {
+      toast.error('That order line already has an assigned substitute.');
+      return;
+    }
+    setAdditions(prev => [...prev, {
+      productId: selectedProduct.id, quantity: additionQuantity,
+      unitCostUGX: additionCost, supplierId: supplier.id,
+      supplierName: supplier.supplier_name, replacesLineId: replacesLineId || undefined,
+      reason: additionReason.trim()
+    }]);
+    if (replacesLineId) setEditedLines(prev => ({
+      ...prev, [replacesLineId]: { qty: 0, removed: true }
     }));
+    setSelectedProductId('');
+    setProductSearch('');
+    setAdditionQuantity(1);
+    setAdditionCost(0);
+    setAdditionReason('');
+    setReplacesLineId('');
   };
 
   const handleConfirm = async () => {
-    if (submitting) return;
+    if (submitting || !canApprove || !profile?.tenantId || !profile.uid) return;
+    if (loading) return;
     setSubmitting(true);
     try {
-      let totalValue = 0;
-      for (const line of lines) {
-        const edit = editedLines[line.id];
-        if (!edit) continue;
-        if (edit.removed || edit.qty === 0) {
-          // Move to unsupplied
-          await firestoreService.updateDocument('stock_order_lines', line.id, {
-            line_status: 'unsupplied',
-            original_qty: line.qty_ordered,
-            qty_ordered: 0
-          });
-          
-          await firestoreService.addDocument('unsupplied_lines', {
-            tenantId: profile?.tenantId,
-            order_id: order.id,
-            original_line_id: line.id,
-            product_id: line.product_id,
-            product_name: line.product_name || 'Unknown Product',
-            qty_unsupplied: line.qty_ordered,
-            reason: 'Removed during financial approval',
-            status: 'pending',
-            createdAt: new Date().toISOString()
-          });
-        } else if (edit.qty < line.qty_ordered) {
-          // Reduce qty and move difference to unsupplied
-          const diff = line.qty_ordered - edit.qty;
-          await firestoreService.updateDocument('stock_order_lines', line.id, {
-            original_qty: line.qty_ordered,
-            qty_ordered: edit.qty,
-            line_total_ugx: edit.qty * line.unit_cost_ugx
-          });
-          
-          await firestoreService.addDocument('unsupplied_lines', {
-            tenantId: profile?.tenantId,
-            order_id: order.id,
-            original_line_id: line.id,
-            product_id: line.product_id,
-            product_name: line.product_name || 'Unknown Product',
-            qty_unsupplied: diff,
-            reason: 'Quantity reduced during financial approval',
-            status: 'pending',
-            createdAt: new Date().toISOString()
-          });
-          totalValue += edit.qty * (line.unit_cost_ugx || 0);
-        } else {
-          totalValue += line.line_total_ugx;
-        }
-      }
-
-      // Update order total value
-      await firestoreService.updateDocument('stock_orders', order.id, {
-        total_order_value_ugx: totalValue
+      const result = await confirmProcurementApproval({
+        order, tenantId: profile.tenantId, actorId: profile.uid,
+        edits: editedLines, additions
       });
-
+      toast.success(`Approved UGX ${result.approvedTotalUGX.toLocaleString()} with ${result.addedCount} added and ${result.unsuppliedCount} unsupplied line(s).`);
       onApprove(order.id);
     } catch (error) {
-      toast.error('Failed to update order details');
+      toast.error(error instanceof Error ? error.message : 'Could not finalize financial approval.');
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-[32px] w-full max-w-4xl max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
-        <div className="p-8 border-b border-zinc-100 flex items-center justify-between">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4">
+      <div className="bg-white rounded-2xl sm:rounded-[32px] w-full max-w-5xl max-h-[94dvh] overflow-hidden shadow-2xl flex flex-col">
+        <div className="p-4 sm:p-6 border-b border-zinc-100 flex justify-between items-start gap-3">
           <div>
-            <h2 className="text-2xl font-bold text-zinc-900">Financial Review</h2>
-            <p className="text-sm text-zinc-500">{order.order_number} - {order.requesting_branch_name}</p>
+            <h2 className="text-xl font-bold text-zinc-900">Financial Approval — Review & Adjust</h2>
+            <p className="text-sm text-zinc-500">{order.order_number} · Requested by: {originBranchName}</p>
+            <p className="text-xs mt-1 text-emerald-700 font-semibold">{operational ? 'Operational Inventory' : 'Sellable Inventory'} · Original requisition remains in audit history</p>
           </div>
-          <button onClick={onClose} disabled={submitting} className="p-2 hover:bg-zinc-100 rounded-full transition-colors disabled:opacity-50">
-            <Plus className="rotate-45" size={24} />
-          </button>
+          <button type="button" onClick={onClose} disabled={submitting} aria-label="Close approval" className="p-2 rounded-lg hover:bg-zinc-100"><X size={20} /></button>
         </div>
-        
-        <div className="p-8 overflow-y-auto flex-1">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">
-                <th className="px-4 py-3">Product</th>
-                <th className="px-4 py-3">Supplier</th>
-                <th className="px-4 py-3">Unit Cost</th>
-                <th className="px-4 py-3">Qty</th>
-                <th className="px-4 py-3">Total</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {lines.map((line) => {
-                const edit = editedLines[line.id] || { qty: line.qty_ordered, removed: false };
-                return (
-                  <tr key={line.id} className={cn(edit.removed && "opacity-50 bg-red-50/30")}>
-                    <td className="px-4 py-3 text-sm font-medium text-zinc-900">{line.product_name}</td>
-                    <td className="px-4 py-3 text-sm text-zinc-600">{line.supplier_name}</td>
-                    <td className="px-4 py-3 text-sm text-zinc-600">UGX {line.unit_cost_ugx.toLocaleString()}</td>
-                    <td className="px-4 py-3">
-                      <input 
-                        type="number"
-                        disabled={edit.removed || submitting}
-                        className="w-20 px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg text-sm disabled:opacity-50"
-                        value={edit.qty}
-                        onChange={(e) => handleQtyChange(line.id, Number(e.target.value))}
-                      />
-                    </td>
-                    <td className="px-4 py-3 text-sm font-bold text-zinc-900">
-                      UGX {(edit.qty * line.unit_cost_ugx).toLocaleString()}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button 
-                        onClick={() => handleToggleRemove(line.id)}
-                        disabled={submitting}
-                        className={cn("p-2 rounded-lg transition-colors disabled:opacity-50", edit.removed ? "text-emerald-500 hover:bg-emerald-50" : "text-red-500 hover:bg-red-50")}
-                      >
-                        {edit.removed ? <Plus size={18} /> : <Trash2 size={18} />}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        
-        <div className="p-8 bg-zinc-50 border-t border-zinc-100 flex justify-between items-center">
-          <div className="text-zinc-600">
-            Total Approved: <span className="text-xl font-bold text-zinc-900 ml-2">
-              UGX {lines.reduce((sum, l) => {
-                const edit = editedLines[l.id] || { qty: l.qty_ordered, removed: false };
-                return sum + (edit.removed ? 0 : edit.qty * l.unit_cost_ugx);
-              }, 0).toLocaleString()}
-            </span>
-          </div>
-          <div className="flex gap-3">
-            <button onClick={onClose} disabled={submitting} className="px-6 py-2 text-zinc-500 font-bold hover:bg-zinc-100 rounded-xl transition-all disabled:opacity-50">
-              Cancel
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-6">
+          {loading ? <p className="text-sm text-zinc-500">Loading approval lines…</p> : (
+            <div className="overflow-x-auto border border-zinc-200 rounded-xl">
+              <table className="w-full min-w-[640px] text-left">
+                <thead className="bg-zinc-50 text-[11px] text-zinc-500 uppercase">
+                  <tr><th className="p-3">Product</th><th className="p-3">Supplier</th><th className="p-3">Quoted cost</th><th className="p-3">Requested</th><th className="p-3">Approved</th><th className="p-3">Decision</th></tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {lines.map(line => {
+                    const edit = editedLines[line.id] || { qty: line.qty_ordered, removed: false };
+                    return <tr key={line.id} className={cn(edit.removed && 'bg-rose-50/40')}>
+                      <td className="p-3 text-sm font-semibold">{line.product_name}</td>
+                      <td className="p-3 text-xs">{line.supplier_name || 'Not specified'}</td>
+                      <td className="p-3 text-xs">UGX {Number(line.unit_cost_ugx || 0).toLocaleString()}</td>
+                      <td className="p-3 text-sm">{line.qty_ordered}</td>
+                      <td className="p-3">
+                        <input type="number" min="0" step="1" aria-label={`Approved quantity for ${line.product_name}`}
+                          disabled={!canApprove || submitting || edit.removed}
+                          className="w-24 border rounded-lg p-2 text-sm"
+                          value={edit.removed ? 0 : edit.qty}
+                          onChange={event => setEditedLines(prev => ({
+                            ...prev, [line.id]: { qty: Number(event.target.value), removed: false }
+                          }))}/>
+                      </td>
+                      <td className="p-3">
+                        <button type="button" disabled={!canApprove || submitting}
+                          onClick={() => setEditedLines(prev => ({
+                            ...prev, [line.id]: { qty: edit.removed ? line.qty_ordered : 0, removed: !edit.removed }
+                          }))}
+                          className={cn('rounded-lg px-3 py-2 text-xs font-semibold', edit.removed ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700')}>
+                          {edit.removed ? 'Restore' : 'Remove'}
+                        </button>
+                      </td>
+                    </tr>;
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <section className="rounded-2xl border border-emerald-200 p-4 sm:p-5 space-y-4">
+            <div>
+              <h3 className="font-bold text-emerald-950">Add product or substitute</h3>
+              <p className="text-xs text-zinc-600 mt-1">Search the {operational ? 'Operational Inventory master-linked location register' : 'Inventory Product Master'}. The new line is added to this order only after approval.</p>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-600 mb-1">Search products</label>
+              <input type="search" value={productSearch} disabled={!canApprove || submitting}
+                onChange={event => {setProductSearch(event.target.value);setSelectedProductId('');}}
+                placeholder="Name, SKU, generic name or product ID"
+                className="w-full border border-zinc-200 rounded-xl px-3 py-2 text-sm"/>
+              {productSearch.trim() && <div className="mt-1 max-h-40 overflow-y-auto border border-zinc-200 rounded-xl">
+                {filteredProducts.map(product => <button type="button" key={product.id}
+                  onClick={() => {setSelectedProductId(product.id);setProductSearch(product.name);setAdditionCost(product.defaultCost);}}
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 border-b border-zinc-100 last:border-0">
+                  <strong>{product.name}</strong> <span className="text-zinc-500">{product.code}</span>
+                </button>)}
+                {filteredProducts.length === 0 && <p className="px-3 py-2 text-xs text-zinc-500">No matching product in this inventory class.</p>}
+              </div>}
+              {selectedProduct && <p className="text-xs text-emerald-700 mt-1 font-bold">Selected: {selectedProduct.name}</p>}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <label className="text-xs font-bold text-zinc-600">Supplier
+                <select value={selectedSupplierId} onChange={event => setSelectedSupplierId(event.target.value)}
+                  disabled={!canApprove || submitting}
+                  className="mt-1 w-full border rounded-xl p-2 text-sm font-normal">
+                  <option value="">Select registered supplier</option>
+                  {eligibleSuppliers.map(supplier => <option key={supplier.id} value={supplier.id}>{supplier.supplier_name}</option>)}
+                </select>
+              </label>
+              <label className="text-xs font-bold text-zinc-600">Quantity (packs)
+                <input type="number" min="1" step="1" value={additionQuantity}
+                  disabled={!canApprove || submitting}
+                  onChange={event => setAdditionQuantity(Number(event.target.value))}
+                  className="mt-1 w-full border rounded-xl p-2 text-sm font-normal"/>
+              </label>
+              <label className="text-xs font-bold text-zinc-600">Quoted unit cost (UGX)
+                <input type="number" min="1" step="1" value={additionCost}
+                  disabled={!canApprove || submitting}
+                  onChange={event => setAdditionCost(Number(event.target.value))}
+                  className="mt-1 w-full border rounded-xl p-2 text-sm font-normal"/>
+              </label>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="text-xs font-bold text-zinc-600">Replaces existing product (optional)
+                <select value={replacesLineId} disabled={!canApprove || submitting}
+                  onChange={event => setReplacesLineId(event.target.value)}
+                  className="mt-1 w-full border rounded-xl p-2 text-sm font-normal">
+                  <option value="">Additional product, not a substitution</option>
+                  {lines.map(line => <option key={line.id} value={line.id}>{line.product_name}</option>)}
+                </select>
+              </label>
+              <label className="text-xs font-bold text-zinc-600">Reason for addition / substitution
+                <input value={additionReason} disabled={!canApprove || submitting}
+                  onChange={event => setAdditionReason(event.target.value)}
+                  placeholder="E.g. Requested item unavailable; authorized alternative"
+                  className="mt-1 w-full border rounded-xl p-2 text-sm font-normal"/>
+              </label>
+            </div>
+            <button type="button" onClick={handleAddProduct} disabled={!canApprove || submitting}
+              className="rounded-xl px-4 py-2 bg-emerald-700 text-white text-sm font-semibold disabled:opacity-40">
+              + Add selected product
             </button>
-            <button 
-              onClick={handleConfirm} 
-              disabled={submitting}
-              className="px-6 py-2 bg-emerald-500 text-white font-bold hover:bg-emerald-600 rounded-xl transition-all disabled:bg-zinc-300 disabled:opacity-50"
-            >
-              {submitting ? 'Approving...' : 'Approve Order'}
+            {additions.length > 0 && <div className="space-y-2">
+              <p className="text-sm font-bold">Products to add on approval</p>
+              {additions.map((addition, index) => <div key={addition.productId} className="rounded-xl border p-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold">{availableProducts.find(product => product.id === addition.productId)?.name || addition.productId} · {addition.quantity} pack(s)</p>
+                  <p className="text-xs text-zinc-500">UGX {(addition.quantity * addition.unitCostUGX).toLocaleString()} · {addition.reason}{addition.replacesLineId ? ' · Substitute' : ''}</p>
+                </div>
+                <button type="button" disabled={!canApprove || submitting}
+                  onClick={() => {
+                    setAdditions(prev => prev.filter((_, i) => i !== index));
+                    if (addition.replacesLineId) setEditedLines(prev => ({
+                      ...prev, [addition.replacesLineId!]: { qty: lines.find(line => line.id === addition.replacesLineId)?.qty_ordered || 0, removed: false }
+                    }));
+                  }}
+                  className="rounded-lg px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50">Remove addition</button>
+              </div>)}
+            </div>}
+          </section>
+        </div>
+        <div className="border-t border-zinc-200 bg-zinc-50 px-4 py-3 sm:px-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div>
+            <p className="text-xs text-zinc-500">Approved line total (including new products)</p>
+            <p className="text-xl font-black text-zinc-900">UGX {(existingTotal + addedTotal).toLocaleString()}</p>
+            <p className="text-[11px] text-zinc-500">Other previously approved internal lines remain unchanged and are included in final validation.</p>
+          </div>
+          <div className="flex gap-2 w-full sm:w-auto">
+            <button type="button" onClick={onClose} disabled={submitting}
+              className="flex-1 sm:flex-none border rounded-xl px-4 py-2 text-sm">Cancel</button>
+            <button type="button" onClick={handleConfirm} disabled={submitting || loading || !canApprove || lines.length === 0}
+              className="flex-1 sm:flex-none bg-emerald-600 text-white font-bold rounded-xl px-5 py-2 text-sm disabled:opacity-40">
+              {submitting ? 'Approving…' : 'Approve final order'}
             </button>
           </div>
         </div>
