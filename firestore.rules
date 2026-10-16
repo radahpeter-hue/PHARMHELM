@@ -2251,6 +2251,27 @@ service cloud.firestore {
         && isTenantMember(request.resource.data.tenantId)
         && (!isOperationalTransfer(request.resource.data) || isOperationalInventoryEnabled(request.resource.data.tenantId))
         && hasValidTransferClass(request.resource.data, true);
+      // Only the canonical GRN dispatch action can advance a prepared transfer.
+      allow update: if isProcurement()
+        && isTenantMember(resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && resource.data.inventoryClass == 'SELLABLE'
+        && resource.data.status == 'ready_for_dispatch'
+        && request.resource.data.status == 'dispatched'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'dispatchedAt', 'dispatched_at', 'dispatched_by',
+          'dispatched_by_name', 'updatedAt'
+        ])
+        && request.resource.data.dispatched_by == request.auth.uid
+        && resource.data.grn_id is string
+        && resource.data.order_id is string
+        && existsAfter(/databases/$(database)/documents/grn_records/$(resource.data.grn_id))
+        && getAfter(/databases/$(database)/documents/grn_records/$(resource.data.grn_id)).data.tenantId == resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/grn_records/$(resource.data.grn_id)).data.transfer_id == invoiceId
+        && getAfter(/databases/$(database)/documents/grn_records/$(resource.data.grn_id)).data.dispatch_status == 'dispatched'
+        && existsAfter(/databases/$(database)/documents/stock_orders/$(resource.data.order_id))
+        && getAfter(/databases/$(database)/documents/stock_orders/$(resource.data.order_id)).data.tenantId == resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/stock_orders/$(resource.data.order_id)).data.status == 'dispatched';
       allow update: if isStockOperator()
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
