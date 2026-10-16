@@ -1625,7 +1625,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         if (showHistory) {
           setInvoices(filtered.filter(i => i.status === 'fully_accepted' || i.status === 'queried'));
         } else {
-          setInvoices(filtered.filter(i => i.status !== 'fully_accepted' && i.status !== 'queried'));
+          setInvoices(filtered.filter(i => i.status !== 'fully_accepted' && i.status !== 'queried' && i.status !== 'ready_for_dispatch'));
         }
         }
       );
@@ -1733,6 +1733,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
           throw new Error('This dispatch has already been received. No stock was added again.');
         }
         if (status === 'receiving') throw new Error('This dispatch is already being received by another session.');
+        if (status !== 'dispatched') throw new Error('This transfer has not been physically dispatched. Reception cannot begin.');
         transaction.update(selectedInvoiceRef, {
           status: 'receiving',
           reception_claimed_by: profile.uid,
