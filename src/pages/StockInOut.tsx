@@ -1959,6 +1959,9 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               eventType: 'TRANSFER_IN',
               quantityDeltaBaseUnits: totalUnitsAccepted,
               consumptionDeltaBaseUnits: 0,
+              // Physical SOH was already committed in the reception batch.
+              // Do not add the same quantity a second time to analytics closing stock.
+              stockAlreadyApplied: true,
               isExceptional: false,
               exceptionalReason: null,
               sourceCollection: 'transfer_invoices',
