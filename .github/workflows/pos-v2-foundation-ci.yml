@@ -44,6 +44,8 @@ on:
       - 'tests/supplier-registry.test.ts'
       - 'src/services/orderSubmissionService.ts'
       - 'src/services/procurementFinanceService.ts'
+      - 'src/services/centralGrnFinanceContract.ts'
+      - 'tests/central-grn-finance-contract.test.ts'
       - 'src/services/procurementApproval*.ts'
       - 'scripts/procurement-approval-rules-emulator.mjs'
       - 'tests/procurement-approval-substitutions.test.ts'
