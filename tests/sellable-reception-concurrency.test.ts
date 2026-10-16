@@ -35,3 +35,7 @@ test('each receipt is claimed under transaction before any stock write and remai
   assert.match(handler,/status: 'receiving'/);
   assert.match(handler,/invoiceLines\.some\(line => line\.inventoryClass === 'OPERATIONAL'\)/);
 });
+
+test('post-commit Sellable movement records flag stock as already applied',()=>{
+  assert.match(handler,/eventType: 'TRANSFER_IN',[\\s\\S]*?stockAlreadyApplied: true/);
+});
