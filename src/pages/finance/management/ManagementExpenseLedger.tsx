@@ -356,6 +356,10 @@ export const ManagementExpenseLedger: React.FC = () => {
   // Confirm and Issue draft
   const handleConfirmAndIssue = async () => {
     if (!profile?.tenantId || !reviewingExpense) return;
+    if (reviewingExpense.source === 'procurement_cash_grn') {
+      toast.error('This GRN cash-payment draft requires the dedicated atomic supplier-invoice settlement workflow. Payment is not enabled yet.');
+      return;
+    }
 
     const amt = reviewForm.amount;
     const origAmt = reviewingExpense.originalAmount || reviewingExpense.amount;
@@ -568,6 +572,10 @@ export const ManagementExpenseLedger: React.FC = () => {
   // Reject draft
   const handleRejectDraft = async () => {
     if (!profile?.tenantId || !reviewingExpense) return;
+    if (reviewingExpense.source === 'procurement_cash_grn') {
+      toast.error('Supplier invoice payment drafts must be reconciled through the dedicated procurement workflow.');
+      return;
+    }
 
     try {
       // Set status to rejected
