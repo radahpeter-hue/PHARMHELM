@@ -1477,6 +1477,8 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const { profile, activeBranchId, hasPermission } = useAuth();
   const [invoices, setInvoices] = useState<TransferInvoice[]>([]);
   const [selectedInvoice, setSelectedInvoice] = useState<TransferInvoice | null>(null);
+  const receptionInFlightRef = useRef(false);
+  const [receptionInFlight, setReceptionInFlight] = useState(false);
   const [invoiceLines, setInvoiceLines] = useState<TransferInvoiceLine[]>([]);
   const [receivingData, setReceivingData] = useState<Record<string, { accepted: number; queried: number; reason?: any }>>({});
   const [showHistory, setShowHistory] = useState(false);
@@ -1741,6 +1743,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   };
 
   const handleReceiveSubmit = async () => {
+    if (receptionInFlightRef.current) return;
     if (!selectedInvoice || !profile?.tenantId || !activeBranchId) return;
     if (!canOperateReception) {
       toast.error('Your role can view this invoice but cannot confirm stock reception.');
@@ -1772,6 +1775,8 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       return;
     }
 
+    receptionInFlightRef.current = true;
+    setReceptionInFlight(true);
     const selectedInvoiceRef = doc(db, 'transfer_invoices', selectedInvoice.id);
     let receptionClaimed = false;
     let receptionCommitted = false;
@@ -1986,6 +1991,9 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         }
       }
       toast.error(error?.message || "Failed to process reception.");
+    } finally {
+      receptionInFlightRef.current = false;
+      setReceptionInFlight(false);
     }
   };
 
@@ -2346,10 +2354,10 @@ return (
                 {!showHistory && (
                   <button 
                     onClick={handleReceiveSubmit}
-                    disabled={!canOperateReception || invoiceLinesLoading || !!invoiceLinesError || invoiceLines.length === 0}
+                    disabled={receptionInFlight || !canOperateReception || invoiceLinesLoading || !!invoiceLinesError || invoiceLines.length === 0}
                     className="px-8 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold transition-colors shadow-lg shadow-emerald-500/20 disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:shadow-none"
                   >
-                    Confirm Reception
+                    {receptionInFlight ? 'Processing Reception…' : 'Confirm Reception'}
                   </button>
                 )}
               </div>
