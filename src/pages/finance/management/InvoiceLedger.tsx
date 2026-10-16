@@ -13,6 +13,9 @@ interface Invoice {
   tenantId: string;
   invoiceRef: string;
   grnId: string;
+  grnRef?: string;
+  paymentType?: string;
+  paidAmountUGX?: number;
   branchId: string;
   branchName: string;
   supplierId: string;
@@ -413,16 +416,19 @@ export const InvoiceLedger: React.FC = () => {
                   <span className="font-mono font-bold text-zinc-950 text-base">UGX {selectedInvoice.invoiceValue?.toLocaleString() || 0}</span>
                 </div>
                 <div>
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Remaining Credit Balance</span>
-                  <span className="font-mono font-bold text-amber-600 text-base">UGX {selectedInvoice.creditBalance?.toLocaleString() || 0}</span>
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">{selectedInvoice.paymentType === 'cash' ? 'Amount Pending Payment' : 'Remaining Credit Balance'}</span>
+                  <span className="font-mono font-bold text-amber-600 text-base">UGX {(selectedInvoice.paymentType === 'cash' ? Math.max(0, selectedInvoice.invoiceValue - (selectedInvoice.paidAmountUGX || 0)) : selectedInvoice.creditBalance || 0).toLocaleString()}</span>
                 </div>
               </div>
 
               <div className="border-t border-zinc-100 pt-4">
-                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Linked GRN Reference ID</span>
-                <span className="font-mono text-xs text-zinc-600 bg-zinc-100 px-2 py-1 rounded-md block mt-1 break-all">
-                  {selectedInvoice.grnId || 'Direct-logged GRN reference'}
+                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Linked GRN Number</span>
+                <span className="font-mono text-sm font-semibold text-zinc-900 bg-zinc-100 px-2 py-2 rounded-md block mt-1 break-words">
+                  {selectedInvoice.grnRef || selectedInvoice.grnId || 'Direct-logged GRN reference'}
                 </span>
+                {selectedInvoice.grnRef && selectedInvoice.grnId && selectedInvoice.grnRef !== selectedInvoice.grnId && (
+                  <span className="text-[10px] text-zinc-500 block mt-2 break-all">Internal audit ID: {selectedInvoice.grnId}</span>
+                )}
               </div>
 
               <div className="border-t border-zinc-100 pt-4 grid grid-cols-2 gap-4">

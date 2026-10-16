@@ -20,6 +20,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { processProcurementGrn } from '../services/procurementFinanceService';
 import { dispatchPreparedSellableGrn } from '../services/grnDispatchService';
+import { grnReceivedDateKey } from '../utils/grnDates';
 import { processOperationalGrn } from '../services/operationalGrnService';
 import { confirmProcurementApproval } from '../services/procurementApprovalService';
 import type { ApprovalAddition, ApprovalQuantityEdit } from '../services/procurementApprovalPolicy';
@@ -2111,6 +2112,7 @@ const FinancialApprovalModal: React.FC<{
   );
 };
 
+
 const GRNTab: React.FC = () => {
   const { profile } = useAuth();
   const operationalInventoryEnabled = useOperationalInventoryFeature();
@@ -2129,7 +2131,7 @@ const GRNTab: React.FC = () => {
     if (profile?.tenantId) {
       const unsubscribeGrns = firestoreService.subscribeToCollection<GRNRecord>('grn_records', profile.tenantId, (data) => {
         setGrns(data.filter(grn => operationalInventoryEnabled || !isOperationalInventoryRecord(grn))
-          .sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime()));
+          .sort((a, b) => (grnReceivedDateKey(b.receivedAt) || '').localeCompare(grnReceivedDateKey(a.receivedAt) || '')));
       });
       const unsubscribeOrders = firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
         setApprovedOrders(data.filter(o => o.status === 'approved' && (operationalInventoryEnabled || !isOperationalInventoryRecord(o))));
@@ -2234,7 +2236,7 @@ const GRNTab: React.FC = () => {
         'HQ Store',
         g.total_value_ugx || 0,
         g.payment_type ? g.payment_type.toUpperCase() : 'CREDIT',
-        g.receivedAt ? g.receivedAt.split('T')[0] : '-',
+        grnReceivedDateKey(g.receivedAt) || '-',
         g.invoice_number || 'N/A'
       ]);
     });
@@ -2263,7 +2265,7 @@ const GRNTab: React.FC = () => {
       'central store'.includes(q) ||
       'main store'.includes(q);
 
-    const grnDate = g.receivedAt ? g.receivedAt.split('T')[0] : '';
+    const grnDate = grnReceivedDateKey(g.receivedAt);
     const matchesStart = !grnDateRange.start || grnDate >= grnDateRange.start;
     const matchesEnd = !grnDateRange.end || grnDate <= grnDateRange.end;
 
