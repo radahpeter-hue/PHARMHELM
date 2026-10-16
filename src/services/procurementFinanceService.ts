@@ -226,7 +226,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
     };
 
     transaction.set(refs.grn, {
-      tenantId, id: ids.grnId, grn_number: grnNumber, order_id: order.id,
+      tenantId, inventoryClass: 'SELLABLE', id: ids.grnId, grn_number: grnNumber, order_id: order.id,
       invoice_id: financeValue > 0 ? ids.invoiceId : null,
       procurement_invoice_id: financeValue > 0 ? ids.procurementInvoiceId : null,
       credit_ledger_id: paymentType === 'credit' && financeValue > 0 ? ids.creditId : null,
