@@ -3027,11 +3027,11 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
       };
       if (isOperationalOrder) {
         const result = await processOperationalGrn({
-          tenantId, order, lines, editedLines, invoiceNumber, invoiceDate, inputVat, whtAmount, notes, user
+          tenantId, order, lines, editedLines, invoiceNumber, invoiceDate, paymentType, inputVat, whtAmount, notes, user
         });
         toast.success(result.alreadyProcessed
           ? 'This Operational GRN was already completed. No duplicate stock was added.'
-          : `Operational GRN ${result.grnNumber} received into the HQ Operational Store. Finance event and branch dispatch are separate steps.`);
+          : `Operational GRN ${result.grnNumber} received into the HQ Operational Store. Cash/Credit invoice and Finance event recorded. Branch dispatch remains a separate step.`);
         onClose();
         return;
       }
@@ -3095,7 +3095,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
                 onChange={(e) => setInvoiceDate(e.target.value)}
               />
             </div>
-            {!isOperationalOrder && <div className="space-y-1">
+            <div className="space-y-1">
               <label className="text-xs font-bold text-zinc-500 uppercase">Payment Type</label>
               <div className="flex gap-4">
                 <button 
@@ -3111,7 +3111,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
                   Credit
                 </button>
               </div>
-            </div>}
+            </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-zinc-500 uppercase">Input VAT (UGX)</label>
               <input 
