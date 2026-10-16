@@ -176,7 +176,7 @@ try {
     await setDoc(doc(context.firestore(), 'stock_order_lines', bufferLine.id), bufferLine);
   });
   const grnInput = { tenantId, order: bufferOrder, lines: [bufferLine], editedLines: { [actualBufferLineId]: { qty: 2, unitCostUGX: 1000 } },
-    invoiceNumber: 'OP-TEST-001', invoiceDate: '2026-10-13', inputVat: 0, whtAmount: 0, notes: '', user: { uid: 'procurement-a', name: 'Buyer' } };
+    invoiceNumber: 'OP-TEST-001', invoiceDate: '2026-10-13', paymentType: 'credit', inputVat: 0, whtAmount: 0, notes: '', user: { uid: 'procurement-a', name: 'Buyer' } };
   const receipt = await processOperationalGrn(grnInput, procurement);
   assert.equal(receipt.alreadyProcessed, false);
   assert.equal((await getDoc(doc(procurement, 'operational_inventory', registered.itemId))).data().quantityInStock, 2);
