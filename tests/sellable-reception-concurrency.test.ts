@@ -43,5 +43,5 @@ test('post-commit Sellable movement records flag stock as already applied',()=>{
   assert.match(recovery,/eventType: 'TRANSFER_IN'/);
   assert.match(recovery,/stockAlreadyApplied: true/);
   assert.match(recovery,/if \(intent.status === 'processed'\) return 'already_processed'/);
-  assert.match(recovery,/where\('status', '==', 'pending'\)/);
+  assert.match(recovery,/intent\.data\(\)\.status !== 'pending'/);
 });
