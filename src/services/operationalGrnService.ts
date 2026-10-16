@@ -345,7 +345,7 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
       supplier_id: supplierId, supplier_name: supplierName, invoice_number: invoiceNumber,
       invoice_date: input.invoiceDate, receivedAt: now.toDate().toISOString(), receivedBy: input.user.uid,
       destination_branch_id: 'HQ', destination_store_id: 'HQ_OPERATIONAL', status: 'completed',
-      grn_status: 'completed', financial_posting_status: 'posted',
+      grn_status: 'completed', financial_posting_status: 'event_created', invoice_posting_status: 'posted',
       invoice_id: financeInvoiceId, procurement_invoice_id: registerRef.id,
       credit_ledger_id: input.paymentType === 'credit' ? creditRef.id : null,
       payment_type: input.paymentType,
