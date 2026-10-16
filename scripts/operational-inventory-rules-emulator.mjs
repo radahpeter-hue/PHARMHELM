@@ -179,6 +179,21 @@ try {
     invoiceNumber: 'OP-TEST-001', invoiceDate: '2026-10-13', paymentType: 'credit', inputVat: 0, whtAmount: 0, notes: '', user: { uid: 'procurement-a', name: 'Buyer' } };
   const receipt = await processOperationalGrn(grnInput, procurement);
   assert.equal(receipt.alreadyProcessed, false);
+  // Operational GRN must create one unpaid supplier invoice and one credit
+  // payable, without creating a cash draft or debiting petty cash.
+  const canonicalInvoiceId = `procurement_invoice_${receipt.grnId}`;
+  const canonicalInvoice = (await getDoc(doc(procurement, 'invoices', canonicalInvoiceId))).data();
+  const creditPayable = (await getDoc(doc(procurement, 'creditLedger', `supplier_credit_${receipt.grnId}`))).data();
+  assert.equal(canonicalInvoice?.inventoryClass, 'OPERATIONAL');
+  assert.equal(canonicalInvoice?.invoiceValue, 2000);
+  assert.equal(canonicalInvoice?.paymentType, 'credit');
+  assert.equal(canonicalInvoice?.paymentStatus, 'Outstanding');
+  assert.equal(canonicalInvoice?.paidAmountUGX, 0);
+  assert.equal(creditPayable?.remainingCreditBalance, 2000);
+  assert.equal((await getDoc(doc(procurement, 'management_expenses',
+    `management_payment_draft_${receipt.grnId}`))).exists(), false);
+  assert.equal((await getDoc(doc(procurement, 'procurement_invoices',
+    `procurement_register_${receipt.grnId}`))).exists(), true);
   assert.equal((await getDoc(doc(procurement, 'operational_inventory', registered.itemId))).data().quantityInStock, 2);
   const receivedItem = (await getDoc(doc(procurement, 'operational_inventory', registered.itemId))).data();
   const receiptMovement = (await getDoc(doc(procurement, 'operational_inventory_movements', receivedItem.lastMovementId))).data();
