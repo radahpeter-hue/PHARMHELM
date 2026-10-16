@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing';
-import { doc, getDoc, increment, runTransaction, writeBatch, setDoc } from 'firebase/firestore';
+import { doc, getDoc, increment, runTransaction, writeBatch, setDoc, updateDoc } from 'firebase/firestore';
 
 /**
  * Integration regression for the actual Sellable Stock In atomic primitives:
@@ -81,7 +81,25 @@ try {
   assert.equal(outcomes.filter(x=>x.status==='rejected').length,1);
   await assertFails(claim(user('unauthorized'),'transfer-four'));
   assert.equal((await getDoc(doc(first,'products',productId))).data().quantityInStock,18);
-  console.log('PASS: distinct concurrent receipts add 3+5 exactly; one canonical new batch; only one concurrent claim.');
+  // Durable movement intent is accepted after physical stock receipt, and its
+  // status can only advance from pending to processed under a branch role.
+  const intentId='sellable_stockin_transfer-one_test-line-1';
+  const intentRef=doc(first,'sellable_receipt_movement_outbox',intentId);
+  const intent={
+    tenantId:tenant, branchId:branch, productId, transferId:'transfer-one',
+    lineId:'test-line-1', quantityBaseUnits:3, actorId:'receiver-one',
+    effectiveAt:'2026-10-16T12:00:00.000Z',status:'pending',
+    createdAt:'2026-10-16T12:00:00.000Z'
+  };
+  await setDoc(intentRef,intent);
+  await updateDoc(intentRef,{status:'processed',processedAt:'2026-10-16T12:01:00.000Z'});
+  assert.equal((await getDoc(intentRef)).data().status,'processed');
+  await assertFails(updateDoc(intentRef,{status:'pending'}));
+  await assertFails(setDoc(doc(user('unauthorized'),'sellable_receipt_movement_outbox',
+    'sellable_stockin_transfer-four_test-line-2'),{
+    ...intent,transferId:'transfer-four',lineId:'test-line-2',actorId:'unauthorized'
+  }));
+  console.log('PASS: distinct concurrent receipts add 3+5 exactly; canonical batch, duplicate claim blocked, movement intent guardrails.');
 } finally {
   await env.cleanup();
 }
