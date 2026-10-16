@@ -346,8 +346,8 @@ export const ManagementExpenseLedger: React.FC = () => {
     setReviewingExpense(exp);
     setReviewForm({
       amount: exp.amount,
-      category: exp.category || 'Procurement & Inventory',
-      department: exp.department || 'HQ',
+      category: exp.source === 'procurement_cash_grn' ? 'Procurement & Inventory' : (exp.category || 'Procurement & Inventory'),
+      department: exp.source === 'procurement_cash_grn' ? 'Procurement' : (exp.department || 'HQ'),
       description: exp.description || ''
     });
     setIsReviewModalOpen(true);
@@ -961,6 +961,7 @@ export const ManagementExpenseLedger: React.FC = () => {
                     value={manualForm.department}
                     onChange={(e) => setManualForm({ ...manualForm, department: e.target.value })}
                   >
+                    <option value="Procurement">Procurement Department</option>
                     <option value="HQ">HQ Administration</option>
                     <option value="Logistics">Logistics Fleet</option>
                     <option value="Marketing">Marketing Agency</option>
@@ -1021,7 +1022,7 @@ export const ManagementExpenseLedger: React.FC = () => {
                 <AlertTriangle className="text-amber-500 shrink-0 mt-0.5" size={18} />
                 <div className="space-y-1 text-xs text-zinc-600">
                   <span className="font-bold text-zinc-800 block">Original Document Ceilings Applied</span>
-                  <span>This auto draft represents pre-approved capital. You can edit this expense down (creating a partial payment / remaining credit log) but you are **blocked** from issuing more than the ceiling.</span>
+                  <span>This draft is subject to its approved invoice ceiling. Supplier cash GRN drafts remain pending until the dedicated payment settlement workflow is available; reviewing the draft does not issue a payment.</span>
                 </div>
               </div>
 
@@ -1047,7 +1048,7 @@ export const ManagementExpenseLedger: React.FC = () => {
                     value={reviewForm.amount}
                     onChange={(e) => setReviewForm({ ...reviewForm, amount: parseFloat(e.target.value) || 0 })}
                   />
-                  <p className="text-[10px] text-zinc-400">If edited for a lower value, the balance is logged as credit receivable/payable status and invoices are labeled as "partial payments".</p>
+                  <p className="text-[10px] text-zinc-400">The settlement processor must validate any partial payment and update the supplier invoice and outstanding balance together. Editing this draft does not settle an invoice.</p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
@@ -1073,7 +1074,8 @@ export const ManagementExpenseLedger: React.FC = () => {
                       value={reviewForm.department}
                       onChange={(e) => setReviewForm({ ...reviewForm, department: e.target.value })}
                     >
-                      <option value="HQ">HQ Administration</option>
+                      <option value="Procurement">Procurement Department</option>
+                    <option value="HQ">HQ Administration</option>
                       <option value="Logistics">Logistics Fleet</option>
                       <option value="Marketing">Marketing Agency</option>
                       <option value="HR">Human Resource Office</option>
