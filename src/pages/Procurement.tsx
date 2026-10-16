@@ -3247,7 +3247,8 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
 };
 
 const DispatchTab: React.FC = () => {
-  const { profile } = useAuth();
+  const { profile, hasPermission } = useAuth();
+  const canDispatch = hasPermission('procurement', 'operate');
   const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [approvedOrders, setApprovedOrders] = useState<StockOrder[]>([]);
   const [preparedSellableOrders, setPreparedSellableOrders] = useState<StockOrder[]>([]);
@@ -3303,6 +3304,7 @@ const DispatchTab: React.FC = () => {
   }, [operationalInventoryEnabled, selectedOrder]);
 
   const handlePreparedDispatch = async (order: StockOrder) => {
+    if (!canDispatch) { toast.error('Functional Procurement permission is required for dispatch.'); return; }
     if (!profile?.tenantId || !profile.uid || dispatchingPreparedId) return;
     const grnId = (order as any).grn_id;
     const transferId = (order as any).transfer_id;
@@ -3412,6 +3414,7 @@ const DispatchTab: React.FC = () => {
   };
 
   const handleOperationalDispatch = async (order: StockOrder) => {
+    if (!canDispatch) { toast.error('Functional Procurement permission is required for dispatch.'); return; }
     if (!profile?.tenantId || !profile.uid || dispatchingOperationalOrderId) return;
     setDispatchingOperationalOrderId(order.id);
     try {
@@ -3460,7 +3463,7 @@ const DispatchTab: React.FC = () => {
         <div className="divide-y divide-zinc-100">
           {operationalOrders.map(order => <div key={order.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div><button type="button" onClick={() => setDetailsOrder(order)} className="font-bold text-left text-emerald-800 underline hover:text-emerald-950">{order.order_number}</button><p className="text-xs text-zinc-500">{order.requesting_branch_name || order.requesting_branch_id} · Operational Inventory</p></div>
-            <button onClick={() => handleOperationalDispatch(order)} disabled={dispatchingOperationalOrderId !== null} className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-black disabled:opacity-50">
+            <button onClick={() => handleOperationalDispatch(order)} disabled={!canDispatch || dispatchingOperationalOrderId !== null} className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-black disabled:opacity-50">
               {dispatchingOperationalOrderId === order.id ? 'Dispatching…' : 'Dispatch Operational Stock'}
             </button>
           </div>)}
@@ -3474,7 +3477,7 @@ const DispatchTab: React.FC = () => {
         <div className="divide-y divide-zinc-100">
           {pendingOperationalTransfers.map(transfer => <div key={transfer.id} className="p-4 flex items-center justify-between gap-3">
             <div><p className="font-bold text-zinc-900">{transfer.transferNumber}</p><p className="text-xs text-zinc-500">{transfer.destinationBranchName || transfer.destinationBranchId} · {transfer.sourceOrderNumber || transfer.sourceOrderId}</p></div>
-            <button onClick={() => handleResumeOperationalTransfer(transfer)} disabled={dispatchingOperationalOrderId !== null} className="px-4 py-2 rounded-xl bg-amber-700 text-white text-xs font-black disabled:opacity-50">{dispatchingOperationalOrderId === transfer.id ? 'Resuming…' : 'Resume Dispatch'}</button>
+            <button onClick={() => handleResumeOperationalTransfer(transfer)} disabled={!canDispatch || dispatchingOperationalOrderId !== null} className="px-4 py-2 rounded-xl bg-amber-700 text-white text-xs font-black disabled:opacity-50">{dispatchingOperationalOrderId === transfer.id ? 'Resuming…' : 'Resume Dispatch'}</button>
           </div>)}
         </div>
       </section>}
@@ -3489,7 +3492,7 @@ const DispatchTab: React.FC = () => {
               <button type="button" onClick={() => setDetailsOrder(order)} className="font-bold text-left text-emerald-800 underline hover:text-emerald-950">{order.order_number}</button>
               <p className="text-xs text-zinc-700">{order.requesting_branch_name || order.requesting_branch_id} · GRN prepared for dispatch</p>
             </div>
-            <button type="button" onClick={() => handlePreparedDispatch(order)} disabled={dispatchingPreparedId !== null}
+            <button type="button" onClick={() => handlePreparedDispatch(order)} disabled={!canDispatch || dispatchingPreparedId !== null}
               className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
               {dispatchingPreparedId === order.id ? 'Dispatching…' : 'Confirm Physical Dispatch'}
             </button>
