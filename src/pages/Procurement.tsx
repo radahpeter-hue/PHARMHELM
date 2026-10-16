@@ -1817,7 +1817,7 @@ const FinancialApprovalModal: React.FC<{
   const eligibleSuppliers = suppliers.filter(supplier => supplierEligibleForStream(supplier, inventoryClass));
   const availableProducts = operational
     ? operationalItems.map(item => ({ id: item.id, name: item.name, code: item.sku || item.uniqueId || '', defaultCost: item.costPerPack || 0 }))
-    : products.filter(product => product.inventoryClass !== 'OPERATIONAL' &&
+    : products.filter(product => (product as any).isOperational !== true &&
         product.category !== 'non_sellable')
       .map(product => ({ id: product.id, name: product.name, code: `${product.sku || ''} ${product.productId || ''} ${product.genericName || ''}`, defaultCost: product.costPricePerPack || 0 }));
   const filteredProducts = availableProducts.filter(product =>
