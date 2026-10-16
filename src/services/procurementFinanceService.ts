@@ -1,14 +1,11 @@
 import {
-  collection,
   doc,
-  getDocs,
-  query,
   runTransaction,
-  Timestamp,
-  where
+  Timestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { StockOrder, StockOrderLine } from '../types';
+import { planCentralGrnFinance } from './centralGrnFinanceContract';
 
 export type GrnLineEdit = { qty: number; removed: boolean; batch: string; expiry: string };
 
@@ -44,7 +41,8 @@ export const procurementPostingIds = (tenantId: string, orderId: string) => {
     invoiceId: `procurement_invoice_${key}`,
     procurementInvoiceId: `procurement_register_${key}`,
     creditId: `supplier_credit_${key}`,
-    pettyCashId: `cash_grn_${key}`,
+    pettyCashId: `cash_grn_${key}`, // Legacy posting identity, reserved for later Finance settlement
+    cashDraftId: `management_payment_draft_grn_${key}`,
     transferId: `grn_dispatch_${key}`,
     auditId: `grn_financial_posting_${key}`
   };
@@ -56,32 +54,6 @@ const toTimestamp = (date: string) => {
   return Timestamp.fromDate(parsed);
 };
 
-
-const pettyCashLeaseRef = (tenantId: string) => doc(db, 'petty_cash_posting_locks', stablePart(tenantId));
-
-async function acquirePettyCashLease(tenantId: string, postingId: string, userId: string) {
-  const lockRef = pettyCashLeaseRef(tenantId);
-  await runTransaction(db, async transaction => {
-    const snapshot = await transaction.get(lockRef);
-    const nowMs = Date.now();
-    if (snapshot.exists()) {
-      const lock = snapshot.data();
-      if (lock.postingId !== postingId && Number(lock.expiresAtMs || 0) > nowMs) {
-        throw new Error('Another Management Petty Cash posting is currently being processed. Please retry in a moment.');
-      }
-    }
-    transaction.set(lockRef, { tenantId, postingId, userId, acquiredAt: Timestamp.now(), expiresAtMs: nowMs + 120000 }, { merge: true });
-  });
-}
-
-async function releasePettyCashLease(tenantId: string, postingId: string) {
-  const lockRef = pettyCashLeaseRef(tenantId);
-  await runTransaction(db, async transaction => {
-    const snapshot = await transaction.get(lockRef);
-    if (!snapshot.exists() || snapshot.data().postingId !== postingId) return;
-    transaction.set(lockRef, { tenantId, postingId: null, userId: null, releasedAt: Timestamp.now(), expiresAtMs: 0 }, { merge: true });
-  });
-}
 
 /**
  * Posts a procurement GRN, its Finance representation and its dispatch as one
@@ -193,32 +165,30 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
   const isHqDestination = branchId === 'HQ';
 
   if (financeValue > 0 && supplierId === 'UNKNOWN') throw new Error('A supplier is required for externally purchased stock.');
-  let pettyCashLeaseAcquired = false;
-  if (paymentType === 'cash' && financeValue > 0) {
-    await acquirePettyCashLease(tenantId, ids.pettyCashId, user.uid);
-    pettyCashLeaseAcquired = true;
-    const ledger = await getDocs(query(collection(db, 'petty_cash_ledger'), where('tenantId', '==', tenantId)));
-    const available = ledger.docs.reduce((sum, snap) => {
-      const data = snap.data();
-      const type = String(data.type || '').toLowerCase();
-      return sum + (['incoming', 'deposit', 'topup'].includes(type) ? Number(data.amount || 0) : -Number(data.amount || 0));
-    }, 0);
-    if (available < financeValue) {
-      await releasePettyCashLease(tenantId, ids.pettyCashId);
-      pettyCashLeaseAcquired = false;
-      throw new Error(`Insufficient Management Petty Cash. Available: UGX ${available.toLocaleString()}, required: UGX ${financeValue.toLocaleString()}.`);
-    }
+  // Cash at Central GRN is a selected payment term, NOT a cash disbursement.
+  // Payment permission, available balance and petty cash debit belong to
+  // Finance's separate, idempotent settlement transaction.
+  const externalReceived = receivedItems.filter(item => financeItems.some(finance => finance.line_id === item.line_id));
+  const financePlan = financeValue > 0 ? planCentralGrnFinance({
+    tenantId, orderId: order.id, grnId: ids.grnId,
+    invoiceRef: input.invoiceNumber.trim(), supplierId,
+    inventoryClass: 'SELLABLE', paymentType,
+    lines: externalReceived.map(item => ({
+      orderLineId: item.line_id, supplierId,
+      quantity: item.qty_received, unitCostUGX: item.unit_cost_ugx
+    }))
+  }) : null;
+  if (financePlan && financePlan.invoiceAmountUGX !== financeValue) {
+    throw new Error('Supplier invoice total does not reconcile to the GRN received lines.');
   }
 
-  let result: { alreadyProcessed: boolean };
-  try {
-    result = await runTransaction(db, async transaction => {
+  const result = await runTransaction(db, async transaction => {
     const refs = {
       grn: doc(db, 'grn_records', ids.grnId),
       invoice: doc(db, 'invoices', ids.invoiceId),
       procurementInvoice: doc(db, 'procurement_invoices', ids.procurementInvoiceId),
       credit: doc(db, 'creditLedger', ids.creditId),
-      pettyCash: doc(db, 'petty_cash_ledger', ids.pettyCashId),
+      cashDraft: doc(db, 'management_expenses', ids.cashDraftId),
       transfer: doc(db, 'transfer_invoices', ids.transferId),
       audit: doc(db, 'financial_posting_audit', ids.auditId),
       order: doc(db, 'stock_orders', order.id)
@@ -226,7 +196,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
     const lineRefs = lineUpdates.map(line => doc(db, 'stock_order_lines', line.id));
     const reads = await Promise.all([
       transaction.get(refs.grn), transaction.get(refs.invoice), transaction.get(refs.credit),
-      transaction.get(refs.pettyCash), transaction.get(refs.transfer), transaction.get(refs.order),
+      transaction.get(refs.cashDraft), transaction.get(refs.transfer), transaction.get(refs.order),
       ...lineRefs.map(ref => transaction.get(ref))
     ]);
     const existingGrn = reads[0];
@@ -237,6 +207,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
     const existingCredit = reads[2].exists() ? reads[2].data() : null;
     if (existingInvoice && existingInvoice.tenantId !== tenantId) throw new Error('Invoice ID collision across tenants.');
     if (existingCredit && existingCredit.tenantId !== tenantId) throw new Error('Credit ID collision across tenants.');
+    if (reads[3].exists()) throw new Error('A cash payment draft already exists without a completed GRN. Reconcile before retrying.');
 
     const invoiceRefValue = input.invoiceNumber.trim();
     const invoiceData = {
@@ -244,14 +215,14 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
       supplierInvoiceNumber: invoiceRefValue, grnId: ids.grnId, grnRef: grnNumber,
       branchId, branchName, supplierId, supplierName, invoiceValue: financeValue,
       paymentType,
-      paymentStatus: paymentType === 'cash' ? 'Paid' : (existingCredit && Number(existingCredit.remainingCreditBalance ?? existingCredit.balance ?? financeValue) <= 0 ? 'Paid' : (existingCredit && Number(existingCredit.remainingCreditBalance ?? existingCredit.balance ?? financeValue) < financeValue ? 'Partially Paid' : 'Outstanding')) ,
+      paymentStatus: paymentType === 'cash' ? 'Pending Payment' : (existingCredit && Number(existingCredit.remainingCreditBalance ?? existingCredit.balance ?? financeValue) <= 0 ? 'Paid' : (existingCredit && Number(existingCredit.remainingCreditBalance ?? existingCredit.balance ?? financeValue) < financeValue ? 'Partially Paid' : 'Outstanding')) ,
       creditBalance: existingInvoice?.creditBalance ?? (paymentType === 'credit' ? financeValue : 0),
       invoiceDate: invoiceTimestamp, dueDate, createdAt: existingInvoice?.createdAt || now, updatedAt: now,
       type: 'payable', items: financeItems,
       // Read compatibility for older Procurement views.
       branch_id: branchId, branch_name: branchName, supplier_id: supplierId, supplier_name: supplierName,
       invoice_number: invoiceRefValue, grn_number: grnNumber, amount: financeValue,
-      status: paymentType === 'cash' ? 'Paid' : 'Unpaid', created_at: now.toDate().toISOString()
+      status: 'Unpaid', created_at: now.toDate().toISOString()
     };
 
     transaction.set(refs.grn, {
@@ -266,7 +237,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
       receivedAt: now, receivedBy: user.uid, status: 'completed',
       grn_status: 'completed', dispatch_status: 'dispatched', reception_status: 'awaiting_receipt',
       financial_posting_status: financeValue > 0 ? 'posted' : 'not_applicable',
-      payment_type: paymentType, payment_status: paymentType === 'cash' ? 'paid' : 'outstanding',
+      payment_type: paymentType, payment_status: paymentType === 'cash' ? 'pending_payment' : 'outstanding',
       total_value_ugx: financeValue, transfer_value_ugx: transferValue,
       inputVat: input.inputVat, whtAmount: input.whtAmount, items: receivedItems,
       notes: input.notes, createdAt: now, updatedAt: now
@@ -276,7 +247,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
       transaction.set(refs.invoice, invoiceData, { merge: true });
       transaction.set(refs.procurementInvoice, {
         ...invoiceData, amount: financeValue, total_amount_ugx: financeValue,
-        paid_amount_ugx: paymentType === 'cash' ? financeValue : 0
+        paid_amount_ugx: 0
       }, { merge: true });
       if (paymentType === 'credit') {
         const existingRemaining = existingCredit
@@ -295,13 +266,22 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
           invoiceNumber: invoiceRefValue, amount: financeValue, balance: existingRemaining
         }, { merge: true });
       } else {
-        transaction.set(refs.pettyCash, {
-          tenantId, date: input.invoiceDate, amount: financeValue, source: 'Procurement cash GRN',
-          reference_number: invoiceRefValue, type: 'outgoing', branch_id: branchId,
-          grnId: ids.grnId, invoiceId: ids.invoiceId, logged_by: user.uid,
-          notes: `Cash stock purchase - GRN ${grnNumber} - Supplier: ${supplierName}`,
+        transaction.set(refs.cashDraft, {
+          tenantId, source: 'procurement_cash_grn', sourceRef: ids.grnId,
+          grnId: ids.grnId, invoiceId: ids.invoiceId,
+          invoiceRef: invoiceRefValue, supplierId, supplierName,
+          branchId, branch_id: branchId,
+          inventoryClass: 'SELLABLE', category: 'Procurement Cash Invoice',
+          description: `Cash supplier invoice awaiting Finance payment: ${invoiceRefValue} / ${grnNumber}`,
+          amount: financeValue, amount_ugx: financeValue,
+          expense_date: input.invoiceDate, payment_method: 'Management Petty Cash',
+          status: 'draft', paymentStatus: 'pending_payment',
+          excludeFromOpexRollup: true,
+          accountingRecognitionSource: 'PROCUREMENT_GRN',
+          createdBy: user.uid, logged_by: user.name,
           createdAt: now, created_at: now.toDate().toISOString()
-        }, { merge: true });
+        });
+
       }
     }
 
@@ -344,12 +324,6 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
     }, { merge: true });
     return { alreadyProcessed: false };
     });
-  } finally {
-    if (pettyCashLeaseAcquired) {
-      await releasePettyCashLease(tenantId, ids.pettyCashId).catch(error => console.error('Failed to release petty cash posting lease:', error));
-    }
-  }
-
   return {
     grnId: ids.grnId, grnNumber,
     invoiceId: financeValue > 0 ? ids.invoiceId : null,
