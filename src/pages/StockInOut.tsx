@@ -27,6 +27,7 @@ import { firestoreService } from '../services/firestore';
 import { Product, StockOrder, StockOrderLine, TransferInvoice, Branch, ProductBatch, TransferInvoiceLine, Sale, OperationalInventory, OperationalTransfer, OperationalTransferLine } from '../types';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, runTransaction, writeBatch, increment } from 'firebase/firestore';
+import { logMovementAndAggregateInTx, getBranchProductBatchRefs } from '../services/consumptionService';
 import { replaySellableReceiptMovement, reconcilePendingSellableReceipts, sellableReceiptMovementId } from '../services/sellableReceiptRecoveryService';
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
