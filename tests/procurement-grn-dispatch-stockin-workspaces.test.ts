@@ -7,7 +7,7 @@ const stockPage = readFileSync('src/pages/StockInOut.tsx', 'utf8');
 
 const ruleBlock = (collection: string, next: string) => {
   const start = rules.indexOf(`match /${collection}/`);
-  const end = rules.indexOf(`match /${next}/`, start + 1);
+  const end = next ? rules.indexOf(`match /${next}/`, start + 1) : rules.indexOf('\n    match /', start + 1);
   assert.ok(start >= 0 && end > start, `Rules for ${collection} not found`);
   return rules.slice(start, end);
 };
@@ -22,7 +22,7 @@ test('procurement GRN transfer authorization requires a posted matching GRN', ()
 });
 
 test('procurement GRN line authorization requires the same transfer ID and tenant', () => {
-  const block = ruleBlock('transfer_invoice_lines', 'stock_orders');
+  const block = ruleBlock('transfer_invoice_lines', '');
   assert.match(block, /isStockOperator\(\) \|\| \(/);
   assert.match(block, /isProcurement\(\)/);
   assert.match(block, /getAfter\(\/databases\/\$\(database\)\/documents\/grn_records\/\$\(request\.resource\.data\.grn_id\)\)\.data\.transfer_id == request\.resource\.data\.transfer_id/);
