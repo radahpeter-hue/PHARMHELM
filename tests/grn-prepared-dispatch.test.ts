@@ -32,7 +32,7 @@ test('Procurement dispatch has a separate explicit prepared-GRN action',()=>{
 });
 
 test('branch Stock In cannot receive prepared inventory that has not been dispatched',()=>{
-  assert.match(stock,/i\.status !== 'ready_for_dispatch'/);
+  assert.match(stock,/filtered\.filter\(isSellableStockInInvoice\)/);
   assert.match(stock,/if \(status !== 'dispatched'\) throw new Error\('This transfer has not been physically dispatched/);
 });
 
