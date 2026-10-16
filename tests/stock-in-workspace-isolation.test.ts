@@ -33,7 +33,9 @@ test('Sellable reception blocks wrong tenant, branch, class and mismatched quant
 });
 
 test('Operational Stock In uses operational transfer ledger rather than Sellable invoice lines', () => {
-  const operational = source.slice(source.indexOf('const OperationalBranchReceiptQueue:'), source.indexOf('const OperationalBranchReceiptQueue:') + 13000);
+  const operationalStart = source.indexOf('const OperationalBranchReceiptQueue:');
+  const operationalEnd = source.indexOf('\nconst ', operationalStart + 40);
+  const operational = source.slice(operationalStart, operationalEnd > operationalStart ? operationalEnd : undefined);
   assert.match(operational, /'operational_transfers'/);
   assert.match(operational, /'operational_transfer_lines'/);
   assert.match(operational, /receiveOperationalTransferLine\(/);
