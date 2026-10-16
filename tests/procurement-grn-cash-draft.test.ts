@@ -34,3 +34,12 @@ test('GRN-generated draft rule requires matching completed GRN and invoice and n
   assert.match(block,/getAfter\(\/databases\/\$\(database\)\/documents\/invoices\/\$\(request\.resource\.data\.invoiceId\)\)/);
   assert.match(block,/request\.resource\.data\.createdBy == request\.auth\.uid/);
 });
+
+test('new GRN cash drafts are not processed by legacy non-idempotent Finance cash issue flow',()=>{
+  const page=readFileSync(new URL('../src/pages/finance/management/ManagementExpenseLedger.tsx', import.meta.url),'utf8');
+  const approve=page.slice(page.indexOf('const handleConfirmAndIssue = async'), page.indexOf('// Reject draft'));
+  const reject=page.slice(page.indexOf('const handleRejectDraft = async'),page.indexOf('// Export Excel'));
+  assert.match(approve,/reviewingExpense\.source === 'procurement_cash_grn'/);
+  assert.match(approve,/requires the dedicated atomic supplier-invoice settlement workflow/);
+  assert.match(reject,/reviewingExpense\.source === 'procurement_cash_grn'/);
+});
