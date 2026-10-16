@@ -63,7 +63,10 @@ export async function settleCashGrnDraft(input: CashGrnSettlementInput, connecti
     }
     const invoiceRef = doc(connection,'invoices',draft.data().invoiceId);
     const grnRef = doc(connection,'grn_records',draft.data().grnId);
-    const legacyInvoiceRef = doc(connection,'procurement_invoices',`procurement_register_${draft.data().grnId.slice(4)}`);
+    const legacyInvoiceRef = doc(connection,'procurement_invoices',
+      draft.data().grnId.startsWith('op_grn_')
+        ? `procurement_register_${draft.data().grnId}`
+        : `procurement_register_${draft.data().grnId.slice(4)}`);
     const [invoice,grn,legacyInvoice,pettyExisting] = await Promise.all([
       tx.get(invoiceRef),tx.get(grnRef),tx.get(legacyInvoiceRef),tx.get(pettyRef)
     ]);
