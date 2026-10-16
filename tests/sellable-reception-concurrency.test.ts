@@ -37,5 +37,5 @@ test('each receipt is claimed under transaction before any stock write and remai
 });
 
 test('post-commit Sellable movement records flag stock as already applied',()=>{
-  assert.match(handler,/eventType: 'TRANSFER_IN',[\\s\\S]*?stockAlreadyApplied: true/);
+  assert.match(handler,/eventType: 'TRANSFER_IN',[\s\S]*?stockAlreadyApplied: true/);
 });
