@@ -27,7 +27,7 @@ import { firestoreService } from '../services/firestore';
 import { Product, StockOrder, StockOrderLine, TransferInvoice, Branch, ProductBatch, TransferInvoiceLine, Sale, OperationalInventory, OperationalTransfer, OperationalTransferLine } from '../types';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, runTransaction, writeBatch, increment } from 'firebase/firestore';
-import { logMovementAndAggregateInTx, getBranchProductBatchRefs } from '../services/consumptionService';
+import { replaySellableReceiptMovement, reconcilePendingSellableReceipts, sellableReceiptMovementId } from '../services/sellableReceiptRecoveryService';
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -1488,6 +1488,12 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const [invoiceLinesLoading, setInvoiceLinesLoading] = useState(false);
   const [invoiceLinesError, setInvoiceLinesError] = useState<string | null>(null);
   const canOperateReception = hasPermission('stock', 'operate') && hasPermission('inventory', 'operate');
+  useEffect(() => {
+    if (!profile?.tenantId || !activeBranchId || !canOperateReception) return;
+    reconcilePendingSellableReceipts(profile.tenantId, activeBranchId)
+      .catch(error => console.error('Pending Stock In analytics recovery:', error));
+  }, [profile?.tenantId, activeBranchId, canOperateReception]);
+
 
   useEffect(() => {
     if (profile?.tenantId) {
@@ -1812,16 +1818,6 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         }
       });
 
-      const uniqueProductIds = (Array.from(new Set(invoiceLines.map(line => String(line.product_id)))) as string[]);
-      const branchBatchRefsMap: Record<string, any> = {};
-      for (const pId of uniqueProductIds) {
-        branchBatchRefsMap[pId] = await getBranchProductBatchRefs(
-          profile.tenantId,
-          activeBranchId,
-          pId
-        );
-      }
-
       const batch = writeBatch(db);
 
       let hasQueries = false;
@@ -1919,10 +1915,15 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
             });
           }
 
-          successfulMovements.push({
-            line,
-            totalUnitsAccepted
+          const movementId = sellableReceiptMovementId(selectedInvoice.id, line.id);
+          batch.set(doc(db, 'sellable_receipt_movement_outbox', movementId), {
+            tenantId: profile.tenantId, branchId: activeBranchId,
+            productId: line.product_id, transferId: selectedInvoice.id,
+            lineId: line.id, quantityBaseUnits: totalUnitsAccepted,
+            actorId: profile.uid, effectiveAt: new Date().toISOString(),
+            status: 'pending', createdAt: new Date().toISOString()
           });
+          successfulMovements.push(movementId);
         }
       }
 
@@ -1946,36 +1947,17 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       await batch.commit();
       receptionCommitted = true;
 
-      for (const movement of successfulMovements) {
-        const { line, totalUnitsAccepted } = movement;
-        const batchRefs = branchBatchRefsMap[line.product_id] || [];
-        
+      let analyticsOutstanding = false;
+      for (const movementId of successfulMovements) {
         try {
-          await firestoreService.runTransaction(async (transaction) => {
-            await logMovementAndAggregateInTx(transaction, batchRefs, {
-              tenantId: profile.tenantId,
-              branchId: activeBranchId,
-              productId: line.product_id,
-              eventType: 'TRANSFER_IN',
-              quantityDeltaBaseUnits: totalUnitsAccepted,
-              consumptionDeltaBaseUnits: 0,
-              // Physical SOH was already committed in the reception batch.
-              // Do not add the same quantity a second time to analytics closing stock.
-              stockAlreadyApplied: true,
-              isExceptional: false,
-              exceptionalReason: null,
-              sourceCollection: 'transfer_invoices',
-              sourceDocumentId: selectedInvoice.id,
-              sourceLineId: line.id,
-              reversalOfEventId: null,
-              createdBy: profile.uid || 'system',
-              effectiveAt: new Date(),
-              timezone: 'Africa/Kampala'
-            });
-          });
+          await replaySellableReceiptMovement(movementId, profile.tenantId, activeBranchId);
         } catch (logErr) {
-          console.error("Failed to log movement for product", line.product_id, logErr);
+          analyticsOutstanding = true;
+          console.error('Receipt recorded; movement reconciliation will retry on next Stock In visit.', movementId, logErr);
         }
+      }
+      if (analyticsOutstanding) {
+        toast.warning('Stock received successfully. Some analytics records will automatically retry on the next Stock In visit.');
       }
 
       toast.success("Stock verified and inventory updated.");
