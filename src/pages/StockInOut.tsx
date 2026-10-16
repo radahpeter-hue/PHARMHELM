@@ -1463,6 +1463,15 @@ const StockInWorkspace: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   );
 };
 
+/** Legacy transfers without an explicit inventoryClass remain Sellable only when
+ * their order is not marked Operational. Operational transfers live in a separate ledger.
+ * The Sellable UI must never render an explicit Operational transfer.
+ */
+export function isSellableStockInInvoice(invoice: Pick<TransferInvoice, 'inventoryClass' | 'transfer_type' | 'status'>): boolean {
+  return invoice.inventoryClass !== 'OPERATIONAL'
+    && invoice.status !== 'ready_for_dispatch';
+}
+
 const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const { profile, activeBranchId, hasPermission } = useAuth();
   const [invoices, setInvoices] = useState<TransferInvoice[]>([]);
@@ -1622,10 +1631,11 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         profile.tenantId,
         [where('destination_branch_id', '==', activeBranchId)],
         (filtered) => {
+        const sellableInvoices = filtered.filter(isSellableStockInInvoice);
         if (showHistory) {
-          setInvoices(filtered.filter(i => i.status === 'fully_accepted' || i.status === 'queried'));
+          setInvoices(sellableInvoices.filter(i => i.status === 'fully_accepted' || i.status === 'queried'));
         } else {
-          setInvoices(filtered.filter(i => i.status !== 'fully_accepted' && i.status !== 'queried' && i.status !== 'ready_for_dispatch'));
+          setInvoices(sellableInvoices.filter(i => ['dispatched', 'receiving'].includes(i.status)));
         }
         }
       );
@@ -1675,6 +1685,14 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       toast.error('This invoice is not assigned to the active branch.');
       return;
     }
+    if (!isSellableStockInInvoice(invoice)) {
+      toast.error('Operational stock must be received in Operational Stock In, not Sellable Stock In.');
+      return;
+    }
+    if (!['dispatched', 'fully_accepted', 'queried'].includes(invoice.status)) {
+      toast.error('Only physically dispatched Sellable transfers can be opened for reception.');
+      return;
+    }
 
     setSelectedInvoice(invoice);
     setInvoiceLines([]);
@@ -1721,6 +1739,23 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       toast.error('This invoice is not assigned to the active branch.');
       return;
     }
+    if (!isSellableStockInInvoice(selectedInvoice)) {
+      toast.error('Operational transfers cannot be posted through Sellable Stock In.');
+      return;
+    }
+    if (invoiceLines.some(line => line.inventoryClass === 'OPERATIONAL')) {
+      toast.error('An Operational product was found in this Sellable invoice. Reception is blocked.');
+      return;
+    }
+    if (invoiceLines.some(line => {
+      const values = receivingData[line.id];
+      return !values || !Number.isSafeInteger(values.accepted) || !Number.isSafeInteger(values.queried)
+        || values.accepted < 0 || values.queried < 0
+        || values.accepted + values.queried !== line.qty_dispatched;
+    })) {
+      toast.error('All dispatched quantities must be accounted for as accepted or queried.');
+      return;
+    }
 
     const selectedInvoiceRef = doc(db, 'transfer_invoices', selectedInvoice.id);
     let receptionClaimed = false;
@@ -1728,6 +1763,11 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       await runTransaction(db, async transaction => {
         const current = await transaction.get(selectedInvoiceRef);
         if (!current.exists()) throw new Error('The dispatch no longer exists.');
+        if (current.data().tenantId !== profile.tenantId ||
+            current.data().destination_branch_id !== activeBranchId ||
+            current.data().inventoryClass === 'OPERATIONAL') {
+          throw new Error('Sellable reception must match the active tenant, branch and inventory class.');
+        }
         const status = current.data().status;
         if (status === 'fully_accepted' || status === 'queried' || status === 'received') {
           throw new Error('This dispatch has already been received. No stock was added again.');
