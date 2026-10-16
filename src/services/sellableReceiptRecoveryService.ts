@@ -47,7 +47,7 @@ export async function replaySellableReceiptMovement(
 export async function reconcilePendingSellableReceipts(tenantId: string, branchId: string): Promise<void> {
   const snapshots = await getDocs(query(
     collection(db, 'sellable_receipt_movement_outbox'),
-    where('tenantId', '==', tenantId)
+    where('tenantId', '==', tenantId), where('branchId', '==', branchId)
   ));
   const errors: unknown[] = [];
   for (const intent of snapshots.docs) {
