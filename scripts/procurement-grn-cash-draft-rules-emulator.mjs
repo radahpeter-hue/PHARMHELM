@@ -18,7 +18,7 @@ try {
     const db=context.firestore();
     for(const [id,role,tenant] of [
       ['procurement-finance-test','Procurement Head',tenantId],
-      ['viewer-finance-test','HR Support Personnel',tenantId],
+      ['viewer-finance-test','Dispenser',tenantId],
       ['other-tenant-finance-test','Procurement Head','other-tenant']
     ]) await setDoc(doc(db,'staff',id),{
       tenantId:tenant,role,secondaryRoles:[],assigned_branches:[],active:true,status:'active'
