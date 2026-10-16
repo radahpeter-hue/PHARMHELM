@@ -20,7 +20,7 @@ test('Operational GRN posts single invoice and conditional cash draft/credit lia
   assert.match(service,/transaction\.set\(cashDraftRef,/);
   assert.match(service,/status: 'draft', paymentStatus: 'pending_payment'/);
   assert.match(service,/excludeFromOpexRollup: true/);
-  assert.match(service,/financial_posting_status: 'posted'/);
+  assert.match(service,/financial_posting_status: 'event_created', invoice_posting_status: 'posted'/);
   assert.doesNotMatch(service,/transaction\.set\([^\n]*petty_cash_ledger/);
 });
 
