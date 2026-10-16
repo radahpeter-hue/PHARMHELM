@@ -1113,9 +1113,11 @@ export const ManagementExpenseLedger: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleConfirmAndIssue}
-                    className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-1"
+                    disabled={reviewingExpense.source === 'procurement_cash_grn'}
+                    title={reviewingExpense.source === 'procurement_cash_grn' ? 'Pending dedicated supplier invoice settlement implementation' : undefined}
+                    className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-300 disabled:cursor-not-allowed text-white rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-1"
                   >
-                    <Check size={14} /> Confirm & Issue
+                    <Check size={14} /> {reviewingExpense.source === 'procurement_cash_grn' ? 'Settlement Pending' : 'Confirm & Issue'}
                   </button>
                 </div>
               </div>
