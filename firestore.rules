@@ -1145,7 +1145,33 @@ service cloud.firestore {
     }
 
     match /management_expenses/{expenseId} {
+      // Procurement can only read deterministic GRN cash drafts for atomic
+      // collision checks. Ordinary management expenses remain Finance/HR only.
+      allow get: if isProcurement()
+        && expenseId.matches('management_payment_draft_grn_.*')
+        && (resource == null || isTenantMember(resource.data.tenantId));
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (canViewFinance() || isHR());
+      // A cash GRN creates a payment DRAFT, never a disbursement.
+      // The linked completed GRN and invoice must exist after the same commit.
+      allow create: if isProcurement()
+        && isTenantMember(request.resource.data.tenantId)
+        && expenseId == 'management_payment_draft_' + request.resource.data.grnId
+        && request.resource.data.source == 'procurement_cash_grn'
+        && request.resource.data.status == 'draft'
+        && request.resource.data.paymentStatus == 'pending_payment'
+        && request.resource.data.excludeFromOpexRollup == true
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.amount == request.resource.data.amount_ugx
+        && request.resource.data.amount > 0
+        && existsAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId))
+        && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId)).data.tenantId == request.resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId)).data.payment_type == 'cash'
+        && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId)).data.payment_status == 'pending_payment'
+        && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId)).data.invoice_id == request.resource.data.invoiceId
+        && existsAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId))
+        && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.tenantId == request.resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.invoiceValue == request.resource.data.amount
+        && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.paymentStatus == 'Pending Payment';
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isFinance() || isHR());
       allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && isFinance();
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
