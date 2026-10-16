@@ -21,7 +21,7 @@ try{
       status:'ready_for_dispatch',requesting_branch_id:'Masaka'
     });
     await setDoc(doc(db,'grn_records',grnId),{
-      tenantId:tenant,inventoryClass:'SELLABLE',order_id:orderId,
+      tenantId:tenant,order_id:orderId,
       transfer_id:transferId,destination_branch_id:'Masaka',
       grn_status:'completed',financial_posting_status:'posted',
       dispatch_status:'ready_for_dispatch',reception_status:'not_dispatched'
