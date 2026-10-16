@@ -1882,7 +1882,12 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               lastUpdated: new Date().toISOString()
             });
           } else {
-            const newBatchRef = doc(collection(db, 'product_batches'));
+            // Stable identity: concurrent first receipts for one product batch
+            // must increment the same document rather than create duplicates.
+            const newBatchId = ['stockin', profile.tenantId, activeBranchId, line.product_id,
+              line.batch_number || 'N/A', line.expiry_date || '']
+              .map(value => encodeURIComponent(String(value))).join('_');
+            const newBatchRef = doc(db, 'product_batches', newBatchId);
             const purchasePricePerUnit = (line.unit_cost_ugx || 0) / unitsPerPack;
             const sellingPricePerUnit = product?.sellingPricePerUnit || (purchasePricePerUnit * 1.3);
             
@@ -1898,7 +1903,12 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               batch_status: 'active',
               lastUpdated: new Date().toISOString()
             };
-            batch.set(newBatchRef, { ...newBatch, createdAt: new Date().toISOString() });
+            // merge + increment preserves simultaneous first receipts of the
+            // same canonical batch even when neither caller saw it in a query.
+            batch.set(newBatchRef, {
+              ...newBatch, quantity: increment(totalUnitsAccepted),
+              createdAt: new Date().toISOString()
+            }, { merge: true });
           }
 
           if (product) {
