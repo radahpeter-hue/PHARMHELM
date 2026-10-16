@@ -11,7 +11,7 @@ const grn=readFileSync(new URL('../src/services/procurementFinanceService.ts',im
 
 test('GRN dates accept Firestore timestamps, ISO strings, Dates and invalid data',()=>{
   assert.equal(grnReceivedDateKey({toDate:()=>new Date('2026-10-16T16:09:00Z')}),'2026-10-16');
-  assert.equal(grnReceivedDateKey({seconds:1792166940}),'2026-10-16');
+  assert.equal(grnReceivedDateKey({seconds:Math.floor(new Date('2026-10-16T16:09:00Z').getTime()/1000)}),'2026-10-16');
   assert.equal(grnReceivedDateKey('2026-10-16T16:09:00.000Z'),'2026-10-16');
   assert.equal(grnReceivedDateKey(new Date('2026-10-16T16:09:00Z')),'2026-10-16');
   assert.equal(grnReceivedDateKey(null),'');
