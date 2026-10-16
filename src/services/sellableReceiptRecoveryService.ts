@@ -11,7 +11,7 @@ export interface SellableReceiptMovementIntent {
 }
 
 export const sellableReceiptMovementId = (transferId: string, lineId: string) =>
-  `sellable_stockin_${encodeURIComponent(transferId)}_${encodeURIComponent(lineId)}`;
+  `sellable_stockin_${transferId}_${lineId}`;
 
 export async function replaySellableReceiptMovement(
   id: string, tenantId: string, branchId: string
