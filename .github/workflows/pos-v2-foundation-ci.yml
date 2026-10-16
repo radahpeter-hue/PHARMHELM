@@ -45,6 +45,8 @@ on:
       - 'src/services/orderSubmissionService.ts'
       - 'src/services/procurementFinanceService.ts'
       - 'src/services/centralGrnFinanceContract.ts'
+      - 'src/services/grnDispatchService.ts'
+      - 'tests/grn-prepared-dispatch.test.ts'
       - 'src/services/cashGrnSettlement*.ts'
       - 'tests/cash-grn-settlement.test.ts'
       - 'tests/central-grn-finance-contract.test.ts'
