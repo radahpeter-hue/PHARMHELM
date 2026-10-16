@@ -1505,7 +1505,15 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const getUserName = (uid?: string) => {
     if (!uid) return 'N/A';
     const found = staff.find(s => s.uid === uid || s.id === uid);
-    return found ? (found.full_name || found.displayName || found.username || found.email) : uid;
+    return found ? (found.full_name || found.fullName || found.name || found.displayName || found.username || found.email || uid) : uid;
+  };
+
+  const getSenderName = (invoice: TransferInvoice) => {
+    const directoryName = getUserName(invoice.dispatched_by);
+    const storedName = invoice.dispatched_by_name?.trim();
+    // Older dispatches stored the account email in the display-name field.
+    if (storedName && !storedName.includes('@')) return storedName;
+    return directoryName && directoryName !== invoice.dispatched_by ? directoryName : (storedName || directoryName);
   };
 
   const downloadExcelGRN = async (invoice: TransferInvoice) => {
@@ -1519,7 +1527,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
 
     const srcName = invoice.source_branch_id === 'HQ' ? 'HQ Central Store' : (branches.find(b => b.id === invoice.source_branch_id)?.name || invoice.source_branch_name || 'Branch Store');
     const destName = invoice.destination_branch_id === 'HQ' ? 'HQ Central Store' : (branches.find(b => b.id === invoice.destination_branch_id)?.name || invoice.destination_branch_name || 'Branch Store');
-    const senderName = (invoice.dispatched_by_name || getUserName(invoice.dispatched_by));
+    const senderName = getSenderName(invoice);
     const receiverName = invoice.received_by ? (invoice.received_by_name || getUserName(invoice.received_by)) : 'N/A';
     const timeSent = invoice.dispatched_at ? new Date(invoice.dispatched_at).toLocaleString() : 'N/A';
     const timeRec = invoice.received_at ? new Date(invoice.received_at).toLocaleString() : 'N/A';
@@ -1663,7 +1671,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       
       const srcName = (invoice.source_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === invoice.source_branch_id)?.name || invoice.source_branch_name || 'Branch Transfer')).toLowerCase();
       const destName = (invoice.destination_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === invoice.destination_branch_id)?.name || invoice.destination_branch_name || 'Current Branch')).toLowerCase();
-      const sender = (invoice.dispatched_by_name || getUserName(invoice.dispatched_by)).toLowerCase();
+      const sender = getSenderName(invoice).toLowerCase();
       const receiver = invoice.received_by ? (invoice.received_by_name || getUserName(invoice.received_by)).toLowerCase() : 'pending';
       
       return transferNum.includes(q) || 
@@ -2060,7 +2068,7 @@ return (
               {displayedInvoices.map((invoice) => {
                 const srcName = invoice.source_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === invoice.source_branch_id)?.name || invoice.source_branch_name || 'Branch Transfer');
                 const destName = invoice.destination_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === invoice.destination_branch_id)?.name || invoice.destination_branch_name || 'Current Branch');
-                const sender = (invoice.dispatched_by_name || getUserName(invoice.dispatched_by));
+                const sender = getSenderName(invoice);
                 const receiver = invoice.received_by ? (invoice.received_by_name || getUserName(invoice.received_by)) : 'Pending';
                 const totalWorth = invoice.total_value_ugx || (invoice.items || []).reduce((sum, item) => sum + ((item.qty_dispatched || 0) * (item.unit_cost_ugx || 0)), 0);
                 return (
@@ -2107,7 +2115,7 @@ return (
                             onClick={() => handleOpenReceive(invoice)}
                             className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition-colors shadow-sm"
                           >
-                            {canOperateReception ? 'Receive &amp; Verify' : 'View Details'}
+                            {canOperateReception ? 'Receive & Verify' : 'View Details'}
                           </button>
                         ) : (
                           <button 
@@ -2161,7 +2169,7 @@ return (
                   </div>
                   <div className="pt-2 border-t border-zinc-200">
                     <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block font-mono">Dispatched/Sent By &amp; When</span>
-                    <span className="font-semibold text-zinc-700 block">{(selectedInvoice.dispatched_by_name || getUserName(selectedInvoice.dispatched_by))}</span>
+                    <span className="font-semibold text-zinc-700 block">{getSenderName(selectedInvoice)}</span>
                     <span className="text-zinc-500 font-mono text-[11px] block">
                       {selectedInvoice.dispatched_at ? new Date(selectedInvoice.dispatched_at).toLocaleString() : '--'}
                     </span>
