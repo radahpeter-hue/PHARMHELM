@@ -26,7 +26,7 @@ import { hasAnyRole } from '../utils/roles';
 import { firestoreService } from '../services/firestore';
 import { Product, StockOrder, StockOrderLine, TransferInvoice, Branch, ProductBatch, TransferInvoiceLine, Sale, OperationalInventory, OperationalTransfer, OperationalTransferLine } from '../types';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, runTransaction, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, runTransaction, writeBatch, increment } from 'firebase/firestore';
 import { logMovementAndAggregateInTx, getBranchProductBatchRefs } from '../services/consumptionService';
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
@@ -1759,6 +1759,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
 
     const selectedInvoiceRef = doc(db, 'transfer_invoices', selectedInvoice.id);
     let receptionClaimed = false;
+    let receptionCommitted = false;
     try {
       await runTransaction(db, async transaction => {
         const current = await transaction.get(selectedInvoiceRef);
@@ -1877,7 +1878,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
           if (existingBatch) {
             const batchRef = doc(db, 'product_batches', existingBatch.id);
             batch.update(batchRef, {
-              quantity: (existingBatch.quantity || 0) + totalUnitsAccepted,
+              quantity: increment(totalUnitsAccepted),
               lastUpdated: new Date().toISOString()
             });
           } else {
@@ -1903,7 +1904,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
           if (product) {
             const productRef = doc(db, 'products', line.product_id);
             batch.update(productRef, {
-              quantityInStock: (product.quantityInStock || 0) + totalUnitsAccepted,
+              quantityInStock: increment(totalUnitsAccepted),
               updatedAt: new Date().toISOString()
             });
           }
@@ -1933,6 +1934,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       }
 
       await batch.commit();
+      receptionCommitted = true;
 
       for (const movement of successfulMovements) {
         const { line, totalUnitsAccepted } = movement;
@@ -1967,7 +1969,8 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       setSelectedInvoice(null);
     } catch (error: any) {
       console.error(error);
-      if (receptionClaimed) {
+      // Never reopen an already committed receipt when a later analytics write fails.
+      if (receptionClaimed && !receptionCommitted) {
         try {
           await updateDoc(selectedInvoiceRef, {
             status: 'dispatched',
