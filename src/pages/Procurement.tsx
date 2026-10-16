@@ -1786,12 +1786,14 @@ const FinancialApprovalModal: React.FC<{
   const [replacesLineId, setReplacesLineId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const canApprove = hasPermission('procurement', 'operate');
 
   useEffect(() => {
     if (!profile?.tenantId) return;
     let cancelled = false;
     setLoading(true);
+    setLoadError(false);
     const fetchLines = async () => {
       try {
         const data = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [
@@ -1803,7 +1805,10 @@ const FinancialApprovalModal: React.FC<{
         setLines(pending);
         setEditedLines(Object.fromEntries(pending.map(line => [line.id, { qty: line.qty_ordered, removed: false }])));
       } catch (error) {
-        if (!cancelled) toast.error('Could not load order lines for financial review.');
+        if (!cancelled) {
+          setLoadError(true);
+          toast.error('Could not load order lines for financial review. Approval is unavailable.');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -1882,7 +1887,7 @@ const FinancialApprovalModal: React.FC<{
 
   const handleConfirm = async () => {
     if (submitting || !canApprove || !profile?.tenantId || !profile.uid) return;
-    if (loading) return;
+    if (loading || loadError || lines.length === 0) return;
     setSubmitting(true);
     try {
       const result = await confirmProcurementApproval({
@@ -1900,55 +1905,110 @@ const FinancialApprovalModal: React.FC<{
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4">
-      <div className="bg-white rounded-2xl sm:rounded-[32px] w-full max-w-5xl max-h-[94dvh] overflow-hidden shadow-2xl flex flex-col">
-        <div className="p-4 sm:p-6 border-b border-zinc-100 flex justify-between items-start gap-3">
+      <div className="bg-white text-zinc-900 rounded-2xl sm:rounded-[32px] w-full max-w-5xl max-h-[94dvh] overflow-hidden shadow-2xl flex flex-col">
+        <div className="p-3 sm:p-6 border-b border-zinc-100 flex justify-between items-start gap-3 shrink-0">
           <div>
-            <h2 className="text-xl font-bold text-zinc-900">Financial Approval — Review & Adjust</h2>
+            <h2 className="text-lg sm:text-xl leading-tight font-bold text-zinc-900">Financial Approval — Review & Adjust</h2>
             <p className="text-sm text-zinc-500">{order.order_number} · Requested by: {originBranchName}</p>
             <p className="text-xs mt-1 text-emerald-700 font-semibold">{operational ? 'Operational Inventory' : 'Sellable Inventory'} · Original requisition remains in audit history</p>
           </div>
-          <button type="button" onClick={onClose} disabled={submitting} aria-label="Close approval" className="p-2 rounded-lg hover:bg-zinc-100"><X size={20} /></button>
+          <button type="button" onClick={onClose} disabled={submitting} aria-label="Close approval" className="p-2 shrink-0 text-zinc-700 rounded-lg hover:bg-zinc-100"><X size={20} /></button>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-6">
-          {loading ? <p className="text-sm text-zinc-500">Loading approval lines…</p> : (
-            <div className="overflow-x-auto border border-zinc-200 rounded-xl">
-              <table className="w-full min-w-[640px] text-left">
-                <thead className="bg-zinc-50 text-[11px] text-zinc-500 uppercase">
-                  <tr><th className="p-3">Product</th><th className="p-3">Supplier</th><th className="p-3">Quoted cost</th><th className="p-3">Requested</th><th className="p-3">Approved</th><th className="p-3">Decision</th></tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100">
-                  {lines.map(line => {
-                    const edit = editedLines[line.id] || { qty: line.qty_ordered, removed: false };
-                    return <tr key={line.id} className={cn(edit.removed && 'bg-rose-50/40')}>
-                      <td className="p-3 text-sm font-semibold">{line.product_name}</td>
-                      <td className="p-3 text-xs">{line.supplier_name || 'Not specified'}</td>
-                      <td className="p-3 text-xs">UGX {Number(line.unit_cost_ugx || 0).toLocaleString()}</td>
-                      <td className="p-3 text-sm">{line.qty_ordered}</td>
-                      <td className="p-3">
-                        <input type="number" min="0" step="1" aria-label={`Approved quantity for ${line.product_name}`}
+          {loading ? (
+            <p role="status" className="rounded-xl bg-zinc-100 p-4 text-sm text-zinc-700">Loading order products…</p>
+          ) : loadError ? (
+            <p role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm font-semibold text-rose-800">
+              Unable to retrieve this order's products. Close and reopen Financial Approval. Approval has been disabled to prevent an incomplete review.
+            </p>
+          ) : lines.length === 0 ? (
+            <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+              No products awaiting financial approval were found. You cannot approve an order without reviewing its lines.
+            </p>
+          ) : (
+            <section aria-label="Order products awaiting financial review" className="space-y-3 text-zinc-900">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm sm:text-base font-bold text-zinc-900">Products to review ({lines.length})</h3>
+                <span className="text-xs text-zinc-600">Check each quantity and cost</span>
+              </div>
+
+              {/* On narrow screens each item is shown in full without horizontal scrolling. */}
+              <div data-testid="financial-approval-mobile-products" className="grid gap-3 md:hidden">
+                {lines.map(line => {
+                  const edit = editedLines[line.id] || { qty: line.qty_ordered, removed: false };
+                  const approvedQty = edit.removed ? 0 : edit.qty;
+                  return (
+                    <article key={line.id} className={cn('min-w-0 rounded-xl border p-3 space-y-3 text-zinc-900', edit.removed ? 'border-rose-300 bg-rose-50' : 'border-zinc-200 bg-white')}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-bold text-zinc-950 break-words">{line.product_name || 'Unnamed order product'}</p>
+                          <p className="mt-1 text-xs text-zinc-700 break-words">Supplier: {line.supplier_name || 'Not specified'}</p>
+                        </div>
+                        <span className={cn('shrink-0 rounded-md px-2 py-1 text-[11px] font-bold', edit.removed ? 'bg-rose-200 text-rose-900' : 'bg-emerald-50 text-emerald-800')}>
+                          {edit.removed ? 'Removed' : 'Review'}
+                        </span>
+                      </div>
+                      <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                        <div><dt className="text-xs text-zinc-600">Quoted unit cost</dt><dd className="font-semibold text-zinc-950">UGX {Number(line.unit_cost_ugx || 0).toLocaleString()}</dd></div>
+                        <div><dt className="text-xs text-zinc-600">Requested quantity</dt><dd className="font-semibold text-zinc-950">{line.qty_ordered}</dd></div>
+                        <div><dt className="text-xs text-zinc-600">Approved quantity</dt>
+                          <dd className="mt-1"><input type="number" min="0" step="1" inputMode="numeric"
+                            aria-label={`Approved quantity for ${line.product_name}`}
+                            disabled={!canApprove || submitting || edit.removed}
+                            className="w-full max-w-32 rounded-lg border border-zinc-400 bg-white px-2 py-2 text-sm font-semibold text-zinc-950 disabled:bg-zinc-100 disabled:text-zinc-600"
+                            value={approvedQty}
+                            onChange={event => setEditedLines(prev => ({ ...prev, [line.id]: { qty: Number(event.target.value), removed: false } }))}/>
+                          </dd>
+                        </div>
+                        <div><dt className="text-xs text-zinc-600">Approved line total</dt><dd className="mt-2 font-bold text-zinc-950">UGX {(approvedQty * Number(line.unit_cost_ugx || 0)).toLocaleString()}</dd></div>
+                      </dl>
+                      <button type="button" disabled={!canApprove || submitting}
+                        onClick={() => setEditedLines(prev => ({
+                          ...prev, [line.id]: { qty: edit.removed ? line.qty_ordered : 0, removed: !edit.removed }
+                        }))}
+                        className={cn('w-full rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50', edit.removed ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-rose-300 bg-rose-50 text-rose-800')}>
+                        {edit.removed ? 'Restore product' : 'Remove product'}
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+
+              {/* Desktop table retains all fields with explicit foreground colors. */}
+              <div data-testid="financial-approval-desktop-products" className="hidden md:block overflow-x-auto rounded-xl border border-zinc-200">
+                <table className="w-full min-w-[740px] text-left text-zinc-900">
+                  <thead className="bg-zinc-100 text-xs font-semibold uppercase text-zinc-700">
+                    <tr><th className="p-3">Product</th><th className="p-3">Supplier</th><th className="p-3">Unit cost</th><th className="p-3">Requested</th><th className="p-3">Approved</th><th className="p-3">Line total</th><th className="p-3">Action</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-200 bg-white text-zinc-900">
+                    {lines.map(line => {
+                      const edit = editedLines[line.id] || { qty: line.qty_ordered, removed: false };
+                      const approvedQty = edit.removed ? 0 : edit.qty;
+                      return <tr key={line.id} className={edit.removed ? 'bg-rose-50' : 'bg-white'}>
+                        <td className="p-3 text-sm font-bold text-zinc-950 break-words">{line.product_name || 'Unnamed order product'}</td>
+                        <td className="p-3 text-sm text-zinc-800">{line.supplier_name || 'Not specified'}</td>
+                        <td className="p-3 text-sm text-zinc-900">UGX {Number(line.unit_cost_ugx || 0).toLocaleString()}</td>
+                        <td className="p-3 text-sm text-zinc-900">{line.qty_ordered}</td>
+                        <td className="p-3"><input type="number" min="0" step="1" inputMode="numeric"
+                          aria-label={`Approved quantity for ${line.product_name}`}
                           disabled={!canApprove || submitting || edit.removed}
-                          className="w-24 border rounded-lg p-2 text-sm"
-                          value={edit.removed ? 0 : edit.qty}
-                          onChange={event => setEditedLines(prev => ({
-                            ...prev, [line.id]: { qty: Number(event.target.value), removed: false }
-                          }))}/>
-                      </td>
-                      <td className="p-3">
-                        <button type="button" disabled={!canApprove || submitting}
-                          onClick={() => setEditedLines(prev => ({
-                            ...prev, [line.id]: { qty: edit.removed ? line.qty_ordered : 0, removed: !edit.removed }
-                          }))}
-                          className={cn('rounded-lg px-3 py-2 text-xs font-semibold', edit.removed ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700')}>
+                          className="w-20 rounded-lg border border-zinc-400 bg-white p-2 text-sm font-semibold text-zinc-950 disabled:bg-zinc-100 disabled:text-zinc-600"
+                          value={approvedQty}
+                          onChange={event => setEditedLines(prev => ({ ...prev, [line.id]: { qty: Number(event.target.value), removed: false } }))}/></td>
+                        <td className="p-3 text-sm font-semibold text-zinc-950">UGX {(approvedQty * Number(line.unit_cost_ugx || 0)).toLocaleString()}</td>
+                        <td className="p-3"><button type="button" disabled={!canApprove || submitting}
+                          onClick={() => setEditedLines(prev => ({ ...prev, [line.id]: { qty: edit.removed ? line.qty_ordered : 0, removed: !edit.removed } }))}
+                          className={cn('rounded-lg px-3 py-2 text-xs font-semibold', edit.removed ? 'bg-emerald-50 text-emerald-900' : 'bg-rose-50 text-rose-800')}>
                           {edit.removed ? 'Restore' : 'Remove'}
-                        </button>
-                      </td>
-                    </tr>;
-                  })}
-                </tbody>
-              </table>
-            </div>
+                        </button></td>
+                      </tr>;
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           )}
-          <section className="rounded-2xl border border-emerald-200 p-4 sm:p-5 space-y-4">
+          <section className="rounded-2xl border border-emerald-200 bg-white p-3 sm:p-5 space-y-4 text-zinc-900">
             <div>
               <h3 className="font-bold text-emerald-950">Add product or substitute</h3>
               <p className="text-xs text-zinc-600 mt-1">Search the {operational ? 'Operational Inventory master-linked location register' : 'Inventory Product Master'}. The new line is added to this order only after approval.</p>
@@ -1958,11 +2018,11 @@ const FinancialApprovalModal: React.FC<{
               <input type="search" value={productSearch} disabled={!canApprove || submitting}
                 onChange={event => {setProductSearch(event.target.value);setSelectedProductId('');}}
                 placeholder="Name, SKU, generic name or product ID"
-                className="w-full border border-zinc-200 rounded-xl px-3 py-2 text-sm"/>
+                className="w-full border border-zinc-300 bg-white text-zinc-950 rounded-xl px-3 py-2 text-sm"/>
               {productSearch.trim() && <div className="mt-1 max-h-40 overflow-y-auto border border-zinc-200 rounded-xl">
                 {filteredProducts.map(product => <button type="button" key={product.id}
                   onClick={() => {setSelectedProductId(product.id);setProductSearch(product.name);setAdditionCost(product.defaultCost);}}
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 border-b border-zinc-100 last:border-0">
+                  className="w-full text-left px-3 py-2 text-sm text-zinc-950 bg-white hover:bg-emerald-50 border-b border-zinc-100 last:border-0">
                   <strong>{product.name}</strong> <span className="text-zinc-500">{product.code}</span>
                 </button>)}
                 {filteredProducts.length === 0 && <p className="px-3 py-2 text-xs text-zinc-500">No matching product in this inventory class.</p>}
@@ -1973,7 +2033,7 @@ const FinancialApprovalModal: React.FC<{
               <label className="text-xs font-bold text-zinc-600">Supplier
                 <select value={selectedSupplierId} onChange={event => setSelectedSupplierId(event.target.value)}
                   disabled={!canApprove || submitting}
-                  className="mt-1 w-full border rounded-xl p-2 text-sm font-normal">
+                  className="mt-1 w-full min-w-0 border border-zinc-300 bg-white text-zinc-950 rounded-xl p-2 text-sm font-normal">
                   <option value="">Select registered supplier</option>
                   {eligibleSuppliers.map(supplier => <option key={supplier.id} value={supplier.id}>{supplier.supplier_name}</option>)}
                 </select>
@@ -1982,20 +2042,20 @@ const FinancialApprovalModal: React.FC<{
                 <input type="number" min="1" step="1" value={additionQuantity}
                   disabled={!canApprove || submitting}
                   onChange={event => setAdditionQuantity(Number(event.target.value))}
-                  className="mt-1 w-full border rounded-xl p-2 text-sm font-normal"/>
+                  className="mt-1 w-full min-w-0 border border-zinc-300 bg-white text-zinc-950 rounded-xl p-2 text-sm font-normal"/>
               </label>
               <label className="text-xs font-bold text-zinc-600">Quoted unit cost (UGX)
                 <input type="number" min="1" step="1" value={additionCost}
                   disabled={!canApprove || submitting}
                   onChange={event => setAdditionCost(Number(event.target.value))}
-                  className="mt-1 w-full border rounded-xl p-2 text-sm font-normal"/>
+                  className="mt-1 w-full min-w-0 border border-zinc-300 bg-white text-zinc-950 rounded-xl p-2 text-sm font-normal"/>
               </label>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="text-xs font-bold text-zinc-600">Replaces existing product (optional)
                 <select value={replacesLineId} disabled={!canApprove || submitting}
                   onChange={event => setReplacesLineId(event.target.value)}
-                  className="mt-1 w-full border rounded-xl p-2 text-sm font-normal">
+                  className="mt-1 w-full min-w-0 border border-zinc-300 bg-white text-zinc-950 rounded-xl p-2 text-sm font-normal">
                   <option value="">Additional product, not a substitution</option>
                   {lines.map(line => <option key={line.id} value={line.id}>{line.product_name}</option>)}
                 </select>
@@ -2004,7 +2064,7 @@ const FinancialApprovalModal: React.FC<{
                 <input value={additionReason} disabled={!canApprove || submitting}
                   onChange={event => setAdditionReason(event.target.value)}
                   placeholder="E.g. Requested item unavailable; authorized alternative"
-                  className="mt-1 w-full border rounded-xl p-2 text-sm font-normal"/>
+                  className="mt-1 w-full min-w-0 border border-zinc-300 bg-white text-zinc-950 rounded-xl p-2 text-sm font-normal"/>
               </label>
             </div>
             <button type="button" onClick={handleAddProduct} disabled={!canApprove || submitting}
@@ -2013,7 +2073,7 @@ const FinancialApprovalModal: React.FC<{
             </button>
             {additions.length > 0 && <div className="space-y-2">
               <p className="text-sm font-bold">Products to add on approval</p>
-              {additions.map((addition, index) => <div key={addition.productId} className="rounded-xl border p-3 flex flex-wrap items-center justify-between gap-2">
+              {additions.map((addition, index) => <div key={addition.productId} className="rounded-xl border border-zinc-200 bg-white p-3 flex flex-wrap items-center justify-between gap-2 text-zinc-950">
                 <div>
                   <p className="text-sm font-semibold">{availableProducts.find(product => product.id === addition.productId)?.name || addition.productId} · {addition.quantity} pack(s)</p>
                   <p className="text-xs text-zinc-500">UGX {(addition.quantity * addition.unitCostUGX).toLocaleString()} · {addition.reason}{addition.replacesLineId ? ' · Substitute' : ''}</p>
@@ -2030,7 +2090,7 @@ const FinancialApprovalModal: React.FC<{
             </div>}
           </section>
         </div>
-        <div className="border-t border-zinc-200 bg-zinc-50 px-4 py-3 sm:px-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="shrink-0 border-t border-zinc-200 bg-zinc-50 px-3 py-3 sm:px-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-3 text-zinc-900">
           <div>
             <p className="text-xs text-zinc-500">Approved line total (including new products)</p>
             <p className="text-xl font-black text-zinc-900">UGX {(existingTotal + addedTotal).toLocaleString()}</p>
@@ -2038,8 +2098,8 @@ const FinancialApprovalModal: React.FC<{
           </div>
           <div className="flex gap-2 w-full sm:w-auto">
             <button type="button" onClick={onClose} disabled={submitting}
-              className="flex-1 sm:flex-none border rounded-xl px-4 py-2 text-sm">Cancel</button>
-            <button type="button" onClick={handleConfirm} disabled={submitting || loading || !canApprove || lines.length === 0}
+              className="flex-1 sm:flex-none border border-zinc-400 bg-white text-zinc-900 font-semibold rounded-xl px-4 py-2 text-sm">Cancel</button>
+            <button type="button" onClick={handleConfirm} disabled={submitting || loading || loadError || !canApprove || lines.length === 0}
               className="flex-1 sm:flex-none bg-emerald-600 text-white font-bold rounded-xl px-5 py-2 text-sm disabled:opacity-40">
               {submitting ? 'Approving…' : 'Approve final order'}
             </button>
