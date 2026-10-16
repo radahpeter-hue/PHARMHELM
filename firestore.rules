@@ -2210,7 +2210,18 @@ service cloud.firestore {
       }
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isStockOperator()
+      allow create: if (isStockOperator() || (
+          isProcurement()
+          && request.resource.data.get('inventoryClass', '') == 'SELLABLE'
+          && request.resource.data.get('grn_id', '') is string
+          && request.resource.data.get('order_id', '') is string
+          && request.resource.data.get('transfer_type', '') in ['central_to_branch', 'procurement_grn']
+          && existsAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id))
+          && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id)).data.tenantId == request.resource.data.tenantId
+          && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id)).data.order_id == request.resource.data.order_id
+          && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id)).data.transfer_id == invoiceId
+          && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id)).data.financial_posting_status in ['posted', 'not_applicable']
+        ))
         && isTenantMember(request.resource.data.tenantId)
         && (!isOperationalTransfer(request.resource.data) || isOperationalInventoryEnabled(request.resource.data.tenantId))
         && hasValidTransferClass(request.resource.data, true);
@@ -2253,7 +2264,15 @@ service cloud.firestore {
               && get(sellableItemPath).data.tenantId == request.resource.data.tenantId));
       }
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow create: if isStockOperator()
+      allow create: if (isStockOperator() || (
+          isProcurement()
+          && request.resource.data.get('inventoryClass', '') == 'SELLABLE'
+          && request.resource.data.get('grn_id', '') is string
+          && request.resource.data.get('transfer_id', '') is string
+          && existsAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id))
+          && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id)).data.tenantId == request.resource.data.tenantId
+          && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id)).data.transfer_id == request.resource.data.transfer_id
+        ))
         && isTenantMember(request.resource.data.tenantId)
         && validTransferLineClass(true);
       allow update: if isStockOperator()
