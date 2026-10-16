@@ -1048,7 +1048,7 @@ service cloud.firestore {
         && request.resource.data.tenantId == resource.data.tenantId
         && !hasOperationalSourceOrder(resource.data)
         && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
-        && resource.data.inventoryClass != 'OPERATIONAL'
+        && (!('inventoryClass' in resource.data) || resource.data.inventoryClass != 'OPERATIONAL')
         && validGrnInventoryClass(request.resource.data);
       allow delete: if resource.data.inventoryClass != 'OPERATIONAL'
         && !hasOperationalSourceOrder(resource.data)
