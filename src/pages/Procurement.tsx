@@ -3471,7 +3471,7 @@ const DispatchTab: React.FC = () => {
           <table className="w-full text-left text-sm min-w-[740px]">
             <thead className="bg-zinc-50 text-zinc-500 uppercase text-[11px]"><tr><th className="p-3">Order Reference</th><th className="p-3">Inventory Type</th><th className="p-3">Destination Branch</th><th className="p-3">Order Value</th><th className="p-3">Status</th><th className="p-3">Action</th></tr></thead>
             <tbody className="divide-y divide-zinc-100">
-              {(showDispatchHistory ? dispatchHistory : [...preparedSellableOrders, ...operationalOrders, ...approvedOrders]).map(order => {
+              {(showDispatchHistory ? dispatchHistory : [...preparedSellableOrders, ...operationalOrders.filter(order => !pendingOperationalTransfers.some(transfer => transfer.sourceOrderId === order.id)), ...approvedOrders]).map(order => {
                 const operational = isOperationalInventoryRecord(order);
                 const preparedSellable = preparedSellableOrders.some(row => row.id === order.id);
                 return <tr key={order.id}>
