@@ -23,3 +23,14 @@ test('Cash GRN settlement stays disabled while legacy petty-cash writers are unc
     assert.match(source, /petty_cash_ledger/);
   }
 });
+
+
+test('unlaunched supplier cash payment collections are protected from fallback tenant writes', () => {
+  const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
+  const start = rules.indexOf('function isProtectedFinanceCollection(collectionName)');
+  const end = rules.indexOf('function canViewProcurement()', start);
+  assert.ok(start >= 0 && end > start);
+  const protectedCollections = rules.slice(start, end);
+  assert.match(protectedCollections, /'cash_grn_payments'/);
+  assert.match(protectedCollections, /'petty_cash_posting_locks'/);
+});
