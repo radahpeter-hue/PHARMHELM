@@ -11,7 +11,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
 import { firestoreService } from '../services/firestore';
 import { 
-  Product, StockOrder, StockOrderLine, OperationalInventory, OperationalTransfer, InstitutionRegistry, GRNRecord,
+  Product, StockOrder, StockOrderLine, OperationalInventory, OperationalTransfer, OperationalTransferLine, InstitutionRegistry, GRNRecord,
   GRNLine, UnsuppliedLine, ProductBatch, CreditLedgerEntry, TransferInvoice,
   TransferInvoiceLine, Branch, AuditLog
 } from '../types';
