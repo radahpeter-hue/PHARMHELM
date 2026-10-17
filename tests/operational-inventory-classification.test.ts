@@ -158,3 +158,10 @@ test('Operational triage uses a distinct HQ transfer and preserves the external 
   assert.match(rules, /fulfillmentSource == 'HQ_OPERATIONAL'/);
   assert.match(rules, /quantityDispatched <= get\(sourceOrderLinePath\(\)\)\.data\.qty_ordered/);
 });
+
+
+test('Operational transfer line idempotency lookups allow missing documents only for authorized Procurement users', () => {
+  const section = rules.slice(rules.indexOf('match /operational_transfer_lines/{transferLineId}'), rules.indexOf('match /operational_inventory_usage/{usageId}'));
+  assert.match(section, /resource == null && isProcurement\(\)/);
+  assert.match(section, /resource != null && isTenantMember\(resource\.data\.tenantId\)/);
+});
