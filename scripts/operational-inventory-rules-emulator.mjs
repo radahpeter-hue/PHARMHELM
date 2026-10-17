@@ -83,6 +83,10 @@ try {
   // point-reads deterministic item/master/movement IDs before creating them.
   // Missing point-reads must be allowed for authenticated users while the
   // subsequent creates remain fully tenant-, branch- and class-validated.
+  // Operational dispatch preparation point-reads a deterministic missing transfer-line ID.
+  // Procurement may check absence, but a branch manager without Procurement rights may not.
+  await assertSucceeds(getDoc(doc(procurement, 'operational_transfer_lines', 'not-created-yet')));
+  await assertFails(getDoc(doc(branchManager, 'operational_transfer_lines', 'not-created-yet')));
   await assertSucceeds(getDoc(doc(branchManager, 'operational_inventory', 'missing-item')));
   await assertSucceeds(getDoc(doc(branchManager, 'operational_inventory_masters', 'missing-master')));
   await assertSucceeds(getDoc(doc(branchManager, 'operational_inventory_identity_claims', 'missing-identity-claim')));
