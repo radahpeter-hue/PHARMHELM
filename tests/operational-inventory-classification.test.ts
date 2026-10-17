@@ -185,7 +185,7 @@ test('staged Operational transfer inspection is read-only and checks dispatch mo
   const inspection = procurement.slice(start, end);
   assert.match(inspection, /operational_transfer_lines/);
   assert.match(inspection, /operational_inventory_movements/);
-  assert.match(inspection, /sourceLineId === line\.id/);
+  assert.match(inspection, /movement\.sourceLineId !== line\.id/);
   assert.doesNotMatch(inspection, /updateDocument|addDocument|setDoc|updateDoc|runTransaction|writeBatch/);
 });
 
