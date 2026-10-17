@@ -453,7 +453,7 @@ try {
     tenantId, order: resumedStageOrder, destinationBranchName: 'Emulator Branch',
     actor: { uid: 'procurement-a', name: 'Buyer' }
   };
-  const resumed = await dispatchOperationalOrderToBranch(stageInput);
+  const resumed = await dispatchOperationalOrderToBranch(stageInput, procurement);
   assert.equal(resumed.alreadyDispatched, false);
   const staged = await getDoc(doc(procurement, 'operational_transfers', stagedTransferId));
   assert.equal(staged.data().status, 'dispatched');
@@ -465,7 +465,7 @@ try {
     stageLines.docs[0].data().dispatchMovementId));
   assert.equal(stageMovement.exists(), true);
   assert.equal(stageMovement.data().quantityDelta, -1);
-  const resumedAgain = await dispatchOperationalOrderToBranch(stageInput);
+  const resumedAgain = await dispatchOperationalOrderToBranch(stageInput, procurement);
   assert.equal(resumedAgain.alreadyDispatched, true);
   const stageLinesAfter = await getDocs(query(collection(procurement, 'operational_transfer_lines'),
     where('tenantId','==', tenantId), where('transferId', '==', stagedTransferId)));
