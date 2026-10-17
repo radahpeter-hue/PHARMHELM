@@ -3508,7 +3508,6 @@ const DispatchTab: React.FC = () => {
           onConfirm={handleDispatch}
         />
       )}
-      </div>
     </div>
   );
 };
