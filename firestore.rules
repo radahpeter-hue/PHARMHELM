@@ -512,7 +512,7 @@ service cloud.firestore {
         'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
         // Stage 2 supplier-cash prototype collections remain fully inaccessible
         // until the atomic cash/bank writer migration and dedicated rules ship.
-        'cash_grn_payments', 'petty_cash_posting_locks',
+        'cash_grn_payments', 'petty_cash_posting_locks', 'finance_payment_accounts',
         'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
       ];
     }
