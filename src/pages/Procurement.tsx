@@ -3251,6 +3251,7 @@ const DispatchTab: React.FC = () => {
   const canDispatch = hasPermission('procurement', 'operate');
   const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [approvedOrders, setApprovedOrders] = useState<StockOrder[]>([]);
+  const [allDispatchOrders, setAllDispatchOrders] = useState<StockOrder[]>([]);
   const [preparedSellableOrders, setPreparedSellableOrders] = useState<StockOrder[]>([]);
   const [dispatchingPreparedId, setDispatchingPreparedId] = useState<string | null>(null);
   const [operationalOrders, setOperationalOrders] = useState<StockOrder[]>([]);
@@ -3268,6 +3269,7 @@ const DispatchTab: React.FC = () => {
       return;
     }
     const unsubscribeOrders = firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
+      setAllDispatchOrders(data);
       setPreparedSellableOrders(data.filter(o =>
         o.status === 'ready_for_dispatch' &&
         Boolean((o as any).grn_id && (o as any).transfer_id) &&
@@ -3489,7 +3491,7 @@ const DispatchTab: React.FC = () => {
                 </tr>;
               })}
               {!showDispatchHistory && pendingOperationalTransfers.map(transfer => <tr key={transfer.id}>
-                <td className="p-3 font-bold">{transfer.sourceOrderNumber || transfer.transferNumber}</td>
+                <td className="p-3 font-bold"><button type="button" className="text-emerald-800 underline" onClick={() => { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (order) setDetailsOrder(order); else toast.error('The staged transfer has no readable linked source order.'); }}>{transfer.sourceOrderNumber || transfer.transferNumber}</button></td>
                 <td className="p-3">Operational</td><td className="p-3">{transfer.destinationBranchName || transfer.destinationBranchId}</td>
                 <td className="p-3">{Number(transfer.totalValueUGX || 0).toLocaleString()} UGX</td>
                 <td className="p-3">Staged / awaiting dispatch</td>
