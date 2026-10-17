@@ -172,6 +172,22 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Read-only reconcile Stage 2 supplier invoice and petty cash readiness
+        env:
+          GOOGLE_CLOUD_PROJECT: gen-lang-client-0911422817
+        run: |
+          set -euo pipefail
+          node scripts/audit-stage2-supplier-invoice.mjs /tmp/pharmhelm-stage2-supplier-audit.json
+
+      - name: Upload Stage 2 supplier invoice summary (no supplier or account details)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pharmhelm-stage2-supplier-invoice-audit
+          path: /tmp/pharmhelm-stage2-supplier-audit.json
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload identity audit summary (no patient or staff details)
         if: always()
         uses: actions/upload-artifact@v4
