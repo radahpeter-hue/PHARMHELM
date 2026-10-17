@@ -35,7 +35,8 @@ test('settlement is not exposed from Finance UI while all petty cash writers are
   assert.match(service,/paymentId = `procurement_cash_settlement_/);
   assert.match(service,/tx\.get\(paymentRef\)/);
   assert.match(service,/if \(payment\.exists\(\)\)/);
-  assert.match(service,/tx\.set\(pettyRef,/);
+  assert.match(service,/tx\.set\(ledgerRef,/);
+  assert.match(service,/tx\.update\(accountRef,/);
   assert.match(service,/tx\.update\(invoiceRef,/);
   assert.match(service,/tx\.update\(draftRef,/);
   assert.match(ui,/reviewingExpense\.source === 'procurement_cash_grn'/);

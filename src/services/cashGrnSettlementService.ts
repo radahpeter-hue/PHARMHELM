@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, query, runTransaction, Timestamp, where, type Firestore } from 'firebase/firestore';
+import { doc, runTransaction, Timestamp, type Firestore } from 'firebase/firestore';
 import { db } from '../firebase';
 import { planCashGrnSettlement } from './cashGrnSettlementPolicy';
 
@@ -8,6 +8,8 @@ export interface CashGrnSettlementInput {
   draftId: string;
   requestId: string;
   amountUGX: number;
+  /** Registered, reconciled payment account ID within the tenant. */
+  paymentAccountId: string;
   actor: { uid: string; name: string };
 }
 
@@ -16,42 +18,46 @@ const positiveAmount = (v: number) => Number.isSafeInteger(v) && v > 0;
 
 /**
  * Atomic settlement prototype for Stage 2.
- * Do not enable in live Finance until ALL legacy petty-cash writers use the
- * same tenant-level balance lock; otherwise a concurrent legacy posting could
- * bypass this balance guard.
+ * NOT LIVE: requires registered/reconciled finance_payment_accounts and every
+ * competing petty-cash writer migrated to the same transactional account balance.
+ * Never initialize account balances opportunistically from nontransactional queries.
  */
 export async function settleCashGrnDraft(input: CashGrnSettlementInput, connection: Firestore = db) {
-  const { tenantId, draftId, requestId, amountUGX, actor } = input;
-  if (!tenantId || !actor.uid || !safeKey(draftId) || !safeKey(requestId) || !positiveAmount(amountUGX)) {
+  const { tenantId, draftId, requestId, amountUGX, paymentAccountId, actor } = input;
+  if (!tenantId || !actor.uid || !safeKey(tenantId) || !safeKey(draftId) || !safeKey(requestId) || !safeKey(paymentAccountId) || !positiveAmount(amountUGX)) {
     throw new Error('Invalid settlement reference, identity or amount.');
   }
   const draftRef = doc(connection, 'management_expenses', draftId);
   const paymentId = `procurement_cash_settlement_${draftId}_${requestId}`;
   const paymentRef = doc(connection, 'cash_grn_payments', paymentId);
-  const pettyRef = doc(connection, 'petty_cash_ledger', paymentId);
-  const lockRef = doc(connection, 'petty_cash_posting_locks', tenantId.replace(/[^a-zA-Z0-9_-]/g, '_'));
-  const ledger = await getDocs(query(collection(connection,'petty_cash_ledger'), where('tenantId','==',tenantId)));
-  let availableUGX = 0;
-  ledger.forEach(snapshot => {
-    const data = snapshot.data();
-    const amount = Number(data.amount || 0);
-    if (!Number.isSafeInteger(amount) || amount < 0) throw new Error('Invalid historical petty cash ledger amount.');
-    const type = String(data.type || '').toLowerCase();
-    availableUGX += ['incoming','deposit','topup'].includes(type) ? amount : -amount;
-  });
-  if (!Number.isSafeInteger(availableUGX)) throw new Error('Invalid petty-cash balance.');
+  const accountRef = doc(connection, 'finance_payment_accounts', `${tenantId}_${paymentAccountId}`);
+  // The ledger reference is selected only after transactionally validating
+  // the registered payment account kind (petty cash or bank).
+  const cashLedgerRef = doc(connection, 'petty_cash_ledger', paymentId);
+  const bankLedgerRef = doc(connection, 'banking_records', paymentId);
   return runTransaction(connection, async tx => {
-    const [draft, payment, lock] = await Promise.all([
-      tx.get(draftRef), tx.get(paymentRef), tx.get(lockRef)
+    const [draft, payment, account] = await Promise.all([
+      tx.get(draftRef), tx.get(paymentRef), tx.get(accountRef)
     ]);
     if (payment.exists()) {
       const existing = payment.data();
       if (existing.tenantId !== tenantId || existing.draftId !== draftId ||
-        existing.amountUGX !== amountUGX || existing.processedBy !== actor.uid) {
+        existing.amountUGX !== amountUGX || existing.processedBy !== actor.uid ||
+        existing.paymentAccountId !== paymentAccountId) {
         throw new Error('Settlement reference already belongs to a different payment.');
       }
       return { paymentId, alreadyProcessed:true, remainingUGX:Number(existing.remainingUGX) };
     }
+    if (!account.exists() || account.data().tenantId !== tenantId ||
+      account.data().accountId !== paymentAccountId ||
+      account.data().currency !== 'UGX' || account.data().initialized !== true ||
+      !['petty_cash', 'bank'].includes(account.data().kind)) {
+      throw new Error('Select a registered, reconciled Management Cash or Bank payment account.');
+    }
+    const accountBalance = Number(account.data().balanceUGX);
+    if (!Number.isSafeInteger(accountBalance) || accountBalance < 0)
+      throw new Error('The selected payment account has an invalid balance.');
+    const ledgerRef = account.data().kind === 'bank' ? bankLedgerRef : cashLedgerRef;
     if (!draft.exists() || draft.data().tenantId !== tenantId ||
       draft.data().source !== 'procurement_cash_grn' ||
       draft.data().excludeFromOpexRollup !== true ||
@@ -67,8 +73,8 @@ export async function settleCashGrnDraft(input: CashGrnSettlementInput, connecti
       draft.data().grnId.startsWith('op_grn_')
         ? `procurement_register_${draft.data().grnId}`
         : `procurement_register_${draft.data().grnId.slice(4)}`);
-    const [invoice,grn,legacyInvoice,pettyExisting] = await Promise.all([
-      tx.get(invoiceRef),tx.get(grnRef),tx.get(legacyInvoiceRef),tx.get(pettyRef)
+    const [invoice,grn,legacyInvoice,ledgerExisting] = await Promise.all([
+      tx.get(invoiceRef),tx.get(grnRef),tx.get(legacyInvoiceRef),tx.get(ledgerRef)
     ]);
     if (!invoice.exists() || !grn.exists() || !legacyInvoice.exists() ||
       invoice.data().tenantId !== tenantId || grn.data().tenantId !== tenantId ||
@@ -76,28 +82,27 @@ export async function settleCashGrnDraft(input: CashGrnSettlementInput, connecti
       invoice.data().grnId !== grnRef.id || grn.data().payment_type !== 'cash') {
       throw new Error('Missing or mismatched canonical supplier invoice records.');
     }
-    if (pettyExisting.exists()) throw new Error('A cash movement exists without its payment record. Reconcile before retry.');
+    if (ledgerExisting.exists()) throw new Error('A disbursement exists without its linked payment record. Reconcile before retry.');
     const invoiceAmount = Number(invoice.data().invoiceValue);
     const alreadyPaid = Number(invoice.data().paidAmountUGX ?? legacyInvoice.data().paid_amount_ugx ?? 0);
     const plan = planCashGrnSettlement(invoiceAmount, alreadyPaid, amountUGX);
-    if (availableUGX < amountUGX) throw new Error('Insufficient Management Petty Cash at payment processing.');
-    // Changes to the lock invalidate concurrent dedicated cash-settlement attempts.
-    if (lock.exists() && lock.data().postingId && Number(lock.data().expiresAtMs || 0) > Date.now()) {
-      throw new Error('Another Management Petty Cash operation is in progress.');
-    }
+    if (accountBalance < amountUGX)
+      throw new Error('Insufficient funds in the selected Management Cash or Bank account.');
     const now = Timestamp.now();
     const paymentRefText = `PC-GRN-${requestId}`;
     tx.set(paymentRef, {
       tenantId,draftId,grnId:grnRef.id,invoiceId:invoiceRef.id,
-      amountUGX,remainingUGX:plan.remainingUGX,processedBy:actor.uid,
+      amountUGX,remainingUGX:plan.remainingUGX,paymentAccountId,
+      paymentAccountKind:account.data().kind,processedBy:actor.uid,
       processedByName:actor.name,processedAt:now,reference:paymentRefText,
       excludeFromOpexRollup:true
     });
-    tx.set(pettyRef,{
+    tx.set(ledgerRef,{
       tenantId,date:now.toDate().toISOString().slice(0,10),amount:amountUGX,
       type:'outgoing',source:'Procurement Cash GRN settlement',
       reference_number:paymentRefText,grnId:grnRef.id,invoiceId:invoiceRef.id,
-      paymentId,logged_by:actor.uid,createdAt:now,created_at:now.toDate().toISOString()
+      paymentId,paymentAccountId,paymentAccountKind:account.data().kind,
+      logged_by:actor.uid,createdAt:now,created_at:now.toDate().toISOString()
     });
     tx.update(invoiceRef,{
       paidAmountUGX:alreadyPaid+amountUGX,
@@ -120,10 +125,12 @@ export async function settleCashGrnDraft(input: CashGrnSettlementInput, connecti
       payment_status:plan.remainingUGX === 0 ? 'paid' : 'partial',
       updatedAt:now
     });
-    tx.set(lockRef,{
-      tenantId,postingId:null,userId:null,
-      lastSettlementId:paymentId,lastPostedAt:now,expiresAtMs:0
-    },{merge:true});
+    // A shared account balance is the serialization point for concurrent
+    // supplier installments and (after migration) ALL other cash/bank writers.
+    tx.update(accountRef,{
+      balanceUGX:accountBalance-amountUGX,
+      lastPostingId:paymentId,lastPostedAt:now,updatedAt:now
+    });
     return {paymentId,alreadyProcessed:false,remainingUGX:plan.remainingUGX};
   });
 }

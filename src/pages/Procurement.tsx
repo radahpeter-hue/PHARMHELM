@@ -11,7 +11,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
 import { firestoreService } from '../services/firestore';
 import { 
-  Product, StockOrder, StockOrderLine, OperationalInventory, OperationalTransfer, InstitutionRegistry, GRNRecord,
+  Product, StockOrder, StockOrderLine, OperationalInventory, OperationalTransfer, OperationalTransferLine, InstitutionRegistry, GRNRecord,
   GRNLine, UnsuppliedLine, ProductBatch, CreditLedgerEntry, TransferInvoice,
   TransferInvoiceLine, Branch, AuditLog
 } from '../types';
@@ -3247,23 +3247,67 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
 };
 
 const DispatchTab: React.FC = () => {
-  const { profile } = useAuth();
+  const { profile, hasPermission } = useAuth();
+  const canDispatch = hasPermission('procurement', 'operate');
   const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [approvedOrders, setApprovedOrders] = useState<StockOrder[]>([]);
+  const [allDispatchOrders, setAllDispatchOrders] = useState<StockOrder[]>([]);
   const [preparedSellableOrders, setPreparedSellableOrders] = useState<StockOrder[]>([]);
   const [dispatchingPreparedId, setDispatchingPreparedId] = useState<string | null>(null);
   const [operationalOrders, setOperationalOrders] = useState<StockOrder[]>([]);
+  const [dispatchHistory, setDispatchHistory] = useState<StockOrder[]>([]);
+  const [showDispatchHistory, setShowDispatchHistory] = useState(false);
   const [pendingOperationalTransfers, setPendingOperationalTransfers] = useState<OperationalTransfer[]>([]);
   const [dispatchingOperationalOrderId, setDispatchingOperationalOrderId] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
   const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
-
+  const [detailsOrder, setDetailsOrder] = useState<StockOrder | null>(null);
+  const [transferInspection, setTransferInspection] = useState<Record<string, string>>({});
+  const [verifiedTransferIds, setVerifiedTransferIds] = useState<Record<string, boolean>>({});
+  const inspectStagedTransfer = async (transfer: OperationalTransfer) => {
+    if (!profile?.tenantId) return;
+    setVerifiedTransferIds(previous => ({ ...previous, [transfer.id]: false }));
+    setTransferInspection(previous => ({ ...previous, [transfer.id]: 'Inspecting linked lines and stock movements…' }));
+    try {
+      const lines = await firestoreService.getDocumentsByQuery<OperationalTransferLine>('operational_transfer_lines', [
+        { field: 'tenantId', operator: '==', value: profile.tenantId },
+        { field: 'transferId', operator: '==', value: transfer.id }
+      ]);
+      const movementResults = await Promise.all(lines.map(async line => {
+        if (!line.dispatchMovementId) return null;
+        return firestoreService.getDocument<any>('operational_inventory_movements', line.dispatchMovementId);
+      }));
+      const posted = movementResults.filter(Boolean).length;
+      const expected = Number(transfer.expectedLineCount || 0);
+      const invalid = lines.some((line, index) => {
+        const movement = movementResults[index];
+        return line.status === 'dispatched'
+          ? !movement || movement.tenantId !== profile.tenantId || movement.sourceLineId !== line.id
+            || movement.movementType !== 'TRANSFER_OUT' || Number(movement.quantityDelta) !== -Number(line.quantityDispatched)
+          : Boolean(movement);
+      });
+      const complete = expected > 0 && expected === lines.length;
+      const valid = !invalid && lines.length <= expected && lines.every(line => ['prepared', 'dispatched'].includes(line.status));
+      // A draft may legitimately have fewer than the expected lines: its idempotent processor can fill them.
+      // But mismatched movements, unexpected extra lines, or an unreadable link require manual reconciliation.
+      const safeToResume = valid && expected > 0;
+      setVerifiedTransferIds(previous => ({ ...previous, [transfer.id]: safeToResume }));
+      setTransferInspection(previous => ({ ...previous, [transfer.id]:
+        `Read-only: ${lines.length}/${expected || '?'} transfer lines, ${posted} recorded dispatch movements. ${safeToResume ? (complete ? 'Verified for safe resume.' : 'Partial preparation verified for safe resume.') : 'INCONSISTENT: reconcile before resuming.'}`
+      }));
+    } catch {
+      setTransferInspection(previous => ({ ...previous, [transfer.id]:
+        'Inspection could not read all movement records. Do not resume until an authorized officer reconciles this transfer.'
+      }));
+    }
+  };
   useEffect(() => {
     if (!profile?.tenantId) {
       setPendingOperationalTransfers([]);
       return;
     }
     const unsubscribeOrders = firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
+      setAllDispatchOrders(data);
       setPreparedSellableOrders(data.filter(o =>
         o.status === 'ready_for_dispatch' &&
         Boolean((o as any).grn_id && (o as any).transfer_id) &&
@@ -3281,10 +3325,15 @@ const DispatchTab: React.FC = () => {
         isOperationalInventoryRecord(order) &&
         !(order as any).operational_external_transfer_id
       ));
+      setDispatchHistory(data.filter(order =>
+        ['dispatched', 'fully_accepted', 'closed', 'queried'].includes(order.status) &&
+        order.requesting_branch_id !== 'HQ' &&
+        (Boolean((order as any).transfer_id) || Boolean((order as any).operational_external_transfer_id) || Boolean((order as any).operational_transfer_id))
+      ));
     });
     const unsubscribeTransfers = operationalInventoryEnabled
       ? firestoreService.subscribeToCollection<OperationalTransfer>('operational_transfers', profile.tenantId, transfers => {
-          setPendingOperationalTransfers(transfers.filter(transfer => transfer.fulfillmentSource === 'HQ_OPERATIONAL' && ['draft', 'dispatching'].includes(transfer.status)));
+          setPendingOperationalTransfers(transfers.filter(transfer => ['HQ_OPERATIONAL', 'EXTERNAL_SUPPLIER', 'HQ_DIRECT'].includes(transfer.fulfillmentSource || '') && ['draft', 'dispatching'].includes(transfer.status)));
         })
       : undefined;
     if (!operationalInventoryEnabled) setPendingOperationalTransfers([]);
@@ -3302,6 +3351,7 @@ const DispatchTab: React.FC = () => {
   }, [operationalInventoryEnabled, selectedOrder]);
 
   const handlePreparedDispatch = async (order: StockOrder) => {
+    if (!canDispatch) { toast.error('Functional Procurement permission is required for dispatch.'); return; }
     if (!profile?.tenantId || !profile.uid || dispatchingPreparedId) return;
     const grnId = (order as any).grn_id;
     const transferId = (order as any).transfer_id;
@@ -3411,6 +3461,7 @@ const DispatchTab: React.FC = () => {
   };
 
   const handleOperationalDispatch = async (order: StockOrder) => {
+    if (!canDispatch) { toast.error('Functional Procurement permission is required for dispatch.'); return; }
     if (!profile?.tenantId || !profile.uid || dispatchingOperationalOrderId) return;
     setDispatchingOperationalOrderId(order.id);
     try {
@@ -3448,122 +3499,48 @@ const DispatchTab: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      {operationalInventoryEnabled && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-        Operational GRNs receive stock into the HQ Operational Store. Operational orders are dispatched through their separate, movement-tracked transfer ledger.
-      </div>}
-      {operationalInventoryEnabled && operationalOrders.length > 0 && <section className="rounded-2xl border border-emerald-200 bg-white shadow-sm overflow-hidden">
-        <div className="p-5 border-b border-emerald-100 bg-emerald-50/60">
-          <h3 className="font-black text-emerald-950">Operational Orders Ready for HQ Dispatch</h3>
-          <p className="text-xs text-emerald-800 mt-1">Only quantities received on Operational GRNs are considered. HQ Operational SOH and each branch ledger are updated separately.</p>
+      <div className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
+        <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-4 border-b">
+          <div><h3 className="font-black text-zinc-900">HQ Dispatch Register</h3><p className="text-xs text-zinc-500">Sellable and Operational orders share this register, but retain separate stock ledgers and dispatch processors.</p></div>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setShowDispatchHistory(false)} className={`px-3 py-2 rounded-lg text-xs font-bold ${!showDispatchHistory ? 'bg-zinc-900 text-white' : 'bg-zinc-100'}`}>Pending Dispatch</button>
+            <button type="button" onClick={() => setShowDispatchHistory(true)} className={`px-3 py-2 rounded-lg text-xs font-bold ${showDispatchHistory ? 'bg-zinc-900 text-white' : 'bg-zinc-100'}`}>Dispatch History</button>
+          </div>
         </div>
-        <div className="divide-y divide-zinc-100">
-          {operationalOrders.map(order => <div key={order.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div><p className="font-bold text-zinc-900">{order.order_number}</p><p className="text-xs text-zinc-500">{order.requesting_branch_name || order.requesting_branch_id} · Operational Inventory</p></div>
-            <button onClick={() => handleOperationalDispatch(order)} disabled={dispatchingOperationalOrderId !== null} className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-black disabled:opacity-50">
-              {dispatchingOperationalOrderId === order.id ? 'Dispatching…' : 'Dispatch Operational Stock'}
-            </button>
-          </div>)}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm min-w-[740px]">
+            <thead className="bg-zinc-50 text-zinc-500 uppercase text-[11px]"><tr><th className="p-3">Order Reference</th><th className="p-3">Inventory Type</th><th className="p-3">Destination Branch</th><th className="p-3">Order Value</th><th className="p-3">Status</th><th className="p-3">Action</th></tr></thead>
+            <tbody className="divide-y divide-zinc-100">
+              {(showDispatchHistory ? dispatchHistory : [...preparedSellableOrders, ...operationalOrders.filter(order => !pendingOperationalTransfers.some(transfer => transfer.sourceOrderId === order.id)), ...approvedOrders]).map(order => {
+                const operational = isOperationalInventoryRecord(order);
+                const preparedSellable = preparedSellableOrders.some(row => row.id === order.id);
+                return <tr key={order.id}>
+                  <td className="p-3"><button type="button" onClick={() => setDetailsOrder(order)} className="text-emerald-800 underline font-bold">{order.order_number || order.id}</button></td>
+                  <td className="p-3">{operational ? 'Operational' : 'Sellable'}</td>
+                  <td className="p-3">{order.requesting_branch_name || order.requesting_branch_id}</td>
+                  <td className="p-3">{Number(order.total_order_value_ugx || 0).toLocaleString()} UGX</td>
+                  <td className="p-3 capitalize">{showDispatchHistory ? order.status.replace(/_/g, ' ') : 'Ready for dispatch'}</td>
+                  <td className="p-3">
+                    {showDispatchHistory ? <button type="button" className="text-emerald-800 underline" onClick={() => setDetailsOrder(order)}>View Details</button>
+                      : operational ? <button type="button" onClick={() => handleOperationalDispatch(order)} disabled={!canDispatch || dispatchingOperationalOrderId !== null} className="px-3 py-2 rounded-lg bg-emerald-700 text-white font-semibold disabled:opacity-40">{dispatchingOperationalOrderId === order.id ? 'Dispatching…' : 'Dispatch Operational'}</button>
+                      : preparedSellable ? <button type="button" onClick={() => handlePreparedDispatch(order)} disabled={!canDispatch || dispatchingPreparedId !== null} className="px-3 py-2 rounded-lg bg-blue-700 text-white font-semibold disabled:opacity-40">{dispatchingPreparedId === order.id ? 'Dispatching…' : 'Confirm Dispatch'}</button>
+                      : <button type="button" onClick={() => {setSelectedOrder(order);setIsDispatchModalOpen(true);}} disabled={!canDispatch} className="px-3 py-2 rounded-lg bg-blue-700 text-white font-semibold disabled:opacity-40">Review Dispatch</button>}
+                  </td>
+                </tr>;
+              })}
+              {!showDispatchHistory && pendingOperationalTransfers.map(transfer => <tr key={transfer.id}>
+                <td className="p-3 font-bold"><button type="button" className="text-emerald-800 underline" onClick={() => { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (order) setDetailsOrder(order); else toast.error('The staged transfer has no readable linked source order.'); }}>{transfer.sourceOrderNumber || transfer.transferNumber}</button></td>
+                <td className="p-3">Operational</td><td className="p-3">{transfer.destinationBranchName || transfer.destinationBranchId}</td>
+                <td className="p-3">{Number(transfer.totalValueUGX || 0).toLocaleString()} UGX</td>
+                <td className="p-3">Staged / awaiting dispatch{transferInspection[transfer.id] && <p className="text-xs text-amber-800 mt-1 max-w-xs">{transferInspection[transfer.id]}</p>}</td>
+                <td className="p-3"><button type="button" onClick={() => void inspectStagedTransfer(transfer)} className="px-3 py-2 mr-2 rounded-lg border border-amber-700 text-amber-800 font-semibold">Inspect</button><button type="button" disabled={!canDispatch || dispatchingOperationalOrderId !== null || !verifiedTransferIds[transfer.id]} onClick={() => { if (transfer.fulfillmentSource === 'EXTERNAL_SUPPLIER') { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (!order) { toast.error('The staged external transfer needs order reconciliation before resuming.'); return; } void handleOperationalDispatch(order); } else { void handleResumeOperationalTransfer(transfer); } }} className="px-3 py-2 rounded-lg bg-amber-700 text-white disabled:opacity-40">Resume Staged Transfer</button></td>
+              </tr>)}
+              {(showDispatchHistory ? dispatchHistory.length === 0 : (preparedSellableOrders.length + operationalOrders.length + approvedOrders.length + pendingOperationalTransfers.length === 0)) && <tr><td colSpan={6} className="text-zinc-500 p-8 text-center">{showDispatchHistory ? 'No linked dispatch history found.' : 'No orders ready for dispatch.'}</td></tr>}
+            </tbody>
+          </table>
         </div>
-      </section>}
-      {operationalInventoryEnabled && pendingOperationalTransfers.length > 0 && <section className="rounded-2xl border border-amber-200 bg-white shadow-sm overflow-hidden">
-        <div className="p-5 border-b border-amber-100 bg-amber-50/60">
-          <h3 className="font-black text-amber-950">Operational Store Transfers Awaiting Dispatch</h3>
-          <p className="text-xs text-amber-800 mt-1">Resume a safely staged transfer after a network interruption. Stock is deducted only when its immutable movement is posted.</p>
-        </div>
-        <div className="divide-y divide-zinc-100">
-          {pendingOperationalTransfers.map(transfer => <div key={transfer.id} className="p-4 flex items-center justify-between gap-3">
-            <div><p className="font-bold text-zinc-900">{transfer.transferNumber}</p><p className="text-xs text-zinc-500">{transfer.destinationBranchName || transfer.destinationBranchId} · {transfer.sourceOrderNumber || transfer.sourceOrderId}</p></div>
-            <button onClick={() => handleResumeOperationalTransfer(transfer)} disabled={dispatchingOperationalOrderId !== null} className="px-4 py-2 rounded-xl bg-amber-700 text-white text-xs font-black disabled:opacity-50">{dispatchingOperationalOrderId === transfer.id ? 'Resuming…' : 'Resume Dispatch'}</button>
-          </div>)}
-        </div>
-      </section>}
-      {preparedSellableOrders.length > 0 && <section className="rounded-2xl border border-blue-200 bg-white overflow-hidden">
-        <div className="px-4 py-3 bg-blue-50 border-b border-blue-100">
-          <h3 className="text-sm font-black text-blue-950">Sellable GRNs Awaiting Physical Dispatch</h3>
-          <p className="text-xs text-blue-800">Receiving a supplier delivery does not dispatch it. Branch stock changes only on verified Stock In reception.</p>
-        </div>
-        <div className="divide-y divide-zinc-100">
-          {preparedSellableOrders.map(order => <div key={order.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="font-bold text-zinc-900">{order.order_number}</p>
-              <p className="text-xs text-zinc-700">{order.requesting_branch_name || order.requesting_branch_id} · GRN prepared for dispatch</p>
-            </div>
-            <button type="button" onClick={() => handlePreparedDispatch(order)} disabled={dispatchingPreparedId !== null}
-              className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
-              {dispatchingPreparedId === order.id ? 'Dispatching…' : 'Confirm Physical Dispatch'}
-            </button>
-          </div>)}
-        </div>
-      </section>}
-      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-      <table className="w-full text-left border-collapse">
-        <thead>
-          <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
-            <th className="px-6 py-4">Order #</th>
-            <th className="px-6 py-4">Branch</th>
-            <th className="px-6 py-4">Type</th>
-            <th className="px-6 py-4">Category</th>
-            <th className="px-6 py-4 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-100">
-          {approvedOrders.map((order) => (
-            <tr key={order.id} className="hover:bg-zinc-50/50 transition-colors">
-              <td className="px-6 py-4 font-bold text-zinc-900">{order.order_number}</td>
-              <td className="px-6 py-4 text-sm text-zinc-600">{order.requesting_branch_name || order.requesting_branch_id}</td>
-              <td className="px-6 py-4 text-sm capitalize text-zinc-600">{order.order_type}</td>
-              <td className="px-6 py-4 text-sm text-zinc-600">{order.category.replace(/_/g, ' ')}</td>
-              <td className="px-6 py-4 text-right">
-                <div className="flex justify-end gap-2">
-                  <button 
-                    onClick={async () => {
-                      if (window.confirm(`Are you sure you want to revert order ${order.order_number || ''} back to the Supplier Delivery (awaiting GRN) stage?`)) {
-                        try {
-                          await firestoreService.updateDocument('stock_orders', order.id, {
-                            status: 'approved',
-                            updatedAt: new Date().toISOString()
-                          });
-                          const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: order.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
-                          for (const line of lines) {
-                            await firestoreService.updateDocument('stock_order_lines', line.id, {
-                              line_status: 'approved',
-                              updatedAt: new Date().toISOString()
-                            });
-                          }
-                          toast.success('Order reverted back to Supplier Delivery (awaiting GRN) stage.');
-                        } catch (error) {
-                          console.error(error);
-                          toast.error('Failed to revert order.');
-                        }
-                      }
-                    }}
-                    className="border border-zinc-200 text-zinc-500 hover:bg-zinc-50 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors"
-                  >
-                    Revert
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setSelectedOrder(order);
-                      setIsDispatchModalOpen(true);
-                    }}
-                    className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1.5 rounded-xl text-xs font-bold transition-colors"
-                  >
-                    Dispatch
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-          {approvedOrders.length === 0 && (
-            <tr>
-              <td colSpan={5} className="px-6 py-12 text-center text-zinc-400 italic">
-                No orders ready for dispatch.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-
+      </div>
+      {detailsOrder && <DispatchOrderDetails order={detailsOrder} onClose={() => setDetailsOrder(null)} />}
       {isDispatchModalOpen && selectedOrder && (
         <DispatchModal 
           order={selectedOrder}
@@ -3571,9 +3548,35 @@ const DispatchTab: React.FC = () => {
           onConfirm={handleDispatch}
         />
       )}
-      </div>
     </div>
   );
+};
+
+const DispatchOrderDetails: React.FC<{ order: StockOrder; onClose: () => void }> = ({ order, onClose }) => {
+  const [lines, setLines] = useState<StockOrderLine[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [
+      { field: 'tenantId', operator: '==', value: order.tenantId },
+      { field: 'order_id', operator: '==', value: order.id }
+    ]).then(rows => { if (active) setLines(rows); })
+      .catch(() => toast.error('Unable to load the order item details.'))
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [order.id, order.tenantId]);
+  return <div className="fixed inset-0 z-50 bg-black/50 p-4 flex items-center justify-center">
+    <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 space-y-4">
+      <div className="flex justify-between gap-4">
+        <div><h3 className="text-xl font-bold">{order.order_number}</h3>
+          <p className="text-sm text-zinc-500">{isOperationalInventoryRecord(order) ? 'Operational' : 'Sellable'} Inventory • {order.requesting_branch_name || order.requesting_branch_id} • {order.status}</p></div>
+        <button type="button" onClick={onClose} className="px-3 py-2 rounded-lg border">Close</button>
+      </div>
+      {loading ? <p>Loading item details…</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-2">Item</th><th className="p-2">Ordered</th><th className="p-2">Received</th><th className="p-2">Batch</th><th className="p-2">Expiry</th></tr></thead>
+        <tbody>{lines.map(line => <tr key={line.id} className="border-b"><td className="p-2">{line.product_name || line.product_id}</td><td className="p-2">{line.qty_ordered}</td><td className="p-2">{line.qty_received ?? '—'}</td><td className="p-2">{(line as StockOrderLine & { batch_number?: string }).batch_number || '—'}</td><td className="p-2">{(line as StockOrderLine & { expiry_date?: string }).expiry_date || '—'}</td></tr>)}</tbody>
+      </table>{lines.length === 0 && <p className="p-3 text-zinc-500">No linked order lines found.</p>}</div>}
+    </div>
+  </div>;
 };
 
 const DispatchModal: React.FC<{ 

@@ -510,6 +510,9 @@ service cloud.firestore {
         'credit_receivables', 'supplier_payables', 'banking_records',
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
         'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
+        // Stage 2 supplier-cash prototype collections remain fully inaccessible
+        // until the atomic cash/bank writer migration and dedicated rules ship.
+        'cash_grn_payments', 'petty_cash_posting_locks', 'finance_payment_accounts',
         'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
       ];
     }
@@ -1784,8 +1787,12 @@ service cloud.firestore {
       function receiptMovementPath() {
         return /databases/$(database)/documents/operational_inventory_movements/$(request.resource.data.receiptMovementId);
       }
-      allow get: if isAuthenticated() && isTenantMember(resource.data.tenantId)
-        && (isProcurement() || isAssignedToBranch(resource.data.destinationBranchId) || (resource.data.get('transferType', '') == 'BRANCH_RETURN' && isAssignedToBranch(resource.data.sourceBranchId)));
+      // Idempotent preparation checks deterministic transfer line IDs before creation.
+      // Missing documents are readable only by Procurement; existing records stay tenant and branch scoped.
+      allow get: if isAuthenticated()
+        && ((resource == null && isProcurement()) || (resource != null && isTenantMember(resource.data.tenantId)
+          && (isProcurement() || isAssignedToBranch(resource.data.destinationBranchId)
+            || (resource.data.get('transferType', '') == 'BRANCH_RETURN' && isAssignedToBranch(resource.data.sourceBranchId)))));
       allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId)
         && (isProcurement() || isAssignedToBranch(resource.data.destinationBranchId) || (resource.data.get('transferType', '') == 'BRANCH_RETURN' && isAssignedToBranch(resource.data.sourceBranchId)));
       allow create: if isAuthenticated()
