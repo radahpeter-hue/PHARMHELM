@@ -166,3 +166,12 @@ test('Operational transfer line idempotency lookups allow missing documents only
   assert.match(section, /resource == null && isProcurement\(\)/);
   assert.match(section, /resource != null && isTenantMember\(resource\.data\.tenantId\)/);
 });
+
+
+test('Dispatch register distinguishes externally received staged transfers from HQ Operational Store transfers', () => {
+  const procurement = readFileSync(new URL('../src/pages/Procurement.tsx', import.meta.url), 'utf8');
+  assert.match(procurement, /'EXTERNAL_SUPPLIER', 'HQ_DIRECT'/);
+  assert.match(procurement, /transfer\.fulfillmentSource === 'EXTERNAL_SUPPLIER'/);
+  assert.match(procurement, /handleOperationalDispatch\(order\)/);
+  assert.match(procurement, /handleResumeOperationalTransfer\(transfer\)/);
+});
