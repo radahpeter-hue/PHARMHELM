@@ -131,7 +131,8 @@ test('Operational GRNs receive only into the Operational HQ ledger and cannot us
   assert.match(grnService, /qty_received_units: receivedUnits/);
   assert.match(procurement, /processOperationalGrn\(/);
   assert.match(procurement, /!isOperationalInventoryRecord\(o\)/);
-  assert.match(procurement, /Operational Orders Ready for HQ Dispatch/);
+  assert.match(procurement, /HQ Dispatch Register/);
+  assert.match(procurement, /Dispatch Operational/);
   assert.match(procurement, /dispatchOperationalOrderToBranch\(/);
   assert.match(rules, /match \/operational_transfers\/\{transferId\}/);
   assert.match(rules, /match \/operational_transfer_lines\/\{transferLineId\}/);
