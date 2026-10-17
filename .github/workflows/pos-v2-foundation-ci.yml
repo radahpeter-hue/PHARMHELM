@@ -156,6 +156,22 @@ jobs:
           npm install --no-save --ignore-scripts firebase-admin
           node scripts/audit-system-identities.mjs /tmp/pharmhelm-identity-audit-summary.json
 
+      - name: Read-only reconcile Stage 2 Masaka Operational transfer
+        env:
+          GOOGLE_CLOUD_PROJECT: gen-lang-client-0911422817
+        run: |
+          set -euo pipefail
+          node scripts/audit-stage2-operational-order.mjs /tmp/pharmhelm-stage2-operational-audit.json
+
+      - name: Upload Stage 2 Operational reconciliation summary (no staff or raw IDs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pharmhelm-stage2-operational-audit
+          path: /tmp/pharmhelm-stage2-operational-audit.json
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload identity audit summary (no patient or staff details)
         if: always()
         uses: actions/upload-artifact@v4
