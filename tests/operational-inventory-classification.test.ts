@@ -188,3 +188,12 @@ test('staged Operational transfer inspection is read-only and checks dispatch mo
   assert.match(inspection, /sourceLineId === line\.id/);
   assert.doesNotMatch(inspection, /updateDocument|addDocument|setDoc|updateDoc|runTransaction|writeBatch/);
 });
+
+
+test('staged Operational transfer resume requires successful read-only reconciliation', () => {
+  const procurement = readFileSync(new URL('../src/pages/Procurement.tsx', import.meta.url), 'utf8');
+  assert.match(procurement, /verifiedTransferIds\[transfer\.id\]/);
+  assert.match(procurement, /!verifiedTransferIds\[transfer\.id\]/);
+  assert.match(procurement, /movement\.quantityDelta/);
+  assert.match(procurement, /INCONSISTENT: reconcile before resuming/);
+});
