@@ -3262,6 +3262,35 @@ const DispatchTab: React.FC = () => {
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
   const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
   const [detailsOrder, setDetailsOrder] = useState<StockOrder | null>(null);
+  const [transferInspection, setTransferInspection] = useState<Record<string, string>>({});
+  const inspectStagedTransfer = async (transfer: OperationalTransfer) => {
+    if (!profile?.tenantId) return;
+    setTransferInspection(previous => ({ ...previous, [transfer.id]: 'Inspecting linked lines and stock movements…' }));
+    try {
+      const lines = await firestoreService.getDocumentsByQuery<OperationalTransferLine>('operational_transfer_lines', [
+        { field: 'tenantId', operator: '==', value: profile.tenantId },
+        { field: 'transferId', operator: '==', value: transfer.id }
+      ]);
+      const movementResults = await Promise.all(lines.map(async line => {
+        if (!line.dispatchMovementId) return false;
+        const movement = await firestoreService.getDocument<any>('operational_inventory_movements', line.dispatchMovementId);
+        return Boolean(movement && movement.tenantId === profile.tenantId
+          && movement.sourceLineId === line.id && movement.movementType === 'TRANSFER_OUT');
+      }));
+      const posted = movementResults.filter(Boolean).length;
+      const expected = Number(transfer.expectedLineCount || 0);
+      const warning = expected > 0 && lines.length !== expected
+        ? ' LINE COUNT MISMATCH: do not resume until reconciled.'
+        : '';
+      setTransferInspection(previous => ({ ...previous, [transfer.id]:
+        `Read-only: ${lines.length}/${expected || '?'} transfer lines, ${posted} valid dispatch movements. ${warning}`.trim()
+      }));
+    } catch (error) {
+      setTransferInspection(previous => ({ ...previous, [transfer.id]:
+        'Inspection could not read all movement records. Do not resume until an authorized officer reconciles this transfer.'
+      }));
+    }
+  };
 
   useEffect(() => {
     if (!profile?.tenantId) {
@@ -3494,8 +3523,8 @@ const DispatchTab: React.FC = () => {
                 <td className="p-3 font-bold"><button type="button" className="text-emerald-800 underline" onClick={() => { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (order) setDetailsOrder(order); else toast.error('The staged transfer has no readable linked source order.'); }}>{transfer.sourceOrderNumber || transfer.transferNumber}</button></td>
                 <td className="p-3">Operational</td><td className="p-3">{transfer.destinationBranchName || transfer.destinationBranchId}</td>
                 <td className="p-3">{Number(transfer.totalValueUGX || 0).toLocaleString()} UGX</td>
-                <td className="p-3">Staged / awaiting dispatch</td>
-                <td className="p-3"><button type="button" disabled={!canDispatch || dispatchingOperationalOrderId !== null} onClick={() => { if (transfer.fulfillmentSource === 'EXTERNAL_SUPPLIER') { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (!order) { toast.error('The staged external transfer needs order reconciliation before resuming.'); return; } void handleOperationalDispatch(order); } else { void handleResumeOperationalTransfer(transfer); } }} className="px-3 py-2 rounded-lg bg-amber-700 text-white disabled:opacity-40">Resume Staged Transfer</button></td>
+                <td className="p-3">Staged / awaiting dispatch{transferInspection[transfer.id] && <p className="text-xs text-amber-800 mt-1 max-w-xs">{transferInspection[transfer.id]}</p>}</td>
+                <td className="p-3"><button type="button" onClick={() => void inspectStagedTransfer(transfer)} className="px-3 py-2 mr-2 rounded-lg border border-amber-700 text-amber-800 font-semibold">Inspect</button><button type="button" disabled={!canDispatch || dispatchingOperationalOrderId !== null} onClick={() => { if (transfer.fulfillmentSource === 'EXTERNAL_SUPPLIER') { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (!order) { toast.error('The staged external transfer needs order reconciliation before resuming.'); return; } void handleOperationalDispatch(order); } else { void handleResumeOperationalTransfer(transfer); } }} className="px-3 py-2 rounded-lg bg-amber-700 text-white disabled:opacity-40">Resume Staged Transfer</button></td>
               </tr>)}
               {(showDispatchHistory ? dispatchHistory.length === 0 : (preparedSellableOrders.length + operationalOrders.length + approvedOrders.length + pendingOperationalTransfers.length === 0)) && <tr><td colSpan={6} className="text-zinc-500 p-8 text-center">{showDispatchHistory ? 'No linked dispatch history found.' : 'No orders ready for dispatch.'}</td></tr>}
             </tbody>
