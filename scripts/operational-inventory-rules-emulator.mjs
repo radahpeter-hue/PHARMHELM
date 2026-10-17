@@ -138,8 +138,8 @@ try {
   // Exercise the actual registration service, including every preflight read and
   // master/location/claim/audit write in the live transaction shape.
   const { build } = await import('esbuild');
-  await build({ stdin: { contents: "export { saveOperationalLocationItem } from './src/services/operationalInventoryMasterService'; export { submitOperationalHqBufferOrder } from './src/services/operationalHqBufferOrderService'; export { processOperationalGrn } from './src/services/operationalGrnService'; export { createHqOperationalDistribution, receiveOperationalTransferLine, createOperationalBranchReturn, receiveOperationalBranchReturn } from './src/services/operationalTransferService';", resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', packages: 'external', outfile: '.operational-registration-emulator.mjs' });
-  const { saveOperationalLocationItem, submitOperationalHqBufferOrder, processOperationalGrn, createHqOperationalDistribution, receiveOperationalTransferLine, createOperationalBranchReturn, receiveOperationalBranchReturn } = await import('../.operational-registration-emulator.mjs');
+  await build({ stdin: { contents: "export { saveOperationalLocationItem } from './src/services/operationalInventoryMasterService'; export { submitOperationalHqBufferOrder } from './src/services/operationalHqBufferOrderService'; export { processOperationalGrn } from './src/services/operationalGrnService'; export { createHqOperationalDistribution, receiveOperationalTransferLine, createOperationalBranchReturn, receiveOperationalBranchReturn, dispatchOperationalOrderToBranch } from './src/services/operationalTransferService';", resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', packages: 'external', outfile: '.operational-registration-emulator.mjs' });
+  const { saveOperationalLocationItem, submitOperationalHqBufferOrder, processOperationalGrn, createHqOperationalDistribution, receiveOperationalTransferLine, createOperationalBranchReturn, receiveOperationalBranchReturn, dispatchOperationalOrderToBranch } = await import('../.operational-registration-emulator.mjs');
   const registration = { tenantId, branchId: 'HQ', actor: { uid: 'procurement-a', name: 'Buyer' }, data: {
     tenantId, branchId: 'HQ', name: 'Register test notebooks', category: 'Stationery', type: 'non-fixed',
     inventoryClass: 'OPERATIONAL', operationalType: 'CONSUMABLE_OPERATIONAL', unitPerPack: 1,
@@ -400,6 +400,76 @@ try {
     movementId, staffId: 'manager-a'
   });
   await assertFails(usageBatch.commit());
+
+
+  // Stage 2 Masaka regression: a previous failed external-supplier dispatch
+  // left a transfer header status=dispatching but ZERO transfer lines/movements.
+  // An authorized Procurement Head must safely resume that exact header.
+  const stageOrderId = 'stage2-external-resume-test';
+  const stageLineId = 'stage2-external-resume-line';
+  const stageHash = value => {
+    let code = 2166136261;
+    for (let i = 0; i < value.length; i++) {
+      code ^= value.charCodeAt(i);
+      code = Math.imul(code, 16777619);
+    }
+    return (code >>> 0).toString(36).toUpperCase();
+  };
+  const stagedTransferId = `optr_${stageOrderId}_${stageHash(stageOrderId)}`;
+  await testEnv.withSecurityRulesDisabled(async context => {
+    const adminDb = context.firestore();
+    await setDoc(doc(adminDb, 'stock_orders', stageOrderId), {
+      tenantId, order_number: 'ORD-STAGE2-RESUME-TEST', inventoryClass: 'OPERATIONAL',
+      category: 'non_sellable', requesting_branch_id: branchA,
+      requesting_branch_name: 'Emulator Branch', status: 'fully_received'
+    });
+    await setDoc(doc(adminDb, 'stock_order_lines', stageLineId), {
+      tenantId, order_id: stageOrderId, inventoryClass: 'OPERATIONAL',
+      supplier_type: 'external', line_status: 'received', qty_received: 1,
+      qty_ordered: 1, unit_cost_ugx: 1000, product_name: 'Test notebooks',
+      masterItemId: registered.masterItemId, product_id: branchRegistration.itemId
+    });
+    await setDoc(doc(adminDb, 'operational_transfers', stagedTransferId), {
+      id: stagedTransferId, tenantId, inventoryClass: 'OPERATIONAL',
+      fulfillmentSource: 'EXTERNAL_SUPPLIER', transferNumber: 'OT-STAGE2-RESUME-TEST',
+      sourceLocationId: 'HQ_OPERATIONAL', sourceBranchId: 'HQ',
+      destinationBranchId: branchA, destinationBranchName: 'Emulator Branch',
+      sourceOrderId: stageOrderId, sourceOrderNumber: 'ORD-STAGE2-RESUME-TEST',
+      status: 'dispatching', expectedLineCount: 1, remainingExternalPacks: 0,
+      totalValueUGX: 1000, dispatchedBy: 'procurement-a', dispatchedByName: 'Buyer'
+    });
+    await setDoc(doc(adminDb, 'operational_inventory', registered.itemId), {
+      ...(await getDoc(doc(adminDb, 'operational_inventory', registered.itemId))).data(),
+      quantityInStock: 3
+    });
+  });
+  const resumedStageOrder = {
+    id: stageOrderId, tenantId, order_number: 'ORD-STAGE2-RESUME-TEST',
+    category: 'non_sellable', inventoryClass: 'OPERATIONAL',
+    requesting_branch_id: branchA, requesting_branch_name: 'Emulator Branch',
+    status: 'fully_received'
+  };
+  const stageInput = {
+    tenantId, order: resumedStageOrder, destinationBranchName: 'Emulator Branch',
+    actor: { uid: 'procurement-a', name: 'Buyer' }
+  };
+  const resumed = await dispatchOperationalOrderToBranch(stageInput);
+  assert.equal(resumed.alreadyDispatched, false);
+  const staged = await getDoc(doc(procurement, 'operational_transfers', stagedTransferId));
+  assert.equal(staged.data().status, 'dispatched');
+  const stageLines = await getDocs(query(collection(procurement, 'operational_transfer_lines'),
+    where('tenantId','==', tenantId), where('transferId', '==', stagedTransferId)));
+  assert.equal(stageLines.size, 1);
+  assert.equal(stageLines.docs[0].data().status, 'dispatched');
+  const stageMovement = await getDoc(doc(procurement, 'operational_inventory_movements',
+    stageLines.docs[0].data().dispatchMovementId));
+  assert.equal(stageMovement.exists(), true);
+  assert.equal(stageMovement.data().quantityDelta, -1);
+  const resumedAgain = await dispatchOperationalOrderToBranch(stageInput);
+  assert.equal(resumedAgain.alreadyDispatched, true);
+  const stageLinesAfter = await getDocs(query(collection(procurement, 'operational_transfer_lines'),
+    where('tenantId','==', tenantId), where('transferId', '==', stagedTransferId)));
+  assert.equal(stageLinesAfter.size, 1);
 
   console.log('[operational-inventory-rules] PASS: buffer-order preflight/create, order, GRN, transfer, master, store and usage writes stay class-, tenant- and branch-scoped.');
 } finally {
