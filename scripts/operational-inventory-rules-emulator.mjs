@@ -89,6 +89,7 @@ try {
   // Generic tenant-write fallback must never permit premature payment creation.
   await assertFails(setDoc(doc(procurement, 'cash_grn_payments', 'unlaunched_test'), { tenantId, amountUGX: 1 }));
   await assertFails(setDoc(doc(procurement, 'petty_cash_posting_locks', tenantId), { tenantId, postingId: null }));
+  await assertFails(setDoc(doc(procurement, 'finance_payment_accounts', `${tenantId}_management_petty_cash`), { tenantId, accountId: 'management_petty_cash', balanceUGX: 1, initialized: true }));
   await assertSucceeds(getDoc(doc(procurement, 'operational_transfer_lines', 'not-created-yet')));
   await assertFails(getDoc(doc(branchManager, 'operational_transfer_lines', 'not-created-yet')));
   await assertSucceeds(getDoc(doc(branchManager, 'operational_inventory', 'missing-item')));
