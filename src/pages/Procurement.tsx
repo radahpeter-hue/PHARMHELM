@@ -3295,7 +3295,7 @@ const DispatchTab: React.FC = () => {
     });
     const unsubscribeTransfers = operationalInventoryEnabled
       ? firestoreService.subscribeToCollection<OperationalTransfer>('operational_transfers', profile.tenantId, transfers => {
-          setPendingOperationalTransfers(transfers.filter(transfer => transfer.fulfillmentSource === 'HQ_OPERATIONAL' && ['draft', 'dispatching'].includes(transfer.status)));
+          setPendingOperationalTransfers(transfers.filter(transfer => ['HQ_OPERATIONAL', 'EXTERNAL_SUPPLIER', 'HQ_DIRECT'].includes(transfer.fulfillmentSource || '') && ['draft', 'dispatching'].includes(transfer.status)));
         })
       : undefined;
     if (!operationalInventoryEnabled) setPendingOperationalTransfers([]);
@@ -3495,7 +3495,7 @@ const DispatchTab: React.FC = () => {
                 <td className="p-3">Operational</td><td className="p-3">{transfer.destinationBranchName || transfer.destinationBranchId}</td>
                 <td className="p-3">{Number(transfer.totalValueUGX || 0).toLocaleString()} UGX</td>
                 <td className="p-3">Staged / awaiting dispatch</td>
-                <td className="p-3"><button type="button" disabled={!canDispatch || dispatchingOperationalOrderId !== null} onClick={() => handleResumeOperationalTransfer(transfer)} className="px-3 py-2 rounded-lg bg-amber-700 text-white disabled:opacity-40">Resume Staged Transfer</button></td>
+                <td className="p-3"><button type="button" disabled={!canDispatch || dispatchingOperationalOrderId !== null} onClick={() => { if (transfer.fulfillmentSource === 'EXTERNAL_SUPPLIER') { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (!order) { toast.error('The staged external transfer needs order reconciliation before resuming.'); return; } void handleOperationalDispatch(order); } else { void handleResumeOperationalTransfer(transfer); } }} className="px-3 py-2 rounded-lg bg-amber-700 text-white disabled:opacity-40">Resume Staged Transfer</button></td>
               </tr>)}
               {(showDispatchHistory ? dispatchHistory.length === 0 : (preparedSellableOrders.length + operationalOrders.length + approvedOrders.length + pendingOperationalTransfers.length === 0)) && <tr><td colSpan={6} className="text-zinc-500 p-8 text-center">{showDispatchHistory ? 'No linked dispatch history found.' : 'No orders ready for dispatch.'}</td></tr>}
             </tbody>
