@@ -175,3 +175,16 @@ test('Dispatch register distinguishes externally received staged transfers from 
   assert.match(procurement, /handleOperationalDispatch\(order\)/);
   assert.match(procurement, /handleResumeOperationalTransfer\(transfer\)/);
 });
+
+
+test('staged Operational transfer inspection is read-only and checks dispatch movement linkage', () => {
+  const procurement = readFileSync(new URL('../src/pages/Procurement.tsx', import.meta.url), 'utf8');
+  const start = procurement.indexOf('const inspectStagedTransfer = async');
+  const end = procurement.indexOf('\n  useEffect(() => {', start);
+  assert.ok(start >= 0 && end > start);
+  const inspection = procurement.slice(start, end);
+  assert.match(inspection, /operational_transfer_lines/);
+  assert.match(inspection, /operational_inventory_movements/);
+  assert.match(inspection, /sourceLineId === line\.id/);
+  assert.doesNotMatch(inspection, /updateDocument|addDocument|setDoc|updateDoc|runTransaction|writeBatch/);
+});
