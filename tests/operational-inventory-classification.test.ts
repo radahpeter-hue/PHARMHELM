@@ -161,6 +161,7 @@ test('Operational triage uses a distinct HQ transfer and preserves the external 
 
 
 test('Operational transfer line idempotency lookups allow missing documents only for authorized Procurement users', () => {
+  const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
   const section = rules.slice(rules.indexOf('match /operational_transfer_lines/{transferLineId}'), rules.indexOf('match /operational_inventory_usage/{usageId}'));
   assert.match(section, /resource == null && isProcurement\(\)/);
   assert.match(section, /resource != null && isTenantMember\(resource\.data\.tenantId\)/);
