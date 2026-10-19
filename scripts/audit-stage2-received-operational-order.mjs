@@ -9,6 +9,15 @@ const issues=[];
 const report={mode:'READ_ONLY',orderNumber:'ORD-2026-15022',transferNumber:'OT-2026-1DRHF6O',issues};
 const scoped=async(c,f,v)=>(await db.collection(c).where(f,'==',v).get()).docs.filter(d=>d.get('tenantId')===tenantId);
 const belongs=d=>d.exists&&d.get('tenantId')===tenantId;
+const movementTime=d=>{
+ const value=d.get('createdAt');
+ if(typeof value==='string')return Date.parse(value);
+ if(typeof value?.toMillis==='function')return value.toMillis();
+ const seconds=value?.seconds??value?._seconds;
+ const nanos=value?.nanoseconds??value?._nanoseconds??0;
+ if(Number.isFinite(seconds))return seconds*1000+nanos/1e6;
+ throw new Error('Unsupported movement timestamp; chronology cannot be reconciled.');
+};
 try {
  const orders=await scoped('stock_orders','order_number',report.orderNumber);
  if(orders.length!==1)throw new Error('Expected exactly one source order');
@@ -43,7 +52,7 @@ try {
   if(receipt&&Number(receipt.get('balanceAfter'))-Number(receipt.get('balanceBefore'))!==accepted)issues.push('INVALID_RECEIPT_BALANCE_DELTA');
   // Account for any legitimate later consumption instead of assuming SOH still equals 24.
   const itemMovements=await scoped('operational_inventory_movements','itemId',item.id);
-  const ordered=itemMovements.sort((a,b)=>String(a.get('createdAt')).localeCompare(String(b.get('createdAt'))));
+  const ordered=itemMovements.sort((a,b)=>movementTime(a)-movementTime(b));
   for(let i=0;i<ordered.length;i++) {
    const m=ordered[i],before=Number(m.get('balanceBefore')),after=Number(m.get('balanceAfter')),delta=Number(m.get('quantityDelta'));
    if(![before,after,delta].every(Number.isFinite)||after-before!==delta||(i&&before!==Number(ordered[i-1].get('balanceAfter'))))issues.push('STOCK_MOVEMENT_CHAIN_MISMATCH');
@@ -56,14 +65,14 @@ try {
    const source=await db.collection('operational_inventory').doc(row.sourceItemId).get();
    const outgoing=dispatch[0];
    if(!belongs(source)||source.get('branchId')!=='HQ'||source.get('masterItemId')!==row.masterItemId||outgoing?.get('itemId')!==source.id||outgoing?.get('branchId')!=='HQ'||Number(outgoing?.get('balanceBefore'))-Number(outgoing?.get('balanceAfter'))!==24)issues.push('INVALID_HISTORICAL_HQ_DEDUCTION');
-   const sourceMovements=(await scoped('operational_inventory_movements','itemId',source.id)).sort((a,b)=>String(a.get('createdAt')).localeCompare(String(b.get('createdAt'))));
+   const sourceMovements=(await scoped('operational_inventory_movements','itemId',source.id)).sort((a,b)=>movementTime(a)-movementTime(b));
    for(let i=0;i<sourceMovements.length;i++) {
     const m=sourceMovements[i],before=Number(m.get('balanceBefore')),after=Number(m.get('balanceAfter')),delta=Number(m.get('quantityDelta'));
     if(![before,after,delta].every(Number.isFinite)||after-before!==delta||(i&&before!==Number(sourceMovements[i-1].get('balanceAfter'))))issues.push('HQ_MOVEMENT_CHAIN_MISMATCH');
    }
    const lastSource=sourceMovements.at(-1);
    if(!lastSource||Number(source.get('quantityInStock'))!==Number(lastSource.get('balanceAfter'))||source.get('lastMovementId')!==lastSource.id)issues.push('HQ_SOH_DOES_NOT_MATCH_LEDGER');
-   report.hqMovementEvidence=sourceMovements.map(m=>({type:m.get('movementType'),before:m.get('balanceBefore'),after:m.get('balanceAfter'),delta:m.get('quantityDelta'),createdAt:String(m.get('createdAt')),reference:m.get('reference')}));
+   report.hqMovementEvidence=sourceMovements.map(m=>({type:m.get('movementType'),before:m.get('balanceBefore'),after:m.get('balanceAfter'),delta:m.get('quantityDelta'),createdAt:new Date(movementTime(m)).toISOString(),reference:m.get('reference')}));
    report.hqSource={dispatchBefore:outgoing?.get('balanceBefore'),dispatchAfter:outgoing?.get('balanceAfter'),currentSOH:source.get('quantityInStock'),movementCount:sourceMovements.length};
   }
 
