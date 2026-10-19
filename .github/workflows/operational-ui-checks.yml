@@ -4,6 +4,9 @@ on:
     paths:
       - 'src/components/inventory/**'
       - 'src/components/procurement/OperationalHQStoreTab.tsx'
+      - 'src/components/procurement/OperationalGrnRouteSelector.tsx'
+      - 'src/pages/Procurement.tsx'
+      - 'scripts/operational-grn-route-ui-smoke.mjs'
       - 'src/utils/operationalStock.ts'
       - 'scripts/operational-ui-smoke.mjs'
       - '.github/workflows/operational-ui-checks.yml'
@@ -25,9 +28,13 @@ jobs:
       - name: Check actual registration and catalogue components
         env:
           PLAYWRIGHT_MODULE: /tmp/browser-check/node_modules/playwright
-        run: node scripts/operational-ui-smoke.mjs
+        run: |
+          node scripts/operational-ui-smoke.mjs
+          node scripts/operational-grn-route-ui-smoke.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: operational-ui-screenshots
-          path: /tmp/operational-ui-*/*.png
+          path: |
+            /tmp/operational-ui-*/*.png
+            /tmp/operational-route-ui-*/*.png

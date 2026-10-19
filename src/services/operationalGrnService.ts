@@ -1,3 +1,4 @@
+import { validateOperationalDeliveryRoute, type OperationalDeliveryRoute } from './operationalDeliveryRoute';
 import { operationalReceiptCostPerPack } from './operationalValuationPolicy';
 import type { Firestore } from 'firebase/firestore';
 import { doc, runTransaction, Timestamp } from 'firebase/firestore';
@@ -8,6 +9,7 @@ import { planOperationalGrnFinanceEvents } from './operationalGrnFinancePolicy';
 import { planCentralGrnFinance, type SupplierPaymentTerms } from './centralGrnFinanceContract';
 
 export interface ProcessOperationalGrnInput {
+  deliveryRoute?: OperationalDeliveryRoute;
   tenantId: string;
   order: StockOrder;
   lines: StockOrderLine[];
@@ -43,9 +45,13 @@ function validInvoiceDate(value: string): Timestamp {
   return Timestamp.fromDate(date);
 }
 
-/** Finalizes an Operational supplier GRN into HQ Operational balances atomically. */
+/** Posts supplier evidence atomically, crediting HQ stock only for the VIA_HQ route. */
 export async function processOperationalGrn(input: ProcessOperationalGrnInput, connection: Firestore = db): Promise<ProcessOperationalGrnResult> {
   const tenantId = input.tenantId.trim();
+  const deliveryRoute = input.deliveryRoute || 'VIA_HQ';
+  validateOperationalDeliveryRoute(deliveryRoute, input.order.requesting_branch_id);
+  const direct = deliveryRoute === 'DIRECT_BRANCH';
+  const locationId = direct ? 'SUPPLIER_TRANSIT' : 'HQ_OPERATIONAL';
   const invoiceNumber = input.invoiceNumber.trim();
   const invoiceTimestamp = validInvoiceDate(input.invoiceDate);
   if (!['cash', 'credit'].includes(input.paymentType)) throw new Error('Choose Cash or Credit at Central Operational GRN.');
@@ -95,6 +101,7 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
     invoiceNumber,
     invoiceDate: input.invoiceDate,
     paymentType: input.paymentType,
+    deliveryRoute,
     items: receivedInput.map(row => ({ lineId: row.line.id, qty: row.quantity, unitCost: row.cost })).sort((a, b) => a.lineId.localeCompare(b.lineId))
   }));
   const grnId = `op_grn_${hash(`${tenantId}|${input.order.id}|${supplierId}|${invoiceNumber.toLowerCase()}`)}`;
@@ -147,6 +154,11 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
       }
       return { grnId, grnNumber: existing.grn_number, alreadyProcessed: true, receivedValueUGX: Number(existing.total_value_ugx || 0) };
     }
+    const lockedRoute = orderSnapshot.data().operational_delivery_route;
+    const hasHistoricalReceipts = lineSnapshots.some(snapshot => Number(snapshot.data()?.qty_received || 0) > 0);
+    if ((lockedRoute && lockedRoute !== deliveryRoute) || (!lockedRoute && hasHistoricalReceipts && direct)) {
+      throw new Error('This order already has a posted GRN. Its delivery route cannot change.');
+    }
     if (!['approved', 'fully_received'].includes(orderSnapshot.data().status)) {
       throw new Error('The Operational order must be approved before receiving a supplier delivery.');
     }
@@ -157,13 +169,13 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
       throw new Error('An Operational GRN movement already exists without its parent GRN. Reconcile before retrying.');
     }
 
-    const hqItemRefs = masterSnapshots.map(snapshot => {
+    const hqItemRefs = masterSnapshots.map((snapshot, index) => {
       if (!snapshot.exists()) throw new Error('An Operational tenant item identity is missing.');
       const master = snapshot.data() as OperationalInventoryMaster;
-      if (master.tenantId !== tenantId || master.inventoryClass !== 'OPERATIONAL' || !master.hqLocationItemId) {
+      if (master.tenantId !== tenantId || master.inventoryClass !== 'OPERATIONAL' || (!direct && !master.hqLocationItemId)) {
         throw new Error('Register this Operational item at HQ before receiving a supplier delivery.');
       }
-      return doc(connection, 'operational_inventory', master.hqLocationItemId);
+      return direct ? sourceItemRefs[index] : doc(connection, 'operational_inventory', master.hqLocationItemId);
     });
     const hqSnapshots = await Promise.all(hqItemRefs.map(ref => transaction.get(ref)));
 
@@ -210,7 +222,7 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
       if (!sourceSnapshot.exists() || !hqSnapshot.exists() || source?.tenantId !== tenantId || source.inventoryClass !== 'OPERATIONAL' ||
           source.branchId !== input.order.requesting_branch_id || source.masterItemId !== inputRow.line.masterItemId ||
           master.tenantId !== tenantId || master.inventoryClass !== 'OPERATIONAL' || master.operationalType !== source.operationalType ||
-          hqItem?.tenantId !== tenantId || hqItem.branchId !== 'HQ' || hqItem.inventoryClass !== 'OPERATIONAL' ||
+          hqItem?.tenantId !== tenantId || hqItem.branchId !== (direct ? input.order.requesting_branch_id : 'HQ') || hqItem.inventoryClass !== 'OPERATIONAL' ||
           hqItem.operationalType !== master.operationalType || hqItem.masterItemId !== master.id) {
         throw new Error(`Operational identity or HQ location mismatch for ${inputRow.line.product_name || inputRow.line.product_id}.`);
       }
@@ -224,7 +236,7 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
       const lineValue = inputRow.quantity * inputRow.cost;
       const unitCostIssueUGX = inputRow.cost / unitsPerPack;
       const movementKey = movementKeys[sourceSnapshotIndex];
-      const movementId = movementRefs[sourceSnapshotIndex].id;
+      const movementId = direct ? '' : movementRefs[sourceSnapshotIndex].id;
       const operationalType = master.operationalType;
 
       receivedLines.push({
@@ -245,12 +257,14 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
         sourceTransactionId: grnId, createdAt: now
       });
 
+      if (!direct) {
       transaction.update(hqItemRefs[sourceSnapshotIndex], {
         inventoryClass: 'OPERATIONAL', operationalType, quantityInStock: balanceAfter,
         costPerPack: operationalReceiptCostPerPack(balanceBefore, receivedUnits, Number(hqItem.costPerPack || 0), unitCostIssueUGX, unitsPerPack),
         lastMovementId: movementId, updatedAt: now.toDate().toISOString()
       });
       transaction.set(movementRefs[sourceSnapshotIndex], movementDocs[movementDocs.length - 1]);
+      }
       transaction.set(grnLineRefs[sourceSnapshotIndex], {
         tenantId, inventoryClass: 'OPERATIONAL', operationalType, grnId, orderId: input.order.id,
         orderLineId: inputRow.line.id, itemId: hqItem.id, masterItemId: master.id,
@@ -258,7 +272,7 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
         itemName: master.name, supplierId, supplierName, qtyOrdered: inputRow.outstanding,
         qtyReceived: inputRow.quantity, qtyReceivedUnits: receivedUnits,
         unitCostUGX: inputRow.cost, unitCostIssueUGX, totalValueUGX: lineValue,
-        locationId: 'HQ_OPERATIONAL', receivedBy: input.user.uid, createdAt: now
+        locationId, deliveryRoute, receivedBy: input.user.uid, createdAt: now
       });
 
       const cumulativeReceived = Number(orderLine.qty_received || 0) + inputRow.quantity;
@@ -269,6 +283,8 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
         unit_cost_ugx: inputRow.cost,
         line_status: remainingAfterReceipt === 0 ? 'received' : 'approved',
         grn_id: grnId,
+        operational_delivery_route: deliveryRoute,
+        ...(direct ? { operational_received_value_ugx: Number(orderLine.operational_received_value_ugx || 0) + lineValue, operational_last_grn_line_id: grnLineRefs[sourceSnapshotIndex].id } : {}),
         grn_ids: [...new Set([...(Array.isArray(orderLine.grn_ids) ? orderLine.grn_ids : []), grnId])],
         updatedAt: now.toDate().toISOString()
       });
@@ -344,7 +360,7 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
       grn_number: grnNumber, order_id: input.order.id, procurement_requisition_id: input.order.id,
       supplier_id: supplierId, supplier_name: supplierName, invoice_number: invoiceNumber,
       invoice_date: input.invoiceDate, receivedAt: now.toDate().toISOString(), receivedBy: input.user.uid,
-      destination_branch_id: 'HQ', destination_store_id: 'HQ_OPERATIONAL', status: 'completed',
+      deliveryRoute, destination_branch_id: direct ? input.order.requesting_branch_id : 'HQ', destination_store_id: locationId, status: 'completed',
       grn_status: 'completed', financial_posting_status: 'event_created', invoice_posting_status: 'posted',
       invoice_id: financeInvoiceId, procurement_invoice_id: registerRef.id,
       credit_ledger_id: input.paymentType === 'credit' ? creditRef.id : null,
@@ -366,15 +382,15 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
         eventKind: event.eventKind, status: 'READY_FOR_FINANCE', eventId: financeEventIds[index],
         sourceType: 'OPERATIONAL_GRN', sourceId: grnId, sourceOrderId: input.order.id,
         supplierId, supplierName, invoiceNumber, invoiceDate: input.invoiceDate,
-        amountUGX: event.amountUGX, currency: 'UGX', destinationStoreId: 'HQ_OPERATIONAL',
+        amountUGX: event.amountUGX, currency: 'UGX', destinationStoreId: locationId,
         lines: event.lines, createdBy: input.user.uid, createdAt: now
       });
     }
 
     if (allSupplierLinesComplete) {
-      transaction.update(orderRef, { status: 'fully_received', last_grn_id: grnId, updatedAt: now.toDate().toISOString() });
+      transaction.update(orderRef, { status: 'fully_received', operational_delivery_route: deliveryRoute, last_grn_id: grnId, updatedAt: now.toDate().toISOString() });
     } else {
-      transaction.update(orderRef, { status: 'approved', last_grn_id: grnId, updatedAt: now.toDate().toISOString() });
+      transaction.update(orderRef, { status: 'approved', operational_delivery_route: deliveryRoute, last_grn_id: grnId, updatedAt: now.toDate().toISOString() });
     }
 
     return { grnId, grnNumber, alreadyProcessed: false, receivedValueUGX: totalValueUGX };

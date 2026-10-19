@@ -1,3 +1,5 @@
+import { OperationalGrnRouteSelector } from '../components/procurement/OperationalGrnRouteSelector';
+import type { OperationalDeliveryRoute } from '../services/operationalDeliveryRoute';
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, Search, Filter, CheckCircle2, AlertCircle, Clock, Package, Truck, FileText,
@@ -2181,7 +2183,7 @@ const GRNTab: React.FC = () => {
     csvContent += `GRN/Ref Number,${grn.grn_number}\n`;
     csvContent += `Inventory Class,${isOperationalInventoryRecord(grn) ? 'Operational Inventory' : 'Sellable Inventory'}\n`;
     csvContent += `Origin (Source),${grn.supplier_name || 'N/A'}\n`;
-    csvContent += `Destination,${grn.destination_store_id === 'HQ_OPERATIONAL' ? 'HQ Operational Store' : 'HQ Central Store / Main Depot'}\n`;
+    csvContent += `Destination,${grn.destination_store_id === 'SUPPLIER_TRANSIT' ? 'Direct to ordering branch' : grn.destination_store_id === 'HQ_OPERATIONAL' ? 'HQ Operational Store' : 'HQ Central Store / Main Depot'}\n`;
     csvContent += `Prepared/Sent By,Supplier Dispatch\n`;
     csvContent += `Prepared/Sent At,${grn.invoice_date || grn.receivedAt || 'N/A'}\n`;
     csvContent += `Received/Verified By,${grn.receivedBy || 'Staff Pharmacist'}\n`;
@@ -2496,7 +2498,7 @@ const GRNTab: React.FC = () => {
                 <div className="space-y-2">
                   <div>
                     <span className="text-xs font-bold text-zinc-600 uppercase tracking-wider block">Destination (Where arrived)</span>
-                    <span className="font-bold text-zinc-800 text-sm mt-0.5 block">{selectedGRN.destination_store_id === 'HQ_OPERATIONAL' ? 'HQ Operational Store' : 'HQ Central Store / Main Depot'}</span>
+                    <span className="font-bold text-zinc-800 text-sm mt-0.5 block">{selectedGRN.destination_store_id === 'SUPPLIER_TRANSIT' ? 'Direct to ordering branch' : selectedGRN.destination_store_id === 'HQ_OPERATIONAL' ? 'HQ Operational Store' : 'HQ Central Store / Main Depot'}</span>
                   </div>
                   <div className="pt-2 border-t border-zinc-200">
                     <span className="text-xs font-bold text-zinc-600 uppercase tracking-wider block">Received/Verified By & When</span>
@@ -2947,10 +2949,12 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   );
 };
 
-const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({ order, onClose }) => {
+export const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({ order, onClose }) => {
   const { profile } = useAuth();
   const isOperationalOrder = isOperationalInventoryRecord(order);
+  const [deliveryRoute, setDeliveryRoute] = useState<OperationalDeliveryRoute>(order.operational_delivery_route || (order.requesting_branch_id === 'HQ' || order.last_grn_id ? 'VIA_HQ' : 'DIRECT_BRANCH'));
   const [lines, setLines] = useState<StockOrderLine[]>([]);
+  const routeLocked = Boolean(order.operational_delivery_route || order.last_grn_id || lines.some(line => Number(line.qty_received || 0) > 0));
   const [editedLines, setEditedLines] = useState<Record<string, { qty: number, removed: boolean, batch: string, expiry: string, unitCostUGX?: number }>>({});
   const [paymentType, setPaymentType] = useState<'cash' | 'credit'>('cash');
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -2969,6 +2973,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
         return;
       }
       setLines(approvedLines);
+      if (!order.operational_delivery_route && data.some(line => Number(line.qty_received || 0) > 0)) setDeliveryRoute('VIA_HQ');
       
       const initialEdits: Record<string, { qty: number, removed: boolean, batch: string, expiry: string, unitCostUGX?: number }> = {};
       
@@ -3030,11 +3035,11 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
       };
       if (isOperationalOrder) {
         const result = await processOperationalGrn({
-          tenantId, order, lines, editedLines, invoiceNumber, invoiceDate, paymentType, inputVat, whtAmount, notes, user
+          tenantId, order, lines, editedLines, deliveryRoute, invoiceNumber, invoiceDate, paymentType, inputVat, whtAmount, notes, user
         });
         toast.success(result.alreadyProcessed
           ? 'This Operational GRN was already completed. No duplicate stock was added.'
-          : `Operational GRN ${result.grnNumber} received into the HQ Operational Store. Cash/Credit invoice and Finance event recorded. Branch dispatch remains a separate step.`);
+          : `Operational GRN ${result.grnNumber} posted. ${deliveryRoute === 'DIRECT_BRANCH' ? 'Direct branch delivery prepared; HQ stock unchanged.' : 'Received into HQ Operational Store.'} Supplier invoice recorded unpaid. Branch dispatch remains a separate step.`);
         onClose();
         return;
       }
@@ -3065,25 +3070,27 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
   };
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-[32px] w-full max-w-6xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
-        <div className="p-8 border-b border-zinc-100 flex items-center justify-between">
+      <div role="dialog" aria-modal="true" aria-label="Supplier GRN posting" className="bg-white text-zinc-900 rounded-2xl w-full max-w-6xl max-h-[90dvh] min-h-0 overflow-hidden shadow-2xl flex flex-col">
+        <div className="shrink-0 p-4 sm:p-6 border-b border-zinc-100 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-2xl font-bold text-zinc-900">{isOperationalOrder ? 'Operational Inventory GRN' : 'Process GRN'}</h2>
             <p className="text-sm text-zinc-500">{order.order_number} - {order.requesting_branch_name}</p>
-            {isOperationalOrder && <p className="mt-2 text-xs font-bold uppercase tracking-wide text-emerald-700">Operational receipt → HQ Operational Store</p>}
+            {isOperationalOrder && <p className="mt-2 text-xs font-bold uppercase tracking-wide text-emerald-700">{deliveryRoute === 'DIRECT_BRANCH' ? 'Supplier delivery → Ordering branch' : 'Operational receipt → HQ Operational Store'}</p>}
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
+          <button aria-label="Close GRN posting" disabled={submitting} onClick={onClose} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
             <Plus className="rotate-45" size={24} />
           </button>
         </div>
         
-        <div className="p-8 overflow-y-auto flex-1">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="min-h-0 overflow-y-auto flex-1 p-4 sm:p-6">
+          {isOperationalOrder && <OperationalGrnRouteSelector value={deliveryRoute} onChange={setDeliveryRoute}
+            branchName={order.requesting_branch_name || order.requesting_branch_id} hqOrder={order.requesting_branch_id === 'HQ'} locked={routeLocked || submitting} />}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <div className="space-y-1">
               <label className="text-xs font-bold text-zinc-500 uppercase">Invoice Number</label>
               <input 
                 type="text"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none"
+                className="text-zinc-900 w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none"
                 placeholder="Required supplier invoice reference"
                 value={invoiceNumber}
                 onChange={(e) => setInvoiceNumber(e.target.value)}
@@ -3093,7 +3100,8 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
               <label className="text-xs font-bold text-zinc-500 uppercase">Invoice Date</label>
               <input 
                 type="date"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none"
+                aria-label="Supplier invoice date"
+                className="text-zinc-900 w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none"
                 value={invoiceDate}
                 onChange={(e) => setInvoiceDate(e.target.value)}
               />
@@ -3119,7 +3127,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
               <label className="text-xs font-bold text-zinc-500 uppercase">Input VAT (UGX)</label>
               <input 
                 type="number"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/20"
+                className="text-zinc-900 w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/20"
                 value={inputVat}
                 onChange={(e) => setInputVat(Number(e.target.value))}
                 placeholder="0"
@@ -3129,7 +3137,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
               <label className="text-xs font-bold text-zinc-500 uppercase">WHT Amount (UGX)</label>
               <input 
                 type="number"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/20"
+                className="text-zinc-900 w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/20"
                 value={whtAmount}
                 onChange={(e) => setWhtAmount(Number(e.target.value))}
                 placeholder="0"
@@ -3138,7 +3146,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
             <div className="space-y-1">
               <label className="text-xs font-bold text-zinc-500 uppercase">Notes</label>
               <textarea 
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/20 h-[52px]"
+                className="text-zinc-900 w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/20 h-[52px]"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Add any GRN notes..."
@@ -3146,6 +3154,18 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
             </div>
           </div>
 
+          {isOperationalOrder && <div className="space-y-3 md:hidden">{lines.map(line => {
+            const edit = editedLines[line.id];
+            if (!edit) return null;
+            return <article key={line.id} className="rounded-xl border border-zinc-200 bg-white p-3 text-zinc-900">
+              <p className="font-bold break-words">{line.product_name}</p><p className="text-xs text-zinc-600 break-words">{line.supplier_name}</p>
+              <label className="mt-3 block text-sm font-medium">Quantity received (packs)<input aria-label={`Received packs ${line.product_name}`} type="number" min="0" disabled={edit.removed} value={edit.qty} onChange={e => handleQtyChange(line.id, Number(e.target.value))} className="mt-1 min-h-11 w-full rounded-lg border border-zinc-300 bg-white p-2 text-zinc-900" /></label>
+              <label className="mt-3 block text-sm font-medium">Cost per pack (UGX)<input aria-label={`Cost per pack ${line.product_name}`} type="number" min="0" disabled={edit.removed} value={edit.unitCostUGX ?? line.unit_cost_ugx} onChange={e => setEditedLines(prev => ({...prev,[line.id]:{...prev[line.id],unitCostUGX:Number(e.target.value)}}))} className="mt-1 min-h-11 w-full rounded-lg border border-zinc-300 bg-white p-2 text-zinc-900" /></label>
+              <p className="mt-3 text-sm font-bold">UGX {(edit.removed ? 0 : edit.qty * (edit.unitCostUGX ?? line.unit_cost_ugx)).toLocaleString()}</p>
+              <button type="button" onClick={() => handleToggleRemove(line.id)} className="mt-2 min-h-11 w-full rounded-lg border border-zinc-300 px-3 py-2 font-semibold text-zinc-900">{edit.removed ? 'Restore item' : 'Mark unsupplied'}</button>
+            </article>;
+          })}</div>}
+          <div className={isOperationalOrder ? 'hidden md:block overflow-x-auto' : 'overflow-x-auto'}>
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">
@@ -3170,6 +3190,7 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
                     <td className="px-4 py-3">
                       <input 
                         type="number"
+                        aria-label={`Received packs ${line.product_name}`}
                         min="0"
                         disabled={edit.removed}
                         className="w-20 px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-lg text-sm"
@@ -3213,9 +3234,10 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
               })}
             </tbody>
           </table>
+          </div>
         </div>
         
-        <div className="p-8 bg-zinc-50 border-t border-zinc-100 flex justify-between items-center">
+        <div className="shrink-0 p-4 sm:p-6 bg-zinc-50 border-t border-zinc-100 flex flex-col sm:flex-row justify-between sm:items-center gap-3">
           <div className="text-zinc-600">
             Total GRN Value: <span className="text-xl font-bold text-zinc-900 ml-2">
               UGX {lines.reduce((sum, l) => {
@@ -3224,18 +3246,18 @@ const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void }> = ({
               }, 0).toLocaleString()}
             </span>
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-3 w-full sm:w-auto">
             <button 
               onClick={onClose} 
               disabled={submitting}
-              className="px-6 py-2 text-zinc-500 font-bold hover:bg-zinc-100 rounded-xl transition-all disabled:opacity-50"
+              className="min-h-12 flex-1 px-4 py-2 text-zinc-500 font-bold hover:bg-zinc-100 rounded-xl transition-all disabled:opacity-50"
             >
               Cancel
             </button>
             <button 
               onClick={handleConfirm} 
               disabled={submitting}
-              className="px-6 py-2 bg-zinc-900 text-white font-bold hover:bg-zinc-800 rounded-xl transition-all disabled:bg-zinc-300 disabled:opacity-50"
+              className="min-h-12 flex-1 px-4 py-2 bg-zinc-900 text-white font-bold hover:bg-zinc-800 rounded-xl transition-all disabled:bg-zinc-300 disabled:opacity-50"
             >
               {submitting ? 'Completing...' : 'Complete GRN'}
             </button>
@@ -3281,6 +3303,7 @@ const DispatchTab: React.FC = () => {
       const expected = Number(transfer.expectedLineCount || 0);
       const invalid = lines.some((line, index) => {
         const movement = movementResults[index];
+        if (transfer.deliveryRoute === 'DIRECT_BRANCH') return Boolean(movement) || line.dispatchMovementId !== '' || line.sourceItemId !== 'SUPPLIER_TRANSIT';
         return line.status === 'dispatched'
           ? !movement || movement.tenantId !== profile.tenantId || movement.sourceLineId !== line.id
             || movement.movementType !== 'TRANSFER_OUT' || Number(movement.quantityDelta) !== -Number(line.quantityDispatched)
@@ -3515,7 +3538,7 @@ const DispatchTab: React.FC = () => {
             return <article key={order.id} className="p-4 space-y-3 bg-white text-zinc-900">
               <button type="button" onClick={() => setDetailsOrder(order)} className="text-left text-base font-bold text-emerald-800 underline break-all">{order.order_number || order.id}</button>
               <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
-                <div><p className="text-xs text-zinc-500">Inventory</p><p className="font-semibold text-zinc-900">{operational ? 'Operational' : 'Sellable'}</p></div>
+                <div><p className="text-xs text-zinc-500">Inventory</p><p className="font-semibold text-zinc-900">{operational ? 'Operational' : 'Sellable'}</p>{operational && <p className="text-xs text-zinc-700">{order.operational_delivery_route === 'DIRECT_BRANCH' ? 'Direct to branch' : 'Via HQ Store'}</p>}</div>
                 <div><p className="text-xs text-zinc-500">Destination</p><p className="font-semibold text-zinc-900 break-words">{order.requesting_branch_name || order.requesting_branch_id}</p></div>
                 <div><p className="text-xs text-zinc-500">Order value</p><p className="font-semibold text-zinc-900">{Number(order.total_order_value_ugx || 0).toLocaleString()} UGX</p></div>
                 <div><p className="text-xs text-zinc-500">Status</p><p className="font-semibold text-zinc-900 capitalize">{showDispatchHistory ? order.status.replace(/_/g, ' ') : 'Ready for dispatch'}</p></div>
@@ -3530,7 +3553,7 @@ const DispatchTab: React.FC = () => {
             <button type="button" className="text-left text-base font-bold text-emerald-800 underline break-all" onClick={() => { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (order) setDetailsOrder(order); else toast.error('The staged transfer has no readable linked source order.'); }}>{transfer.sourceOrderNumber || transfer.transferNumber}</button>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div><p className="text-xs text-zinc-500">Inventory</p><p className="font-semibold text-zinc-900">Operational</p></div>
-              <div><p className="text-xs text-zinc-500">Destination</p><p className="font-semibold text-zinc-900 break-words">{transfer.destinationBranchName || transfer.destinationBranchId}</p></div>
+              <div><p className="text-xs text-zinc-500">Destination</p><p className="font-semibold text-zinc-900 break-words">{transfer.destinationBranchName || transfer.destinationBranchId}</p><p className="text-xs text-zinc-700">{transfer.deliveryRoute === 'DIRECT_BRANCH' ? 'Direct to branch' : 'Via HQ Store'}</p></div>
               <div><p className="text-xs text-zinc-500">Value</p><p className="font-semibold text-zinc-900">{Number(transfer.totalValueUGX || 0).toLocaleString()} UGX</p></div>
               <div><p className="text-xs text-zinc-500">Status</p><p className="font-semibold text-zinc-900">Staged / awaiting dispatch</p></div>
             </div>
@@ -3542,7 +3565,7 @@ const DispatchTab: React.FC = () => {
           </article>)}
           {(showDispatchHistory ? dispatchHistory.length === 0 : (preparedSellableOrders.length + operationalOrders.length + approvedOrders.length + pendingOperationalTransfers.length === 0)) && <p className="px-4 py-8 text-sm text-zinc-500">{showDispatchHistory ? 'No linked dispatch history found.' : 'No orders ready for dispatch.'}</p>}
         </div>
-        <div className="hidden md:block overflow-x-auto">
+        <div className="hidden md:block overflow-x-auto bg-white text-zinc-900">
           <table className="w-full text-left text-sm min-w-[740px]">
             <thead className="bg-zinc-50 text-zinc-500 uppercase text-[11px]"><tr><th className="p-3">Order Reference</th><th className="p-3">Inventory Type</th><th className="p-3">Destination Branch</th><th className="p-3">Order Value</th><th className="p-3">Status</th><th className="p-3">Action</th></tr></thead>
             <tbody className="divide-y divide-zinc-100">
@@ -3551,7 +3574,7 @@ const DispatchTab: React.FC = () => {
                 const preparedSellable = preparedSellableOrders.some(row => row.id === order.id);
                 return <tr key={order.id}>
                   <td className="p-3"><button type="button" onClick={() => setDetailsOrder(order)} className="text-emerald-800 underline font-bold">{order.order_number || order.id}</button></td>
-                  <td className="p-3">{operational ? 'Operational' : 'Sellable'}</td>
+                  <td className="p-3">{operational ? 'Operational' : 'Sellable'}{operational && <p className="text-xs text-zinc-700">{order.operational_delivery_route === 'DIRECT_BRANCH' ? 'Direct to branch' : 'Via HQ Store'}</p>}</td>
                   <td className="p-3">{order.requesting_branch_name || order.requesting_branch_id}</td>
                   <td className="p-3">{Number(order.total_order_value_ugx || 0).toLocaleString()} UGX</td>
                   <td className="p-3 capitalize">{showDispatchHistory ? order.status.replace(/_/g, ' ') : 'Ready for dispatch'}</td>
@@ -3565,7 +3588,7 @@ const DispatchTab: React.FC = () => {
               })}
               {!showDispatchHistory && pendingOperationalTransfers.map(transfer => <tr key={transfer.id}>
                 <td className="p-3 font-bold"><button type="button" className="text-emerald-800 underline" onClick={() => { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (order) setDetailsOrder(order); else toast.error('The staged transfer has no readable linked source order.'); }}>{transfer.sourceOrderNumber || transfer.transferNumber}</button></td>
-                <td className="p-3">Operational</td><td className="p-3">{transfer.destinationBranchName || transfer.destinationBranchId}</td>
+                <td className="p-3">Operational<p className="text-xs text-zinc-700">{transfer.deliveryRoute === 'DIRECT_BRANCH' ? 'Direct to branch' : 'Via HQ Store'}</p></td><td className="p-3">{transfer.destinationBranchName || transfer.destinationBranchId}</td>
                 <td className="p-3">{Number(transfer.totalValueUGX || 0).toLocaleString()} UGX</td>
                 <td className="p-3">Staged / awaiting dispatch{transferInspection[transfer.id] && <p className="text-xs text-amber-800 mt-1 max-w-xs">{transferInspection[transfer.id]}</p>}</td>
                 <td className="p-3"><button type="button" onClick={() => void inspectStagedTransfer(transfer)} className="px-3 py-2 mr-2 rounded-lg border border-amber-700 text-amber-800 font-semibold">Inspect</button><button type="button" disabled={!canDispatch || dispatchingOperationalOrderId !== null || !verifiedTransferIds[transfer.id]} onClick={() => { if (transfer.fulfillmentSource === 'EXTERNAL_SUPPLIER') { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (!order) { toast.error('The staged external transfer needs order reconciliation before resuming.'); return; } void handleOperationalDispatch(order); } else { void handleResumeOperationalTransfer(transfer); } }} className="px-3 py-2 rounded-lg bg-amber-700 text-white disabled:opacity-40">Resume Staged Transfer</button></td>

@@ -2506,7 +2506,7 @@ const OperationalBranchReceiptQueue: React.FC = () => {
       </div>
       <div className="divide-y divide-zinc-100">
         {visibleTransfers.map(transfer => <div key={transfer.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div><p className="font-bold text-zinc-900">{transfer.transferNumber}</p><p className="text-xs text-zinc-500">From HQ Operational Store · {transfer.sourceOrderNumber || 'HQ distribution'} · {transfer.status.replace(/_/g, ' ')}</p></div>
+          <div><p className="font-bold text-zinc-900">{transfer.transferNumber}</p><p className="text-xs text-zinc-500">{transfer.deliveryRoute === 'DIRECT_BRANCH' ? 'Direct supplier delivery' : 'From HQ Operational Store'} · {transfer.sourceOrderNumber || 'HQ distribution'} · {transfer.status.replace(/_/g, ' ')}</p></div>
           <button onClick={() => void openTransfer(transfer)} className="px-4 py-2 rounded-xl border border-emerald-200 text-emerald-800 text-xs font-black hover:bg-emerald-50">{showHistory ? 'View receipt' : canReceive ? 'Receive & verify' : 'View details'}</button>
         </div>)}
         {visibleTransfers.length === 0 && <p className="p-8 text-center text-sm text-zinc-400">{showHistory ? 'No Operational receipt history for this branch.' : 'No Operational transfers are awaiting receipt.'}</p>}
@@ -2514,7 +2514,7 @@ const OperationalBranchReceiptQueue: React.FC = () => {
 
       {selectedTransfer && <div className="fixed inset-0 z-[70] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
         <div className="flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl min-w-0 flex-col overflow-hidden rounded-2xl bg-white text-zinc-900 shadow-2xl sm:max-h-[calc(100dvh-2rem)]">
-          <div className="shrink-0 border-b border-zinc-200 p-4 sm:p-5"><p className="text-xs font-bold uppercase tracking-wide text-emerald-800">Operational Inventory Transfer</p><h3 className="mt-1 break-all text-lg font-black text-zinc-900 sm:text-xl">{selectedTransfer.transferNumber}</h3><p className="mt-1 text-sm font-medium text-zinc-700">HQ Operational Store → {selectedTransfer.destinationBranchName || activeBranchId}</p><p className="mt-1 text-sm text-zinc-700">Source: {selectedTransfer.sourceOrderNumber || 'HQ distribution'}</p></div>
+          <div className="shrink-0 border-b border-zinc-200 p-4 sm:p-5"><p className="text-xs font-bold uppercase tracking-wide text-emerald-800">Operational Inventory Transfer</p><h3 className="mt-1 break-all text-lg font-black text-zinc-900 sm:text-xl">{selectedTransfer.transferNumber}</h3><p className="mt-1 text-sm font-medium text-zinc-700">{selectedTransfer.deliveryRoute === 'DIRECT_BRANCH' ? 'Supplier direct delivery' : 'HQ Operational Store'} → {selectedTransfer.destinationBranchName || activeBranchId}</p><p className="mt-1 text-sm text-zinc-700">Source: {selectedTransfer.sourceOrderNumber || 'HQ distribution'}</p></div>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-5">
             {loading ? <p className="py-8 text-center text-sm text-zinc-500">Loading transfer lines…</p> : <div className="overflow-x-auto rounded-xl border border-zinc-300">
               <table className="w-full min-w-[700px] text-left"><thead className="bg-zinc-100 text-xs font-bold uppercase text-zinc-800"><tr><th className="p-3">Operational item</th><th className="p-3">Dispatched</th><th className="p-3">Accepted</th><th className="p-3">Queried</th><th className="p-3">Reason</th></tr></thead>

@@ -501,6 +501,76 @@ try {
   }
   console.log('[stage2-secondary-role] PASS: interrupted header resumed, one line/movement, stock deducted once; IT-only claims and invalid links denied.');
 
+  // Direct-to-branch route: GRN and dispatch never post HQ or branch stock.
+  const directRegistration = await saveOperationalLocationItem({...registration,data:{...registration.data,name:'Direct route pens',unitPerPack:12,unitOfIssue:'piece',uniqueId:''}},procurement);
+  const directBranchRegistration = await saveOperationalLocationItem({...registration,branchId:branchA,actor:{uid:'manager-a'},masterItemId:directRegistration.masterItemId,data:{...registration.data,name:'Direct route pens',unitPerPack:12,unitOfIssue:'piece',uniqueId:'',branchId:branchA}},branchManager);
+  // Direct delivery must work without an HQ location link on its master.
+  await testEnv.withSecurityRulesDisabled(async context => {
+    const masterRef=doc(context.firestore(),'operational_inventory_masters',directRegistration.masterItemId);
+    const data=(await getDoc(masterRef)).data(); delete data.hqLocationItemId; await setDoc(masterRef,data);
+  });
+  const directId = 'route-direct-order';
+  const directLineId = 'route-direct-line';
+  const directOrder = { tenantId, id: directId, order_number: 'ORD-DIRECT-TEST',
+    inventoryClass: 'OPERATIONAL', category: 'non_sellable', requesting_branch_id: branchA,
+    requesting_branch_name: 'Branch A', status: 'approved' };
+  const directLine = { tenantId, id: directLineId, order_id: directId, inventoryClass: 'OPERATIONAL',
+    product_id: directBranchRegistration.itemId, masterItemId: directRegistration.masterItemId,
+    supplier_type: 'external', supplier_id: 'supplier-direct', supplier_name: 'Test supplier',
+    product_name: 'Notebooks', line_status: 'approved', qty_ordered: 2, qty_received: 0, unit_cost_ugx: 1000 };
+  await testEnv.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'stock_orders', directId), directOrder);
+    await setDoc(doc(context.firestore(), 'stock_order_lines', directLineId), directLine);
+  });
+  const hqBefore = (await getDoc(doc(procurement, 'operational_inventory', directRegistration.itemId))).data().quantityInStock;
+  const branchBefore = (await getDoc(doc(branchManager, 'operational_inventory', directBranchRegistration.itemId))).data().quantityInStock;
+  const directGrnInput = { tenantId, order: directOrder, lines: [directLine], deliveryRoute: 'DIRECT_BRANCH',
+    editedLines: { [directLineId]: {qty:1,removed:false,batch:'',expiry:''} },
+    invoiceNumber: 'DIRECT-INV-1', invoiceDate: '2026-10-19', paymentType: 'credit', inputVat:0, whtAmount:0, notes:'',
+    user:{uid:'combined-procurement',name:'Combined Buyer'} };
+  await assert.rejects(processOperationalGrn({...directGrnInput,order:{...directOrder,requesting_branch_id:'HQ'}},combinedProcurement), /HQ buffer/);
+  await assertFails(processOperationalGrn({...directGrnInput,user:{uid:'it-only',name:'IT only'}},itOnly));
+  const directGrn = await processOperationalGrn(directGrnInput, combinedProcurement);
+  assert.equal((await processOperationalGrn(directGrnInput, combinedProcurement)).alreadyProcessed, true);
+  await assert.rejects(processOperationalGrn({...directGrnInput, deliveryRoute:'VIA_HQ'}, combinedProcurement));
+  assert.equal((await getDoc(doc(combinedProcurement,'grn_records',directGrn.grnId))).data().destination_store_id, 'SUPPLIER_TRANSIT');
+  assert.equal((await getDoc(doc(procurement, 'operational_inventory', directRegistration.itemId))).data().quantityInStock, hqBefore);
+  assert.equal((await getDoc(doc(branchManager, 'operational_inventory', directBranchRegistration.itemId))).data().quantityInStock, branchBefore);
+  const grnRows = await getDocs(query(collection(combinedProcurement,'operational_grn_lines'),where('tenantId','==',tenantId),where('grnId','==',directGrn.grnId)));
+  assert.equal(grnRows.size,1); assert.equal(grnRows.docs[0].data().movementId,'');
+  const firstPostedOrder = {...(await getDoc(doc(combinedProcurement,'stock_orders',directId))).data(),id:directId};
+  assert.equal(firstPostedOrder.status,'approved');
+  await assertFails(setDoc(doc(combinedProcurement,'stock_orders',directId),{operational_delivery_route:'VIA_HQ'},{merge:true}));
+  await assertFails(setDoc(doc(branchManager,'stock_orders',directId),{operational_delivery_route:'VIA_HQ'},{merge:true}));
+  const partiallyReceivedLine={...(await getDoc(doc(combinedProcurement,'stock_order_lines',directLineId))).data(),id:directLineId};
+  await assert.rejects(processOperationalGrn({...directGrnInput,invoiceNumber:'ROUTE-SWITCH',deliveryRoute:'VIA_HQ',lines:[partiallyReceivedLine]},combinedProcurement),/route cannot change/);
+  const secondGrn=await processOperationalGrn({...directGrnInput,order:firstPostedOrder,lines:[partiallyReceivedLine],editedLines:{[directLineId]:{qty:1,removed:false,batch:'',expiry:'',unitCostUGX:1200}},invoiceNumber:'DIRECT-INV-2'},combinedProcurement);
+  assert.notEqual(secondGrn.grnId,directGrn.grnId);
+  const postedOrder = {...(await getDoc(doc(combinedProcurement,'stock_orders',directId))).data(),id:directId};
+  await assertFails(setDoc(doc(combinedProcurement,'stock_order_lines',directLineId),{operational_received_value_ugx:999999},{merge:true}));
+  await assertFails(setDoc(doc(branchManager,'stock_order_lines',directLineId),{qty_received:99},{merge:true}));
+  const directDispatchInput = {tenantId,order:postedOrder,destinationBranchName:'Branch A',actor:{uid:'combined-procurement',name:'Combined Buyer'}};
+  const directTransfer = await dispatchOperationalOrderToBranch(directDispatchInput,combinedProcurement);
+  assert.equal((await dispatchOperationalOrderToBranch(directDispatchInput,combinedProcurement)).alreadyDispatched,true);
+  const directRows = await getDocs(query(collection(combinedProcurement,'operational_transfer_lines'),where('tenantId','==',tenantId),where('transferId','==',directTransfer.transferId)));
+  assert.equal(directRows.size,1);
+  const directTransferLine = {...directRows.docs[0].data(),id:directRows.docs[0].id};
+  assert.equal(directTransferLine.dispatchMovementId,'');
+  assert.equal(directTransferLine.quantityDispatched,24);
+  assert.equal(directTransferLine.totalValueUGX,2200);
+  await assertFails(setDoc(doc(combinedProcurement,'operational_transfers',directTransfer.transferId),{deliveryRoute:'VIA_HQ'},{merge:true}));
+  await assertFails(setDoc(doc(combinedProcurement,'operational_transfer_lines','direct-forged-quantity'),{...directTransferLine,id:'direct-forged-quantity',status:'prepared',quantityDispatched:25}));
+  await assertFails(setDoc(doc(combinedProcurement,'operational_transfer_lines','direct-forged-destination'),{...directTransferLine,id:'direct-forged-destination',status:'prepared',destinationItemId:'op-item-b'}));
+  assert.equal(directTransferLine.status,'dispatched');
+  assert.equal((await getDoc(doc(procurement, 'operational_inventory', directRegistration.itemId))).data().quantityInStock, hqBefore);
+  assert.equal((await getDoc(doc(branchManager, 'operational_inventory', directBranchRegistration.itemId))).data().quantityInStock, branchBefore);
+  const directReceiptInput={tenantId,transferId:directTransfer.transferId,line:directTransferLine,accepted:12,queried:12,queryReason:'One damaged',actor:{uid:'manager-a',name:'Manager'},activeBranchId:branchA};
+  assert.equal((await receiveOperationalTransferLine(directReceiptInput,branchManager)).alreadyReceived,false);
+  assert.equal((await receiveOperationalTransferLine(directReceiptInput,branchManager)).alreadyReceived,true);
+  assert.equal((await getDoc(doc(branchManager, 'operational_inventory', directBranchRegistration.itemId))).data().quantityInStock,branchBefore+12);
+  assert.equal((await getDoc(doc(procurement, 'operational_inventory', directRegistration.itemId))).data().quantityInStock,hqBefore);
+  console.log('[operational-delivery-route] PASS direct GRN, dispatch, queried receipt and retry without HQ stock.');
+
   console.log('[operational-inventory-rules] PASS: buffer-order preflight/create, order, GRN, transfer, master, store and usage writes stay class-, tenant- and branch-scoped.');
 } finally {
   rmSync('.operational-registration-emulator.mjs', { force: true });

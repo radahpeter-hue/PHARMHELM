@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 test('mobile dispatch cards explicitly render visible dark values without relying on inherited theme text', () => {
   const source = readFileSync(new URL('../src/pages/Procurement.tsx', import.meta.url), 'utf8');
   const start = source.indexOf('/* On phones, each dispatch');
-  const end = source.indexOf('<div className="hidden md:block overflow-x-auto">', start);
+  const end = source.indexOf('<div className="hidden md:block overflow-x-auto', start);
   assert.ok(start >= 0 && end > start);
   const cards = source.slice(start, end);
   assert.match(cards, /bg-white text-zinc-900/);
