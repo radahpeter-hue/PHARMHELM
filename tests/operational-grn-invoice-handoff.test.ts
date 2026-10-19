@@ -9,7 +9,7 @@ const rules=readFileSync(new URL('../firestore.rules',import.meta.url),'utf8');
 test('Operational GRN requires Cash or Credit and embeds payment terms in retry fingerprint',()=>{
   assert.match(service,/paymentType: SupplierPaymentTerms/);
   assert.match(service,/if \(!\['cash', 'credit'\]\.includes\(input\.paymentType\)\)/);
-  assert.match(service,/paymentType: input\.paymentType,\s*items: receivedInput/);
+  assert.match(service,/paymentType: input\.paymentType,\s*deliveryRoute,\s*items: receivedInput/);
 });
 
 test('Operational GRN posts single invoice and conditional cash draft/credit liability atomically',()=>{
@@ -26,7 +26,7 @@ test('Operational GRN posts single invoice and conditional cash draft/credit lia
 
 test('Operational remains separate from Sellable and both retain correct GRN fields',()=>{
   const part=procurement.slice(procurement.indexOf('const GRNProcessModal:'), procurement.indexOf('const GRNProcessModal:')+16000);
-  assert.match(part,/tenantId, order, lines, editedLines, invoiceNumber, invoiceDate, paymentType, inputVat/);
+  assert.match(part,/tenantId, order, lines, editedLines, deliveryRoute, invoiceNumber, invoiceDate, paymentType, inputVat/);
   assert.match(part,/setPaymentType\('cash'\)/);
   assert.match(part,/setPaymentType\('credit'\)/);
   assert.match(part,/!isOperationalOrder && <th[^\n]*Batch/);

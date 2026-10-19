@@ -1,3 +1,4 @@
+import { operationalDeliveryRoute } from './operationalDeliveryRoute';
 import { operationalReceiptCostPerPack } from './operationalValuationPolicy';
 import { collection, doc, getDoc, getDocs, query, runTransaction, where } from 'firebase/firestore';
 import type { Firestore, WhereFilterOp } from 'firebase/firestore';
@@ -217,6 +218,8 @@ export async function dispatchOperationalOrderToBranch(
   if (order.inventoryClass !== 'OPERATIONAL' && order.category !== 'non_sellable') throw new Error('Only Operational Inventory orders can use this dispatch flow.');
   if (!order.requesting_branch_id || order.requesting_branch_id === 'HQ') throw new Error('The Operational order must target a branch.');
 
+  const deliveryRoute = operationalDeliveryRoute(order);
+  const direct = deliveryRoute === 'DIRECT_BRANCH';
   const transferId = transferIdForOrder(order.id);
   const transferRef = doc(connection, 'operational_transfers', transferId);
   const orderRef = doc(connection, 'stock_orders', order.id);
@@ -257,9 +260,10 @@ export async function dispatchOperationalOrderToBranch(
         !(liveOrder.inventoryClass === 'OPERATIONAL' || liveOrder.category === 'non_sellable')) {
       throw new Error('The source order is missing, belongs to another tenant, or is not Operational.');
     }
+    if (operationalDeliveryRoute(liveOrder as StockOrder) !== deliveryRoute) throw new Error('The posted GRN delivery route changed. Reload the order.');
     if (transferSnapshot.exists()) {
       const existing = transferSnapshot.data();
-      if (existing.tenantId !== tenantId || existing.sourceOrderId !== order.id || existing.destinationBranchId !== order.requesting_branch_id) {
+      if ((existing.deliveryRoute || 'VIA_HQ') !== deliveryRoute || existing.tenantId !== tenantId || existing.sourceOrderId !== order.id || existing.destinationBranchId !== order.requesting_branch_id) {
         throw new Error('An Operational transfer already exists with conflicting source or destination details.');
       }
       if (existing.status === 'dispatched' || ['received', 'queried'].includes(existing.status)) return;
@@ -270,7 +274,7 @@ export async function dispatchOperationalOrderToBranch(
     if (liveOrder.status !== 'fully_received') throw new Error('The Operational order must be fully received before branch dispatch.');
     transaction.set(transferRef, {
       id: transferId, tenantId, inventoryClass: 'OPERATIONAL', fulfillmentSource: 'EXTERNAL_SUPPLIER', transferNumber,
-      sourceLocationId: 'HQ_OPERATIONAL', sourceBranchId: 'HQ',
+      deliveryRoute, sourceLocationId: direct ? 'SUPPLIER_TRANSIT' : 'HQ_OPERATIONAL', sourceBranchId: direct ? 'SUPPLIER' : 'HQ',
       destinationBranchId: order.requesting_branch_id,
       destinationBranchName: input.destinationBranchName,
       sourceOrderId: order.id, sourceOrderNumber: order.order_number,
@@ -289,11 +293,11 @@ export async function dispatchOperationalOrderToBranch(
   for (const row of linesToDispatch) {
     const masterId = row.line.masterItemId!;
     const master = await readOperationalDocument<OperationalInventoryMaster>(connection, 'operational_inventory_masters', masterId);
-    if (!master || master.tenantId !== tenantId || master.inventoryClass !== 'OPERATIONAL' || !master.hqLocationItemId) {
+    if (!master || master.tenantId !== tenantId || master.inventoryClass !== 'OPERATIONAL' || (!direct && !master.hqLocationItemId)) {
       throw new Error(`Operational identity ${masterId} has no verified HQ location item.`);
     }
-    const sourceItem = await readOperationalDocument<OperationalInventory>(connection, 'operational_inventory', master.hqLocationItemId);
-    if (!sourceItem || sourceItem.tenantId !== tenantId || sourceItem.branchId !== 'HQ' ||
+    const sourceItem = await readOperationalDocument<OperationalInventory>(connection, 'operational_inventory', direct ? row.line.product_id : master.hqLocationItemId);
+    if (!sourceItem || sourceItem.tenantId !== tenantId || sourceItem.branchId !== (direct ? order.requesting_branch_id : 'HQ') ||
         sourceItem.inventoryClass !== 'OPERATIONAL' || sourceItem.masterItemId !== masterId) {
       throw new Error(`The HQ Operational stock record for ${master.name} is missing or mismatched.`);
     }
@@ -317,27 +321,27 @@ export async function dispatchOperationalOrderToBranch(
 
     await runTransaction(connection, async transaction => {
       const [headerSnapshot, sourceLineSnapshot, currentMaster, currentHq, currentDestination, lineSnapshot] = await Promise.all([
-        transaction.get(transferRef), transaction.get(orderLineRef), transaction.get(masterRef),
-        transaction.get(sourceItemRef), transaction.get(destinationItemRef), transaction.get(transferLineRef)
+        transaction.get(transferRef), transaction.get(orderLineRef), direct ? Promise.resolve(null) : transaction.get(masterRef),
+        direct ? Promise.resolve(null) : transaction.get(sourceItemRef), transaction.get(destinationItemRef), transaction.get(transferLineRef)
       ]);
       if (!headerSnapshot.exists() || headerSnapshot.data().tenantId !== tenantId || headerSnapshot.data().inventoryClass !== 'OPERATIONAL') throw new Error('Operational transfer header is invalid.');
       if (!sourceLineSnapshot.exists() || sourceLineSnapshot.data().order_id !== order.id || sourceLineSnapshot.data().masterItemId !== masterId || sourceLineSnapshot.data().qty_received !== row.qtyPacks) throw new Error('The received order line changed during dispatch preparation.');
-      if (!currentMaster.exists() || currentMaster.data().tenantId !== tenantId || currentMaster.data().inventoryClass !== 'OPERATIONAL') throw new Error('The Operational master changed during dispatch preparation.');
-      if (!currentHq.exists() || currentHq.data().tenantId !== tenantId || currentHq.data().branchId !== 'HQ' || currentHq.data().masterItemId !== masterId) throw new Error('The HQ Operational item changed during dispatch preparation.');
+      if (!direct && (!currentMaster?.exists() || currentMaster.data().tenantId !== tenantId || currentMaster.data().inventoryClass !== 'OPERATIONAL')) throw new Error('The Operational master changed during dispatch preparation.');
+      if (!direct && (!currentHq?.exists() || currentHq.data().tenantId !== tenantId || currentHq.data().branchId !== 'HQ' || currentHq.data().masterItemId !== masterId)) throw new Error('The HQ Operational item changed during dispatch preparation.');
       if (!currentDestination.exists() || currentDestination.data().tenantId !== tenantId || currentDestination.data().branchId !== order.requesting_branch_id || currentDestination.data().masterItemId !== masterId) throw new Error('The destination Operational item changed during dispatch preparation.');
       if (lineSnapshot.exists()) {
         const existing = lineSnapshot.data();
-        if (existing.tenantId !== tenantId || existing.sourceItemId !== sourceItem.id || existing.destinationItemId !== destinationItem.id || existing.quantityDispatched !== quantityDispatched) throw new Error('An existing Operational transfer line conflicts with current order data.');
+        if (existing.tenantId !== tenantId || existing.sourceItemId !== (direct ? 'SUPPLIER_TRANSIT' : sourceItem.id) || existing.destinationItemId !== destinationItem.id || existing.quantityDispatched !== quantityDispatched) throw new Error('An existing Operational transfer line conflicts with current order data.');
         return;
       }
       transaction.set(transferLineRef, {
         id: lineId, tenantId, inventoryClass: 'OPERATIONAL', transferId,
         destinationBranchId: order.requesting_branch_id,
-        masterItemId: masterId, sourceItemId: sourceItem.id, destinationItemId: destinationItem.id,
+        masterItemId: masterId, sourceItemId: direct ? 'SUPPLIER_TRANSIT' : sourceItem.id, destinationItemId: destinationItem.id,
         itemName: master.name, sourceOrderLineId: row.line.id,
         quantityDispatched, unitOfIssue: master.unitOfIssue,
         unitCostUGX, totalValueUGX: quantityDispatched * unitCostUGX,
-        dispatchMovementId: `opm_${movementKeyForTransferLine(lineId, 'out')}`,
+        dispatchMovementId: direct ? '' : `opm_${movementKeyForTransferLine(lineId, 'out')}`,
         receiptMovementId: `opm_${movementKeyForTransferLine(lineId, 'in')}`,
         status: 'prepared', createdAt: now, updatedAt: now
       });
@@ -352,7 +356,7 @@ export async function dispatchOperationalOrderToBranch(
 
   for (const line of transferLines) {
     if (line.status === 'dispatched' || ['received', 'queried'].includes(line.status)) continue;
-    await postOperationalStoreMovement({
+    if (!direct) await postOperationalStoreMovement({
       tenantId, itemId: line.sourceItemId, quantityDelta: -line.quantityDispatched,
       movementType: 'TRANSFER_OUT', reference: transferNumber,
       idempotencyKey: movementKeyForTransferLine(line.id, 'out'), actorId: actor.uid,

@@ -119,13 +119,14 @@ test('Operational location records link to a tenant master and order lines carry
   assert.match(rules, /operationalMasterPath/);
 });
 
-test('Operational GRNs receive only into the Operational HQ ledger and cannot use sellable dispatch', () => {
+test('Operational GRNs separate supplier transit from HQ stock and cannot use sellable dispatch', () => {
   const grnService = readFileSync(new URL('../src/services/operationalGrnService.ts', import.meta.url), 'utf8');
   const procurement = readFileSync(new URL('../src/pages/Procurement.tsx', import.meta.url), 'utf8');
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
   const sellableGrn = readFileSync(new URL('../src/services/procurementFinanceService.ts', import.meta.url), 'utf8');
   assert.match(grnService, /inventoryClass: 'OPERATIONAL'/);
-  assert.match(grnService, /destination_store_id: 'HQ_OPERATIONAL'/);
+  assert.match(grnService, /destination_store_id: locationId/);
+  assert.match(grnService, /direct \? 'SUPPLIER_TRANSIT' : 'HQ_OPERATIONAL'/);
   assert.match(grnService, /transaction\.set\(movementRefs/);
   assert.match(grnService, /alreadyProcessed: true/);
   assert.match(grnService, /qty_received_units: receivedUnits/);
@@ -138,7 +139,7 @@ test('Operational GRNs receive only into the Operational HQ ledger and cannot us
   assert.match(rules, /match \/operational_transfer_lines\/\{transferLineId\}/);
   assert.match(rules, /validTransferMovement\(get\(itemPath\(\)\)\.data\)/);
   assert.match(rules, /match \/operational_grn_lines\/\{grnLineId\}/);
-  assert.match(rules, /getAfter\(movementPath\(\)\)\.data\.sourceTransactionId == request\.resource\.data\.grnId/);
+  assert.match(rules, /getAfter\(movementPath\(\)\)\.data\.sourceTransactionId == line\.grnId/);
   assert.match(rules, /resource\.data\.inventoryClass != 'OPERATIONAL'/);
   assert.match(sellableGrn, /Operational orders must use the Operational GRN workflow; the sellable procurement processor is blocked/);
 });

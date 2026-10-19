@@ -604,6 +604,7 @@ export interface OperationalInventoryMovement {
 export type OperationalTransferStatus = 'draft' | 'dispatching' | 'dispatched' | 'partially_received' | 'received' | 'queried';
 
 export interface OperationalTransfer {
+  deliveryRoute?: 'DIRECT_BRANCH' | 'VIA_HQ';
   id: string;
   tenantId: string;
   inventoryClass: 'OPERATIONAL';
@@ -1107,6 +1108,8 @@ export interface PlatformAuditLog {
 }
 
 export interface StockOrder {
+  operational_delivery_route?: 'DIRECT_BRANCH' | 'VIA_HQ';
+  last_grn_id?: string;
   id: string;
   tenantId: string;
   /** Optional only for backward compatibility with historical orders. */

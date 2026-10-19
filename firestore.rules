@@ -912,7 +912,7 @@ service cloud.firestore {
         && request.resource.data.amountUGX is number
         && request.resource.data.amountUGX >= 0
         && request.resource.data.sourceType == 'OPERATIONAL_GRN'
-        && request.resource.data.destinationStoreId == 'HQ_OPERATIONAL'
+        && request.resource.data.destinationStoreId == getAfter(sourceGrnPath()).data.destination_store_id
         && existsAfter(sourceGrnPath())
         && getAfter(sourceGrnPath()).data.tenantId == request.resource.data.tenantId
         && getAfter(sourceGrnPath()).data.inventoryClass == 'OPERATIONAL'
@@ -1018,7 +1018,13 @@ service cloud.firestore {
         return (('inventoryClass' in data)
             && data.inventoryClass == 'OPERATIONAL'
             && hasOperationalSourceOrder(data)
-            && data.destination_store_id == 'HQ_OPERATIONAL'
+            && (!('deliveryRoute' in data) || getAfter(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.operational_delivery_route == data.deliveryRoute)
+            && ((data.get('deliveryRoute', 'VIA_HQ') == 'VIA_HQ' && data.destination_store_id == 'HQ_OPERATIONAL')
+              || (data.get('deliveryRoute', '') == 'DIRECT_BRANCH'
+                && data.destination_store_id == 'SUPPLIER_TRANSIT'
+                && data.destination_branch_id != 'HQ'
+                && data.destination_branch_id == get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.requesting_branch_id
+                && getAfter(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.operational_delivery_route == 'DIRECT_BRANCH'))
             && data.grn_status == 'completed'
             && data.status == 'completed'
             && !('items' in data)
@@ -1562,6 +1568,30 @@ service cloud.firestore {
       }
       allow get: if isAuthenticated() && isProcurement() && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isProcurement();
+      function validGrnLineRoute() {
+        let line = request.resource.data;
+        let grn = getAfter(grnPath()).data;
+        let item = get(itemPath()).data;
+        let sourceLine = get(sourceLinePath()).data;
+        let order = get(orderPath()).data;
+        return (grn.get('deliveryRoute', 'VIA_HQ') == 'VIA_HQ'
+            && item.branchId == 'HQ'
+            && existsAfter(movementPath())
+            && getAfter(movementPath()).data.tenantId == line.tenantId
+            && getAfter(movementPath()).data.itemId == line.itemId
+            && getAfter(movementPath()).data.masterItemId == line.masterItemId
+            && getAfter(movementPath()).data.sourceTransactionId == line.grnId)
+          || (grn.get('deliveryRoute', '') == 'DIRECT_BRANCH'
+            && line.deliveryRoute == 'DIRECT_BRANCH' && line.locationId == 'SUPPLIER_TRANSIT'
+            && line.movementId == '' && item.branchId == order.requesting_branch_id
+            && item.branchId != 'HQ' && grn.destination_branch_id == item.branchId
+            && sourceLine.supplier_type == 'external' && sourceLine.line_status == 'approved'
+            && sourceLine.supplier_id == line.supplierId
+            && line.qtyReceived <= sourceLine.qty_ordered - sourceLine.get('qty_received', 0)
+            && (sourceLine.get('qty_received', 0) == 0 || order.get('operational_delivery_route', '') == 'DIRECT_BRANCH')
+            && line.qtyReceivedUnits == line.qtyReceived * get(masterPath()).data.unitPerPack
+            && line.totalValueUGX == line.qtyReceived * line.unitCostUGX);
+      }
       allow create: if isAuthenticated()
         && isProcurement()
         && isTenantMember(request.resource.data.tenantId)
@@ -1591,17 +1621,12 @@ service cloud.firestore {
         && get(sourceLinePath()).data.masterItemId == request.resource.data.masterItemId
         && exists(itemPath())
         && get(itemPath()).data.tenantId == request.resource.data.tenantId
-        && get(itemPath()).data.branchId == 'HQ'
         && get(itemPath()).data.inventoryClass == 'OPERATIONAL'
         && get(itemPath()).data.masterItemId == request.resource.data.masterItemId
         && exists(masterPath())
         && get(masterPath()).data.tenantId == request.resource.data.tenantId
         && get(masterPath()).data.inventoryClass == 'OPERATIONAL'
-        && existsAfter(movementPath())
-        && getAfter(movementPath()).data.tenantId == request.resource.data.tenantId
-        && getAfter(movementPath()).data.itemId == request.resource.data.itemId
-        && getAfter(movementPath()).data.masterItemId == request.resource.data.masterItemId
-        && getAfter(movementPath()).data.sourceTransactionId == request.resource.data.grnId;
+        && validGrnLineRoute();
       allow update, delete: if false;
     }
 
@@ -1618,8 +1643,13 @@ service cloud.firestore {
               && data.sourceLocationId == 'BRANCH_' + data.sourceBranchId
               && data.destinationBranchId == 'HQ')
             || (data.get('transferType', '') != 'BRANCH_RETURN'
-              && data.sourceLocationId == 'HQ_OPERATIONAL'
-              && data.sourceBranchId == 'HQ'
+              && ((data.get('deliveryRoute', 'VIA_HQ') == 'VIA_HQ'
+                  && data.sourceLocationId == 'HQ_OPERATIONAL' && data.sourceBranchId == 'HQ')
+                || (data.get('deliveryRoute', '') == 'DIRECT_BRANCH'
+                  && data.fulfillmentSource == 'EXTERNAL_SUPPLIER'
+                  && data.sourceLocationId == 'SUPPLIER_TRANSIT' && data.sourceBranchId == 'SUPPLIER'
+                  && get(sourceOrderPath()).data.operational_delivery_route == 'DIRECT_BRANCH'
+                  && get(sourceOrderPath()).data.status == 'fully_received'))
               && data.destinationBranchId is string
               && data.destinationBranchId.size() > 0
               && data.destinationBranchId != 'HQ'))
@@ -1654,6 +1684,7 @@ service cloud.firestore {
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
         && request.resource.data.inventoryClass == resource.data.inventoryClass
+        && request.resource.data.get('deliveryRoute', 'VIA_HQ') == resource.data.get('deliveryRoute', 'VIA_HQ')
         && request.resource.data.sourceLocationId == resource.data.sourceLocationId
         && request.resource.data.sourceBranchId == resource.data.sourceBranchId
         && request.resource.data.destinationBranchId == resource.data.destinationBranchId
@@ -1700,7 +1731,36 @@ service cloud.firestore {
       function sourceOrderLinePath() {
         return /databases/$(database)/documents/stock_order_lines/$(request.resource.data.sourceOrderLineId);
       }
+      function validDirectSupplierLine() {
+        let line = request.resource.data;
+        let transfer = getAfter(transferPath()).data;
+        let source = get(sourceOrderLinePath()).data;
+        let master = get(masterPath()).data;
+        let destination = get(destinationItemPath()).data;
+        let grn = get(/databases/$(database)/documents/grn_records/$(source.grn_id)).data;
+        return transfer.get('deliveryRoute', '') == 'DIRECT_BRANCH'
+          && transfer.fulfillmentSource == 'EXTERNAL_SUPPLIER' && transfer.sourceLocationId == 'SUPPLIER_TRANSIT'
+          && transfer.tenantId == line.tenantId && transfer.inventoryClass == 'OPERATIONAL'
+          && line.inventoryClass == 'OPERATIONAL' && line.status in ['prepared', 'dispatched']
+          && line.sourceItemId == 'SUPPLIER_TRANSIT' && line.dispatchMovementId == ''
+          && line.destinationBranchId == transfer.destinationBranchId
+          && destination.branchId == transfer.destinationBranchId && destination.branchId != 'HQ'
+          && destination.tenantId == line.tenantId && destination.inventoryClass == 'OPERATIONAL'
+          && destination.masterItemId == line.masterItemId
+          && master.tenantId == line.tenantId && master.inventoryClass == 'OPERATIONAL'
+          && source.tenantId == line.tenantId && source.order_id == transfer.sourceOrderId
+          && source.inventoryClass == 'OPERATIONAL' && source.masterItemId == line.masterItemId
+          && source.supplier_type == 'external' && source.line_status == 'received'
+          && source.operational_delivery_route == 'DIRECT_BRANCH'
+          && grn.deliveryRoute == 'DIRECT_BRANCH' && grn.tenantId == line.tenantId && grn.order_id == transfer.sourceOrderId
+          && line.quantityDispatched is number && line.quantityDispatched > 0
+          && line.quantityDispatched == source.qty_received * master.unitPerPack
+          && line.unitCostUGX == source.unit_cost_ugx / master.unitPerPack
+          && line.totalValueUGX == line.quantityDispatched * line.unitCostUGX
+          && isOperationalInventoryEnabled(line.tenantId);
+      }
       function validPreparedOperationalTransferLine() {
+        let line = request.resource.data;
         // Bind validated records once to keep mixed-role dispatch below the
         // Firestore expression budget without relaxing any linkage checks.
         let transfer = getAfter(transferPath()).data;
@@ -1708,51 +1768,45 @@ service cloud.firestore {
         let destination = get(destinationItemPath()).data;
         let master = get(masterPath()).data;
         let orderLine = 'sourceOrderLineId' in request.resource.data ? get(sourceOrderLinePath()).data : {};
-        return request.resource.data.inventoryClass == 'OPERATIONAL'
-          && request.resource.data.status == 'prepared'
-          && request.resource.data.quantityDispatched is number
-          && request.resource.data.quantityDispatched > 0
-          && request.resource.data.unitCostUGX is number
-          && request.resource.data.unitCostUGX >= 0
-          && existsAfter(transferPath())
-          && transfer.tenantId == request.resource.data.tenantId
+        return line.inventoryClass == 'OPERATIONAL'
+          && line.status == 'prepared'
+          && line.quantityDispatched is number
+          && line.quantityDispatched > 0
+          && line.unitCostUGX is number
+          && line.unitCostUGX >= 0
+          && transfer.tenantId == line.tenantId
           && transfer.inventoryClass == 'OPERATIONAL'
-          && isOperationalInventoryEnabled(request.resource.data.tenantId)
-          && exists(sourceItemPath())
-          && source.tenantId == request.resource.data.tenantId
+          && isOperationalInventoryEnabled(line.tenantId)
+          && source.tenantId == line.tenantId
           && source.branchId == 'HQ'
           && source.inventoryClass == 'OPERATIONAL'
-          && source.masterItemId == request.resource.data.masterItemId
-          && exists(destinationItemPath())
-          && destination.tenantId == request.resource.data.tenantId
+          && source.masterItemId == line.masterItemId
+          && destination.tenantId == line.tenantId
           && destination.branchId == transfer.destinationBranchId
           && destination.inventoryClass == 'OPERATIONAL'
-          && destination.masterItemId == request.resource.data.masterItemId
-          && exists(masterPath())
-          && master.tenantId == request.resource.data.tenantId
+          && destination.masterItemId == line.masterItemId
+          && master.tenantId == line.tenantId
           && master.inventoryClass == 'OPERATIONAL'
-          && master.hqLocationItemId == request.resource.data.sourceItemId
+          && master.hqLocationItemId == line.sourceItemId
           && (
             (transfer.fulfillmentSource == 'HQ_DIRECT'
-              && !('sourceOrderLineId' in request.resource.data))
+              && !('sourceOrderLineId' in line))
             || (transfer.fulfillmentSource == 'HQ_OPERATIONAL'
-              && exists(sourceOrderLinePath())
-              && orderLine.tenantId == request.resource.data.tenantId
+                  && orderLine.tenantId == line.tenantId
               && orderLine.order_id == transfer.sourceOrderId
               && orderLine.inventoryClass == 'OPERATIONAL'
-              && orderLine.masterItemId == request.resource.data.masterItemId
+              && orderLine.masterItemId == line.masterItemId
               && orderLine.line_status == 'sourcing'
               && !('supplier_type' in orderLine)
-              && request.resource.data.quantityDispatched <= orderLine.qty_ordered * master.unitPerPack)
+              && line.quantityDispatched <= orderLine.qty_ordered * master.unitPerPack)
             || (transfer.fulfillmentSource == 'EXTERNAL_SUPPLIER'
-              && exists(sourceOrderLinePath())
-              && orderLine.tenantId == request.resource.data.tenantId
+                  && orderLine.tenantId == line.tenantId
               && orderLine.order_id == transfer.sourceOrderId
               && orderLine.inventoryClass == 'OPERATIONAL'
-              && orderLine.masterItemId == request.resource.data.masterItemId
+              && orderLine.masterItemId == line.masterItemId
               && orderLine.supplier_type == 'external'
               && orderLine.line_status == 'received'
-              && request.resource.data.quantityDispatched == orderLine.qty_received * master.unitPerPack)
+              && line.quantityDispatched == orderLine.qty_received * master.unitPerPack)
           );
       }
       function validBranchReturnLine() {
@@ -1800,7 +1854,9 @@ service cloud.firestore {
       allow create: if isAuthenticated()
         && (isProcurement() || (request.resource.data.status == 'dispatched' && isInventoryOperator() && isAssignedToBranch(getAfter(transferPath()).data.sourceBranchId)))
         && isTenantMember(request.resource.data.tenantId)
-        && (validPreparedOperationalTransferLine() || validBranchReturnLine());
+        && (request.resource.data.sourceItemId == 'SUPPLIER_TRANSIT'
+          ? (request.resource.data.status == 'prepared' && validDirectSupplierLine())
+          : (validPreparedOperationalTransferLine() || validBranchReturnLine()));
       allow update: if isAuthenticated()
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
@@ -1811,17 +1867,20 @@ service cloud.firestore {
         && request.resource.data.sourceItemId == resource.data.sourceItemId
         && request.resource.data.destinationItemId == resource.data.destinationItemId
         && request.resource.data.quantityDispatched == resource.data.quantityDispatched
+        && request.resource.data.unitCostUGX == resource.data.unitCostUGX
+        && request.resource.data.totalValueUGX == resource.data.totalValueUGX
+        && request.resource.data.get('sourceOrderLineId', '') == resource.data.get('sourceOrderLineId', '')
         && request.resource.data.dispatchMovementId == resource.data.dispatchMovementId
         && request.resource.data.receiptMovementId == resource.data.receiptMovementId
         && isOperationalInventoryEnabled(resource.data.tenantId)
         && ((isProcurement()
             && resource.data.status == 'prepared'
             && request.resource.data.status == 'dispatched'
-            && exists(dispatchMovementPath())
+            && (resource.data.sourceItemId == 'SUPPLIER_TRANSIT' ? validDirectSupplierLine() : (exists(dispatchMovementPath())
             && get(dispatchMovementPath()).data.tenantId == resource.data.tenantId
             && get(dispatchMovementPath()).data.itemId == resource.data.sourceItemId
             && get(dispatchMovementPath()).data.sourceLineId == transferLineId
-            && get(dispatchMovementPath()).data.movementType == 'TRANSFER_OUT')
+            && get(dispatchMovementPath()).data.movementType == 'TRANSFER_OUT')))
           || (isInventoryOperator()
             && isAssignedToBranch(resource.data.destinationBranchId)
             && resource.data.status == 'dispatched'
@@ -2120,6 +2179,7 @@ service cloud.firestore {
         && request.resource.data.inventoryClass in ['SELLABLE', 'OPERATIONAL']
         && ((request.resource.data.category == 'non_sellable' && request.resource.data.inventoryClass == 'OPERATIONAL')
           || (request.resource.data.category in ['sellable_non_cosmetic', 'sellable_cosmetic'] && request.resource.data.inventoryClass == 'SELLABLE'))
+        && !('operational_delivery_route' in request.resource.data)
         && validOrderClass(request.resource.data)
         && (!isOperationalOrderData(request.resource.data) || isAssignedToBranch(request.resource.data.requesting_branch_id) || isProcurement());
       allow update: if isAuthenticated()
@@ -2132,6 +2192,13 @@ service cloud.firestore {
           || request.resource.data.inventoryClass == resource.data.inventoryClass
           || (!('inventoryClass' in resource.data)
             && request.resource.data.inventoryClass == (resource.data.category == 'non_sellable' ? 'OPERATIONAL' : 'SELLABLE')))
+        && (('operational_delivery_route' in resource.data)
+          ? request.resource.data.get('operational_delivery_route', '') == resource.data.operational_delivery_route
+          : (!('operational_delivery_route' in request.resource.data)
+            || (isProcurement() && request.resource.data.operational_delivery_route in ['DIRECT_BRANCH', 'VIA_HQ']
+              && existsAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.last_grn_id))
+              && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.last_grn_id)).data.order_id == orderId
+              && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.last_grn_id)).data.deliveryRoute == request.resource.data.operational_delivery_route)))
         && validOrderClass(request.resource.data);
       allow delete: if isAdmin();
     }
@@ -2212,6 +2279,8 @@ service cloud.firestore {
         && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
         && (!('internal_fulfillment_transfer_id' in resource.data) || request.resource.data.internal_fulfillment_transfer_id == resource.data.internal_fulfillment_transfer_id)
         && (!('operational_external_transfer_id' in resource.data) || request.resource.data.operational_external_transfer_id == resource.data.operational_external_transfer_id)
+        && (!('operational_delivery_route' in resource.data) || request.resource.data.operational_delivery_route == resource.data.operational_delivery_route)
+        && (!('operational_delivery_route' in request.resource.data) || request.resource.data.operational_delivery_route == getAfter(parentOrderPath()).data.operational_delivery_route)
         && hasValidLineClass(false);
       // A submitted draft may remove omitted items in the SAME atomic batch.
       // Inspect the pre-commit order, never allow deletion of submitted/sourcing lines.
