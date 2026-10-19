@@ -1755,7 +1755,7 @@ service cloud.firestore {
           && grn.deliveryRoute == 'DIRECT_BRANCH' && grn.tenantId == line.tenantId && grn.order_id == transfer.sourceOrderId
           && line.quantityDispatched is number && line.quantityDispatched > 0
           && line.quantityDispatched == source.qty_received * master.unitPerPack
-          && line.unitCostUGX == source.unit_cost_ugx / master.unitPerPack
+          && line.unitCostUGX == float(source.unit_cost_ugx) / float(master.unitPerPack)
           && line.totalValueUGX == line.quantityDispatched * line.unitCostUGX
           && isOperationalInventoryEnabled(line.tenantId);
       }
