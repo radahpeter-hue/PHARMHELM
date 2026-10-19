@@ -1,0 +1,31 @@
+name: Stage 2 read-only acceptance
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/audit-stage2-*.mjs'
+      - '.github/workflows/stage2-readonly-acceptance.yml'
+permissions:
+  contents: read
+jobs:
+  reconcile:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --prefix /tmp/stage2-audit --no-save --ignore-scripts firebase-admin
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - name: Reconcile received Operational stock without writes
+        run: |
+          cp scripts/audit-stage2-received-operational-order.mjs /tmp/stage2-audit/operational.mjs
+          node /tmp/stage2-audit/operational.mjs
+      - name: Verify supplier invoice remains unpaid without writes
+        if: always()
+        run: |
+          cp scripts/audit-stage2-supplier-invoice.mjs /tmp/stage2-audit/finance.mjs
+          node /tmp/stage2-audit/finance.mjs

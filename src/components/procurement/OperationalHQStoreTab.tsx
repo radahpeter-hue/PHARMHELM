@@ -135,7 +135,7 @@ const OperationalHQStoreTab: React.FC = () => {
       <section className="rounded-3xl border border-sky-200 bg-white p-5 shadow-sm">
         <div className="flex items-start gap-3 mb-4"><ShoppingCart className="text-sky-700 mt-0.5" size={19} /><div><h3 className="font-black text-zinc-900">Order Buffer Stock</h3><p className="text-xs text-zinc-500 mt-1">Request stock replenishment from Procurement.</p></div></div>
         <form onSubmit={submitBufferOrder} className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3">
-          <select required value={bufferItemId} onChange={event => setBufferItemId(event.target.value)} className="rounded-xl border border-zinc-200 px-3 py-2 text-sm"><option value="">Select an item</option>{items.filter(item => item.masterItemId && item.operationalType === 'CONSUMABLE_OPERATIONAL').map(item => <option key={item.id} value={item.id}>{item.name} · {item.uniqueId || item.id}</option>)}</select>
+          <select required value={bufferItemId} onChange={event => setBufferItemId(event.target.value)} className="rounded-xl border border-zinc-200 px-3 py-2 text-sm"><option value="">Select an item</option>{items.filter(item => item.masterItemId && item.operationalType === 'CONSUMABLE_OPERATIONAL').map(item => <option key={item.id} value={item.id}>{item.name} · {item.uniqueId || 'Code unavailable'}</option>)}</select>
           <input aria-label="Buffer order quantity in packs" type="number" min="0.001" step="any" required value={bufferQuantity} onChange={event => setBufferQuantity(event.target.value)} placeholder="Quantity (packs)" className="rounded-xl border border-zinc-200 px-3 py-2 text-sm" />
           <button disabled={!canDistribute || bufferSaving} className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{bufferSaving ? 'Submitting…' : 'Send to Procurement'}</button>
         </form>
@@ -170,7 +170,7 @@ const OperationalHQStoreTab: React.FC = () => {
                   <tr key={item.id} className="hover:bg-zinc-50">
                     <td className="px-5 py-4">
                       <p className="font-bold text-sm text-zinc-900">{item.name}</p>
-                      <p className="text-[10px] text-zinc-500">{item.uniqueId || item.sku || '—'}</p>
+                      <p className="text-[10px] text-zinc-500">{item.uniqueId || 'Code unavailable'}</p>
                     </td>
                     <td className="px-5 py-4 text-xs text-zinc-600">{item.type === 'fixed' ? 'Fixed asset' : 'Consumable'}</td>
                     <td className="px-5 py-4 text-xs text-zinc-600">{item.supplier || '—'}</td>
