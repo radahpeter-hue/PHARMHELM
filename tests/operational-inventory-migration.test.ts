@@ -91,8 +91,10 @@ test('migration runner is tenant-scoped, preview-only by default and stops apply
   const itemRule = rules.slice(rules.indexOf('match /operational_inventory/{itemId}'), rules.indexOf('match /operational_inventory_movements/'));
   const movementRule = rules.slice(rules.indexOf('match /operational_inventory_movements/'), rules.indexOf('match /operational_grn_lines/'));
   assert.match(itemRule, /hasOpeningOperationalMovement/);
-  assert.match(movementRule, /request\.resource\.data\.movementType == 'ADJUSTMENT'/);
-  assert.match(movementRule, /request\.resource\.data\.balanceBefore == 0/);
+  assert.match(movementRule, /let data = request\.resource\.data/);
+  assert.match(movementRule, /allow create: if validMovementCreate\(\)/);
+  assert.match(movementRule, /data\.movementType == 'ADJUSTMENT'/);
+  assert.match(movementRule, /data\.balanceBefore == 0/);
   const auditRule = rules.slice(rules.indexOf('match /operational_inventory_migration_audit/'), rules.indexOf('match /grn_records/'));
   assert.match(auditRule, /allow create, update, delete: if false/);
   assert.match(rules, /'operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit'/);

@@ -1371,15 +1371,16 @@ service cloud.firestore {
       function hasMatchingOperationalMovement() {
         let movementId = request.resource.data.lastMovementId;
         let movementPath = /databases/$(database)/documents/operational_inventory_movements/$(movementId);
+        let movement = getAfter(movementPath).data;
         return movementId is string
           && existsAfter(movementPath)
-          && getAfter(movementPath).data.tenantId == resource.data.tenantId
-          && getAfter(movementPath).data.inventoryClass == 'OPERATIONAL'
-          && getAfter(movementPath).data.itemId == itemId
-          && getAfter(movementPath).data.locationId == (resource.data.branchId == 'HQ' ? 'HQ_OPERATIONAL' : 'BRANCH_' + resource.data.branchId)
-          && getAfter(movementPath).data.balanceBefore == resource.data.quantityInStock
-          && getAfter(movementPath).data.balanceAfter == request.resource.data.quantityInStock
-          && getAfter(movementPath).data.quantityDelta == request.resource.data.quantityInStock - resource.data.quantityInStock;
+          && movement.tenantId == resource.data.tenantId
+          && movement.inventoryClass == 'OPERATIONAL'
+          && movement.itemId == itemId
+          && movement.locationId == (resource.data.branchId == 'HQ' ? 'HQ_OPERATIONAL' : 'BRANCH_' + resource.data.branchId)
+          && movement.balanceBefore == resource.data.quantityInStock
+          && movement.balanceAfter == request.resource.data.quantityInStock
+          && movement.quantityDelta == request.resource.data.quantityInStock - resource.data.quantityInStock;
       }
       function hasOpeningOperationalMovement() {
         let movementId = request.resource.data.lastMovementId;
@@ -1468,82 +1469,91 @@ service cloud.firestore {
       function validTransferMovement(item) {
         let transferPathValue = transferPath();
         let transferLinePathValue = transferLinePath();
-        return request.resource.data.sourceTransactionId is string
-          && request.resource.data.sourceLineId is string
+        let transfer = getAfter(transferPathValue).data;
+        let transferLine = getAfter(transferLinePathValue).data;
+        let data = request.resource.data;
+        return data.sourceTransactionId is string
+          && data.sourceLineId is string
           && existsAfter(transferPathValue)
-          && getAfter(transferPathValue).data.tenantId == request.resource.data.tenantId
-          && getAfter(transferPathValue).data.inventoryClass == 'OPERATIONAL'
+          && transfer.tenantId == data.tenantId
+          && transfer.inventoryClass == 'OPERATIONAL'
           && existsAfter(transferLinePathValue)
-          && getAfter(transferLinePathValue).data.tenantId == request.resource.data.tenantId
-          && getAfter(transferLinePathValue).data.transferId == request.resource.data.sourceTransactionId
-          && getAfter(transferLinePathValue).data.masterItemId == request.resource.data.masterItemId
-          && ((request.resource.data.movementType == 'TRANSFER_OUT'
+          && transferLine.tenantId == data.tenantId
+          && transferLine.transferId == data.sourceTransactionId
+          && transferLine.masterItemId == data.masterItemId
+          && ((data.movementType == 'TRANSFER_OUT'
               && item.branchId == 'HQ'
-              && getAfter(transferPathValue).data.sourceLocationId == 'HQ_OPERATIONAL'
-              && getAfter(transferLinePathValue).data.sourceItemId == request.resource.data.itemId)
-            || (request.resource.data.movementType == 'TRANSFER_OUT'
-              && getAfter(transferPathValue).data.transferType == 'BRANCH_RETURN'
-              && item.branchId == getAfter(transferPathValue).data.sourceBranchId
-              && getAfter(transferPathValue).data.sourceLocationId == 'BRANCH_' + item.branchId
-              && getAfter(transferLinePathValue).data.sourceItemId == request.resource.data.itemId)
-            || (request.resource.data.movementType == 'TRANSFER_IN'
-              && getAfter(transferPathValue).data.transferType == 'BRANCH_RETURN'
+              && transfer.sourceLocationId == 'HQ_OPERATIONAL'
+              && transferLine.sourceItemId == data.itemId)
+            || (data.movementType == 'TRANSFER_OUT'
+              && transfer.transferType == 'BRANCH_RETURN'
+              && item.branchId == transfer.sourceBranchId
+              && transfer.sourceLocationId == 'BRANCH_' + item.branchId
+              && transferLine.sourceItemId == data.itemId)
+            || (data.movementType == 'TRANSFER_IN'
+              && transfer.transferType == 'BRANCH_RETURN'
               && item.branchId == 'HQ'
-              && getAfter(transferPathValue).data.destinationBranchId == 'HQ'
-              && getAfter(transferLinePathValue).data.destinationItemId == request.resource.data.itemId)
-            || (request.resource.data.movementType == 'TRANSFER_IN'
+              && transfer.destinationBranchId == 'HQ'
+              && transferLine.destinationItemId == data.itemId)
+            || (data.movementType == 'TRANSFER_IN'
               && item.branchId != 'HQ'
-              && getAfter(transferPathValue).data.destinationBranchId == item.branchId
-              && getAfter(transferLinePathValue).data.destinationItemId == request.resource.data.itemId));
+              && transfer.destinationBranchId == item.branchId
+              && transferLine.destinationItemId == data.itemId));
       }
       allow get: if isAuthenticated()
         && (resource == null || (isTenantMember(resource.data.tenantId)
           && canOperateOperationalLocation(resource.data.branchId)));
       allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId)
         && canOperateOperationalLocation(resource.data.branchId);
-      allow create: if isAuthenticated()
-        && isTenantMember(request.resource.data.tenantId)
-        && isOperationalInventoryEnabled(request.resource.data.tenantId)
-        && request.resource.data.inventoryClass == 'OPERATIONAL'
+      function validMovementCreate() {
+        let data = request.resource.data;
+        let item = getAfter(itemPath()).data;
+        let master = getAfter(masterPath()).data;
+        return isAuthenticated()
+        && isTenantMember(data.tenantId)
+        && isOperationalInventoryEnabled(data.tenantId)
+        && data.inventoryClass == 'OPERATIONAL'
         && (isInventoryOperator() || isProcurement())
-        && request.resource.data.movementType in ['RECEIPT', 'DISPATCH', 'RETURN', 'TRANSFER_IN', 'TRANSFER_OUT', 'USAGE', 'ADJUSTMENT', 'WRITE_OFF']
-        && request.resource.data.quantityDelta is number
-        && request.resource.data.quantityDelta != 0
-        && request.resource.data.balanceBefore is number
-        && request.resource.data.balanceAfter is number
-        && request.resource.data.balanceBefore >= 0
-        && request.resource.data.balanceAfter >= 0
-        && request.resource.data.balanceAfter == request.resource.data.balanceBefore + request.resource.data.quantityDelta
-        && request.resource.data.reference is string
-        && request.resource.data.reference.size() > 0
-        && request.resource.data.idempotencyKey is string
-        && request.resource.data.idempotencyKey.matches('^[A-Za-z0-9_-]{1,190}$')
-        && movementId == 'opm_' + request.resource.data.idempotencyKey
-        && request.resource.data.actorId == request.auth.uid
+        && data.movementType in ['RECEIPT', 'DISPATCH', 'RETURN', 'TRANSFER_IN', 'TRANSFER_OUT', 'USAGE', 'ADJUSTMENT', 'WRITE_OFF']
+        && data.quantityDelta is number
+        && data.quantityDelta != 0
+        && data.balanceBefore is number
+        && data.balanceAfter is number
+        && data.balanceBefore >= 0
+        && data.balanceAfter >= 0
+        && data.balanceAfter == data.balanceBefore + data.quantityDelta
+        && data.reference is string
+        && data.reference.size() > 0
+        && data.idempotencyKey is string
+        && data.idempotencyKey.matches('^[A-Za-z0-9_-]{1,190}$')
+        && movementId == 'opm_' + data.idempotencyKey
+        && data.actorId == request.auth.uid
         && existsAfter(itemPath())
-        && getAfter(itemPath()).data.tenantId == request.resource.data.tenantId
-        && getAfter(itemPath()).data.inventoryClass == 'OPERATIONAL'
-        && request.resource.data.branchId == getAfter(itemPath()).data.branchId
-        && request.resource.data.locationId == (getAfter(itemPath()).data.branchId == 'HQ' ? 'HQ_OPERATIONAL' : 'BRANCH_' + getAfter(itemPath()).data.branchId)
-        && ((getAfter(itemPath()).data.branchId == 'HQ' && (isProcurement() || (isInventoryOperator() && isAssignedToBranch('HQ'))))
-          || (getAfter(itemPath()).data.branchId != 'HQ' && isInventoryOperator() && isAssignedToBranch(getAfter(itemPath()).data.branchId)))
-        && request.resource.data.masterItemId is string
+        && item.tenantId == data.tenantId
+        && item.inventoryClass == 'OPERATIONAL'
+        && data.branchId == item.branchId
+        && data.locationId == (item.branchId == 'HQ' ? 'HQ_OPERATIONAL' : 'BRANCH_' + item.branchId)
+        && ((item.branchId == 'HQ' && (isProcurement() || (isInventoryOperator() && isAssignedToBranch('HQ'))))
+          || (item.branchId != 'HQ' && isInventoryOperator() && isAssignedToBranch(item.branchId)))
+        && data.masterItemId is string
         && existsAfter(masterPath())
-        && getAfter(masterPath()).data.tenantId == request.resource.data.tenantId
-        && getAfter(masterPath()).data.inventoryClass == 'OPERATIONAL'
-        && request.resource.data.masterItemId == getAfter(itemPath()).data.get('masterItemId', request.resource.data.itemId)
-        && getAfter(itemPath()).data.quantityInStock == request.resource.data.balanceAfter
-        && getAfter(itemPath()).data.lastMovementId == movementId
+        && master.tenantId == data.tenantId
+        && master.inventoryClass == 'OPERATIONAL'
+        && data.masterItemId == item.get('masterItemId', data.itemId)
+        && item.quantityInStock == data.balanceAfter
+        && item.lastMovementId == movementId
         && (exists(itemPath())
-          ? get(itemPath()).data.quantityInStock == request.resource.data.balanceBefore
-            && get(itemPath()).data.tenantId == request.resource.data.tenantId
-            && get(itemPath()).data.branchId == getAfter(itemPath()).data.branchId
-            && (request.resource.data.movementType in ['TRANSFER_IN', 'TRANSFER_OUT'] ? validTransferMovement(get(itemPath()).data) : true)
-            && (request.resource.data.movementType == 'USAGE' ? validUsageMovement(get(itemPath()).data) : true)
-          : request.resource.data.movementType == 'ADJUSTMENT'
-            && request.resource.data.balanceBefore == 0
-            && request.resource.data.reason is string
-            && request.resource.data.reason.size() > 0);
+          ? get(itemPath()).data.quantityInStock == data.balanceBefore
+            && get(itemPath()).data.tenantId == data.tenantId
+            && get(itemPath()).data.branchId == item.branchId
+            && (data.movementType in ['TRANSFER_IN', 'TRANSFER_OUT'] ? validTransferMovement(get(itemPath()).data) : true)
+            && (data.movementType == 'USAGE' ? validUsageMovement(get(itemPath()).data) : true)
+          : data.movementType == 'ADJUSTMENT'
+            && data.balanceBefore == 0
+            && data.reason is string
+            && data.reason.size() > 0);
+      }
+      allow create: if validMovementCreate();
       allow update, delete: if false;
     }
 
@@ -1815,34 +1825,35 @@ service cloud.firestore {
           );
       }
       function validBranchReturnLine() {
+        let line = request.resource.data;
         let transfer = getAfter(transferPath()).data;
         let src = get(sourceItemPath()).data;
         let dest = get(destinationItemPath()).data;
         let master = get(masterPath()).data;
         return transfer.transferType == 'BRANCH_RETURN'
-          && request.resource.data.inventoryClass == 'OPERATIONAL'
-          && request.resource.data.status == 'dispatched'
-          && request.resource.data.quantityDispatched is number
-          && request.resource.data.quantityDispatched > 0
-          && request.resource.data.unitCostUGX is number
-          && request.resource.data.unitCostUGX >= 0
-          && request.resource.data.destinationBranchId == transfer.destinationBranchId
-          && request.resource.data.tenantId == transfer.tenantId
+          && line.inventoryClass == 'OPERATIONAL'
+          && line.status == 'dispatched'
+          && line.quantityDispatched is number
+          && line.quantityDispatched > 0
+          && line.unitCostUGX is number
+          && line.unitCostUGX >= 0
+          && line.destinationBranchId == transfer.destinationBranchId
+          && line.tenantId == transfer.tenantId
           && transfer.tenantId == src.tenantId && src.tenantId == dest.tenantId && dest.tenantId == master.tenantId
           && src.branchId == transfer.sourceBranchId
           && dest.branchId == 'HQ'
           && src.inventoryClass == 'OPERATIONAL' && dest.inventoryClass == 'OPERATIONAL'
-          && src.masterItemId == request.resource.data.masterItemId
-          && dest.masterItemId == request.resource.data.masterItemId
+          && src.masterItemId == line.masterItemId
+          && dest.masterItemId == line.masterItemId
           && master.inventoryClass == 'OPERATIONAL'
-          && master.hqLocationItemId == request.resource.data.destinationItemId
+          && master.hqLocationItemId == line.destinationItemId
           && existsAfter(transferPath()) && exists(sourceItemPath()) && exists(destinationItemPath()) && exists(masterPath())
           && existsAfter(dispatchMovementPath())
-          && getAfter(dispatchMovementPath()).data.itemId == request.resource.data.sourceItemId
-          && getAfter(dispatchMovementPath()).data.sourceTransactionId == request.resource.data.transferId
-          && getAfter(dispatchMovementPath()).data.sourceLineId == request.resource.data.id
+          && getAfter(dispatchMovementPath()).data.itemId == line.sourceItemId
+          && getAfter(dispatchMovementPath()).data.sourceTransactionId == line.transferId
+          && getAfter(dispatchMovementPath()).data.sourceLineId == line.id
           && getAfter(dispatchMovementPath()).data.movementType == 'TRANSFER_OUT'
-          && getAfter(dispatchMovementPath()).data.quantityDelta == -request.resource.data.quantityDispatched;
+          && getAfter(dispatchMovementPath()).data.quantityDelta == -line.quantityDispatched;
       }
       function dispatchMovementPath() {
         return /databases/$(database)/documents/operational_inventory_movements/$(request.resource.data.dispatchMovementId);
@@ -1862,59 +1873,63 @@ service cloud.firestore {
         && (request.resource.data.sourceItemId == 'SUPPLIER_TRANSIT'
           ? (request.resource.data.status == 'prepared' && validDirectSupplierLine())
           : (validPreparedOperationalTransferLine() || validBranchReturnLine()));
-      allow update: if isAuthenticated()
-        && isTenantMember(resource.data.tenantId)
-        && isTenantMember(request.resource.data.tenantId)
-        && request.resource.data.tenantId == resource.data.tenantId
-        && request.resource.data.inventoryClass == resource.data.inventoryClass
-        && request.resource.data.transferId == resource.data.transferId
-        && request.resource.data.masterItemId == resource.data.masterItemId
-        && request.resource.data.sourceItemId == resource.data.sourceItemId
-        && request.resource.data.destinationItemId == resource.data.destinationItemId
-        && request.resource.data.quantityDispatched == resource.data.quantityDispatched
-        && request.resource.data.unitCostUGX == resource.data.unitCostUGX
-        && request.resource.data.totalValueUGX == resource.data.totalValueUGX
-        && request.resource.data.get('sourceOrderLineId', '') == resource.data.get('sourceOrderLineId', '')
-        && request.resource.data.dispatchMovementId == resource.data.dispatchMovementId
-        && request.resource.data.receiptMovementId == resource.data.receiptMovementId
-        && isOperationalInventoryEnabled(resource.data.tenantId)
+      function validAcceptedReceiptMovement() {
+        let movement = getAfter(receiptMovementPath()).data;
+        return existsAfter(receiptMovementPath())
+          && movement.tenantId == resource.data.tenantId
+          && movement.itemId == resource.data.destinationItemId
+          && movement.sourceLineId == transferLineId
+          && movement.movementType == 'TRANSFER_IN'
+          && movement.quantityDelta == request.resource.data.quantityAccepted;
+      }
+      function validTransferLineUpdate() {
+        let data = request.resource.data;
+        let before = resource.data;
+        return isAuthenticated()
+        && isTenantMember(before.tenantId)
+        && isTenantMember(data.tenantId)
+        && data.tenantId == before.tenantId
+        && data.inventoryClass == before.inventoryClass
+        && data.transferId == before.transferId
+        && data.masterItemId == before.masterItemId
+        && data.sourceItemId == before.sourceItemId
+        && data.destinationItemId == before.destinationItemId
+        && data.quantityDispatched == before.quantityDispatched
+        && data.unitCostUGX == before.unitCostUGX
+        && data.totalValueUGX == before.totalValueUGX
+        && data.get('sourceOrderLineId', '') == before.get('sourceOrderLineId', '')
+        && data.dispatchMovementId == before.dispatchMovementId
+        && data.receiptMovementId == before.receiptMovementId
+        && isOperationalInventoryEnabled(before.tenantId)
         && ((isProcurement()
-            && resource.data.status == 'prepared'
-            && request.resource.data.status == 'dispatched'
-            && (resource.data.sourceItemId == 'SUPPLIER_TRANSIT' ? validDirectSupplierLine() : (exists(dispatchMovementPath())
-            && get(dispatchMovementPath()).data.tenantId == resource.data.tenantId
-            && get(dispatchMovementPath()).data.itemId == resource.data.sourceItemId
+            && before.status == 'prepared'
+            && data.status == 'dispatched'
+            && (before.sourceItemId == 'SUPPLIER_TRANSIT' ? validDirectSupplierLine() : (exists(dispatchMovementPath())
+            && get(dispatchMovementPath()).data.tenantId == before.tenantId
+            && get(dispatchMovementPath()).data.itemId == before.sourceItemId
             && get(dispatchMovementPath()).data.sourceLineId == transferLineId
             && get(dispatchMovementPath()).data.movementType == 'TRANSFER_OUT')))
           || (isInventoryOperator()
-            && isAssignedToBranch(resource.data.destinationBranchId)
-            && resource.data.status == 'dispatched'
-            && request.resource.data.status in ['received', 'queried']
-            && request.resource.data.quantityAccepted is number
-            && request.resource.data.quantityQueried is number
-            && request.resource.data.quantityAccepted >= 0
-            && request.resource.data.quantityQueried >= 0
-            && request.resource.data.quantityAccepted + request.resource.data.quantityQueried == resource.data.quantityDispatched
-            && ((request.resource.data.quantityAccepted == 0 && request.resource.data.quantityQueried == resource.data.quantityDispatched)
-              || (existsAfter(receiptMovementPath())
-                && getAfter(receiptMovementPath()).data.tenantId == resource.data.tenantId
-                && getAfter(receiptMovementPath()).data.itemId == resource.data.destinationItemId
-                && getAfter(receiptMovementPath()).data.sourceLineId == transferLineId
-                && getAfter(receiptMovementPath()).data.movementType == 'TRANSFER_IN'
-                && getAfter(receiptMovementPath()).data.quantityDelta == request.resource.data.quantityAccepted)))
+            && isAssignedToBranch(before.destinationBranchId)
+            && before.status == 'dispatched'
+            && data.status in ['received', 'queried']
+            && data.quantityAccepted is number
+            && data.quantityQueried is number
+            && data.quantityAccepted >= 0
+            && data.quantityQueried >= 0
+            && data.quantityAccepted + data.quantityQueried == before.quantityDispatched
+            && ((data.quantityAccepted == 0 && data.quantityQueried == before.quantityDispatched)
+              || validAcceptedReceiptMovement()))
           || (isProcurement()
             && get(transferPath()).data.transferType == 'BRANCH_RETURN'
-            && resource.data.status == 'dispatched'
-            && request.resource.data.status == 'received'
-            && request.resource.data.quantityAccepted == resource.data.quantityDispatched
-            && request.resource.data.quantityQueried == 0
-            && existsAfter(receiptMovementPath())
-            && getAfter(receiptMovementPath()).data.tenantId == resource.data.tenantId
-            && getAfter(receiptMovementPath()).data.itemId == resource.data.destinationItemId
-            && getAfter(receiptMovementPath()).data.sourceTransactionId == resource.data.transferId
-            && getAfter(receiptMovementPath()).data.sourceLineId == transferLineId
-            && getAfter(receiptMovementPath()).data.movementType == 'TRANSFER_IN'
-            && getAfter(receiptMovementPath()).data.quantityDelta == resource.data.quantityDispatched));
+            && before.status == 'dispatched'
+            && data.status == 'received'
+            && data.quantityAccepted == before.quantityDispatched
+            && data.quantityQueried == 0
+            && validAcceptedReceiptMovement()
+            && getAfter(receiptMovementPath()).data.sourceTransactionId == before.transferId));
+      }
+      allow update: if validTransferLineUpdate();
       allow delete: if false;
     }
 
