@@ -80,9 +80,9 @@ test('generic tenant fallback cannot reopen revision request reads, writes or de
   const genericRules = rules.slice(rules.indexOf('match /{collectionName}/{docId}'));
   const genericAllows = genericRules
     .split('\n')
-    .filter((line) => /allow (get|list|create|update|delete):/.test(line));
+    .filter((line) => /allow (read|write):/.test(line));
 
-  assert.equal(genericAllows.length, 5, 'expected generic get, list, create, update and delete rules');
+  assert.equal(genericAllows.length, 2, 'expected shared read and write boundaries covering every method');
   for (const line of genericAllows) {
     assert.match(
       line,
