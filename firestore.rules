@@ -1701,6 +1701,13 @@ service cloud.firestore {
         return /databases/$(database)/documents/stock_order_lines/$(request.resource.data.sourceOrderLineId);
       }
       function validPreparedOperationalTransferLine() {
+        // Bind validated records once to keep mixed-role dispatch below the
+        // Firestore expression budget without relaxing any linkage checks.
+        let transfer = getAfter(transferPath()).data;
+        let source = get(sourceItemPath()).data;
+        let destination = get(destinationItemPath()).data;
+        let master = get(masterPath()).data;
+        let orderLine = 'sourceOrderLineId' in request.resource.data ? get(sourceOrderLinePath()).data : {};
         return request.resource.data.inventoryClass == 'OPERATIONAL'
           && request.resource.data.status == 'prepared'
           && request.resource.data.quantityDispatched is number
@@ -1708,44 +1715,44 @@ service cloud.firestore {
           && request.resource.data.unitCostUGX is number
           && request.resource.data.unitCostUGX >= 0
           && existsAfter(transferPath())
-          && getAfter(transferPath()).data.tenantId == request.resource.data.tenantId
-          && getAfter(transferPath()).data.inventoryClass == 'OPERATIONAL'
+          && transfer.tenantId == request.resource.data.tenantId
+          && transfer.inventoryClass == 'OPERATIONAL'
           && isOperationalInventoryEnabled(request.resource.data.tenantId)
           && exists(sourceItemPath())
-          && get(sourceItemPath()).data.tenantId == request.resource.data.tenantId
-          && get(sourceItemPath()).data.branchId == 'HQ'
-          && get(sourceItemPath()).data.inventoryClass == 'OPERATIONAL'
-          && get(sourceItemPath()).data.masterItemId == request.resource.data.masterItemId
+          && source.tenantId == request.resource.data.tenantId
+          && source.branchId == 'HQ'
+          && source.inventoryClass == 'OPERATIONAL'
+          && source.masterItemId == request.resource.data.masterItemId
           && exists(destinationItemPath())
-          && get(destinationItemPath()).data.tenantId == request.resource.data.tenantId
-          && get(destinationItemPath()).data.branchId == getAfter(transferPath()).data.destinationBranchId
-          && get(destinationItemPath()).data.inventoryClass == 'OPERATIONAL'
-          && get(destinationItemPath()).data.masterItemId == request.resource.data.masterItemId
+          && destination.tenantId == request.resource.data.tenantId
+          && destination.branchId == transfer.destinationBranchId
+          && destination.inventoryClass == 'OPERATIONAL'
+          && destination.masterItemId == request.resource.data.masterItemId
           && exists(masterPath())
-          && get(masterPath()).data.tenantId == request.resource.data.tenantId
-          && get(masterPath()).data.inventoryClass == 'OPERATIONAL'
-          && get(masterPath()).data.hqLocationItemId == request.resource.data.sourceItemId
+          && master.tenantId == request.resource.data.tenantId
+          && master.inventoryClass == 'OPERATIONAL'
+          && master.hqLocationItemId == request.resource.data.sourceItemId
           && (
-            (getAfter(transferPath()).data.fulfillmentSource == 'HQ_DIRECT'
+            (transfer.fulfillmentSource == 'HQ_DIRECT'
               && !('sourceOrderLineId' in request.resource.data))
-            || (getAfter(transferPath()).data.fulfillmentSource == 'HQ_OPERATIONAL'
+            || (transfer.fulfillmentSource == 'HQ_OPERATIONAL'
               && exists(sourceOrderLinePath())
-              && get(sourceOrderLinePath()).data.tenantId == request.resource.data.tenantId
-              && get(sourceOrderLinePath()).data.order_id == getAfter(transferPath()).data.sourceOrderId
-              && get(sourceOrderLinePath()).data.inventoryClass == 'OPERATIONAL'
-              && get(sourceOrderLinePath()).data.masterItemId == request.resource.data.masterItemId
-              && get(sourceOrderLinePath()).data.line_status == 'sourcing'
-              && !('supplier_type' in get(sourceOrderLinePath()).data)
-              && request.resource.data.quantityDispatched <= get(sourceOrderLinePath()).data.qty_ordered * get(masterPath()).data.unitPerPack)
-            || (getAfter(transferPath()).data.fulfillmentSource == 'EXTERNAL_SUPPLIER'
+              && orderLine.tenantId == request.resource.data.tenantId
+              && orderLine.order_id == transfer.sourceOrderId
+              && orderLine.inventoryClass == 'OPERATIONAL'
+              && orderLine.masterItemId == request.resource.data.masterItemId
+              && orderLine.line_status == 'sourcing'
+              && !('supplier_type' in orderLine)
+              && request.resource.data.quantityDispatched <= orderLine.qty_ordered * master.unitPerPack)
+            || (transfer.fulfillmentSource == 'EXTERNAL_SUPPLIER'
               && exists(sourceOrderLinePath())
-              && get(sourceOrderLinePath()).data.tenantId == request.resource.data.tenantId
-              && get(sourceOrderLinePath()).data.order_id == getAfter(transferPath()).data.sourceOrderId
-              && get(sourceOrderLinePath()).data.inventoryClass == 'OPERATIONAL'
-              && get(sourceOrderLinePath()).data.masterItemId == request.resource.data.masterItemId
-              && get(sourceOrderLinePath()).data.supplier_type == 'external'
-              && get(sourceOrderLinePath()).data.line_status == 'received'
-              && request.resource.data.quantityDispatched == get(sourceOrderLinePath()).data.qty_received * get(masterPath()).data.unitPerPack)
+              && orderLine.tenantId == request.resource.data.tenantId
+              && orderLine.order_id == transfer.sourceOrderId
+              && orderLine.inventoryClass == 'OPERATIONAL'
+              && orderLine.masterItemId == request.resource.data.masterItemId
+              && orderLine.supplier_type == 'external'
+              && orderLine.line_status == 'received'
+              && request.resource.data.quantityDispatched == orderLine.qty_received * master.unitPerPack)
           );
       }
       function validBranchReturnLine() {
