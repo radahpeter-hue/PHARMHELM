@@ -131,7 +131,8 @@ test('Operational GRNs receive only into the Operational HQ ledger and cannot us
   assert.match(grnService, /qty_received_units: receivedUnits/);
   assert.match(procurement, /processOperationalGrn\(/);
   assert.match(procurement, /!isOperationalInventoryRecord\(o\)/);
-  assert.match(procurement, /Operational Orders Ready for HQ Dispatch/);
+  assert.match(procurement, /HQ Dispatch Register/);
+  assert.match(procurement, /Dispatch Operational/);
   assert.match(procurement, /dispatchOperationalOrderToBranch\(/);
   assert.match(rules, /match \/operational_transfers\/\{transferId\}/);
   assert.match(rules, /match \/operational_transfer_lines\/\{transferLineId\}/);
@@ -156,4 +157,43 @@ test('Operational triage uses a distinct HQ transfer and preserves the external 
   assert.match(transfers, /dispatchPreparedOperationalHqTransfer/);
   assert.match(rules, /fulfillmentSource == 'HQ_OPERATIONAL'/);
   assert.match(rules, /quantityDispatched <= get\(sourceOrderLinePath\(\)\)\.data\.qty_ordered/);
+});
+
+
+test('Operational transfer line idempotency lookups allow missing documents only for authorized Procurement users', () => {
+  const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
+  const section = rules.slice(rules.indexOf('match /operational_transfer_lines/{transferLineId}'), rules.indexOf('match /operational_inventory_usage/{usageId}'));
+  assert.match(section, /resource == null && isProcurement\(\)/);
+  assert.match(section, /resource != null && isTenantMember\(resource\.data\.tenantId\)/);
+});
+
+
+test('Dispatch register distinguishes externally received staged transfers from HQ Operational Store transfers', () => {
+  const procurement = readFileSync(new URL('../src/pages/Procurement.tsx', import.meta.url), 'utf8');
+  assert.match(procurement, /'EXTERNAL_SUPPLIER', 'HQ_DIRECT'/);
+  assert.match(procurement, /transfer\.fulfillmentSource === 'EXTERNAL_SUPPLIER'/);
+  assert.match(procurement, /handleOperationalDispatch\(order\)/);
+  assert.match(procurement, /handleResumeOperationalTransfer\(transfer\)/);
+});
+
+
+test('staged Operational transfer inspection is read-only and checks dispatch movement linkage', () => {
+  const procurement = readFileSync(new URL('../src/pages/Procurement.tsx', import.meta.url), 'utf8');
+  const start = procurement.indexOf('const inspectStagedTransfer = async');
+  const end = procurement.indexOf('\n  useEffect(() => {', start);
+  assert.ok(start >= 0 && end > start);
+  const inspection = procurement.slice(start, end);
+  assert.match(inspection, /operational_transfer_lines/);
+  assert.match(inspection, /operational_inventory_movements/);
+  assert.match(inspection, /movement\.sourceLineId !== line\.id/);
+  assert.doesNotMatch(inspection, /updateDocument|addDocument|setDoc|updateDoc|runTransaction|writeBatch/);
+});
+
+
+test('staged Operational transfer resume requires successful read-only reconciliation', () => {
+  const procurement = readFileSync(new URL('../src/pages/Procurement.tsx', import.meta.url), 'utf8');
+  assert.match(procurement, /verifiedTransferIds\[transfer\.id\]/);
+  assert.match(procurement, /!verifiedTransferIds\[transfer\.id\]/);
+  assert.match(procurement, /movement\.quantityDelta/);
+  assert.match(procurement, /INCONSISTENT: reconcile before resuming/);
 });
