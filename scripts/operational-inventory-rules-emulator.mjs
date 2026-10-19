@@ -14,6 +14,8 @@ const testEnv = await initializeTestEnvironment({
 });
 
 const branchManager = testEnv.authenticatedContext('manager-a', { tenantId, role: 'Branch Manager' }).firestore();
+const itOnly = testEnv.authenticatedContext('it-only', { tenantId, role: 'Procurement Head' }).firestore();
+const combinedProcurement = testEnv.authenticatedContext('combined-procurement', { tenantId, role: 'IT Head' }).firestore();
 const procurement = testEnv.authenticatedContext('procurement-a', { tenantId, role: 'Procurement Head' }).firestore();
 
 function stockOrder(id, category, inventoryClass, branchId = branchA) {
@@ -49,6 +51,8 @@ try {
       setDoc(doc(db, 'staff', 'manager-a'), {
         tenantId, role: 'Branch Manager', assigned_branches: [branchA], status: 'active', active: true
       }),
+      setDoc(doc(db, 'staff', 'it-only'), { tenantId, role: 'IT Head', secondaryRoles: [], assigned_branches: [], status: 'active', active: true }),
+      setDoc(doc(db, 'staff', 'combined-procurement'), { tenantId, role: 'IT Head', secondaryRoles: ['Procurement Personnel'], assigned_branches: [], status: 'active', active: true }),
       setDoc(doc(db, 'staff', 'procurement-a'), {
         tenantId, role: 'Procurement Head', assigned_branches: [], status: 'active', active: true
       }),
@@ -402,7 +406,8 @@ try {
 
   // Stage 2 Masaka regression: a previous failed external-supplier dispatch
   // left a transfer header status=dispatching but ZERO transfer lines/movements.
-  // An authorized Procurement Head must safely resume that exact header.
+  // IT Head primary + Procurement Personnel secondary must safely resume the
+  // exact header using the authoritative staff roles, even without token roles.
   const stageOrderId = 'stage2-external-resume-test';
   const stageLineId = 'stage2-external-resume-line';
   const stageHash = value => {
@@ -449,9 +454,18 @@ try {
   };
   const stageInput = {
     tenantId, order: resumedStageOrder, destinationBranchName: 'Emulator Branch',
-    actor: { uid: 'procurement-a', name: 'Buyer' }
+    actor: { uid: 'combined-procurement', name: 'Combined Buyer' }
   };
-  const resumed = await dispatchOperationalOrderToBranch(stageInput, procurement);
+  const stagedLinesQuery = query(collection(combinedProcurement, 'operational_transfer_lines'),
+    where('tenantId', '==', tenantId), where('transferId', '==', stagedTransferId));
+  const stagedMovementsQuery = query(collection(combinedProcurement, 'operational_inventory_movements'),
+    where('tenantId', '==', tenantId), where('branchId', '==', 'HQ'), where('sourceTransactionId', '==', stagedTransferId));
+  assert.equal((await getDocs(stagedLinesQuery)).size, 0);
+  assert.equal((await getDocs(stagedMovementsQuery)).size, 0);
+  // Token claims cannot grant procurement when the staff record has only IT.
+  await assertFails(dispatchOperationalOrderToBranch({ ...stageInput,
+    actor: { uid: 'it-only', name: 'IT only' } }, itOnly));
+  const resumed = await dispatchOperationalOrderToBranch(stageInput, combinedProcurement);
   assert.equal(resumed.alreadyDispatched, false);
   const staged = await getDoc(doc(procurement, 'operational_transfers', stagedTransferId));
   assert.equal(staged.data().status, 'dispatched');
@@ -463,11 +477,29 @@ try {
     stageLines.docs[0].data().dispatchMovementId));
   assert.equal(stageMovement.exists(), true);
   assert.equal(stageMovement.data().quantityDelta, -1);
-  const resumedAgain = await dispatchOperationalOrderToBranch(stageInput, procurement);
+  const resumedAgain = await dispatchOperationalOrderToBranch(stageInput, combinedProcurement);
   assert.equal(resumedAgain.alreadyDispatched, true);
   const stageLinesAfter = await getDocs(query(collection(procurement, 'operational_transfer_lines'),
     where('tenantId','==', tenantId), where('transferId', '==', stagedTransferId)));
   assert.equal(stageLinesAfter.size, 1);
+  assert.equal((await getDocs(stagedMovementsQuery)).size, 1);
+  assert.equal((await getDoc(doc(combinedProcurement, 'operational_inventory', registered.itemId))).data().quantityInStock, 2);
+  assert.equal((await getDoc(doc(combinedProcurement, 'stock_orders', stageOrderId))).data().status, 'dispatched');
+  assert.equal(staged.data().dispatchedBy, 'combined-procurement');
+  // The refactor preserves exact received quantity and identity/tenant linkage.
+  const validLine = stageLines.docs[0].data();
+  for (const [label, changes] of Object.entries({
+    overQuantity: { quantityDispatched: 2 }, foreignTenant: { tenantId: 'tenant-b' },
+    wrongDestination: { destinationItemId: 'op-item-b' },
+    wrongMaster: { masterItemId: 'foreign-master' }, sellable: { inventoryClass: 'SELLABLE' },
+    missingOrderLine: { sourceOrderLineId: 'missing-order-line' }
+  })) {
+    const id = `stage2-denied-${label}`;
+    await assertFails(setDoc(doc(combinedProcurement, 'operational_transfer_lines', id), {
+      ...validLine, id, status: 'prepared', ...changes
+    }));
+  }
+  console.log('[stage2-secondary-role] PASS: interrupted header resumed, one line/movement, stock deducted once; IT-only claims and invalid links denied.');
 
   console.log('[operational-inventory-rules] PASS: buffer-order preflight/create, order, GRN, transfer, master, store and usage writes stay class-, tenant- and branch-scoped.');
 } finally {

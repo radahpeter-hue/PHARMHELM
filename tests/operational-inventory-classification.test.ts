@@ -156,7 +156,7 @@ test('Operational triage uses a distinct HQ transfer and preserves the external 
   assert.match(transfers, /operational_external_transfer_id === transferId/);
   assert.match(transfers, /dispatchPreparedOperationalHqTransfer/);
   assert.match(rules, /fulfillmentSource == 'HQ_OPERATIONAL'/);
-  assert.match(rules, /quantityDispatched <= get\(sourceOrderLinePath\(\)\)\.data\.qty_ordered/);
+  assert.match(rules, /quantityDispatched <= orderLine\.qty_ordered/);
 });
 
 
