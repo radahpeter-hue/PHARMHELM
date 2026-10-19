@@ -3503,11 +3503,46 @@ const DispatchTab: React.FC = () => {
         <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-4 border-b">
           <div><h3 className="font-black text-zinc-900">HQ Dispatch Register</h3><p className="text-xs text-zinc-500">Sellable and Operational orders share this register, but retain separate stock ledgers and dispatch processors.</p></div>
           <div className="flex gap-2">
-            <button type="button" onClick={() => setShowDispatchHistory(false)} className={`px-3 py-2 rounded-lg text-xs font-bold ${!showDispatchHistory ? 'bg-zinc-900 text-white' : 'bg-zinc-100'}`}>Pending Dispatch</button>
-            <button type="button" onClick={() => setShowDispatchHistory(true)} className={`px-3 py-2 rounded-lg text-xs font-bold ${showDispatchHistory ? 'bg-zinc-900 text-white' : 'bg-zinc-100'}`}>Dispatch History</button>
+            <button type="button" onClick={() => setShowDispatchHistory(false)} className={`px-3 py-2 rounded-lg text-xs font-bold ${!showDispatchHistory ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-800'}`}>Pending Dispatch</button>
+            <button type="button" onClick={() => setShowDispatchHistory(true)} className={`px-3 py-2 rounded-lg text-xs font-bold ${showDispatchHistory ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-800'}`}>Dispatch History</button>
           </div>
         </div>
-        <div className="overflow-x-auto">
+        {/* On phones, each dispatch is a readable card rather than a 740px table. */}
+        <div className="md:hidden divide-y divide-zinc-100">
+          {(showDispatchHistory ? dispatchHistory : [...preparedSellableOrders, ...operationalOrders.filter(order => !pendingOperationalTransfers.some(transfer => transfer.sourceOrderId === order.id)), ...approvedOrders]).map(order => {
+            const operational = isOperationalInventoryRecord(order);
+            const preparedSellable = preparedSellableOrders.some(row => row.id === order.id);
+            return <article key={order.id} className="p-4 space-y-3">
+              <button type="button" onClick={() => setDetailsOrder(order)} className="text-left text-base font-bold text-emerald-800 underline break-all">{order.order_number || order.id}</button>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                <div><p className="text-xs text-zinc-500">Inventory</p><p className="font-medium">{operational ? 'Operational' : 'Sellable'}</p></div>
+                <div><p className="text-xs text-zinc-500">Destination</p><p className="font-medium break-words">{order.requesting_branch_name || order.requesting_branch_id}</p></div>
+                <div><p className="text-xs text-zinc-500">Order value</p><p className="font-medium">{Number(order.total_order_value_ugx || 0).toLocaleString()} UGX</p></div>
+                <div><p className="text-xs text-zinc-500">Status</p><p className="font-medium capitalize">{showDispatchHistory ? order.status.replace(/_/g, ' ') : 'Ready for dispatch'}</p></div>
+              </div>
+              {showDispatchHistory ? <button type="button" onClick={() => setDetailsOrder(order)} className="w-full rounded-lg border border-emerald-700 text-emerald-800 px-3 py-3 font-semibold">View Order Details</button>
+                : operational ? <button type="button" onClick={() => handleOperationalDispatch(order)} disabled={!canDispatch || dispatchingOperationalOrderId !== null} className="w-full rounded-lg bg-emerald-700 text-white px-3 py-3 font-semibold disabled:opacity-40">{dispatchingOperationalOrderId === order.id ? 'Dispatching…' : 'Dispatch Operational'}</button>
+                : preparedSellable ? <button type="button" onClick={() => handlePreparedDispatch(order)} disabled={!canDispatch || dispatchingPreparedId !== null} className="w-full rounded-lg bg-blue-700 text-white px-3 py-3 font-semibold disabled:opacity-40">{dispatchingPreparedId === order.id ? 'Dispatching…' : 'Confirm Dispatch'}</button>
+                : <button type="button" onClick={() => { setSelectedOrder(order); setIsDispatchModalOpen(true); }} disabled={!canDispatch} className="w-full rounded-lg bg-blue-700 text-white px-3 py-3 font-semibold disabled:opacity-40">Review Dispatch</button>}
+            </article>;
+          })}
+          {!showDispatchHistory && pendingOperationalTransfers.map(transfer => <article key={transfer.id} className="p-4 space-y-3">
+            <button type="button" className="text-left text-base font-bold text-emerald-800 underline break-all" onClick={() => { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (order) setDetailsOrder(order); else toast.error('The staged transfer has no readable linked source order.'); }}>{transfer.sourceOrderNumber || transfer.transferNumber}</button>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><p className="text-xs text-zinc-500">Inventory</p><p className="font-medium">Operational</p></div>
+              <div><p className="text-xs text-zinc-500">Destination</p><p className="font-medium break-words">{transfer.destinationBranchName || transfer.destinationBranchId}</p></div>
+              <div><p className="text-xs text-zinc-500">Value</p><p className="font-medium">{Number(transfer.totalValueUGX || 0).toLocaleString()} UGX</p></div>
+              <div><p className="text-xs text-zinc-500">Status</p><p className="font-medium">Staged / awaiting dispatch</p></div>
+            </div>
+            {transferInspection[transfer.id] && <p role="status" className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900 break-words">{transferInspection[transfer.id]}</p>}
+            <div className="grid grid-cols-1 gap-2">
+              <button type="button" onClick={() => void inspectStagedTransfer(transfer)} className="w-full rounded-lg border border-amber-700 text-amber-800 font-semibold px-3 py-3">Inspect Transfer</button>
+              <button type="button" disabled={!canDispatch || dispatchingOperationalOrderId !== null || !verifiedTransferIds[transfer.id]} onClick={() => { if (transfer.fulfillmentSource === 'EXTERNAL_SUPPLIER') { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (!order) { toast.error('The staged external transfer needs order reconciliation before resuming.'); return; } void handleOperationalDispatch(order); } else { void handleResumeOperationalTransfer(transfer); } }} className="w-full rounded-lg bg-amber-700 text-white font-semibold px-3 py-3 disabled:opacity-40">Resume Staged Transfer</button>
+            </div>
+          </article>)}
+          {(showDispatchHistory ? dispatchHistory.length === 0 : (preparedSellableOrders.length + operationalOrders.length + approvedOrders.length + pendingOperationalTransfers.length === 0)) && <p className="px-4 py-8 text-sm text-zinc-500">{showDispatchHistory ? 'No linked dispatch history found.' : 'No orders ready for dispatch.'}</p>}
+        </div>
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left text-sm min-w-[740px]">
             <thead className="bg-zinc-50 text-zinc-500 uppercase text-[11px]"><tr><th className="p-3">Order Reference</th><th className="p-3">Inventory Type</th><th className="p-3">Destination Branch</th><th className="p-3">Order Value</th><th className="p-3">Status</th><th className="p-3">Action</th></tr></thead>
             <tbody className="divide-y divide-zinc-100">
@@ -3565,16 +3600,43 @@ const DispatchOrderDetails: React.FC<{ order: StockOrder; onClose: () => void }>
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [order.id, order.tenantId]);
-  return <div className="fixed inset-0 z-50 bg-black/50 p-4 flex items-center justify-center">
-    <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 space-y-4">
-      <div className="flex justify-between gap-4">
-        <div><h3 className="text-xl font-bold">{order.order_number}</h3>
-          <p className="text-sm text-zinc-500">{isOperationalInventoryRecord(order) ? 'Operational' : 'Sellable'} Inventory • {order.requesting_branch_name || order.requesting_branch_id} • {order.status}</p></div>
-        <button type="button" onClick={onClose} className="px-3 py-2 rounded-lg border">Close</button>
+  return <div role="dialog" aria-modal="true" aria-label={`Dispatch details for ${order.order_number || order.id}`} className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center sm:p-4">
+    <div className="bg-white text-zinc-900 rounded-t-2xl sm:rounded-2xl shadow-xl w-full max-w-3xl max-h-[90dvh] sm:max-h-[85vh] flex flex-col overflow-hidden">
+      <div className="flex items-start justify-between gap-3 px-4 py-4 sm:px-6 border-b border-zinc-200 shrink-0">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Dispatch order details</p>
+          <h3 className="text-lg sm:text-xl font-bold text-zinc-900 break-all">{order.order_number || order.id}</h3>
+          <p className="text-sm text-zinc-600 break-words">{isOperationalInventoryRecord(order) ? 'Operational' : 'Sellable'} Inventory · {order.requesting_branch_name || order.requesting_branch_id}</p>
+        </div>
+        <button type="button" onClick={onClose} aria-label="Close dispatch details" className="shrink-0 px-3 py-2 rounded-lg border border-zinc-300 font-semibold text-zinc-800">Close</button>
       </div>
-      {loading ? <p>Loading item details…</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-2">Item</th><th className="p-2">Ordered</th><th className="p-2">Received</th><th className="p-2">Batch</th><th className="p-2">Expiry</th></tr></thead>
-        <tbody>{lines.map(line => <tr key={line.id} className="border-b"><td className="p-2">{line.product_name || line.product_id}</td><td className="p-2">{line.qty_ordered}</td><td className="p-2">{line.qty_received ?? '—'}</td><td className="p-2">{(line as StockOrderLine & { batch_number?: string }).batch_number || '—'}</td><td className="p-2">{(line as StockOrderLine & { expiry_date?: string }).expiry_date || '—'}</td></tr>)}</tbody>
-      </table>{lines.length === 0 && <p className="p-3 text-zinc-500">No linked order lines found.</p>}</div>}
+      <div className="overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 space-y-4">
+        <div className="grid grid-cols-2 gap-3 rounded-xl bg-zinc-50 p-3 text-sm">
+          <div><p className="text-xs text-zinc-500">Status</p><p className="font-semibold capitalize break-words">{order.status.replace(/_/g, ' ')}</p></div>
+          <div><p className="text-xs text-zinc-500">Order value</p><p className="font-semibold">{Number(order.total_order_value_ugx || 0).toLocaleString()} UGX</p></div>
+          <div><p className="text-xs text-zinc-500">Destination branch</p><p className="font-semibold break-words">{order.requesting_branch_name || order.requesting_branch_id}</p></div>
+          <div><p className="text-xs text-zinc-500">Inventory type</p><p className="font-semibold">{isOperationalInventoryRecord(order) ? 'Operational' : 'Sellable'}</p></div>
+        </div>
+        <h4 className="font-bold text-zinc-900">Ordered items</h4>
+        {loading ? <p role="status" className="text-sm text-zinc-600">Loading item details…</p> : lines.length === 0
+          ? <p className="rounded-lg border border-zinc-200 p-4 text-sm text-zinc-600">No linked order lines found.</p>
+          : <>
+            <div className="sm:hidden space-y-3">
+              {lines.map(line => <div key={line.id} className="rounded-xl border border-zinc-200 p-3 space-y-2">
+                <p className="font-semibold text-zinc-900 break-words">{line.product_name || line.product_id}</p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div><p className="text-xs text-zinc-500">Ordered</p><p>{line.qty_ordered ?? '—'}</p></div>
+                  <div><p className="text-xs text-zinc-500">Received</p><p>{line.qty_received ?? '—'}</p></div>
+                  <div><p className="text-xs text-zinc-500">Batch</p><p className="break-all">{(line as StockOrderLine & { batch_number?: string }).batch_number || '—'}</p></div>
+                  <div><p className="text-xs text-zinc-500">Expiry</p><p>{(line as StockOrderLine & { expiry_date?: string }).expiry_date || '—'}</p></div>
+                </div>
+              </div>)}
+            </div>
+            <div className="hidden sm:block overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-2">Item</th><th className="p-2">Ordered</th><th className="p-2">Received</th><th className="p-2">Batch</th><th className="p-2">Expiry</th></tr></thead>
+              <tbody>{lines.map(line => <tr key={line.id} className="border-b"><td className="p-2">{line.product_name || line.product_id}</td><td className="p-2">{line.qty_ordered}</td><td className="p-2">{line.qty_received ?? '—'}</td><td className="p-2">{(line as StockOrderLine & { batch_number?: string }).batch_number || '—'}</td><td className="p-2">{(line as StockOrderLine & { expiry_date?: string }).expiry_date || '—'}</td></tr>)}</tbody>
+            </table></div>
+          </>}
+      </div>
     </div>
   </div>;
 };
