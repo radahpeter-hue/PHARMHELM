@@ -3507,7 +3507,42 @@ const DispatchTab: React.FC = () => {
             <button type="button" onClick={() => setShowDispatchHistory(true)} className={`px-3 py-2 rounded-lg text-xs font-bold ${showDispatchHistory ? 'bg-zinc-900 text-white' : 'bg-zinc-100'}`}>Dispatch History</button>
           </div>
         </div>
-        <div className="overflow-x-auto">
+        {/* On phones, each dispatch is a readable card rather than a 740px table. */}
+        <div className="md:hidden divide-y divide-zinc-100">
+          {(showDispatchHistory ? dispatchHistory : [...preparedSellableOrders, ...operationalOrders.filter(order => !pendingOperationalTransfers.some(transfer => transfer.sourceOrderId === order.id)), ...approvedOrders]).map(order => {
+            const operational = isOperationalInventoryRecord(order);
+            const preparedSellable = preparedSellableOrders.some(row => row.id === order.id);
+            return <article key={order.id} className="p-4 space-y-3">
+              <button type="button" onClick={() => setDetailsOrder(order)} className="text-left text-base font-bold text-emerald-800 underline break-all">{order.order_number || order.id}</button>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                <div><p className="text-xs text-zinc-500">Inventory</p><p className="font-medium">{operational ? 'Operational' : 'Sellable'}</p></div>
+                <div><p className="text-xs text-zinc-500">Destination</p><p className="font-medium break-words">{order.requesting_branch_name || order.requesting_branch_id}</p></div>
+                <div><p className="text-xs text-zinc-500">Order value</p><p className="font-medium">{Number(order.total_order_value_ugx || 0).toLocaleString()} UGX</p></div>
+                <div><p className="text-xs text-zinc-500">Status</p><p className="font-medium capitalize">{showDispatchHistory ? order.status.replace(/_/g, ' ') : 'Ready for dispatch'}</p></div>
+              </div>
+              {showDispatchHistory ? <button type="button" onClick={() => setDetailsOrder(order)} className="w-full rounded-lg border border-emerald-700 text-emerald-800 px-3 py-3 font-semibold">View Order Details</button>
+                : operational ? <button type="button" onClick={() => handleOperationalDispatch(order)} disabled={!canDispatch || dispatchingOperationalOrderId !== null} className="w-full rounded-lg bg-emerald-700 text-white px-3 py-3 font-semibold disabled:opacity-40">{dispatchingOperationalOrderId === order.id ? 'Dispatching…' : 'Dispatch Operational'}</button>
+                : preparedSellable ? <button type="button" onClick={() => handlePreparedDispatch(order)} disabled={!canDispatch || dispatchingPreparedId !== null} className="w-full rounded-lg bg-blue-700 text-white px-3 py-3 font-semibold disabled:opacity-40">{dispatchingPreparedId === order.id ? 'Dispatching…' : 'Confirm Dispatch'}</button>
+                : <button type="button" onClick={() => { setSelectedOrder(order); setIsDispatchModalOpen(true); }} disabled={!canDispatch} className="w-full rounded-lg bg-blue-700 text-white px-3 py-3 font-semibold disabled:opacity-40">Review Dispatch</button>}
+            </article>;
+          })}
+          {!showDispatchHistory && pendingOperationalTransfers.map(transfer => <article key={transfer.id} className="p-4 space-y-3">
+            <button type="button" className="text-left text-base font-bold text-emerald-800 underline break-all" onClick={() => { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (order) setDetailsOrder(order); else toast.error('The staged transfer has no readable linked source order.'); }}>{transfer.sourceOrderNumber || transfer.transferNumber}</button>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><p className="text-xs text-zinc-500">Inventory</p><p className="font-medium">Operational</p></div>
+              <div><p className="text-xs text-zinc-500">Destination</p><p className="font-medium break-words">{transfer.destinationBranchName || transfer.destinationBranchId}</p></div>
+              <div><p className="text-xs text-zinc-500">Value</p><p className="font-medium">{Number(transfer.totalValueUGX || 0).toLocaleString()} UGX</p></div>
+              <div><p className="text-xs text-zinc-500">Status</p><p className="font-medium">Staged / awaiting dispatch</p></div>
+            </div>
+            {transferInspection[transfer.id] && <p role="status" className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900 break-words">{transferInspection[transfer.id]}</p>}
+            <div className="grid grid-cols-1 gap-2">
+              <button type="button" onClick={() => void inspectStagedTransfer(transfer)} className="w-full rounded-lg border border-amber-700 text-amber-800 font-semibold px-3 py-3">Inspect Transfer</button>
+              <button type="button" disabled={!canDispatch || dispatchingOperationalOrderId !== null || !verifiedTransferIds[transfer.id]} onClick={() => { if (transfer.fulfillmentSource === 'EXTERNAL_SUPPLIER') { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (!order) { toast.error('The staged external transfer needs order reconciliation before resuming.'); return; } void handleOperationalDispatch(order); } else { void handleResumeOperationalTransfer(transfer); } }} className="w-full rounded-lg bg-amber-700 text-white font-semibold px-3 py-3 disabled:opacity-40">Resume Staged Transfer</button>
+            </div>
+          </article>)}
+          {(showDispatchHistory ? dispatchHistory.length === 0 : (preparedSellableOrders.length + operationalOrders.length + approvedOrders.length + pendingOperationalTransfers.length === 0)) && <p className="px-4 py-8 text-sm text-zinc-500">{showDispatchHistory ? 'No linked dispatch history found.' : 'No orders ready for dispatch.'}</p>}
+        </div>
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left text-sm min-w-[740px]">
             <thead className="bg-zinc-50 text-zinc-500 uppercase text-[11px]"><tr><th className="p-3">Order Reference</th><th className="p-3">Inventory Type</th><th className="p-3">Destination Branch</th><th className="p-3">Order Value</th><th className="p-3">Status</th><th className="p-3">Action</th></tr></thead>
             <tbody className="divide-y divide-zinc-100">
