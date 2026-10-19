@@ -147,13 +147,16 @@ test('POS create allow expressions remain shallow enough for the hosted rules co
 
 test('generic tenant fallback cannot bypass dedicated POS V2 transaction records', () => {
   const generic = rules.slice(rules.indexOf('match /{collectionName}/{docId}'));
-  for (const collectionName of ['pos_checkout_attempts', 'pos_payments', 'pos_transaction_outbox']) {
-    for (const operation of ['get', 'list', 'create', 'update', 'delete']) {
-      const guard = generic.split('\n').find(line => line.includes(`allow ${operation}:`)) || '';
-      assert.match(guard, /!\(collectionName in \[/);
-      assert.ok(guard.includes(`'${collectionName}'`), `${operation} must exclude ${collectionName}`);
-    }
+  const protectedList = generic.slice(generic.indexOf('function dedicatedCollection()'), generic.indexOf('function dedicatedWriteCollection()'));
+  for (const name of ['pos_checkout_attempts', 'pos_payments', 'pos_transaction_outbox']) {
+    assert.ok(protectedList.includes(`'${name}'`));
   }
+  assert.match(generic, /allow read: if !dedicatedCollection\(\)/);
+  assert.match(generic, /allow write: if !dedicatedWriteCollection\(\)/);
+  assert.match(generic, /return dedicatedCollection\(\) \|\| collectionName in/);
+  assert.match(generic, /request\.method == 'get' && resource == null/);
+  assert.match(generic, /request\.method == 'delete'/);
+  assert.match(generic, /request\.method == 'update' && isTenantMember\(resource\.data\.tenantId\) && immutableFallbackIdentities\(\)/);
 });
 
 test('QA quarantine rule preserves branch scope and narrow quarantine-only fields', () => {
