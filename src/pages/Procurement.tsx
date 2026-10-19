@@ -3503,8 +3503,8 @@ const DispatchTab: React.FC = () => {
         <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-4 border-b">
           <div><h3 className="font-black text-zinc-900">HQ Dispatch Register</h3><p className="text-xs text-zinc-500">Sellable and Operational orders share this register, but retain separate stock ledgers and dispatch processors.</p></div>
           <div className="flex gap-2">
-            <button type="button" onClick={() => setShowDispatchHistory(false)} className={`px-3 py-2 rounded-lg text-xs font-bold ${!showDispatchHistory ? 'bg-zinc-900 text-white' : 'bg-zinc-100'}`}>Pending Dispatch</button>
-            <button type="button" onClick={() => setShowDispatchHistory(true)} className={`px-3 py-2 rounded-lg text-xs font-bold ${showDispatchHistory ? 'bg-zinc-900 text-white' : 'bg-zinc-100'}`}>Dispatch History</button>
+            <button type="button" onClick={() => setShowDispatchHistory(false)} className={`px-3 py-2 rounded-lg text-xs font-bold ${!showDispatchHistory ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-800'}`}>Pending Dispatch</button>
+            <button type="button" onClick={() => setShowDispatchHistory(true)} className={`px-3 py-2 rounded-lg text-xs font-bold ${showDispatchHistory ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-800'}`}>Dispatch History</button>
           </div>
         </div>
         {/* On phones, each dispatch is a readable card rather than a 740px table. */}
