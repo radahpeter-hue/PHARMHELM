@@ -18,6 +18,9 @@ const {getFirestore} = await import('firebase-admin/firestore');
 const app = initializeApp({credential:applicationDefault(),projectId},'stage2-finance-readonly');
 try {
   const db = getFirestore(app,databaseId);
+  const accounts=await db.collection('finance_payment_accounts').where('tenantId','==',tenantId).get();
+  report.registeredPaymentAccountCount=accounts.size;
+  report.initializedPaymentAccountCount=accounts.docs.filter(d=>d.get('initialized')===true&&d.get('currency')==='UGX'&&['petty_cash','bank'].includes(d.get('kind'))&&Number.isSafeInteger(d.get('balanceUGX'))&&d.get('balanceUGX')>=0).length;
   const docs = await db.collection('invoices').where('supplierInvoiceNumber','==',invoiceNumber).get();
   const invoices=docs.docs.filter(x=>x.get('tenantId')===tenantId);
   report.invoiceCount=invoices.length;
