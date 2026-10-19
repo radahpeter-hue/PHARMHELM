@@ -3512,13 +3512,13 @@ const DispatchTab: React.FC = () => {
           {(showDispatchHistory ? dispatchHistory : [...preparedSellableOrders, ...operationalOrders.filter(order => !pendingOperationalTransfers.some(transfer => transfer.sourceOrderId === order.id)), ...approvedOrders]).map(order => {
             const operational = isOperationalInventoryRecord(order);
             const preparedSellable = preparedSellableOrders.some(row => row.id === order.id);
-            return <article key={order.id} className="p-4 space-y-3">
+            return <article key={order.id} className="p-4 space-y-3 bg-white text-zinc-900">
               <button type="button" onClick={() => setDetailsOrder(order)} className="text-left text-base font-bold text-emerald-800 underline break-all">{order.order_number || order.id}</button>
               <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
-                <div><p className="text-xs text-zinc-500">Inventory</p><p className="font-medium">{operational ? 'Operational' : 'Sellable'}</p></div>
-                <div><p className="text-xs text-zinc-500">Destination</p><p className="font-medium break-words">{order.requesting_branch_name || order.requesting_branch_id}</p></div>
-                <div><p className="text-xs text-zinc-500">Order value</p><p className="font-medium">{Number(order.total_order_value_ugx || 0).toLocaleString()} UGX</p></div>
-                <div><p className="text-xs text-zinc-500">Status</p><p className="font-medium capitalize">{showDispatchHistory ? order.status.replace(/_/g, ' ') : 'Ready for dispatch'}</p></div>
+                <div><p className="text-xs text-zinc-500">Inventory</p><p className="font-semibold text-zinc-900">{operational ? 'Operational' : 'Sellable'}</p></div>
+                <div><p className="text-xs text-zinc-500">Destination</p><p className="font-semibold text-zinc-900 break-words">{order.requesting_branch_name || order.requesting_branch_id}</p></div>
+                <div><p className="text-xs text-zinc-500">Order value</p><p className="font-semibold text-zinc-900">{Number(order.total_order_value_ugx || 0).toLocaleString()} UGX</p></div>
+                <div><p className="text-xs text-zinc-500">Status</p><p className="font-semibold text-zinc-900 capitalize">{showDispatchHistory ? order.status.replace(/_/g, ' ') : 'Ready for dispatch'}</p></div>
               </div>
               {showDispatchHistory ? <button type="button" onClick={() => setDetailsOrder(order)} className="w-full rounded-lg border border-emerald-700 text-emerald-800 px-3 py-3 font-semibold">View Order Details</button>
                 : operational ? <button type="button" onClick={() => handleOperationalDispatch(order)} disabled={!canDispatch || dispatchingOperationalOrderId !== null} className="w-full rounded-lg bg-emerald-700 text-white px-3 py-3 font-semibold disabled:opacity-40">{dispatchingOperationalOrderId === order.id ? 'Dispatching…' : 'Dispatch Operational'}</button>
@@ -3526,13 +3526,13 @@ const DispatchTab: React.FC = () => {
                 : <button type="button" onClick={() => { setSelectedOrder(order); setIsDispatchModalOpen(true); }} disabled={!canDispatch} className="w-full rounded-lg bg-blue-700 text-white px-3 py-3 font-semibold disabled:opacity-40">Review Dispatch</button>}
             </article>;
           })}
-          {!showDispatchHistory && pendingOperationalTransfers.map(transfer => <article key={transfer.id} className="p-4 space-y-3">
+          {!showDispatchHistory && pendingOperationalTransfers.map(transfer => <article key={transfer.id} className="p-4 space-y-3 bg-white text-zinc-900">
             <button type="button" className="text-left text-base font-bold text-emerald-800 underline break-all" onClick={() => { const order = allDispatchOrders.find(row => row.id === transfer.sourceOrderId); if (order) setDetailsOrder(order); else toast.error('The staged transfer has no readable linked source order.'); }}>{transfer.sourceOrderNumber || transfer.transferNumber}</button>
             <div className="grid grid-cols-2 gap-3 text-sm">
-              <div><p className="text-xs text-zinc-500">Inventory</p><p className="font-medium">Operational</p></div>
-              <div><p className="text-xs text-zinc-500">Destination</p><p className="font-medium break-words">{transfer.destinationBranchName || transfer.destinationBranchId}</p></div>
-              <div><p className="text-xs text-zinc-500">Value</p><p className="font-medium">{Number(transfer.totalValueUGX || 0).toLocaleString()} UGX</p></div>
-              <div><p className="text-xs text-zinc-500">Status</p><p className="font-medium">Staged / awaiting dispatch</p></div>
+              <div><p className="text-xs text-zinc-500">Inventory</p><p className="font-semibold text-zinc-900">Operational</p></div>
+              <div><p className="text-xs text-zinc-500">Destination</p><p className="font-semibold text-zinc-900 break-words">{transfer.destinationBranchName || transfer.destinationBranchId}</p></div>
+              <div><p className="text-xs text-zinc-500">Value</p><p className="font-semibold text-zinc-900">{Number(transfer.totalValueUGX || 0).toLocaleString()} UGX</p></div>
+              <div><p className="text-xs text-zinc-500">Status</p><p className="font-semibold text-zinc-900">Staged / awaiting dispatch</p></div>
             </div>
             {transferInspection[transfer.id] && <p role="status" className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900 break-words">{transferInspection[transfer.id]}</p>}
             <div className="grid grid-cols-1 gap-2">
