@@ -509,9 +509,140 @@ service cloud.firestore {
         'finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
         'credit_receivables', 'supplier_payables', 'banking_records',
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
-        'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
+        'petty_cash_ledger', 'banking_records', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
         'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
       ];
+    }
+
+    function canPostManagementCash() {
+      return isFinance() || isHR() || isLogisticsHead() || isProcurement();
+    }
+    function managementAccountPath(tenantId, kind) {
+      return /databases/$(database)/documents/finance_payment_accounts/$(tenantId + (kind == 'bank' ? '_management_bank' : '_management_petty_cash'));
+    }
+    function managementMovementPath(kind, id) {
+      return kind == 'bank'
+        ? /databases/$(database)/documents/banking_records/$(id)
+        : /databases/$(database)/documents/petty_cash_ledger/$(id);
+    }
+    function validManagementMovement(id, data, kind) {
+      let accountPath = managementAccountPath(data.tenantId, kind);
+      let before = get(accountPath).data;
+      let after = getAfter(accountPath).data;
+      return isTenantMember(data.tenantId)
+        && (kind == 'bank' ? isFinance() : canPostManagementCash())
+        && data.postedBy == request.auth.uid
+        && data.amount is int && data.amount > 0
+        && data.type in ['incoming','deposit','topup','outgoing','withdrawal']
+        && data.accountDeltaUGX == (data.type in ['incoming','deposit','topup'] ? data.amount : -data.amount)
+        && (data.accountDeltaUGX <= 0 || isFinance() || isHR())
+        && data.accountDocumentId == data.tenantId + (kind == 'bank' ? '_management_bank' : '_management_petty_cash')
+        && before.tenantId == data.tenantId && before.kind == kind && before.initialized == true
+        && after.lastPostingId == id
+        && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX
+        && after.balanceUGX >= 0;
+    }
+    function validManagementAccountUpdate(accountId, before, after) {
+      let movementPath = managementMovementPath(before.kind, after.lastPostingId);
+      let movement = getAfter(movementPath).data;
+      return isTenantMember(before.tenantId)
+        && (before.kind == 'bank' ? isFinance() : canPostManagementCash())
+        && after.diff(before).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
+        && before.initialized == true && before.currency == 'UGX' && before.controlVersion == 1
+        && after.balanceUGX is int && after.balanceUGX >= 0
+        && after.lastPostingId is string && !exists(movementPath)
+        && movement.tenantId == before.tenantId && movement.accountDocumentId == accountId
+        && movement.postedBy == request.auth.uid
+        && after.balanceUGX == before.balanceUGX + movement.accountDeltaUGX;
+    }
+    function supplierPaymentPath(id) {
+      return /databases/$(database)/documents/cash_grn_payments/$(id);
+    }
+    function linkedSupplierPayment(data) {
+      let paymentPath = supplierPaymentPath(data.lastPaymentId);
+      let payment = getAfter(paymentPath).data;
+      return isFinance() && isTenantMember(data.tenantId)
+        && !exists(paymentPath) && payment.tenantId == data.tenantId
+        && payment.processedBy == request.auth.uid;
+    }
+    function validSupplierInvoiceUpdate(id, before, after, legacy) {
+      let payment = getAfter(supplierPaymentPath(after.lastPaymentId)).data;
+      return linkedSupplierPayment(after)
+        && (legacy ? payment.procurementInvoiceId == id : payment.invoiceId == id)
+        && after.diff(before).affectedKeys().hasOnly(legacy
+          ? ['paid_amount_ugx','paidAmountUGX','creditBalance','status','paymentStatus','updatedAt','lastPaymentReference','lastPaymentId']
+          : ['paidAmountUGX','paymentStatus','creditBalance','updatedAt','lastPaymentReference','lastPaymentId'])
+        && (legacy ? after.paid_amount_ugx : after.paidAmountUGX) == payment.previouslyPaidUGX + payment.amountUGX
+        && after.paymentStatus == (payment.remainingUGX == 0 ? 'Paid' : 'Partially Paid')
+        && after.creditBalance == payment.remainingUGX
+        && (!legacy || after.paidAmountUGX == after.paid_amount_ugx);
+    }
+    function validSupplierGrnPayment(id, before, after) {
+      let payment = getAfter(supplierPaymentPath(after.lastPaymentId)).data;
+      return linkedSupplierPayment(after) && payment.grnId == id
+        && before.payment_type == 'cash'
+        && after.diff(before).affectedKeys().hasOnly(['payment_status','lastPaymentId','updatedAt'])
+        && after.payment_status == (payment.remainingUGX == 0 ? 'paid' : 'partial');
+    }
+    match /finance_payment_accounts/{accountId} {
+      allow get: if canPostManagementCash() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
+        && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
+        && request.resource.data.accountId in ['management_petty_cash','management_bank']
+        && request.resource.data.kind == (request.resource.data.accountId == 'management_bank' ? 'bank' : 'petty_cash')
+        && request.resource.data.currency == 'UGX' && request.resource.data.controlVersion == 1
+        && request.resource.data.initialized == true && request.resource.data.lastPostingId == null
+        && request.resource.data.balanceUGX is int && request.resource.data.balanceUGX >= 0
+        && request.resource.data.balanceUGX == request.resource.data.openingBalanceUGX
+        && request.resource.data.registeredBy == request.auth.uid
+        && request.resource.data.name is string && request.resource.data.name.size() > 0
+        && request.resource.data.reconciliationReference is string && request.resource.data.reconciliationReference.size() >= 5;
+      allow update: if validManagementAccountUpdate(accountId, resource.data, request.resource.data);
+      allow delete: if false;
+    }
+    match /cash_grn_payments/{paymentId} {
+      function validSettlement(data) {
+        let invoicePath = /databases/$(database)/documents/invoices/$(data.invoiceId);
+        let before = get(invoicePath).data;
+        let invoice = getAfter(invoicePath).data;
+        let grn = getAfter(/databases/$(database)/documents/grn_records/$(data.grnId)).data;
+        let draft = getAfter(/databases/$(database)/documents/management_expenses/$(data.draftId)).data;
+        let legacy = getAfter(/databases/$(database)/documents/procurement_invoices/$(data.procurementInvoiceId)).data;
+        let movement = getAfter(managementMovementPath(data.paymentAccountKind, paymentId)).data;
+        return isFinance() && isTenantMember(data.tenantId)
+          && data.processedBy == request.auth.uid
+          && paymentId == 'procurement_cash_settlement_' + data.tenantId + '_' + data.draftId + '_' + data.requestId
+          && data.amountUGX is int && data.amountUGX > 0
+          && data.previouslyPaidUGX == before.get('paidAmountUGX', 0)
+          && data.totalInvoiceUGX == before.invoiceValue
+          && data.remainingUGX == data.totalInvoiceUGX - data.previouslyPaidUGX - data.amountUGX && data.remainingUGX >= 0
+          && before.tenantId == data.tenantId && before.grnId == data.grnId && before.paymentType == 'cash'
+          && invoice.lastPaymentId == paymentId && invoice.paidAmountUGX == data.previouslyPaidUGX + data.amountUGX
+          && grn.tenantId == data.tenantId && grn.invoice_id == data.invoiceId && grn.procurement_invoice_id == data.procurementInvoiceId && grn.lastPaymentId == paymentId
+          && draft.tenantId == data.tenantId && draft.source == 'procurement_cash_grn'
+          && draft.invoiceId == data.invoiceId && draft.grnId == data.grnId && draft.lastPaymentId == paymentId
+          && legacy.tenantId == data.tenantId && legacy.lastPaymentId == paymentId
+          && movement.paymentId == paymentId && movement.invoiceId == data.invoiceId && movement.grnId == data.grnId
+          && movement.amount == data.amountUGX && movement.type == 'outgoing'
+          && movement.accountDocumentId == data.tenantId + '_' + data.paymentAccountId
+          && data.excludeFromOpexRollup == true;
+      }
+      allow get: if isFinance() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow create: if validSettlement(request.resource.data);
+      allow update, delete: if false;
+    }
+    match /cashTransfers/{transferId} {
+      allow read: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.amount is int && request.resource.data.amount > 0
+        && (request.resource.data.fromPortfolio == 'banked' || request.resource.data.toPortfolio == 'banked')
+        && request.resource.data.bankMovementId == 'transfer_' + transferId
+        && getAfter(/databases/$(database)/documents/banking_records/$('transfer_' + transferId)).data.transferId == transferId
+        && getAfter(/databases/$(database)/documents/banking_records/$('transfer_' + transferId)).data.tenantId == request.resource.data.tenantId
+        && getAfter(/databases/$(database)/documents/banking_records/$('transfer_' + transferId)).data.accountDeltaUGX == (request.resource.data.toPortfolio == 'banked' ? request.resource.data.amount : -request.resource.data.amount);
+      allow update, delete: if false;
     }
 
     function canViewProcurement() {
@@ -1053,24 +1184,43 @@ service cloud.firestore {
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
         && !hasOperationalSourceOrder(resource.data)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['payment_status','lastPaymentId']) || resource.data.get('payment_type','') != 'cash')
         && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
         && (!('inventoryClass' in resource.data) || resource.data.inventoryClass != 'OPERATIONAL')
         && validGrnInventoryClass(request.resource.data);
+      allow update: if validSupplierGrnPayment(recordId, resource.data, request.resource.data);
       allow delete: if resource.data.inventoryClass != 'OPERATIONAL'
         && !hasOperationalSourceOrder(resource.data)
         && isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /invoices/{invoiceId} {
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isTenantMember(resource.data.tenantId) && (canViewFinance() || isProcurement());
+      allow create: if isTenantMember(request.resource.data.tenantId) && (isFinance() || isProcurement());
+      allow update: if isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
+        && ((resource.data.get('paymentType','') == 'cash' && resource.data.get('grnId','') != '')
+          ? validSupplierInvoiceUpdate(invoiceId, resource.data, request.resource.data, false)
+          : (isFinance() || isProcurement()));
+      allow delete: if false;
     }
     match /procurement_invoices/{invoiceId} {
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isTenantMember(resource.data.tenantId) && (canViewFinance() || isProcurement());
+      allow create: if isTenantMember(request.resource.data.tenantId) && (isFinance() || isProcurement());
+      allow update: if isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
+        && ((resource.data.get('paymentType','') == 'cash' && resource.data.get('grnId','') != '')
+          ? validSupplierInvoiceUpdate(invoiceId, resource.data, request.resource.data, true)
+          : (isFinance() || isProcurement()));
+      allow delete: if false;
     }
     match /creditLedger/{entryId} {
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
     }
     match /petty_cash_ledger/{entryId} {
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if canPostManagementCash() && isTenantMember(resource.data.tenantId);
+      allow create: if validManagementMovement(entryId, request.resource.data, 'petty_cash');
+      allow update, delete: if false;
     }
 
     match /eod_reconciliations/{reconciliationId} {
@@ -1110,10 +1260,10 @@ service cloud.firestore {
     }
 
     match /banking_records/{recordId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && isFinance();
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && isFinance();
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+      allow get: if isFinance() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow create: if validManagementMovement(recordId, request.resource.data, 'bank');
+      allow update, delete: if false;
     }
 
     match /client_credit_ledger/{entryId} {
@@ -1179,7 +1329,14 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.invoiceValue == request.resource.data.amount
         && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.paymentStatus == 'Pending Payment';
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isFinance() || isHR());
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && isFinance();
+      allow update: if isFinance() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
+        && (resource.data.get('source','') != 'procurement_cash_grn' || (
+          linkedSupplierPayment(request.resource.data)
+          && getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.draftId == expenseId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','paymentStatus','paidAmountUGX','balanceUGX','excludeFromOpexRollup','updatedAt','issuedAt','issuedBy','lastPaymentId'])
+          && request.resource.data.paidAmountUGX == getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.previouslyPaidUGX + getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.amountUGX
+          && request.resource.data.balanceUGX == getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.remainingUGX
+          && request.resource.data.excludeFromOpexRollup == true));
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 

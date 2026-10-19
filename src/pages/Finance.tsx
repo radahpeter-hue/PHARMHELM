@@ -1,3 +1,4 @@
+import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -1637,14 +1638,16 @@ const OldManagementExpenseLedger: React.FC = () => {
     }
 
     try {
-      await firestoreService.updateDocument('management_expenses', exp.id!, {
+      const financeMessages: {kind:'success'|'info';message:string}[] = [];
+      const financeWrites = createManagementFinanceWriteGroup(profile?.tenantId || '', profile?.uid || '');
+      await financeWrites.updateDocument('management_expenses', exp.id!, {
         status: 'Approved',
         approved_at: new Date().toISOString(),
         approved_by: profile?.name || 'Finance System'
       });
 
       // Deduct from petty cash ledger
-      await firestoreService.addDocument('petty_cash_ledger', {
+      await financeWrites.addDocument('petty_cash_ledger', {
         tenantId: profile!.tenantId,
         date: new Date().toISOString().split('T')[0],
         amount: expenseAmt,
@@ -1655,8 +1658,10 @@ const OldManagementExpenseLedger: React.FC = () => {
         logged_by: profile!.uid,
         created_at: new Date().toISOString()
       });
+      await financeWrites.commit();
+      financeMessages.forEach(({kind,message})=>toast[kind](message));
 
-      toast.success('Management expense approved and successfully deducted from petty cash!');
+      financeMessages.push({kind:'success',message:'Management expense approved and successfully deducted from petty cash!'});
     } catch (error) {
       toast.error('Failed to disburse management expense');
     }
@@ -1773,6 +1778,8 @@ const ManagementExpenseModal: React.FC<{ isOpen: boolean, onClose: () => void }>
     e.preventDefault();
     if (!profile) return;
     try {
+      const financeMessages: {kind:'success'|'info';message:string}[] = [];
+      const financeWrites = createManagementFinanceWriteGroup(profile?.tenantId || '', profile?.uid || '');
       const status = disburseDirectly ? 'Approved' : 'Pending';
       const expenseDoc = {
         ...formData,
@@ -1783,11 +1790,11 @@ const ManagementExpenseModal: React.FC<{ isOpen: boolean, onClose: () => void }>
         source: 'manual',
         excludeFromOpexRollup: false
       };
-      const savedDoc = await firestoreService.addDocument('management_expenses', expenseDoc);
+      const savedDoc = await financeWrites.addDocument('management_expenses', expenseDoc);
 
       if (disburseDirectly) {
         // Also add an outgoing record to petty_cash_ledger!
-        await firestoreService.addDocument('petty_cash_ledger', {
+        await financeWrites.addDocument('petty_cash_ledger', {
           tenantId: profile.tenantId,
           date: formData.expense_date,
           amount: formData.amount_ugx,
@@ -1798,10 +1805,12 @@ const ManagementExpenseModal: React.FC<{ isOpen: boolean, onClose: () => void }>
           logged_by: profile.uid,
           created_at: new Date().toISOString()
         });
-        toast.success('HQ Expense logged and disbursed from Petty Cash!');
+        financeMessages.push({kind:'success',message:'HQ Expense logged and disbursed from Petty Cash!'});
       } else {
-        toast.success('HQ Expense logged successfully (Scheduled for Approval)');
+        financeMessages.push({kind:'success',message:'HQ Expense logged successfully (Scheduled for Approval)'});
       }
+      await financeWrites.commit();
+      financeMessages.forEach(({kind,message})=>toast[kind](message));
       onClose();
     } catch (error) {
       toast.error('Failed to log expense');
@@ -2772,8 +2781,10 @@ const PettyCashManagement: React.FC = () => {
     }
 
     try {
+      const financeMessages: {kind:'success'|'info';message:string}[] = [];
+      const financeWrites = createManagementFinanceWriteGroup(profile?.tenantId || '', profile?.uid || '');
       // 1. Log in Petty Cash Ledger (Outgoing)
-      await firestoreService.addDocument('petty_cash_ledger', {
+      await financeWrites.addDocument('petty_cash_ledger', {
         tenantId: profile!.tenantId,
         date: new Date().toISOString().split('T')[0],
         amount: issue.amount,
@@ -2786,7 +2797,7 @@ const PettyCashManagement: React.FC = () => {
       });
 
       // 2. Update Issue Status
-      await firestoreService.updateDocument('petty_cash_issues', issue.id, {
+      await financeWrites.updateDocument('petty_cash_issues', issue.id, {
         status: 'completed',
         issued_by: profile?.uid,
         issued_at: new Date().toISOString()
@@ -2794,14 +2805,14 @@ const PettyCashManagement: React.FC = () => {
 
       // 3. Update Requisition Status
       if (issue.requisition_id) {
-        await firestoreService.updateDocument('petty_cash_requisitions', issue.requisition_id, {
+        await financeWrites.updateDocument('petty_cash_requisitions', issue.requisition_id, {
           status: 'issued'
         });
 
         // Add departmental petty cash ledger transaction if this is a departmental request
         const req = requisitions.find(r => r.id === issue.requisition_id);
         if (req && req.department) {
-          await firestoreService.addDocument('departmental_petty_cash_ledger', {
+          await financeWrites.addDocument('departmental_petty_cash_ledger', {
             tenantId: profile!.tenantId,
             department: req.department,
             date: new Date().toISOString().split('T')[0],
@@ -2815,8 +2826,10 @@ const PettyCashManagement: React.FC = () => {
           });
         }
       }
+      await financeWrites.commit();
+      financeMessages.forEach(({kind,message})=>toast[kind](message));
 
-      toast.success('Petty cash issued successfully');
+      financeMessages.push({kind:'success',message:'Petty cash issued successfully'});
       setSelectedIssue(null);
     } catch (error) {
       toast.error('Issuance failed');
@@ -2830,7 +2843,9 @@ const PettyCashManagement: React.FC = () => {
     }
 
     try {
-      await firestoreService.addDocument('petty_cash_ledger', {
+      const financeMessages: {kind:'success'|'info';message:string}[] = [];
+      const financeWrites = createManagementFinanceWriteGroup(profile?.tenantId || '', profile?.uid || '');
+      await financeWrites.addDocument('petty_cash_ledger', {
         tenantId: profile!.tenantId,
         date: new Date().toISOString().split('T')[0],
         amount: req.amount_requested,
@@ -2842,8 +2857,10 @@ const PettyCashManagement: React.FC = () => {
         created_at: new Date().toISOString()
       });
 
-      await firestoreService.updateDocument('petty_cash_requisitions', req.id, { status: 'disbursed' });
-      toast.success('Cash disbursed successfully');
+      await financeWrites.updateDocument('petty_cash_requisitions', req.id, { status: 'disbursed' });
+      await financeWrites.commit();
+      financeMessages.forEach(({kind,message})=>toast[kind](message));
+      financeMessages.push({kind:'success',message:'Cash disbursed successfully'});
     } catch (error) {
       toast.error('Disbursement failed');
     }
@@ -3108,8 +3125,10 @@ const PettyCashModal: React.FC<{
     }
 
     try {
+      const financeMessages: {kind:'success'|'info';message:string}[] = [];
+      const financeWrites = createManagementFinanceWriteGroup(profile?.tenantId || '', profile?.uid || '');
       // 1. Add to petty_cash_ledger
-      await firestoreService.addDocument('petty_cash_ledger', {
+      await financeWrites.addDocument('petty_cash_ledger', {
         tenantId: profile.tenantId,
         date: new Date().toISOString().split('T')[0],
         amount: formData.amount,
@@ -3123,7 +3142,7 @@ const PettyCashModal: React.FC<{
 
       // 2. Trigger bank transfer if selected sourceType is bank
       if (type === 'incoming' && sourceType === 'bank') {
-        await firestoreService.addDocument('cashTransfers', {
+        await financeWrites.addDocument('cashTransfers', {
           tenantId: profile.tenantId,
           fromPortfolio: 'banked',
           toPortfolio: 'petty_cash',
@@ -3131,10 +3150,12 @@ const PettyCashModal: React.FC<{
           processedBy: profile.fullName || profile.email || 'Authorized Finance',
           processedAt: new Date().toISOString()
         });
-        toast.info('Bank portfolio balance updated for this transfer.');
+        financeMessages.push({kind:'info',message:'Bank portfolio balance updated for this transfer.'});
       }
+      await financeWrites.commit();
+      financeMessages.forEach(({kind,message})=>toast[kind](message));
 
-      toast.success(type === 'incoming' ? 'Inflow logged successfully' : 'Issuance logged successfully');
+      financeMessages.push({kind:'success',message:type === 'incoming' ? 'Inflow logged successfully' : 'Issuance logged successfully'});
       onClose();
     } catch (error) {
       console.error(error);

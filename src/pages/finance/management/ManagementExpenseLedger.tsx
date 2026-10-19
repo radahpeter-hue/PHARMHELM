@@ -1,3 +1,6 @@
+import { ManagementPaymentAccounts } from '../../../components/finance/ManagementPaymentAccounts';
+import { SupplierInvoicePaymentPanel } from '../../../components/finance/SupplierInvoicePaymentPanel';
+import { stageManagementCashEntry } from '../../../services/managementCashPosting';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
@@ -31,7 +34,9 @@ interface ManagementExpense {
   category: string;
   amount: number;
   amount_ugx?: number;
-  status: 'draft' | 'approved' | 'rejected' | 'pending';
+  status: 'draft' | 'approved' | 'rejected' | 'pending' | 'partial';
+  paidAmountUGX?: number;
+  balanceUGX?: number;
   created_at: string;
   logged_by: string;
   description: string;
@@ -321,7 +326,7 @@ export const ManagementExpenseLedger: React.FC = () => {
         logged_by: profile.fullName || profile.email || 'SYSTEM',
         created_at: new Date().toISOString()
       };
-      batch.set(pcRef, pcPayload);
+      stageManagementCashEntry(batch, pcRef.id, pcPayload);
 
       await batch.commit();
 
@@ -418,14 +423,14 @@ export const ManagementExpenseLedger: React.FC = () => {
             issuedBy: profile.fullName || profile.email || 'Authorized Finance',
             paymentReference, excludeFromOpexRollup: true
           });
-          transaction.set(pettyRef, {
+          stageManagementCashEntry(transaction, pettyRef.id, {
             tenantId: profile.tenantId, date: now.toDate().toISOString().split('T')[0],
             amount: amt, source: 'Supplier credit settlement', reference_number: paymentReference,
             type: 'outgoing', invoiceId: reviewingExpense.invoiceId,
             creditLedgerId: reviewingExpense.sourceRefId, paymentId: reviewingExpense.id,
             logged_by: profile.fullName || profile.email || 'SYSTEM',
             createdAt: now, created_at: now.toDate().toISOString()
-          }, { merge: true });
+          });
           transaction.update(creditRef, {
             remainingCreditBalance: remainingAfter, balance: remainingAfter,
             status: liabilityStatus,
@@ -473,7 +478,7 @@ export const ManagementExpenseLedger: React.FC = () => {
 
       // 2. Add outgoing to petty_cash_ledger
       const pcRef = doc(collection(db, 'petty_cash_ledger'));
-      batch.set(pcRef, {
+      stageManagementCashEntry(batch, pcRef.id, {
         tenantId: profile.tenantId,
         date: new Date().toISOString().split('T')[0],
         amount: amt,
@@ -651,6 +656,7 @@ export const ManagementExpenseLedger: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <ManagementPaymentAccounts />
       {/* Treasury Header */}
       <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 bg-white p-6 border border-zinc-200 rounded-[32px] shadow-sm">
         <div className="space-y-1">
@@ -806,8 +812,9 @@ export const ManagementExpenseLedger: React.FC = () => {
         </div>
       </div>
 
+      <div className="space-y-3 md:hidden">{loading?<p className="text-sm text-zinc-700">Loading expenses…</p>:filteredExpenses.map(exp=><article key={exp.id} className="min-w-0 space-y-3 rounded-2xl border border-zinc-300 bg-white p-4 text-zinc-900"><div className="min-w-0"><p className="break-words font-bold text-zinc-950">{exp.invoiceRef || exp.category}</p><p className="break-words text-sm text-zinc-700">{exp.department} · {exp.status}</p><p className="mt-1 break-words text-sm text-zinc-700">{exp.description}</p></div><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-zinc-700">Invoice / expense</p><p className="font-bold text-zinc-950">UGX {Number(exp.originalAmount||exp.amount||0).toLocaleString()}</p></div><div><p className="text-zinc-700">Paid / issued</p><p className="font-bold text-zinc-950">UGX {Number(exp.source==='procurement_cash_grn'?exp.paidAmountUGX||0:exp.status==='approved'?exp.amount:0).toLocaleString()}</p></div></div>{(['draft','pending','partial'].includes(exp.status.toLowerCase())||exp.source==='procurement_cash_grn')&&<button onClick={()=>handleOpenReview(exp)} className="min-h-11 w-full rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 font-bold text-emerald-950">{exp.source==='procurement_cash_grn'?'Supplier invoice & payments':'Review draft'}</button>}</article>)}</div>
       {/* Main Table / Logs Section */}
-      <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
+      <div className="hidden bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden md:block">
         {loading ? (
           <div className="p-12 text-center text-zinc-500 font-bold flex flex-col items-center gap-2">
             <RefreshCw className="animate-spin text-zinc-400" size={24} />
@@ -866,7 +873,7 @@ export const ManagementExpenseLedger: React.FC = () => {
                     <td className="px-6 py-4 text-center">
                       <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${
                         exp.status?.toLowerCase() === 'approved' ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
-                        (exp.status?.toLowerCase() === 'draft' || exp.status?.toLowerCase() === 'pending') ? "bg-amber-50 text-amber-600 border border-amber-100" :
+                        (exp.status?.toLowerCase() === 'draft' || exp.status?.toLowerCase() === 'pending' || exp.status?.toLowerCase() === 'partial') ? "bg-amber-50 text-amber-600 border border-amber-100" :
                         exp.status?.toLowerCase() === 'rejected' ? "bg-red-50 text-red-600 border border-red-100" :
                         "bg-zinc-100 text-zinc-500"
                       }`}>
@@ -874,7 +881,7 @@ export const ManagementExpenseLedger: React.FC = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-center">
-                      {(exp.status?.toLowerCase() === 'draft' || exp.status?.toLowerCase() === 'pending') ? (
+                      {(exp.status?.toLowerCase() === 'draft' || exp.status?.toLowerCase() === 'pending' || exp.status?.toLowerCase() === 'partial') ? (
                         <button
                           onClick={() => handleOpenReview(exp)}
                           className="px-3 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 text-[10px] font-black uppercase tracking-wider rounded-lg border border-amber-200 transition-all flex items-center gap-1 mx-auto"
@@ -1001,8 +1008,9 @@ export const ManagementExpenseLedger: React.FC = () => {
         </div>
       )}
 
+      {isReviewModalOpen && reviewingExpense?.source==='procurement_cash_grn'&&<div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3"><div className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-lg min-w-0 flex-col overflow-hidden rounded-2xl bg-white text-zinc-900 shadow-2xl"><div className="flex shrink-0 items-center justify-between border-b border-zinc-200 p-4"><h3 className="font-bold text-zinc-950">Supplier payment</h3><button aria-label="Close supplier payment" onClick={()=>setIsReviewModalOpen(false)} className="min-h-11 min-w-11 rounded-xl border border-zinc-300 bg-white text-zinc-900"><X size={20} className="mx-auto"/></button></div><div className="min-h-0 overflow-y-auto overscroll-contain p-4"><SupplierInvoicePaymentPanel draftId={reviewingExpense.id} onSettled={()=>{setIsReviewModalOpen(false);setReviewingExpense(null);toast.success('Supplier payment recorded.');void fetchData();}}/></div></div></div>}
       {/* Review Draft Modal */}
-      {isReviewModalOpen && reviewingExpense && (
+      {isReviewModalOpen && reviewingExpense && reviewingExpense.source !== 'procurement_cash_grn' && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-[32px] w-full max-w-lg overflow-hidden shadow-2xl border border-zinc-100 animate-in zoom-in-95 duration-150">
             <div className="p-8 space-y-6">

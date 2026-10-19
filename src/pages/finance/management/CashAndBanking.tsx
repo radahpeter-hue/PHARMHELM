@@ -1,3 +1,5 @@
+import { useManagementPaymentAccounts } from '../../../components/finance/ManagementPaymentAccounts';
+import { createManagementFinanceWriteGroup } from '../../../services/managementCashPosting';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
@@ -123,6 +125,7 @@ export const CashAndBanking: React.FC = () => {
     fetchTreasuryData();
   }, [profile?.tenantId]);
 
+  const { accounts: paymentAccounts } = useManagementPaymentAccounts();
   // Aggregate sums
   const memoizedCalculations = useMemo(() => {
     // A. Direct EOD totals
@@ -144,7 +147,8 @@ export const CashAndBanking: React.FC = () => {
     const totalWelfareAllocated = allocations.reduce((acc, curr) => acc + (curr.amount || 0), 0);
 
     // PORTFOLIO 1: BANKED CASH
-    const bankedCash = totalEodCash + totalEodCard + totalTransferredToBanked - totalTransferredFromBanked;
+    const registeredBank = paymentAccounts.find(account=>account.kind==='bank'&&account.initialized);
+    const bankedCash = registeredBank ? registeredBank.balanceUGX : totalEodCash + totalEodCard + totalTransferredToBanked - totalTransferredFromBanked;
 
     // PORTFOLIO 2: MTN MOMO
     const momoBalance = Math.max(0, totalEodMomo - totalTransfersFromMomo);
@@ -167,7 +171,7 @@ export const CashAndBanking: React.FC = () => {
       welfareAllocated: totalWelfareAllocated,
       welfareUsed: totalEodWelfareUsed
     };
-  }, [eodList, transfers, receivables, allocations]);
+  }, [eodList, transfers, receivables, allocations, paymentAccounts]);
 
   // Last update timers
   const lastUpdatedTimestamps = useMemo(() => {
@@ -230,7 +234,7 @@ export const CashAndBanking: React.FC = () => {
       receivables: getLatestDate(recDates),
       welfare: getLatestDate(welfareDates)
     };
-  }, [eodList, transfers, receivables, allocations]);
+  }, [eodList, transfers, receivables, allocations, paymentAccounts]);
 
   // Execute processing portfolio balance to Banked Cash
   const handleProcessToBank = async () => {
@@ -252,7 +256,9 @@ export const CashAndBanking: React.FC = () => {
 
     setIsSubmittingTransfer(true);
     try {
-      await addDoc(collection(db, 'cashTransfers'), {
+      const financeMessages: {kind:'success'|'info';message:string}[] = [];
+      const financeWrites = createManagementFinanceWriteGroup(profile?.tenantId || '', profile?.uid || '');
+      await financeWrites.add('cashTransfers', {
         tenantId: profile?.tenantId,
         fromPortfolio: transferType,
         toPortfolio: 'banked',
@@ -260,8 +266,10 @@ export const CashAndBanking: React.FC = () => {
         processedBy: profile?.fullName || profile?.email || 'Authorized Finance',
         processedAt: Timestamp.now()
       });
+      await financeWrites.commit();
+      financeMessages.forEach(({kind,message})=>toast[kind](message));
 
-      toast.success(`UGX ${transferAmount.toLocaleString()} moved from ${transferType.toUpperCase()} to Banked Cash.`);
+      financeMessages.push({kind:'success',message:`UGX ${transferAmount.toLocaleString()} moved from ${transferType.toUpperCase()} to Banked Cash.`});
       setTransferType(null);
       setTransferAmount(0);
       fetchTreasuryData(); // refresh
@@ -282,7 +290,9 @@ export const CashAndBanking: React.FC = () => {
 
     setIsSubmittingAllocation(true);
     try {
-      await addDoc(collection(db, 'welfareAllocations'), {
+      const financeMessages: {kind:'success'|'info';message:string}[] = [];
+      const financeWrites = createManagementFinanceWriteGroup(profile?.tenantId || '', profile?.uid || '');
+      await financeWrites.add('welfareAllocations', {
         tenantId: profile?.tenantId,
         amount: welfareAmount,
         notes: welfareNotes || 'Quarterly operational staff welfare allocation',
@@ -291,7 +301,7 @@ export const CashAndBanking: React.FC = () => {
       });
 
       // Also add an outgoing deduction entry to petty_cash_ledger!
-      await addDoc(collection(db, 'petty_cash_ledger'), {
+      await financeWrites.add('petty_cash_ledger', {
         tenantId: profile?.tenantId,
         date: new Date().toISOString().split('T')[0],
         amount: welfareAmount,
@@ -301,8 +311,10 @@ export const CashAndBanking: React.FC = () => {
         logged_by: profile?.fullName || profile?.email || 'Authorized Finance',
         created_at: new Date().toISOString()
       });
+      await financeWrites.commit();
+      financeMessages.forEach(({kind,message})=>toast[kind](message));
 
-      toast.success(`Allocated UGX ${welfareAmount.toLocaleString()} from Petty Cash to Staff Welfare Fund successfully.`);
+      financeMessages.push({kind:'success',message:`Allocated UGX ${welfareAmount.toLocaleString()} from Petty Cash to Staff Welfare Fund successfully.`});
       setIsAllocatingWelfare(false);
       setWelfareAmount(0);
       setWelfareNotes('');

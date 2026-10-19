@@ -1,3 +1,4 @@
+import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { OperationalItemCode } from '../components/inventory/OperationalItemCode';
 import { OperationalGrnRouteSelector } from '../components/procurement/OperationalGrnRouteSelector';
 import type { OperationalDeliveryRoute } from '../services/operationalDeliveryRoute';
@@ -2653,6 +2654,8 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     }
 
     try {
+      const financeMessages: {kind:'success'|'info';message:string}[] = [];
+      const financeWrites = createManagementFinanceWriteGroup(profile?.tenantId || '', profile?.uid || '');
       const grnNumber = `MGRN-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
       const supplier = suppliers.find(s => s.id === selectedSupplierId);
       const targetBranch = branches.find(b => b.id === selectedBranchId);
@@ -2675,14 +2678,14 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         items
       };
 
-      const grnId = await firestoreService.addDocument('grn_records', grnRecord);
+      const grnId = await financeWrites.addDocument('grn_records', grnRecord);
 
       // Write corresponding document to 'invoices' collection
       const todayStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
       const seq = Math.floor(1000 + Math.random() * 9000);
       const invoiceRef = `INV-${todayStr}-${seq}`;
 
-      const invoiceId = await firestoreService.addDocument('invoices', {
+      const invoiceId = await financeWrites.addDocument('invoices', {
         tenantId: profile?.tenantId,
         invoiceRef,
         grnId: grnId,
@@ -2698,7 +2701,7 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       });
 
       if (paymentType === 'credit') {
-        await firestoreService.addDocument('creditLedger', {
+        await financeWrites.addDocument('creditLedger', {
           tenantId: profile?.tenantId,
           invoiceId,
           invoiceRef,
@@ -2716,7 +2719,7 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       }
 
       // Add to Procurement Invoices Ledger for Finance Module
-      await firestoreService.addDocument('procurement_invoices', {
+      await financeWrites.addDocument('procurement_invoices', {
         tenantId: profile?.tenantId,
         branch_id: selectedBranchId,
         branch_name: targetBranch?.branch_name || 'Branch Store',
@@ -2735,7 +2738,7 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
       if (paymentType === 'cash') {
         // Log in Petty Cash Ledger (Outgoing) for cash stock purchase
-        await firestoreService.addDocument('petty_cash_ledger', {
+        await financeWrites.addDocument('petty_cash_ledger', {
           tenantId: profile?.tenantId,
           date: new Date().toISOString(),
           amount: totalValue,
@@ -2756,7 +2759,7 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         const totalUnits = item.qty * unitsPerPack;
 
         // Add batch
-        await firestoreService.addDocument('product_batches', {
+        await financeWrites.addDocument('product_batches', {
           tenantId: profile?.tenantId,
           branchId: selectedBranchId,
           productId: item.product_id,
@@ -2774,14 +2777,14 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
         // Update product stock
         if (product) {
-          await firestoreService.updateDocument('products', product.id, {
+          await financeWrites.updateDocument('products', product.id, {
             quantityInStock: (product.quantityInStock || 0) + totalUnits,
             updatedAt: new Date().toISOString()
           });
         }
 
         // Movement
-        await firestoreService.addDocument('inventory_movements', {
+        await financeWrites.addDocument('inventory_movements', {
           tenantId: profile?.tenantId,
           branchId: selectedBranchId,
           productId: item.product_id,
@@ -2800,8 +2803,10 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           amountAttached: item.qty * item.unit_cost_ugx
         });
       }
+      await financeWrites.commit();
+      financeMessages.forEach(({kind,message})=>toast[kind](message));
 
-      toast.success('Manual GRN recorded and inventory updated');
+      financeMessages.push({kind:'success',message:'Manual GRN recorded and inventory updated'});
       onClose();
     } catch (error: any) {
       console.error('Manual GRN Process Error:', error);

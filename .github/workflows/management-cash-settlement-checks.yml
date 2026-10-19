@@ -1,0 +1,35 @@
+name: Management Cash settlement acceptance
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/services/managementCashPosting.ts'
+      - 'src/services/managementPaymentAccountService.ts'
+      - 'src/services/cashGrnSettlementService.ts'
+      - 'src/components/finance/**'
+      - 'scripts/management-cash-settlement-*.mjs'
+      - '.github/workflows/management-cash-settlement-checks.yml'
+      - 'firestore.rules'
+permissions:
+  contents: read
+jobs:
+  authenticated-settlement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
+      - name: Authenticated Cash/Bank settlement and competing writer tests
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-finance-settlement-rules "node scripts/management-cash-settlement-rules-emulator.mjs"
