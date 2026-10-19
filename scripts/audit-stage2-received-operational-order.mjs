@@ -63,6 +63,7 @@ try {
    }
    const lastSource=sourceMovements.at(-1);
    if(!lastSource||Number(source.get('quantityInStock'))!==Number(lastSource.get('balanceAfter'))||source.get('lastMovementId')!==lastSource.id)issues.push('HQ_SOH_DOES_NOT_MATCH_LEDGER');
+   report.hqMovementEvidence=sourceMovements.map(m=>({type:m.get('movementType'),before:m.get('balanceBefore'),after:m.get('balanceAfter'),delta:m.get('quantityDelta'),createdAt:String(m.get('createdAt')),reference:m.get('reference')}));
    report.hqSource={dispatchBefore:outgoing?.get('balanceBefore'),dispatchAfter:outgoing?.get('balanceAfter'),currentSOH:source.get('quantityInStock'),movementCount:sourceMovements.length};
   }
 

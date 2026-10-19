@@ -37,6 +37,7 @@ try {
   await page.getByText('Item code: OPS-000123',{exact:true}).waitFor();
   assert.equal(await page.getByText(line.masterItemId,{exact:false}).count(),0);
   assert.equal(await page.locator('body').evaluate(e=>e.scrollWidth<=innerWidth),true);
+  assert.notEqual(await page.getByText('24 units',{exact:true}).evaluate(e=>getComputedStyle(e).color),'rgb(255, 255, 255)');
   const accepted=page.getByLabel('Accepted quantity Pens',{exact:true});
   assert.equal(await accepted.inputValue(),'24');
   await accepted.fill('20');
