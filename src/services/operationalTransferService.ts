@@ -208,7 +208,8 @@ function assertOperationalEnabled(settings: any, tenantId: string) {
 
 /** Dispatches only stock actually received against an Operational external-sourcing order. */
 export async function dispatchOperationalOrderToBranch(
-  input: DispatchOperationalOrderInput
+  input: DispatchOperationalOrderInput,
+  connection: Firestore = db
 ): Promise<DispatchOperationalOrderResult> {
   const tenantId = input.tenantId.trim();
   const { order, actor } = input;
@@ -217,11 +218,11 @@ export async function dispatchOperationalOrderToBranch(
   if (!order.requesting_branch_id || order.requesting_branch_id === 'HQ') throw new Error('The Operational order must target a branch.');
 
   const transferId = transferIdForOrder(order.id);
-  const transferRef = doc(db, 'operational_transfers', transferId);
-  const orderRef = doc(db, 'stock_orders', order.id);
-  const settingsRef = doc(db, 'system_settings', tenantId);
+  const transferRef = doc(connection, 'operational_transfers', transferId);
+  const orderRef = doc(connection, 'stock_orders', order.id);
+  const settingsRef = doc(connection, 'system_settings', tenantId);
   const now = new Date().toISOString();
-  const sourceLines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [
+  const sourceLines = await readOperationalQuery<StockOrderLine>(connection, 'stock_order_lines', [
     { field: 'tenantId', operator: '==', value: tenantId },
     { field: 'order_id', operator: '==', value: order.id }
   ]);
@@ -246,7 +247,7 @@ export async function dispatchOperationalOrderToBranch(
   const totalValueUGX = linesToDispatch.reduce((sum, row) => sum + row.qtyPacks * row.costPerPack, 0);
   const transferNumber = `OT-${new Date().getFullYear()}-${hash(`${tenantId}|${transferId}`)}`;
 
-  await runTransaction(db, async transaction => {
+  await runTransaction(connection, async transaction => {
     const [settingsSnapshot, orderSnapshot, transferSnapshot] = await Promise.all([
       transaction.get(settingsRef), transaction.get(orderRef), transaction.get(transferRef)
     ]);
@@ -279,7 +280,7 @@ export async function dispatchOperationalOrderToBranch(
     });
   });
 
-  const transferSnapshot = await firestoreService.getDocument<OperationalTransfer>('operational_transfers', transferId);
+  const transferSnapshot = await readOperationalDocument<OperationalTransfer>(connection, 'operational_transfers', transferId);
   if (!transferSnapshot || transferSnapshot.tenantId !== tenantId) throw new Error('The Operational transfer could not be loaded after creation.');
   if (['dispatched', 'received', 'queried'].includes(transferSnapshot.status)) {
     return { transferId, transferNumber: transferSnapshot.transferNumber, alreadyDispatched: true, lineCount: linesToDispatch.length };
@@ -287,16 +288,16 @@ export async function dispatchOperationalOrderToBranch(
 
   for (const row of linesToDispatch) {
     const masterId = row.line.masterItemId!;
-    const master = await firestoreService.getDocument<OperationalInventoryMaster>('operational_inventory_masters', masterId);
+    const master = await readOperationalDocument<OperationalInventoryMaster>(connection, 'operational_inventory_masters', masterId);
     if (!master || master.tenantId !== tenantId || master.inventoryClass !== 'OPERATIONAL' || !master.hqLocationItemId) {
       throw new Error(`Operational identity ${masterId} has no verified HQ location item.`);
     }
-    const sourceItem = await firestoreService.getDocument<OperationalInventory>('operational_inventory', master.hqLocationItemId);
+    const sourceItem = await readOperationalDocument<OperationalInventory>(connection, 'operational_inventory', master.hqLocationItemId);
     if (!sourceItem || sourceItem.tenantId !== tenantId || sourceItem.branchId !== 'HQ' ||
         sourceItem.inventoryClass !== 'OPERATIONAL' || sourceItem.masterItemId !== masterId) {
       throw new Error(`The HQ Operational stock record for ${master.name} is missing or mismatched.`);
     }
-    const destinationCopies = await firestoreService.getDocumentsByQuery<OperationalInventory>('operational_inventory', [
+    const destinationCopies = await readOperationalQuery<OperationalInventory>(connection, 'operational_inventory', [
       { field: 'tenantId', operator: '==', value: tenantId },
       { field: 'masterItemId', operator: '==', value: masterId }
     ]);
@@ -308,13 +309,13 @@ export async function dispatchOperationalOrderToBranch(
     const quantityDispatched = row.qtyPacks * Math.max(1, Number(master.unitPerPack || sourceItem.unitPerPack || 1));
     const unitCostUGX = row.costPerPack / Math.max(1, Number(master.unitPerPack || 1));
     const lineId = transferLineIdForOrderLine(transferId, row.line.id);
-    const transferLineRef = doc(db, 'operational_transfer_lines', lineId);
-    const orderLineRef = doc(db, 'stock_order_lines', row.line.id);
-    const masterRef = doc(db, 'operational_inventory_masters', masterId);
-    const sourceItemRef = doc(db, 'operational_inventory', sourceItem.id);
-    const destinationItemRef = doc(db, 'operational_inventory', destinationItem.id);
+    const transferLineRef = doc(connection, 'operational_transfer_lines', lineId);
+    const orderLineRef = doc(connection, 'stock_order_lines', row.line.id);
+    const masterRef = doc(connection, 'operational_inventory_masters', masterId);
+    const sourceItemRef = doc(connection, 'operational_inventory', sourceItem.id);
+    const destinationItemRef = doc(connection, 'operational_inventory', destinationItem.id);
 
-    await runTransaction(db, async transaction => {
+    await runTransaction(connection, async transaction => {
       const [headerSnapshot, sourceLineSnapshot, currentMaster, currentHq, currentDestination, lineSnapshot] = await Promise.all([
         transaction.get(transferRef), transaction.get(orderLineRef), transaction.get(masterRef),
         transaction.get(sourceItemRef), transaction.get(destinationItemRef), transaction.get(transferLineRef)
@@ -343,7 +344,7 @@ export async function dispatchOperationalOrderToBranch(
     });
   }
 
-  const transferLines = await firestoreService.getDocumentsByQuery<OperationalTransferLine>('operational_transfer_lines', [
+  const transferLines = await readOperationalQuery<OperationalTransferLine>(connection, 'operational_transfer_lines', [
     { field: 'tenantId', operator: '==', value: tenantId },
     { field: 'transferId', operator: '==', value: transferId }
   ]);
@@ -356,9 +357,9 @@ export async function dispatchOperationalOrderToBranch(
       movementType: 'TRANSFER_OUT', reference: transferNumber,
       idempotencyKey: movementKeyForTransferLine(line.id, 'out'), actorId: actor.uid,
       actorName: actor.name, sourceTransactionId: transferId, sourceLineId: line.id
-    });
-    const lineRef = doc(db, 'operational_transfer_lines', line.id);
-    await runTransaction(db, async transaction => {
+    }, connection);
+    const lineRef = doc(connection, 'operational_transfer_lines', line.id);
+    await runTransaction(connection, async transaction => {
       const snapshot = await transaction.get(lineRef);
       if (!snapshot.exists() || snapshot.data().tenantId !== tenantId || snapshot.data().transferId !== transferId) throw new Error('The Operational transfer line cannot be completed.');
       if (snapshot.data().status === 'dispatched') return;
@@ -368,8 +369,8 @@ export async function dispatchOperationalOrderToBranch(
   }
 
   const completedAt = new Date().toISOString();
-  await runTransaction(db, async transaction => {
-    const sourceLineRefs = linesToDispatch.map(row => doc(db, 'stock_order_lines', row.line.id));
+  await runTransaction(connection, async transaction => {
+    const sourceLineRefs = linesToDispatch.map(row => doc(connection, 'stock_order_lines', row.line.id));
     const [headerSnapshot, orderSnapshot, sourceLineSnapshots] = await Promise.all([
       transaction.get(transferRef), transaction.get(orderRef),
       Promise.all(sourceLineRefs.map(ref => transaction.get(ref)))
