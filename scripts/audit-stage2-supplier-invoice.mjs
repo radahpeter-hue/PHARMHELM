@@ -54,6 +54,7 @@ try {
       const t=String(d.type||'').toLowerCase();
       balance+=['incoming','deposit','topup'].includes(t)?amount:-amount;
     }
+    report.cashLedgerBalanceUGX=balance;
     report.cashLedgerBalanceSufficient=report.cashLedgerAnomalies===0&&balance>=report.remainingUGX;
     if(report.cashLedgerAnomalies) report.issues.push('CASH_LEDGER_AMOUNT_ANOMALIES');
   }

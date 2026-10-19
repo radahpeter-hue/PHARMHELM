@@ -624,13 +624,13 @@ export const ManagementExpenseLedger: React.FC = () => {
       'Source': e.sourceType?.toUpperCase() || 'MANUAL',
       'Ref Number/Invoice': e.invoiceRef || 'N/A',
       'Original Draft Ceiling': e.originalAmount || e.amount,
-      'Issued Amount (UGX)': e.amount,
+      'Issued Amount (UGX)': e.source==='procurement_cash_grn'?Number(e.paidAmountUGX||0):e.status==='approved'?e.amount:0,
       'Status': e.status.toUpperCase(),
       'Logged By': e.logged_by
     }));
 
     // Insert Total row
-    const totalIssued = filteredExpenses.filter(e => e.status === 'approved').reduce((sum, e) => sum + e.amount, 0);
+    const totalIssued = filteredExpenses.reduce((sum,e)=>sum+(e.source==='procurement_cash_grn'?Number(e.paidAmountUGX||0):e.status==='approved'?e.amount:0),0);
     exportData.push({
       'Date': 'TOTAL ISSUED EXPENSES',
       'Category/Type': '',
@@ -868,7 +868,7 @@ export const ManagementExpenseLedger: React.FC = () => {
                       UGX {(exp.originalAmount || exp.amount || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 text-right text-sm font-mono font-black text-zinc-950">
-                      UGX {exp.amount.toLocaleString()}
+                      UGX {(exp.source==='procurement_cash_grn'?Number(exp.paidAmountUGX||0):exp.status==='approved'?exp.amount:0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 text-center">
                       <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${

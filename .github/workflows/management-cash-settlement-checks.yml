@@ -33,3 +33,16 @@ jobs:
       - run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
       - name: Authenticated Cash/Bank settlement and competing writer tests
         run: npx firebase emulators:exec --only firestore --project pharmhelm-finance-settlement-rules "node scripts/management-cash-settlement-rules-emulator.mjs"
+      - name: Install isolated mobile verification browser
+        run: |
+          npm install --prefix /tmp/finance-browser --no-save playwright@1.51.1
+          /tmp/finance-browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Actual supplier payment and account UI at phone widths
+        env:
+          PLAYWRIGHT_MODULE: /tmp/finance-browser/node_modules/playwright
+        run: node scripts/management-cash-settlement-ui-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: management-payment-mobile-proof
+          path: /tmp/management-payment-ui-*/*.png

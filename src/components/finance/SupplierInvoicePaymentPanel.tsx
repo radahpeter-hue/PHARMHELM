@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocs, collection, query, where } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { settleCashGrnDraft } from '../../services/cashGrnSettlementService';
@@ -12,16 +12,23 @@ export function SupplierInvoicePaymentPanel({draftId,onSettled}:{draftId:string;
  const [payable,setPayable]=useState<Payable|null>(null),[accountId,setAccountId]=useState('');
  const [amount,setAmount]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[confirm,setConfirm]=useState(false);
  const busyRef=useRef(false);
- const canPay=hasPermission('finance','operate');
+ const [history,setHistory]=useState<{id:string;reference:string;amountUGX:number;remainingUGX:number}[]>([]);
+ const [released,setReleased]=useState(false);
+ const canPay=released&&hasPermission('finance','operate');
  useEffect(()=>{
   let disposed=false;setPayable(null);setError('');setConfirm(false);
   if(!profile?.tenantId)return;
   const tenantId=profile.tenantId;
   void (async()=>{
+   const settings=await getDoc(doc(db,'system_settings',tenantId));
+   if(!settings.exists()||settings.data().managementCashSettlementV1!==true)throw new Error('Supplier settlement is awaiting Finance release activation.');
+   if(!disposed)setReleased(true);
    const draft=await getDoc(doc(db,'management_expenses',draftId));
    if(!draft.exists()||draft.data().tenantId!==tenantId||draft.data().source!=='procurement_cash_grn')throw new Error('Linked supplier payment draft is unavailable.');
    const invoice=await getDoc(doc(db,'invoices',draft.data().invoiceId));
    if(!invoice.exists()||invoice.data().tenantId!==tenantId||invoice.data().grnId!==draft.data().grnId)throw new Error('Supplier invoice linkage requires reconciliation.');
+   const paymentHistory=await getDocs(query(collection(db,'cash_grn_payments'),where('tenantId','==',tenantId),where('invoiceId','==',invoice.id)));
+   if(!disposed)setHistory(paymentHistory.docs.map(d=>({id:d.id,reference:d.data().reference,amountUGX:Number(d.data().amountUGX),remainingUGX:Number(d.data().remainingUGX)})));
    const value=invoice.data(),total=Number(value.invoiceValue),paid=Number(value.paidAmountUGX||0),remaining=total-paid;
    if(![total,paid,remaining].every(Number.isSafeInteger)||remaining<0)throw new Error('Invoice balances require reconciliation.');
    if(!disposed){setPayable({invoiceRef:value.supplierInvoiceNumber||value.invoiceRef,grnRef:value.grnRef||draft.data().grnId,supplierName:value.supplierName||'Supplier',total,paid,remaining});setAmount(String(remaining));}
@@ -53,6 +60,7 @@ export function SupplierInvoicePaymentPanel({draftId,onSettled}:{draftId:string;
    {account&&value>account.balanceUGX&&<p role="alert" className="text-sm font-semibold text-red-800">Insufficient account funds.</p>}
    {confirm?<div className="space-y-3 rounded-xl border border-emerald-300 bg-emerald-50 p-3"><p className="break-words text-sm font-semibold text-emerald-950">Record UGX {value.toLocaleString()} from {account?.name} against invoice {payable.invoiceRef}. Outstanding after payment: UGX {(payable.remaining-value).toLocaleString()}.</p><div className="flex flex-col gap-2 sm:flex-row"><button disabled={busy} onClick={()=>setConfirm(false)} className="min-h-11 rounded-xl border border-zinc-400 bg-white px-4 py-2 font-bold text-zinc-900">Back</button><button disabled={busy||!valid||!canPay} onClick={()=>void pay()} className="min-h-11 rounded-xl bg-emerald-800 px-4 py-3 font-bold text-white disabled:opacity-50">{busy?'Recording payment…':'Record supplier payment'}</button></div></div>:<button disabled={!valid||!canPay||accountsLoading} onClick={()=>setConfirm(true)} className="min-h-11 w-full rounded-xl bg-emerald-800 px-4 py-3 font-bold text-white disabled:opacity-50">Review supplier payment</button>}
   </>:!error&&<p className="text-sm text-zinc-700">Loading linked invoice…</p>}
+  {history.length>0&&<section className="space-y-2 border-t border-zinc-200 pt-3"><h5 className="text-sm font-bold text-zinc-950">Recorded payments</h5>{history.map(payment=><div key={payment.id} className="min-w-0 rounded-xl border border-zinc-200 p-3 text-sm text-zinc-900"><p className="break-all font-semibold">{payment.reference}</p><p>Paid UGX {payment.amountUGX.toLocaleString()} · Remaining UGX {payment.remainingUGX.toLocaleString()}</p></div>)}</section>}
   {(error||accountsError)&&<p role="alert" className="break-words text-sm font-semibold text-red-800">{error||accountsError}</p>}
  </section>;
 }

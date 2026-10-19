@@ -70,16 +70,19 @@ export function createManagementFinanceWriteGroup(tenantId: string, actorId: str
   let transferCashDelta: number | null = null;
   let bankPosted = false;
   let committed = false;
+  let cashLedgerId: string | null = null;
+  let cashTransferRef: DocumentReference | null = null;
   const add = (path: string, data: Record<string, any>) => {
     if (committed || data.tenantId !== tenantId) throw new Error('Invalid finance posting scope.');
     const ref = doc(collection(connection,path));
     const clean = cleanRecord(data);
     if(path === 'petty_cash_ledger') {
       if(cashPosted)throw new Error('Only one cash movement per posting is supported.');
-      cashPosted=true;cashDelta=cashEntryDelta(clean);
+      cashPosted=true;cashDelta=cashEntryDelta(clean);cashLedgerId=ref.id;
       stageManagementCashEntry(batch,ref.id,clean,connection,MANAGEMENT_CASH_ACCOUNT,actorId);
     } else {
       if(path === 'cashTransfers') {
+        cashTransferRef=ref;
         if(bankPosted)throw new Error('Only one bank transfer per posting is supported.');
         const bankDelta=clean.toPortfolio==='banked'?Number(clean.amount):clean.fromPortfolio==='banked'?-Number(clean.amount):0;
         if(bankDelta) {
@@ -106,7 +109,35 @@ export function createManagementFinanceWriteGroup(tenantId: string, actorId: str
         if(cashPosted && cashDelta!==transferCashDelta)throw new Error('Bank transfer and cash posting amounts differ.');
         if(!cashPosted)add('petty_cash_ledger',{tenantId,amount:Math.abs(transferCashDelta),type:transferCashDelta>0?'incoming':'outgoing',source:'Management bank transfer'});
       }
+      if(transferCashDelta!==null&&cashTransferRef&&cashLedgerId){
+        batch.update(cashTransferRef,{cashMovementId:cashLedgerId});
+        batch.update(doc(connection,'petty_cash_ledger',cashLedgerId),{transferId:cashTransferRef.id});
+      }
       committed=true;await batch.commit();
     }
   };
+}
+
+/** Existing receivable-to-bank funding writer shares the controlled bank balance. */
+export async function postManagementReceivablePayment(input:{tenantId:string;receivableId:string;amountUGX:number;requestId:string;actorId:string},connection:Firestore=db) {
+  const transferId=`receivable_${input.tenantId}_${input.receivableId}_${input.requestId}`;
+  const transferRef=doc(connection,'cashTransfers',transferId);
+  const receivableRef=doc(connection,'credit_receivables',input.receivableId);
+  if(!Number.isSafeInteger(input.amountUGX)||input.amountUGX<=0)throw new Error('Enter a positive whole UGX amount.');
+  return runTransaction(connection,async tx=>{
+    const [transfer,receivable]=await Promise.all([tx.get(transferRef),tx.get(receivableRef)]);
+    if(transfer.exists()) {
+      if(transfer.data().tenantId!==input.tenantId||transfer.data().amount!==input.amountUGX||transfer.data().processedBy!==input.actorId)throw new Error('Receivable payment reference conflict.');
+      return {remainingUGX:Number(transfer.data().remainingReceivableUGX)};
+    }
+    if(!receivable.exists()||receivable.data().tenantId!==input.tenantId)throw new Error('Post and verify the canonical receivable before banking its payment.');
+    const outstanding=Number(receivable.data().outstanding_ugx);
+    if(!Number.isSafeInteger(outstanding)||outstanding<input.amountUGX)throw new Error('Payment exceeds the current outstanding receivable.');
+    const remaining=outstanding-input.amountUGX,now=Timestamp.now();
+    const bankMovementId=`transfer_${transferId}`;
+    stageManagementCashEntry(tx,bankMovementId,{tenantId:input.tenantId,amount:input.amountUGX,type:'incoming',source:'Credit receivable payment',transferId,reference_number:transferId},connection,MANAGEMENT_BANK_ACCOUNT,input.actorId);
+    tx.set(transferRef,{tenantId:input.tenantId,fromPortfolio:'receivables',toPortfolio:'banked',amount:input.amountUGX,bankMovementId,receivableId:input.receivableId,remainingReceivableUGX:remaining,processedBy:input.actorId,processedAt:now});
+    tx.update(receivableRef,{outstanding_ugx:remaining,status:remaining===0?'paid':'outstanding',lastProcessedAt:now});
+    return {remainingUGX:remaining};
+  });
 }

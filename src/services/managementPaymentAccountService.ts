@@ -13,6 +13,7 @@ export async function registerManagementPaymentAccount(input: {
   if (!input.actorId || !input.name.trim() || input.reconciliationReference.trim().length < 5) throw new Error('Account name and reconciliation evidence are required.');
   const accountId = input.kind === 'petty_cash' ? MANAGEMENT_CASH_ACCOUNT : MANAGEMENT_BANK_ACCOUNT;
   const ref = doc(connection,'finance_payment_accounts',managementAccountDocumentId(input.tenantId,accountId));
+  const settingsRef=doc(connection,'system_settings',input.tenantId);
   let openingBalanceUGX = input.bankOpeningBalanceUGX ?? 0;
   let openingEntryCount = 0;
   if(input.kind === 'petty_cash') {
@@ -27,7 +28,9 @@ export async function registerManagementPaymentAccount(input: {
   }
   if(!Number.isSafeInteger(openingBalanceUGX)||openingBalanceUGX<0)throw new Error('Reconciled opening balance must be a non-negative whole UGX amount.');
   return runTransaction(connection,async tx=>{
-    if((await tx.get(ref)).exists())throw new Error('This account is already registered. Reconcile discrepancies without replacing its balance.');
+    const [settings,existing]=await Promise.all([tx.get(settingsRef),tx.get(ref)]);
+    if(!settings.exists()||settings.data().managementCashAccountControlV1!==true)throw new Error('Account control is awaiting Finance release activation.');
+    if(existing.exists())throw new Error('This account is already registered. Reconcile discrepancies without replacing its balance.');
     const now=Timestamp.now();
     tx.set(ref,{tenantId:input.tenantId,accountId,name:input.name.trim(),kind:input.kind,currency:'UGX',initialized:true,balanceUGX:openingBalanceUGX,openingBalanceUGX,openingEntryCount,reconciliationReference:input.reconciliationReference.trim(),registeredBy:input.actorId,registeredAt:now,updatedAt:now,lastPostingId:null,controlVersion:1});
     return {accountId,openingBalanceUGX,openingEntryCount};

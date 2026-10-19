@@ -8,7 +8,7 @@ if(!process.env.FIRESTORE_EMULATOR_HOST)throw new Error('FIRESTORE_EMULATOR_HOST
 mkdirSync('node_modules/.cache/finance-emulator',{recursive:true});
 await build({entryPoints:['src/services/cashGrnSettlementService.ts','src/services/managementCashPosting.ts','src/services/managementPaymentAccountService.ts'],outdir:'node_modules/.cache/finance-emulator',bundle:true,platform:'node',format:'esm',packages:'external',plugins:[{name:'isolated-firebase',setup(b){b.onResolve({filter:/\/firebase$/},()=>({path:'firebase',namespace:'stub'}));b.onLoad({filter:/.*/,namespace:'stub'},()=>({contents:'export const db={};export const auth={currentUser:null};',loader:'js'}));}}]});
 const {settleCashGrnDraft}=await import('../node_modules/.cache/finance-emulator/cashGrnSettlementService.js');
-const {postManagementCashEntry,createManagementFinanceWriteGroup}=await import('../node_modules/.cache/finance-emulator/managementCashPosting.js');
+const {postManagementCashEntry,createManagementFinanceWriteGroup,postManagementReceivablePayment}=await import('../node_modules/.cache/finance-emulator/managementCashPosting.js');
 const {registerManagementPaymentAccount}=await import('../node_modules/.cache/finance-emulator/managementPaymentAccountService.js');
 const tenantId='finance-test',financeUid='finance-secondary';
 const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-settlement-rules',firestore:{rules:readFileSync('firestore.rules','utf8')}});
@@ -17,7 +17,7 @@ const finance=actor(financeUid);
 const accountId=kind=>`${tenantId}_management_${kind==='bank'?'bank':'petty_cash'}`;
 const accountName=kind=>`management_${kind==='bank'?'bank':'petty_cash'}`;
 const refs=key=>({grnId:`grn_${key}`,invoiceId:`invoice_${key}`,draftId:`management_payment_draft_grn_${key}`,legacyId:`procurement_register_${key}`});
-const admin=async fn=>env.withSecurityRulesDisabled(ctx=>fn(ctx.firestore()));
+const admin=async fn=>{let result;await env.withSecurityRulesDisabled(async ctx=>{result=await fn(ctx.firestore());});return result;};
 async function seed(key,kind='petty_cash',balance=50000,operational=false){
  await admin(async db=>{
   await setDoc(doc(db,'finance_payment_accounts',accountId(kind)),{tenantId,accountId:accountName(kind),name:'Test funding account',kind,currency:'UGX',initialized:true,balanceUGX:balance,openingBalanceUGX:balance,lastPostingId:null,controlVersion:1});
@@ -34,6 +34,7 @@ const value=async(c,id)=>admin(async db=>(await getDoc(doc(db,c,id))).data());
 const count=async c=>admin(async db=>(await getDocs(collection(db,c))).size);
 try {
  await admin(async db=>{
+  await setDoc(doc(db,'system_settings',tenantId),{tenantId,managementCashAccountControlV1:true,managementCashSettlementV1:true});
   for(const [uid,role,secondaryRoles,t] of [[financeUid,'IT Head',['Finance Officer'],tenantId],['finance-primary','Finance Head',[],tenantId],['procurement-only','IT Head',['Procurement Personnel'],tenantId],['logistics','Logistics Head',[],tenantId],['hr','HR Head',[],tenantId],['foreign-finance','Finance Head',[],'other']]) await setDoc(doc(db,'staff',uid),{tenantId:t,role,secondaryRoles,active:true,status:'active',assigned_branches:[]});
  });
  // First-time reconciliation is separate from settlement and preserves historical entries.
@@ -103,6 +104,14 @@ try {
  assert.equal(Boolean(await value('cashTransfers',transferRef.id)),didTransfer);
  assert.equal((await value('finance_payment_accounts',accountId('petty_cash'))).balanceUGX,didTransfer?20000:0);
  console.log('PASS bank transfer and supplier settlement share the same bank balance.');
+ await seed('receivable-source','bank',0);
+ await admin(db=>setDoc(doc(db,'credit_receivables','receivable'),{tenantId,outstanding_ugx:10000,amount_ugx:10000,status:'outstanding'}));
+ const receivableInput={tenantId,receivableId:'receivable',amountUGX:10000,requestId:'receivable-request',actorId:financeUid};
+ await Promise.all([postManagementReceivablePayment(receivableInput,finance),postManagementReceivablePayment(receivableInput,finance)]);
+ assert.equal((await value('finance_payment_accounts',accountId('bank'))).balanceUGX,10000);
+ assert.equal((await value('credit_receivables','receivable')).outstanding_ugx,0);
+ console.log('PASS receivable-to-bank funding is atomic and duplicate-safe.');
+
  await seed('denied');
  await assertFails(settleCashGrnDraft({...input('denied','wrong-role'),actor:{uid:'procurement-only',name:'Procurement'}},actor('procurement-only')));
  await assertFails(settleCashGrnDraft({...input('denied','foreign'),actor:{uid:'foreign-finance',name:'Other Finance'}},actor('foreign-finance')));
@@ -112,5 +121,9 @@ try {
  await assertFails(updateDoc(doc(finance,'petty_cash_ledger','historical-opening'),{amount:999999}));
  await assertFails(postManagementCashEntry({tenantId,amount:60000,type:'outgoing'},finance,'overdraw',financeUid));
  console.log('PASS role and tenant isolation, immutable ledgers, unlinked account edits and unfunded batches denied.');
+ await admin(db=>updateDoc(doc(db,'system_settings',tenantId),{managementCashSettlementV1:false,managementCashAccountControlV1:false}));
+ await seed('unreleased');
+ await assert.rejects(settleCashGrnDraft(input('unreleased','release-gate'),finance),/release activation/);
+ console.log('PASS settlement stays disabled until explicit Finance release activation.');
  console.log('Management Cash/Bank settlement authenticated emulator acceptance passed.');
 } finally {await env.cleanup();}

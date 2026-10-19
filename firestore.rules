@@ -588,6 +588,7 @@ service cloud.firestore {
       allow get: if canPostManagementCash() && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if isFinance() && isTenantMember(resource.data.tenantId);
       allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
+        && get(/databases/$(database)/documents/system_settings/$(request.resource.data.tenantId)).data.managementCashAccountControlV1 == true
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
         && request.resource.data.accountId in ['management_petty_cash','management_bank']
         && request.resource.data.kind == (request.resource.data.accountId == 'management_bank' ? 'bank' : 'petty_cash')
@@ -611,6 +612,7 @@ service cloud.firestore {
         let legacy = getAfter(/databases/$(database)/documents/procurement_invoices/$(data.procurementInvoiceId)).data;
         let movement = getAfter(managementMovementPath(data.paymentAccountKind, paymentId)).data;
         return isFinance() && isTenantMember(data.tenantId)
+          && get(/databases/$(database)/documents/system_settings/$(data.tenantId)).data.managementCashSettlementV1 == true
           && data.processedBy == request.auth.uid
           && paymentId == 'procurement_cash_settlement_' + data.tenantId + '_' + data.draftId + '_' + data.requestId
           && data.amountUGX is int && data.amountUGX > 0
@@ -634,14 +636,31 @@ service cloud.firestore {
       allow update, delete: if false;
     }
     match /cashTransfers/{transferId} {
-      allow read: if isFinance() && isTenantMember(resource.data.tenantId);
+      function canonicalNonCashWelfareTransfer(data) {
+        let sale = getAfter(/databases/$(database)/documents/sales/$(data.saleId)).data;
+        return isPOSOperator() && isTenantMember(data.tenantId)
+          && sale.tenantId == data.tenantId
+          && transferId == 'pos_welfare_transfer_' + data.tenantId + '_' + data.saleId
+          && data.fromPortfolio == 'welfare' && data.toPortfolio == 'banked'
+          && data.amount == (sale.paymentMethod == 'staff_welfare' ? sale.get('welfareAmount', sale.get('totalAmount', sale.get('total', 0))) : 0)
+          && data.status == (data.amount > 0 ? 'posted' : 'reversed');
+      }
+      // Existing POS welfare allocations are non-cash accounting records. They
+      // never credit a registered bank account or bypass its funding guard.
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow create, update: if canonicalNonCashWelfareTransfer(request.resource.data);
       allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.amount is int && request.resource.data.amount > 0
         && (request.resource.data.fromPortfolio == 'banked' || request.resource.data.toPortfolio == 'banked')
         && request.resource.data.bankMovementId == 'transfer_' + transferId
         && getAfter(/databases/$(database)/documents/banking_records/$('transfer_' + transferId)).data.transferId == transferId
         && getAfter(/databases/$(database)/documents/banking_records/$('transfer_' + transferId)).data.tenantId == request.resource.data.tenantId
-        && getAfter(/databases/$(database)/documents/banking_records/$('transfer_' + transferId)).data.accountDeltaUGX == (request.resource.data.toPortfolio == 'banked' ? request.resource.data.amount : -request.resource.data.amount);
+        && getAfter(/databases/$(database)/documents/banking_records/$('transfer_' + transferId)).data.accountDeltaUGX == (request.resource.data.toPortfolio == 'banked' ? request.resource.data.amount : -request.resource.data.amount)
+        && (!(request.resource.data.fromPortfolio == 'petty_cash' || request.resource.data.toPortfolio == 'petty_cash')
+          || (getAfter(/databases/$(database)/documents/petty_cash_ledger/$(request.resource.data.cashMovementId)).data.transferId == transferId
+            && getAfter(/databases/$(database)/documents/petty_cash_ledger/$(request.resource.data.cashMovementId)).data.tenantId == request.resource.data.tenantId
+            && getAfter(/databases/$(database)/documents/petty_cash_ledger/$(request.resource.data.cashMovementId)).data.accountDeltaUGX == (request.resource.data.toPortfolio == 'petty_cash' ? request.resource.data.amount : -request.resource.data.amount)));
       allow update, delete: if false;
     }
 

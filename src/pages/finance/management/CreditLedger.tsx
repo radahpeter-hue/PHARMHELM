@@ -1,3 +1,4 @@
+import { postManagementReceivablePayment } from '../../../services/managementCashPosting';
 import { isActiveSale } from '../../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -373,40 +374,12 @@ export const CreditLedger: React.FC = () => {
 
     setIsSubmittingPayment(true);
     try {
-      const remainingBalance = rec.outstanding_ugx - amountToProcess;
-      const updatedStatus = remainingBalance === 0 ? 'paid' : 'outstanding';
+      const intentKey=`pharmhelm_receivable_${profile?.tenantId}_${rec.id}_${rec.outstanding_ugx}_${amountToProcess}`;
+      let requestId=sessionStorage.getItem(intentKey);
+      if(!requestId){requestId=crypto.randomUUID();sessionStorage.setItem(intentKey,requestId);}
+      const result=await postManagementReceivablePayment({tenantId:profile?.tenantId||'',receivableId:rec.id,amountUGX:amountToProcess,requestId,actorId:profile?.uid||''});
 
-      // 1. Create or update document in credit_receivables collection
-      const recDocRef = doc(db, 'credit_receivables', rec.id);
-      
-      const payload: any = {
-        tenantId: profile?.tenantId || '',
-        receipt_id: rec.receipt_id || rec.id,
-        client_name: rec.client_name || 'Individual client',
-        amount_ugx: rec.amount_ugx || rec.totalAmount || rec.total || 0,
-        outstanding_ugx: remainingBalance,
-        status: updatedStatus,
-        branch_id: rec.branch_id || 'HQ',
-        due_date: rec.due_date || new Date().toISOString(),
-        invoice_number: rec.invoice_number || rec.receiptNumber || 'N/A',
-        created_at: rec.created_at || new Date().toISOString(),
-        lastProcessedAt: Timestamp.now()
-      };
-
-      await setDoc(recDocRef, payload, { merge: true });
-
-      // 2. Log a Cash Transfer from 'receivables' to 'banked'
-      await addDoc(collection(db, 'cashTransfers'), {
-        tenantId: profile?.tenantId || '',
-        fromPortfolio: 'receivables',
-        toPortfolio: 'banked',
-        amount: amountToProcess,
-        processedBy: profile?.fullName || profile?.email || 'Authorized Finance',
-        processedAt: Timestamp.now(),
-        notes: `Received payment for credit receivable: ${rec.invoice_number || rec.receipt_id || 'N/A'}`
-      });
-
-      toast.success(`Payment of UGX ${amountToProcess.toLocaleString()} processed. Remaining: UGX ${remainingBalance.toLocaleString()}. Amount banked successfully!`);
+      toast.success(`Payment of UGX ${amountToProcess.toLocaleString()} processed. Remaining: UGX ${result.remainingUGX.toLocaleString()}. Amount banked successfully!`);
       setProcessingId(null);
       fetchCredits(); // Refresh list
     } catch (e: any) {
