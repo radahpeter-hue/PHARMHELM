@@ -52,6 +52,20 @@ try {
   if(!last||Number(item.get('quantityInStock'))!==Number(last.get('balanceAfter'))||item.get('lastMovementId')!==last.id)issues.push('BRANCH_SOH_DOES_NOT_MATCH_LEDGER');
   const direct=transfer.get('deliveryRoute')==='DIRECT_BRANCH'||row.sourceItemId==='SUPPLIER_TRANSIT';
   if(direct&&dispatch.some(m=>m.get('branchId')==='HQ'))issues.push('DIRECT_ROUTE_DEDUCTED_HQ');
+  if(!direct) {
+   const source=await db.collection('operational_inventory').doc(row.sourceItemId).get();
+   const outgoing=dispatch[0];
+   if(!belongs(source)||source.get('branchId')!=='HQ'||source.get('masterItemId')!==row.masterItemId||outgoing?.get('itemId')!==source.id||outgoing?.get('branchId')!=='HQ'||Number(outgoing?.get('balanceBefore'))-Number(outgoing?.get('balanceAfter'))!==24)issues.push('INVALID_HISTORICAL_HQ_DEDUCTION');
+   const sourceMovements=(await scoped('operational_inventory_movements','itemId',source.id)).sort((a,b)=>String(a.get('createdAt')).localeCompare(String(b.get('createdAt'))));
+   for(let i=0;i<sourceMovements.length;i++) {
+    const m=sourceMovements[i],before=Number(m.get('balanceBefore')),after=Number(m.get('balanceAfter')),delta=Number(m.get('quantityDelta'));
+    if(![before,after,delta].every(Number.isFinite)||after-before!==delta||(i&&before!==Number(sourceMovements[i-1].get('balanceAfter'))))issues.push('HQ_MOVEMENT_CHAIN_MISMATCH');
+   }
+   const lastSource=sourceMovements.at(-1);
+   if(!lastSource||Number(source.get('quantityInStock'))!==Number(lastSource.get('balanceAfter'))||source.get('lastMovementId')!==lastSource.id)issues.push('HQ_SOH_DOES_NOT_MATCH_LEDGER');
+   report.hqSource={dispatchBefore:outgoing?.get('balanceBefore'),dispatchAfter:outgoing?.get('balanceAfter'),currentSOH:source.get('quantityInStock'),movementCount:sourceMovements.length};
+  }
+
   report.lines.push({itemName:row.itemName,itemCode:belongs(master)?master.get('uniqueId')||null:null,status:row.status,dispatched:Number(row.quantityDispatched),accepted,queried,branchSOH:Number(item.get('quantityInStock')),receiptBalanceBefore:receipt?.get('balanceBefore'),receiptBalanceAfter:receipt?.get('balanceAfter'),historicalRoute:direct?'DIRECT_BRANCH':'VIA_HQ',itemMovementCount:ordered.length});
  }
  report.accepted=issues.length===0;
