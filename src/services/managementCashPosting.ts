@@ -1,4 +1,4 @@
-import { collection, doc, increment, runTransaction, Timestamp, writeBatch, type Firestore, type Transaction, type WriteBatch, type DocumentReference, type DocumentData } from 'firebase/firestore';
+import { collection, doc, getDoc, increment, runTransaction, Timestamp, writeBatch, type Firestore, type Transaction, type WriteBatch, type DocumentReference, type DocumentData } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 
 export const MANAGEMENT_CASH_ACCOUNT = 'management_petty_cash';
@@ -124,7 +124,7 @@ export async function postManagementReceivablePayment(input:{tenantId:string;rec
   const transferRef=doc(connection,'cashTransfers',transferId);
   const receivableRef=doc(connection,'credit_receivables',input.receivableId);
   if(!Number.isSafeInteger(input.amountUGX)||input.amountUGX<=0)throw new Error('Enter a positive whole UGX amount.');
-  return runTransaction(connection,async tx=>{
+  try { return await runTransaction(connection,async tx=>{
     const [transfer,receivable]=await Promise.all([tx.get(transferRef),tx.get(receivableRef)]);
     if(transfer.exists()) {
       if(transfer.data().tenantId!==input.tenantId||transfer.data().amount!==input.amountUGX||transfer.data().processedBy!==input.actorId)throw new Error('Receivable payment reference conflict.');
@@ -139,5 +139,12 @@ export async function postManagementReceivablePayment(input:{tenantId:string;rec
     tx.set(transferRef,{tenantId:input.tenantId,fromPortfolio:'receivables',toPortfolio:'banked',amount:input.amountUGX,bankMovementId,receivableId:input.receivableId,remainingReceivableUGX:remaining,processedBy:input.actorId,processedAt:now});
     tx.update(receivableRef,{outstanding_ugx:remaining,status:remaining===0?'paid':'outstanding',lastProcessedAt:now});
     return {remainingUGX:remaining};
-  });
+  }); } catch(error) {
+    try {
+      const existing=await getDoc(transferRef);
+      if(existing.exists()&&existing.data().tenantId===input.tenantId&&existing.data().amount===input.amountUGX&&existing.data().processedBy===input.actorId)
+        return {remainingUGX:Number(existing.data().remainingReceivableUGX)};
+    } catch {}
+    throw error;
+  }
 }

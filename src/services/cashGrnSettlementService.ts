@@ -1,5 +1,5 @@
 import { stageManagementCashEntry, managementAccountDocumentId } from './managementCashPosting';
-import { doc, runTransaction, Timestamp, type Firestore } from 'firebase/firestore';
+import { doc, getDoc, runTransaction, Timestamp, type Firestore } from 'firebase/firestore';
 import { db } from '../firebase';
 import { planCashGrnSettlement } from './cashGrnSettlementPolicy';
 
@@ -9,6 +9,7 @@ export interface CashGrnSettlementInput {
   draftId: string;
   requestId: string;
   amountUGX: number;
+  externalReference: string;
   /** Registered, reconciled payment account ID within the tenant. */
   paymentAccountId: string;
   actor: { uid: string; name: string };
@@ -20,7 +21,8 @@ const positiveAmount = (v: number) => Number.isSafeInteger(v) && v > 0;
 /** Supplier invoice, draft, GRN, account and ledger settle in one transaction. */
 export async function settleCashGrnDraft(input: CashGrnSettlementInput, connection: Firestore = db) {
   const { tenantId, draftId, requestId, amountUGX, paymentAccountId, actor } = input;
-  if (!tenantId || !actor.uid || !safeKey(tenantId) || !safeKey(draftId) || !safeKey(requestId) || !safeKey(paymentAccountId) || !positiveAmount(amountUGX)) {
+  const externalReference=input.externalReference?.trim() || '';
+  if (!tenantId || !actor.uid || !safeKey(tenantId) || !safeKey(draftId) || !safeKey(requestId) || !safeKey(paymentAccountId) || !positiveAmount(amountUGX) || externalReference.length < 3 || externalReference.length > 150) {
     throw new Error('Invalid settlement reference, identity or amount.');
   }
   const settingsRef = doc(connection, 'system_settings', tenantId);
@@ -32,7 +34,7 @@ export async function settleCashGrnDraft(input: CashGrnSettlementInput, connecti
   // the registered payment account kind (petty cash or bank).
   const cashLedgerRef = doc(connection, 'petty_cash_ledger', paymentId);
   const bankLedgerRef = doc(connection, 'banking_records', paymentId);
-  return runTransaction(connection, async tx => {
+  try { return await runTransaction(connection, async tx => {
     const [draft, payment, account, settings] = await Promise.all([
       tx.get(draftRef), tx.get(paymentRef), tx.get(accountRef), tx.get(settingsRef)
     ]);
@@ -40,7 +42,7 @@ export async function settleCashGrnDraft(input: CashGrnSettlementInput, connecti
       const existing = payment.data();
       if (existing.tenantId !== tenantId || existing.draftId !== draftId ||
         existing.amountUGX !== amountUGX || existing.processedBy !== actor.uid ||
-        existing.paymentAccountId !== paymentAccountId) {
+        existing.paymentAccountId !== paymentAccountId || existing.externalReference !== externalReference) {
         throw new Error('Settlement reference already belongs to a different payment.');
       }
       return { paymentId, alreadyProcessed:true, remainingUGX:Number(existing.remainingUGX) };
@@ -91,7 +93,7 @@ export async function settleCashGrnDraft(input: CashGrnSettlementInput, connecti
     const paymentRefText = `PAY-GRN-${requestId}`;
     tx.set(paymentRef, {
       tenantId,draftId,grnId:grnRef.id,invoiceId:invoiceRef.id,
-      requestId, procurementInvoiceId:legacyInvoiceRef.id, previouslyPaidUGX:alreadyPaid, totalInvoiceUGX:invoiceAmount,
+      externalReference,requestId, procurementInvoiceId:legacyInvoiceRef.id, previouslyPaidUGX:alreadyPaid, totalInvoiceUGX:invoiceAmount,
       amountUGX,remainingUGX:plan.remainingUGX,paymentAccountId,
       paymentAccountKind:account.data().kind,processedBy:actor.uid,
       processedByName:actor.name,processedAt:now,reference:paymentRefText,
@@ -101,17 +103,17 @@ export async function settleCashGrnDraft(input: CashGrnSettlementInput, connecti
       tenantId,date:now.toDate().toISOString().slice(0,10),amount:amountUGX,
       type:'outgoing',source:'Procurement Cash GRN settlement',
       reference_number:paymentRefText,grnId:grnRef.id,invoiceId:invoiceRef.id,
-      paymentId,paymentAccountId,paymentAccountKind:account.data().kind,
+      paymentId,externalReference,paymentAccountId,paymentAccountKind:account.data().kind,
       logged_by:actor.uid,createdAt:now,created_at:now.toDate().toISOString()
     }, connection, paymentAccountId, actor.uid);
     tx.update(invoiceRef,{
       paidAmountUGX:alreadyPaid+amountUGX,
       paymentStatus:plan.paymentStatus,creditBalance:plan.remainingUGX,
-      updatedAt:now,lastPaymentReference:paymentRefText,lastPaymentId:paymentId
+      updatedAt:now,lastPaymentReference:externalReference,lastPaymentId:paymentId
     });
     tx.update(legacyInvoiceRef,{
       paid_amount_ugx:alreadyPaid+amountUGX,paidAmountUGX:alreadyPaid+amountUGX,creditBalance:plan.remainingUGX,status:plan.legacyPaymentStatus,
-      paymentStatus:plan.paymentStatus,updatedAt:now,lastPaymentReference:paymentRefText,lastPaymentId:paymentId
+      paymentStatus:plan.paymentStatus,updatedAt:now,lastPaymentReference:externalReference,lastPaymentId:paymentId
     });
     tx.update(draftRef,{
       status:plan.remainingUGX === 0 ? 'approved' : 'partial',
@@ -126,5 +128,22 @@ export async function settleCashGrnDraft(input: CashGrnSettlementInput, connecti
       lastPaymentId:paymentId,updatedAt:now
     });
     return {paymentId,alreadyProcessed:false,remainingUGX:plan.remainingUGX};
-  });
+  }); } catch (error) {
+    // Web transactions can surface a stale immutable-create rule rejection
+    // before the retry precondition. Reconcile the SAME request without writing.
+    try {
+      const recorded=await getDoc(paymentRef);
+      if(recorded.exists()) {
+        const existing=recorded.data();
+        if(existing.tenantId===tenantId && existing.draftId===draftId && existing.amountUGX===amountUGX && existing.processedBy===actor.uid && existing.paymentAccountId===paymentAccountId && existing.externalReference===externalReference)
+          return {paymentId,alreadyProcessed:true,remainingUGX:Number(existing.remainingUGX)};
+      }
+      const accountNow=await getDoc(accountRef);
+      if(accountNow.exists()&&accountNow.data().tenantId===tenantId&&Number(accountNow.data().balanceUGX)<amountUGX)
+        throw new Error('Insufficient funds in the selected Management Cash or Bank account.');
+    } catch (reconciliationError) {
+      if(reconciliationError instanceof Error&&reconciliationError.message.startsWith('Insufficient funds'))throw reconciliationError;
+    }
+    throw error;
+  }
 }

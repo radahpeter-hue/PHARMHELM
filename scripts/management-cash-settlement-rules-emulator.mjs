@@ -29,7 +29,7 @@ async function seed(key,kind='petty_cash',balance=50000,operational=false){
   await setDoc(doc(db,'management_expenses',r.draftId),{tenantId,source:'procurement_cash_grn',excludeFromOpexRollup:true,grnId:r.grnId,invoiceId:r.invoiceId,amount:38000,status:'draft',paidAmountUGX:0});
  });
 }
-const input=(key,requestId,amountUGX=38000,kind='petty_cash')=>({tenantId,draftId:refs(key).draftId,requestId,amountUGX,paymentAccountId:accountName(kind),actor:{uid:financeUid,name:'Test Finance'}});
+const input=(key,requestId,amountUGX=38000,kind='petty_cash')=>({tenantId,draftId:refs(key).draftId,requestId,amountUGX,externalReference:`TEST-VOUCHER-${requestId}`,paymentAccountId:accountName(kind),actor:{uid:financeUid,name:'Test Finance'}});
 const value=async(c,id)=>admin(async db=>(await getDoc(doc(db,c,id))).data());
 const count=async c=>admin(async db=>(await getDocs(collection(db,c))).size);
 try {

@@ -509,13 +509,16 @@ service cloud.firestore {
         'finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
         'credit_receivables', 'supplier_payables', 'banking_records',
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
-        'petty_cash_ledger', 'banking_records', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
+        'petty_cash_ledger', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
         'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
       ];
     }
 
     function canPostManagementCash() {
-      return isFinance() || isHR() || isLogisticsHead() || isProcurement();
+      return isAuthenticated() && (
+        hasAnyRole(['Finance Head','Finance Officer','Accountant','HR Head','HR Support Personnel','HR Manager','Logistics Head','Transport & Logistics Personnel','Logistics Manager','Procurement Head','Procurement Officer','Procurement Manager','Procurement Personnel','admin','Admin'])
+        || hasCustomModuleFunctional('finance') || hasCustomModuleFunctional('hr')
+        || hasCustomModuleFunctional('logistics') || hasCustomModuleFunctional('procurement') || isAdmin());
     }
     function managementAccountPath(tenantId, kind) {
       return /databases/$(database)/documents/finance_payment_accounts/$(tenantId + (kind == 'bank' ? '_management_bank' : '_management_petty_cash'));
@@ -549,7 +552,7 @@ service cloud.firestore {
         && (before.kind == 'bank' ? isFinance() : canPostManagementCash())
         && after.diff(before).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
         && before.initialized == true && before.currency == 'UGX' && before.controlVersion == 1
-        && after.balanceUGX is int && after.balanceUGX >= 0
+        && after.balanceUGX is int && after.balanceUGX >= 0 && after.balanceUGX <= 9007199254740991
         && after.lastPostingId is string && !exists(movementPath)
         && movement.tenantId == before.tenantId && movement.accountDocumentId == accountId
         && movement.postedBy == request.auth.uid
@@ -594,7 +597,7 @@ service cloud.firestore {
         && request.resource.data.kind == (request.resource.data.accountId == 'management_bank' ? 'bank' : 'petty_cash')
         && request.resource.data.currency == 'UGX' && request.resource.data.controlVersion == 1
         && request.resource.data.initialized == true && request.resource.data.lastPostingId == null
-        && request.resource.data.balanceUGX is int && request.resource.data.balanceUGX >= 0
+        && request.resource.data.balanceUGX is int && request.resource.data.balanceUGX >= 0 && request.resource.data.balanceUGX <= 9007199254740991
         && request.resource.data.balanceUGX == request.resource.data.openingBalanceUGX
         && request.resource.data.registeredBy == request.auth.uid
         && request.resource.data.name is string && request.resource.data.name.size() > 0
@@ -616,6 +619,7 @@ service cloud.firestore {
           && data.processedBy == request.auth.uid
           && paymentId == 'procurement_cash_settlement_' + data.tenantId + '_' + data.draftId + '_' + data.requestId
           && data.amountUGX is int && data.amountUGX > 0
+          && data.externalReference is string && data.externalReference.size() >= 3 && data.externalReference.size() <= 150
           && data.previouslyPaidUGX == before.get('paidAmountUGX', 0)
           && data.totalInvoiceUGX == before.invoiceValue
           && data.remainingUGX == data.totalInvoiceUGX - data.previouslyPaidUGX - data.amountUGX && data.remainingUGX >= 0
@@ -625,6 +629,7 @@ service cloud.firestore {
           && draft.tenantId == data.tenantId && draft.source == 'procurement_cash_grn'
           && draft.invoiceId == data.invoiceId && draft.grnId == data.grnId && draft.lastPaymentId == paymentId
           && legacy.tenantId == data.tenantId && legacy.lastPaymentId == paymentId
+          && movement.externalReference == data.externalReference
           && movement.paymentId == paymentId && movement.invoiceId == data.invoiceId && movement.grnId == data.grnId
           && movement.amount == data.amountUGX && movement.type == 'outgoing'
           && movement.accountDocumentId == data.tenantId + '_' + data.paymentAccountId

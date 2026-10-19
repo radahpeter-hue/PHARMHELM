@@ -263,6 +263,7 @@ export const InvoiceLedger: React.FC = () => {
               <option value="Cash">Cash</option>
               <option value="Credit">Credit</option>
               <option value="Partial">Partial</option>
+              <option value="Paid">Paid</option>
             </select>
           </div>
 

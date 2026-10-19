@@ -8,6 +8,7 @@ on:
       - 'src/services/cashGrnSettlementService.ts'
       - 'src/components/finance/**'
       - 'scripts/management-cash-settlement-*.mjs'
+      - 'scripts/validate-inactive-finance-rules.mjs'
       - '.github/workflows/management-cash-settlement-checks.yml'
       - 'firestore.rules'
 permissions:
@@ -34,10 +35,12 @@ jobs:
       - name: Authenticated Cash/Bank settlement and competing writer tests
         run: npx firebase emulators:exec --only firestore --project pharmhelm-finance-settlement-rules "node scripts/management-cash-settlement-rules-emulator.mjs"
       - name: Install isolated mobile verification browser
+        if: always()
         run: |
           npm install --prefix /tmp/finance-browser --no-save playwright@1.51.1
           /tmp/finance-browser/node_modules/.bin/playwright install --with-deps chromium
       - name: Actual supplier payment and account UI at phone widths
+        if: always()
         env:
           PLAYWRIGHT_MODULE: /tmp/finance-browser/node_modules/playwright
         run: node scripts/management-cash-settlement-ui-smoke.mjs
@@ -46,3 +49,16 @@ jobs:
         with:
           name: management-payment-mobile-proof
           path: /tmp/management-payment-ui-*/*.png
+      - name: Authenticate inactive ruleset validation
+        if: success() && github.event.pull_request.head.repo.full_name == github.repository
+        id: inactive_rules_auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
+      - name: Verify compiled release limits without activating rules
+        if: success() && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.inactive_rules_auth.outputs.access_token }}
+        run: node scripts/validate-inactive-finance-rules.mjs

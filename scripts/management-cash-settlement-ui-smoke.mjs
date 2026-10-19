@@ -27,7 +27,7 @@ const css=(await readdir('dist/assets')).find(n=>n.endsWith('.css'));assert.ok(c
 await writeFile(path.join(output,'index.html'),'<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="style.css"></head><body><div id="root"></div><script src="app.js"></script></body></html>');
 const server=createServer(async(req,res)=>{const pathname=req.url.split('?')[0],name=pathname==='/'?'index.html':pathname.slice(1);if(!['index.html','style.css','app.js'].includes(name)){res.statusCode=404;res.end();return;}res.setHeader('Content-Type',name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':'text/html');res.end(await readFile(path.join(output,name)));});await new Promise(r=>server.listen(0,'127.0.0.1',r));
 let browser;
-const open=async(page,scenario='')=>{await page.goto(`http://127.0.0.1:${server.address().port}/${scenario}`);const button=page.getByRole('button',{name:'Supplier invoice & payments',exact:true});if(await button.isVisible())await button.click();else await page.getByRole('button',{name:'Review Draft',exact:true}).click();await page.getByLabel('Supplier payment amount',{exact:true}).waitFor();};
+const open=async(page,scenario='')=>{await page.goto(`http://127.0.0.1:${server.address().port}/${scenario}`);const button=page.getByRole('button',{name:'Supplier invoice & payments',exact:true});if(await button.isVisible())await button.click();else await page.getByRole('button',{name:'Review Draft',exact:true}).click();await page.getByLabel('Supplier payment amount',{exact:true}).waitFor();await page.getByLabel('Supplier payment reference',{exact:true}).fill('VOUCHER-TEST-001');};
 try{
  browser=await chromium.launch({headless:true});
  for(const width of [360,390,1280]){

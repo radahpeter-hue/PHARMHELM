@@ -54,3 +54,11 @@ test('date filters accept native Timestamp and legacy ISO strings', () => {
   assert.equal(dateInRange('2026-09-01T10:00:00.000Z', '2026-09-01', '2026-09-01'), true);
   assert.equal(financialDate(timestamp)?.toISOString(), '2026-09-01T10:00:00.000Z');
 });
+
+
+test('supplier Cash and Bank settlements retain paid and partial statuses in Finance',()=>{
+  const partial=normalizeInvoiceRecord('invoice',{invoiceValue:38000,paymentType:'cash',paymentStatus:'Partially Paid',paidAmountUGX:10000,creditBalance:28000});
+  assert.equal(partial.paymentStatus,'partial');assert.equal(partial.paidAmountUGX,10000);assert.equal(partial.creditBalance,28000);
+  const paid=normalizeInvoiceRecord('invoice',{invoiceValue:38000,paymentType:'cash',paymentStatus:'Paid',paidAmountUGX:38000,creditBalance:0});
+  assert.equal(paid.paymentStatus,'paid');assert.equal(paid.paidAmountUGX,38000);assert.equal(paid.creditBalance,0);
+});
