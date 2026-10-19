@@ -284,6 +284,7 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
         line_status: remainingAfterReceipt === 0 ? 'received' : 'approved',
         grn_id: grnId,
         operational_delivery_route: deliveryRoute,
+        ...(direct ? { operational_received_value_ugx: Number(orderLine.operational_received_value_ugx || 0) + lineValue, operational_last_grn_line_id: grnLineRefs[sourceSnapshotIndex].id } : {}),
         grn_ids: [...new Set([...(Array.isArray(orderLine.grn_ids) ? orderLine.grn_ids : []), grnId])],
         updatedAt: now.toDate().toISOString()
       });

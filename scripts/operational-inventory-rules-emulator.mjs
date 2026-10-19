@@ -544,9 +544,11 @@ try {
   await assertFails(setDoc(doc(branchManager,'stock_orders',directId),{operational_delivery_route:'VIA_HQ'},{merge:true}));
   const partiallyReceivedLine={...(await getDoc(doc(combinedProcurement,'stock_order_lines',directLineId))).data(),id:directLineId};
   await assert.rejects(processOperationalGrn({...directGrnInput,invoiceNumber:'ROUTE-SWITCH',deliveryRoute:'VIA_HQ',lines:[partiallyReceivedLine]},combinedProcurement),/route cannot change/);
-  const secondGrn=await processOperationalGrn({...directGrnInput,order:firstPostedOrder,lines:[partiallyReceivedLine],invoiceNumber:'DIRECT-INV-2'},combinedProcurement);
+  const secondGrn=await processOperationalGrn({...directGrnInput,order:firstPostedOrder,lines:[partiallyReceivedLine],editedLines:{[directLineId]:{qty:1,removed:false,batch:'',expiry:'',unitCostUGX:1200}},invoiceNumber:'DIRECT-INV-2'},combinedProcurement);
   assert.notEqual(secondGrn.grnId,directGrn.grnId);
   const postedOrder = {...(await getDoc(doc(combinedProcurement,'stock_orders',directId))).data(),id:directId};
+  await assertFails(setDoc(doc(combinedProcurement,'stock_order_lines',directLineId),{operational_received_value_ugx:999999},{merge:true}));
+  await assertFails(setDoc(doc(branchManager,'stock_order_lines',directLineId),{qty_received:99},{merge:true}));
   const directDispatchInput = {tenantId,order:postedOrder,destinationBranchName:'Branch A',actor:{uid:'combined-procurement',name:'Combined Buyer'}};
   const directTransfer = await dispatchOperationalOrderToBranch(directDispatchInput,combinedProcurement);
   assert.equal((await dispatchOperationalOrderToBranch(directDispatchInput,combinedProcurement)).alreadyDispatched,true);
@@ -555,6 +557,7 @@ try {
   const directTransferLine = {...directRows.docs[0].data(),id:directRows.docs[0].id};
   assert.equal(directTransferLine.dispatchMovementId,'');
   assert.equal(directTransferLine.quantityDispatched,24);
+  assert.equal(directTransferLine.totalValueUGX,2200);
   await assertFails(setDoc(doc(combinedProcurement,'operational_transfers',directTransfer.transferId),{deliveryRoute:'VIA_HQ'},{merge:true}));
   await assertFails(setDoc(doc(combinedProcurement,'operational_transfer_lines','direct-forged-quantity'),{...directTransferLine,id:'direct-forged-quantity',status:'prepared',quantityDispatched:25}));
   await assertFails(setDoc(doc(combinedProcurement,'operational_transfer_lines','direct-forged-destination'),{...directTransferLine,id:'direct-forged-destination',status:'prepared',destinationItemId:'op-item-b'}));

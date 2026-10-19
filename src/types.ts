@@ -1132,6 +1132,9 @@ export interface StockOrder {
 }
 
 export interface StockOrderLine {
+  operational_delivery_route?: 'DIRECT_BRANCH' | 'VIA_HQ';
+  operational_received_value_ugx?: number;
+  operational_last_grn_line_id?: string;
   id: string;
   tenantId: string;
   /** Optional only for backward compatibility with historical order lines. */

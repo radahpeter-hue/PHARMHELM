@@ -1592,41 +1592,45 @@ service cloud.firestore {
             && line.qtyReceivedUnits == line.qtyReceived * get(masterPath()).data.unitPerPack
             && line.totalValueUGX == line.qtyReceived * line.unitCostUGX);
       }
-      allow create: if isAuthenticated()
+      function validGrnLine() {
+        let line = request.resource.data;
+        let grn = getAfter(grnPath()).data;
+        let order = get(orderPath()).data;
+        let source = get(sourceLinePath()).data;
+        let item = get(itemPath()).data;
+        let master = get(masterPath()).data;
+        return isAuthenticated()
         && isProcurement()
-        && isTenantMember(request.resource.data.tenantId)
-        && isOperationalInventoryEnabled(request.resource.data.tenantId)
-        && request.resource.data.inventoryClass == 'OPERATIONAL'
-        && request.resource.data.qtyReceived is number
-        && request.resource.data.qtyReceived > 0
-        && request.resource.data.qtyReceivedUnits is number
-        && request.resource.data.qtyReceivedUnits > 0
-        && request.resource.data.unitCostUGX is number
-        && request.resource.data.unitCostUGX >= 0
-        && request.resource.data.totalValueUGX is number
-        && request.resource.data.totalValueUGX >= 0
-        && request.resource.data.receivedBy == request.auth.uid
-        && existsAfter(grnPath())
-        && getAfter(grnPath()).data.tenantId == request.resource.data.tenantId
-        && getAfter(grnPath()).data.inventoryClass == 'OPERATIONAL'
-        && getAfter(grnPath()).data.order_id == request.resource.data.orderId
-        && getAfter(grnPath()).data.receivedBy == request.auth.uid
-        && exists(orderPath())
-        && get(orderPath()).data.tenantId == request.resource.data.tenantId
-        && isOperationalOrderData(get(orderPath()).data)
-        && exists(sourceLinePath())
-        && get(sourceLinePath()).data.tenantId == request.resource.data.tenantId
-        && get(sourceLinePath()).data.order_id == request.resource.data.orderId
-        && get(sourceLinePath()).data.inventoryClass == 'OPERATIONAL'
-        && get(sourceLinePath()).data.masterItemId == request.resource.data.masterItemId
-        && exists(itemPath())
-        && get(itemPath()).data.tenantId == request.resource.data.tenantId
-        && get(itemPath()).data.inventoryClass == 'OPERATIONAL'
-        && get(itemPath()).data.masterItemId == request.resource.data.masterItemId
-        && exists(masterPath())
-        && get(masterPath()).data.tenantId == request.resource.data.tenantId
-        && get(masterPath()).data.inventoryClass == 'OPERATIONAL'
+        && isTenantMember(line.tenantId)
+        && isOperationalInventoryEnabled(line.tenantId)
+        && line.inventoryClass == 'OPERATIONAL'
+        && line.qtyReceived is number
+        && line.qtyReceived > 0
+        && line.qtyReceivedUnits is number
+        && line.qtyReceivedUnits > 0
+        && line.unitCostUGX is number
+        && line.unitCostUGX >= 0
+        && line.totalValueUGX is number
+        && line.totalValueUGX >= 0
+        && line.receivedBy == request.auth.uid
+        && grn.tenantId == line.tenantId
+        && grn.inventoryClass == 'OPERATIONAL'
+        && grn.order_id == line.orderId
+        && grn.receivedBy == request.auth.uid
+        && order.tenantId == line.tenantId
+        && isOperationalOrderData(order)
+        && source.tenantId == line.tenantId
+        && source.order_id == line.orderId
+        && source.inventoryClass == 'OPERATIONAL'
+        && source.masterItemId == line.masterItemId
+        && item.tenantId == line.tenantId
+        && item.inventoryClass == 'OPERATIONAL'
+        && item.masterItemId == line.masterItemId
+        && master.tenantId == line.tenantId
+        && master.inventoryClass == 'OPERATIONAL'
         && validGrnLineRoute();
+      }
+      allow create: if validGrnLine();
       allow update, delete: if false;
     }
 
@@ -1755,7 +1759,8 @@ service cloud.firestore {
           && grn.deliveryRoute == 'DIRECT_BRANCH' && grn.tenantId == line.tenantId && grn.order_id == transfer.sourceOrderId
           && line.quantityDispatched is number && line.quantityDispatched > 0
           && line.quantityDispatched == source.qty_received * master.unitPerPack
-          && line.unitCostUGX == float(source.unit_cost_ugx) / float(master.unitPerPack)
+          && source.operational_received_value_ugx is number && source.operational_received_value_ugx >= 0
+          && line.unitCostUGX == float(source.operational_received_value_ugx) / float(source.qty_received * master.unitPerPack)
           && line.totalValueUGX == line.quantityDispatched * line.unitCostUGX
           && isOperationalInventoryEnabled(line.tenantId);
       }
@@ -2249,6 +2254,23 @@ service cloud.firestore {
             )
           );
       }
+      function validDirectReceiptTotals() {
+        let data = request.resource.data;
+        let before = resource.data;
+        let evidencePath = /databases/$(database)/documents/operational_grn_lines/$(data.get('operational_last_grn_line_id', ''));
+        let evidence = getAfter(evidencePath).data;
+        return (data.get('operational_received_value_ugx', 0) == before.get('operational_received_value_ugx', 0)
+            && data.get('qty_received', 0) == before.get('qty_received', 0)
+            && data.get('qty_received_units', 0) == before.get('qty_received_units', 0))
+          || (isProcurement() && !exists(evidencePath) && existsAfter(evidencePath)
+            && evidence.tenantId == data.tenantId
+            && evidence.grnId == data.grn_id
+            && evidence.orderLineId == lineId
+            && evidence.deliveryRoute == 'DIRECT_BRANCH'
+            && data.operational_received_value_ugx == before.get('operational_received_value_ugx', 0) + evidence.totalValueUGX
+            && data.qty_received == before.get('qty_received', 0) + evidence.qtyReceived
+            && data.qty_received_units == before.get('qty_received_units', 0) + evidence.qtyReceivedUnits);
+      }
       allow get: if isAuthenticated()
         && ((resource == null && isProcurement()
             && lineId.matches('^op_hq_buffer_line_[A-Za-z0-9_-]{1,120}$')
@@ -2266,6 +2288,30 @@ service cloud.firestore {
             && request.resource.data.unit_cost_ugx is number && request.resource.data.unit_cost_ugx >= 0 && request.resource.data.unit_cost_ugx <= 9007199254740991
             && request.resource.data.line_total_ugx <= 9007199254740991
             && request.resource.data.line_total_ugx == request.resource.data.qty_ordered * request.resource.data.unit_cost_ugx));
+      // Direct GRN source totals are authorized by fresh immutable line evidence.
+      // This bounded path avoids re-evaluating generic order-edit permissions.
+      function validDirectGrnSourceUpdate() {
+        let data = request.resource.data;
+        let before = resource.data;
+        let evidencePath = /databases/$(database)/documents/operational_grn_lines/$(data.get('operational_last_grn_line_id', ''));
+        let evidence = getAfter(evidencePath).data;
+        return isAuthenticated() && data.get('operational_delivery_route', '') == 'DIRECT_BRANCH'
+          && isProcurement() && isTenantMember(before.tenantId)
+          && data.diff(before).affectedKeys().hasOnly(['qty_received','qty_received_units','unit_cost_ugx','line_status','grn_id','operational_delivery_route','grn_ids','updatedAt','operational_received_value_ugx','operational_last_grn_line_id'])
+          && !exists(evidencePath) && evidence.tenantId == before.tenantId
+          && evidence.inventoryClass == 'OPERATIONAL' && evidence.orderLineId == lineId
+          && evidence.orderId == before.order_id && evidence.itemId == before.product_id
+          && evidence.masterItemId == before.masterItemId
+          && evidence.grnId == data.grn_id && evidence.deliveryRoute == 'DIRECT_BRANCH'
+          && data.operational_received_value_ugx == before.get('operational_received_value_ugx', 0) + evidence.totalValueUGX
+          && data.qty_received == before.get('qty_received', 0) + evidence.qtyReceived
+          && data.qty_received_units == before.get('qty_received_units', 0) + evidence.qtyReceivedUnits
+          && data.unit_cost_ugx == evidence.unitCostUGX
+          && data.line_status == (data.qty_received == before.qty_ordered ? 'received' : 'approved');
+      }
+      allow update: if request.resource.data.get('operational_delivery_route', '') == 'DIRECT_BRANCH'
+        && request.resource.data.get('qty_received', 0) != resource.data.get('qty_received', 0)
+        && validDirectGrnSourceUpdate();
       allow update: if isAuthenticated()
         && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL'
           || (request.resource.data.order_id == resource.data.order_id
@@ -2281,6 +2327,9 @@ service cloud.firestore {
         && (!('operational_external_transfer_id' in resource.data) || request.resource.data.operational_external_transfer_id == resource.data.operational_external_transfer_id)
         && (!('operational_delivery_route' in resource.data) || request.resource.data.operational_delivery_route == resource.data.operational_delivery_route)
         && (!('operational_delivery_route' in request.resource.data) || request.resource.data.operational_delivery_route == getAfter(parentOrderPath()).data.operational_delivery_route)
+        && (request.resource.data.get('operational_delivery_route', '') != 'DIRECT_BRANCH'
+          || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['qty_received','qty_received_units','operational_received_value_ugx'])
+          || validDirectReceiptTotals())
         && hasValidLineClass(false);
       // A submitted draft may remove omitted items in the SAME atomic batch.
       // Inspect the pre-commit order, never allow deletion of submitted/sourcing lines.

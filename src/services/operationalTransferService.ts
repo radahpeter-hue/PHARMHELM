@@ -241,7 +241,7 @@ export async function dispatchOperationalOrderToBranch(
 
   const linesToDispatch = receivedLines.map(line => {
     const qtyPacks = Number(line.qty_received || 0);
-    const costPerPack = Number(line.unit_cost_ugx || 0);
+    const costPerPack = direct ? Number(line.operational_received_value_ugx) / qtyPacks : Number(line.unit_cost_ugx || 0);
     if (!Number.isFinite(qtyPacks) || qtyPacks <= 0 || !Number.isFinite(costPerPack) || costPerPack < 0) {
       throw new Error(`Received quantity or cost is invalid for ${line.product_name || line.id}.`);
     }
