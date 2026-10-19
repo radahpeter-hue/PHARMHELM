@@ -1784,8 +1784,10 @@ service cloud.firestore {
       function receiptMovementPath() {
         return /databases/$(database)/documents/operational_inventory_movements/$(request.resource.data.receiptMovementId);
       }
-      allow get: if isAuthenticated() && isTenantMember(resource.data.tenantId)
-        && (isProcurement() || isAssignedToBranch(resource.data.destinationBranchId) || (resource.data.get('transferType', '') == 'BRANCH_RETURN' && isAssignedToBranch(resource.data.sourceBranchId)));
+      allow get: if isAuthenticated()
+        && ((resource == null && isProcurement()) || (resource != null && isTenantMember(resource.data.tenantId)
+          && (isProcurement() || isAssignedToBranch(resource.data.destinationBranchId)
+            || (resource.data.get('transferType', '') == 'BRANCH_RETURN' && isAssignedToBranch(resource.data.sourceBranchId)))));
       allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId)
         && (isProcurement() || isAssignedToBranch(resource.data.destinationBranchId) || (resource.data.get('transferType', '') == 'BRANCH_RETURN' && isAssignedToBranch(resource.data.sourceBranchId)));
       allow create: if isAuthenticated()
