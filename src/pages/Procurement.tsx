@@ -3600,16 +3600,43 @@ const DispatchOrderDetails: React.FC<{ order: StockOrder; onClose: () => void }>
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [order.id, order.tenantId]);
-  return <div className="fixed inset-0 z-50 bg-black/50 p-4 flex items-center justify-center">
-    <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 space-y-4">
-      <div className="flex justify-between gap-4">
-        <div><h3 className="text-xl font-bold">{order.order_number}</h3>
-          <p className="text-sm text-zinc-500">{isOperationalInventoryRecord(order) ? 'Operational' : 'Sellable'} Inventory • {order.requesting_branch_name || order.requesting_branch_id} • {order.status}</p></div>
-        <button type="button" onClick={onClose} className="px-3 py-2 rounded-lg border">Close</button>
+  return <div role="dialog" aria-modal="true" aria-label={`Dispatch details for ${order.order_number || order.id}`} className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center sm:p-4">
+    <div className="bg-white text-zinc-900 rounded-t-2xl sm:rounded-2xl shadow-xl w-full max-w-3xl max-h-[90dvh] sm:max-h-[85vh] flex flex-col overflow-hidden">
+      <div className="flex items-start justify-between gap-3 px-4 py-4 sm:px-6 border-b border-zinc-200 shrink-0">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Dispatch order details</p>
+          <h3 className="text-lg sm:text-xl font-bold text-zinc-900 break-all">{order.order_number || order.id}</h3>
+          <p className="text-sm text-zinc-600 break-words">{isOperationalInventoryRecord(order) ? 'Operational' : 'Sellable'} Inventory · {order.requesting_branch_name || order.requesting_branch_id}</p>
+        </div>
+        <button type="button" onClick={onClose} aria-label="Close dispatch details" className="shrink-0 px-3 py-2 rounded-lg border border-zinc-300 font-semibold text-zinc-800">Close</button>
       </div>
-      {loading ? <p>Loading item details…</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-2">Item</th><th className="p-2">Ordered</th><th className="p-2">Received</th><th className="p-2">Batch</th><th className="p-2">Expiry</th></tr></thead>
-        <tbody>{lines.map(line => <tr key={line.id} className="border-b"><td className="p-2">{line.product_name || line.product_id}</td><td className="p-2">{line.qty_ordered}</td><td className="p-2">{line.qty_received ?? '—'}</td><td className="p-2">{(line as StockOrderLine & { batch_number?: string }).batch_number || '—'}</td><td className="p-2">{(line as StockOrderLine & { expiry_date?: string }).expiry_date || '—'}</td></tr>)}</tbody>
-      </table>{lines.length === 0 && <p className="p-3 text-zinc-500">No linked order lines found.</p>}</div>}
+      <div className="overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 space-y-4">
+        <div className="grid grid-cols-2 gap-3 rounded-xl bg-zinc-50 p-3 text-sm">
+          <div><p className="text-xs text-zinc-500">Status</p><p className="font-semibold capitalize break-words">{order.status.replace(/_/g, ' ')}</p></div>
+          <div><p className="text-xs text-zinc-500">Order value</p><p className="font-semibold">{Number(order.total_order_value_ugx || 0).toLocaleString()} UGX</p></div>
+          <div><p className="text-xs text-zinc-500">Destination branch</p><p className="font-semibold break-words">{order.requesting_branch_name || order.requesting_branch_id}</p></div>
+          <div><p className="text-xs text-zinc-500">Inventory type</p><p className="font-semibold">{isOperationalInventoryRecord(order) ? 'Operational' : 'Sellable'}</p></div>
+        </div>
+        <h4 className="font-bold text-zinc-900">Ordered items</h4>
+        {loading ? <p role="status" className="text-sm text-zinc-600">Loading item details…</p> : lines.length === 0
+          ? <p className="rounded-lg border border-zinc-200 p-4 text-sm text-zinc-600">No linked order lines found.</p>
+          : <>
+            <div className="sm:hidden space-y-3">
+              {lines.map(line => <div key={line.id} className="rounded-xl border border-zinc-200 p-3 space-y-2">
+                <p className="font-semibold text-zinc-900 break-words">{line.product_name || line.product_id}</p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div><p className="text-xs text-zinc-500">Ordered</p><p>{line.qty_ordered ?? '—'}</p></div>
+                  <div><p className="text-xs text-zinc-500">Received</p><p>{line.qty_received ?? '—'}</p></div>
+                  <div><p className="text-xs text-zinc-500">Batch</p><p className="break-all">{(line as StockOrderLine & { batch_number?: string }).batch_number || '—'}</p></div>
+                  <div><p className="text-xs text-zinc-500">Expiry</p><p>{(line as StockOrderLine & { expiry_date?: string }).expiry_date || '—'}</p></div>
+                </div>
+              </div>)}
+            </div>
+            <div className="hidden sm:block overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-2">Item</th><th className="p-2">Ordered</th><th className="p-2">Received</th><th className="p-2">Batch</th><th className="p-2">Expiry</th></tr></thead>
+              <tbody>{lines.map(line => <tr key={line.id} className="border-b"><td className="p-2">{line.product_name || line.product_id}</td><td className="p-2">{line.qty_ordered}</td><td className="p-2">{line.qty_received ?? '—'}</td><td className="p-2">{(line as StockOrderLine & { batch_number?: string }).batch_number || '—'}</td><td className="p-2">{(line as StockOrderLine & { expiry_date?: string }).expiry_date || '—'}</td></tr>)}</tbody>
+            </table></div>
+          </>}
+      </div>
     </div>
   </div>;
 };
