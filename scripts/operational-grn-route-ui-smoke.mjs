@@ -13,7 +13,7 @@ const output = await mkdtemp(path.join(tmpdir(), 'operational-route-ui-'));
 const lines = [{id:'line-a',tenantId:'test',order_id:'order',product_id:'pens',product_name:'Pens with a long descriptive Operational catalogue name',supplier_name:'Stationery supplier',supplier_id:'supplier',supplier_type:'external',inventoryClass:'OPERATIONAL',masterItemId:'master',line_status:'approved',qty_ordered:2,qty_received:0,unit_cost_ugx:12000}];
 const stubs = {
   auth: `export const useAuth=()=>({profile:{tenantId:'test',uid:'buyer',fullName:'Buyer'},hasPermission:()=>true,activeBranchId:'masaka'});`,
-  firestore: `export const firestoreService={getDocumentsByQuery:async()=>${JSON.stringify(lines)}};`,
+  firestore: `export const firestoreService={getDocumentsByQuery:async()=>${JSON.stringify(lines)},getDocument:async()=>({tenantId:'test',inventoryClass:'OPERATIONAL',uniqueId:'OPS-000123'})};`,
   firebase: `export const db={},auth={},storage={},googleProvider={}; export const registerAuthUser=()=>{};`,
   grn: `export async function processOperationalGrn(input){window.posted=input;return {grnNumber:'TEST-GRN',alreadyProcessed:false};}`,
   sellable: `export async function processProcurementGrn(){throw new Error('Sellable must not run');}`
@@ -41,7 +41,7 @@ try{
   await route.waitFor();
   assert.equal(await route.inputValue(),'DIRECT_BRANCH');
   assert.equal(await route.isEnabled(),true);
-  await page.getByText(lines[0].product_name,{exact:true}).filter({visible:true}).waitFor();
+  await page.getByText(lines[0].product_name,{exact:false}).filter({visible:true}).waitFor();
   assert.equal(await page.locator('body').evaluate(e=>e.scrollWidth<=innerWidth),true);
   assert.notEqual(await route.evaluate(e=>getComputedStyle(e).color),'rgb(255, 255, 255)');
   await route.selectOption('VIA_HQ');

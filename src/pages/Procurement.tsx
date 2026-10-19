@@ -1,3 +1,4 @@
+import { OperationalItemCode } from '../components/inventory/OperationalItemCode';
 import { OperationalGrnRouteSelector } from '../components/procurement/OperationalGrnRouteSelector';
 import type { OperationalDeliveryRoute } from '../services/operationalDeliveryRoute';
 import React, { useState, useEffect } from 'react';
@@ -552,7 +553,7 @@ const RequisitionDetailModal: React.FC<{ order: StockOrder, onClose: () => void 
             <tbody className="divide-y divide-zinc-100">
               {lines.map((line) => (
                 <tr key={line.id}>
-                  <td className="px-4 py-3 text-sm font-medium text-zinc-900">{line.product_name}</td>
+                  <td className="px-4 py-3 text-sm font-medium text-zinc-900">{line.product_name}<OperationalItemCode masterItemId={line.masterItemId} /></td>
                   <td className="px-4 py-3 text-sm text-zinc-600">{line.qty_ordered}</td>
                   <td className="px-4 py-3 text-sm text-zinc-500 italic">{line.notes || '--'}</td>
                 </tr>
@@ -1503,7 +1504,7 @@ const WholeOrderSourcingModal: React.FC<{
                       : hqStock !== null && hqStock >= line.qty_ordered;
                     return (
                       <tr key={line.id} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="px-4 py-3 font-semibold text-zinc-900">{line.product_name}</td>
+                        <td className="px-4 py-3 font-semibold text-zinc-900">{line.product_name}<OperationalItemCode masterItemId={line.masterItemId} /></td>
                         <td className="px-4 py-3 text-center font-bold text-zinc-600">{line.qty_ordered}</td>
                         <td className="px-4 py-3 text-center font-bold">
                           <span className={cn("px-2.5 py-1 rounded-full text-xs font-black", canFulfill ? "bg-emerald-100/75 text-emerald-700" : operationalLine ? "bg-sky-100/75 text-sky-700" : "bg-rose-100/75 text-rose-700")}>
@@ -1585,7 +1586,7 @@ const WholeOrderSourcingModal: React.FC<{
                   <tbody className="divide-y divide-zinc-100 text-sm">
                     {lines.map(line => (
                       <tr key={line.id} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="px-4 py-3 font-semibold text-zinc-900">{line.product_name}</td>
+                        <td className="px-4 py-3 font-semibold text-zinc-900">{line.product_name}<OperationalItemCode masterItemId={line.masterItemId} /></td>
                         <td className="px-4 py-3 text-center font-bold text-zinc-600">{line.qty_ordered}</td>
                         <td className="px-4 py-3">
                           <input
@@ -1945,7 +1946,7 @@ const FinancialApprovalModal: React.FC<{
                     <article key={line.id} className={cn('min-w-0 rounded-xl border p-3 space-y-3 text-zinc-900', edit.removed ? 'border-rose-300 bg-rose-50' : 'border-zinc-200 bg-white')}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-bold text-zinc-950 break-words">{line.product_name || 'Unnamed order product'}</p>
+                          <p className="text-sm font-bold text-zinc-950 break-words">{line.product_name || 'Unnamed order product'}<OperationalItemCode masterItemId={line.masterItemId} /></p>
                           <p className="mt-1 text-xs text-zinc-700 break-words">Supplier: {line.supplier_name || 'Not specified'}</p>
                         </div>
                         <span className={cn('shrink-0 rounded-md px-2 py-1 text-[11px] font-bold', edit.removed ? 'bg-rose-200 text-rose-900' : 'bg-emerald-50 text-emerald-800')}>
@@ -1989,7 +1990,7 @@ const FinancialApprovalModal: React.FC<{
                       const edit = editedLines[line.id] || { qty: line.qty_ordered, removed: false };
                       const approvedQty = edit.removed ? 0 : edit.qty;
                       return <tr key={line.id} className={edit.removed ? 'bg-rose-50' : 'bg-white'}>
-                        <td className="p-3 text-sm font-bold text-zinc-950 break-words">{line.product_name || 'Unnamed order product'}</td>
+                        <td className="p-3 text-sm font-bold text-zinc-950 break-words">{line.product_name || 'Unnamed order product'}<OperationalItemCode masterItemId={line.masterItemId} /></td>
                         <td className="p-3 text-sm text-zinc-800">{line.supplier_name || 'Not specified'}</td>
                         <td className="p-3 text-sm text-zinc-900">UGX {Number(line.unit_cost_ugx || 0).toLocaleString()}</td>
                         <td className="p-3 text-sm text-zinc-900">{line.qty_ordered}</td>
@@ -3158,7 +3159,7 @@ export const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void 
             const edit = editedLines[line.id];
             if (!edit) return null;
             return <article key={line.id} className="rounded-xl border border-zinc-200 bg-white p-3 text-zinc-900">
-              <p className="font-bold break-words">{line.product_name}</p><p className="text-xs text-zinc-600 break-words">{line.supplier_name}</p>
+              <p className="font-bold break-words">{line.product_name}<OperationalItemCode masterItemId={line.masterItemId} /></p><p className="text-xs text-zinc-600 break-words">{line.supplier_name}</p>
               <label className="mt-3 block text-sm font-medium">Quantity received (packs)<input aria-label={`Received packs ${line.product_name}`} type="number" min="0" disabled={edit.removed} value={edit.qty} onChange={e => handleQtyChange(line.id, Number(e.target.value))} className="mt-1 min-h-11 w-full rounded-lg border border-zinc-300 bg-white p-2 text-zinc-900" /></label>
               <label className="mt-3 block text-sm font-medium">Cost per pack (UGX)<input aria-label={`Cost per pack ${line.product_name}`} type="number" min="0" disabled={edit.removed} value={edit.unitCostUGX ?? line.unit_cost_ugx} onChange={e => setEditedLines(prev => ({...prev,[line.id]:{...prev[line.id],unitCostUGX:Number(e.target.value)}}))} className="mt-1 min-h-11 w-full rounded-lg border border-zinc-300 bg-white p-2 text-zinc-900" /></label>
               <p className="mt-3 text-sm font-bold">UGX {(edit.removed ? 0 : edit.qty * (edit.unitCostUGX ?? line.unit_cost_ugx)).toLocaleString()}</p>
@@ -3184,7 +3185,7 @@ export const GRNProcessModal: React.FC<{ order: StockOrder, onClose: () => void 
                 return (
                   <tr key={line.id} className={cn(edit.removed && "opacity-50 bg-red-50/30")}>
                     <td className="px-4 py-3">
-                      <p className="text-sm font-medium text-zinc-900">{line.product_name}</p>
+                      <p className="text-sm font-medium text-zinc-900">{line.product_name}<OperationalItemCode masterItemId={line.masterItemId} /></p>
                       <p className="text-[10px] text-zinc-500 uppercase font-bold">{line.supplier_name}</p>
                     </td>
                     <td className="px-4 py-3">
@@ -3646,7 +3647,7 @@ const DispatchOrderDetails: React.FC<{ order: StockOrder; onClose: () => void }>
           : <>
             <div className="sm:hidden space-y-3">
               {lines.map(line => <div key={line.id} className="rounded-xl border border-zinc-200 p-3 space-y-2">
-                <p className="font-semibold text-zinc-900 break-words">{line.product_name || line.product_id}</p>
+                <p className="font-semibold text-zinc-900 break-words">{line.product_name || line.product_id}<OperationalItemCode masterItemId={line.masterItemId} /></p>
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div><p className="text-xs text-zinc-500">Ordered</p><p>{line.qty_ordered ?? '—'}</p></div>
                   <div><p className="text-xs text-zinc-500">Received</p><p>{line.qty_received ?? '—'}</p></div>
@@ -3656,7 +3657,7 @@ const DispatchOrderDetails: React.FC<{ order: StockOrder; onClose: () => void }>
               </div>)}
             </div>
             <div className="hidden sm:block overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-2">Item</th><th className="p-2">Ordered</th><th className="p-2">Received</th><th className="p-2">Batch</th><th className="p-2">Expiry</th></tr></thead>
-              <tbody>{lines.map(line => <tr key={line.id} className="border-b"><td className="p-2">{line.product_name || line.product_id}</td><td className="p-2">{line.qty_ordered}</td><td className="p-2">{line.qty_received ?? '—'}</td><td className="p-2">{(line as StockOrderLine & { batch_number?: string }).batch_number || '—'}</td><td className="p-2">{(line as StockOrderLine & { expiry_date?: string }).expiry_date || '—'}</td></tr>)}</tbody>
+              <tbody>{lines.map(line => <tr key={line.id} className="border-b"><td className="p-2">{line.product_name || line.product_id}<OperationalItemCode masterItemId={line.masterItemId} /></td><td className="p-2">{line.qty_ordered}</td><td className="p-2">{line.qty_received ?? '—'}</td><td className="p-2">{(line as StockOrderLine & { batch_number?: string }).batch_number || '—'}</td><td className="p-2">{(line as StockOrderLine & { expiry_date?: string }).expiry_date || '—'}</td></tr>)}</tbody>
             </table></div>
           </>}
       </div>
@@ -3733,7 +3734,7 @@ const DispatchModal: React.FC<{
               <tbody className="divide-y divide-zinc-50">
                 {lines.map(line => (
                   <tr key={line.id}>
-                    <td className="px-4 py-3 text-sm font-medium text-zinc-900">{line.product_name || line.product_id}</td>
+                    <td className="px-4 py-3 text-sm font-medium text-zinc-900">{line.product_name || line.product_id}<OperationalItemCode masterItemId={line.masterItemId} /></td>
                     <td className="px-4 py-3 text-sm text-right text-zinc-600 font-bold">{line.qty_ordered}</td>
                     <td className="px-4 py-3 text-sm text-right text-zinc-600">UGX {line.unit_cost_ugx?.toLocaleString()}</td>
                   </tr>
@@ -5740,7 +5741,7 @@ const HQStockInOutTab: React.FC = () => {
                       const supp = suppliers.find(s => s.id === line.supplier_id)?.supplier_name || 'Generic Sourcing';
                       return (
                         <tr key={idx} className="hover:bg-zinc-50/20">
-                          <td className="px-6 py-4 font-bold text-zinc-950">{line.product_name}</td>
+                          <td className="px-6 py-4 font-bold text-zinc-950">{line.product_name}<OperationalItemCode masterItemId={line.masterItemId} /></td>
                           <td className="px-6 py-4 text-zinc-500 font-mono text-[11px]">{supp}</td>
                           <td className="px-6 py-4 text-center">
                             <input
@@ -5993,7 +5994,7 @@ const HQStockInOutTab: React.FC = () => {
                     {transferLinesDetail.map(line => (
                       <div key={line.id} className="p-4 bg-zinc-50 rounded-2xl grid grid-cols-1 sm:grid-cols-2 gap-3 border border-zinc-200">
                         <div>
-                          <p className="font-bold text-zinc-900 text-sm">{line.product_name}</p>
+                          <p className="font-bold text-zinc-900 text-sm">{line.product_name}<OperationalItemCode masterItemId={line.masterItemId} /></p>
                           <p className="text-xs text-zinc-700 font-mono mt-0.5 break-words">Batch: {line.batch_number} | Exp: {line.expiry_date}</p>
                         </div>
                         <div className="text-right">
@@ -6154,7 +6155,7 @@ const HQStockInOutTab: React.FC = () => {
                     <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
                       {transferOutLines.map((line, idx) => (
                         <tr key={idx} className="hover:bg-zinc-50/10">
-                          <td className="px-4 py-3 font-bold text-zinc-950">{line.product_name}</td>
+                          <td className="px-4 py-3 font-bold text-zinc-950">{line.product_name}<OperationalItemCode masterItemId={line.masterItemId} /></td>
                           <td className="px-4 py-3 text-center font-mono font-bold text-zinc-600">{line.batch_number}</td>
                           <td className="px-4 py-3 text-center font-bold text-emerald-600 text-sm">{line.qty_dispatched}</td>
                           <td className="px-4 py-3 text-right font-mono text-zinc-500">UGX {line.unit_cost_ugx.toLocaleString()}</td>

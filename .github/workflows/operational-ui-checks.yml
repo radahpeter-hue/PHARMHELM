@@ -6,6 +6,8 @@ on:
       - 'src/components/procurement/OperationalHQStoreTab.tsx'
       - 'src/components/procurement/OperationalGrnRouteSelector.tsx'
       - 'src/pages/Procurement.tsx'
+      - 'src/pages/StockInOut.tsx'
+      - 'scripts/operational-receipt-identity-ui-smoke.mjs'
       - 'scripts/operational-grn-route-ui-smoke.mjs'
       - 'src/utils/operationalStock.ts'
       - 'scripts/operational-ui-smoke.mjs'
@@ -31,6 +33,7 @@ jobs:
         run: |
           node scripts/operational-ui-smoke.mjs
           node scripts/operational-grn-route-ui-smoke.mjs
+          node scripts/operational-receipt-identity-ui-smoke.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -38,3 +41,4 @@ jobs:
           path: |
             /tmp/operational-ui-*/*.png
             /tmp/operational-route-ui-*/*.png
+            /tmp/receipt-identity-*/*.png
