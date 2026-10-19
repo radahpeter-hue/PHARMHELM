@@ -28,7 +28,9 @@ test('explicit dispatch is atomic and retry-safe, without destination stock muta
 test('Procurement dispatch has a separate explicit prepared-GRN action',()=>{
   assert.match(procurement,/preparedSellableOrders/);
   assert.match(procurement,/dispatchPreparedSellableGrn\(/);
-  assert.match(procurement,/Confirm Physical Dispatch/);
+  assert.match(procurement,/HQ Dispatch Register/);
+  assert.match(procurement,/Confirm Dispatch/);
+  assert.match(procurement,/preparedSellable \? <button/);
 });
 
 test('branch Stock In cannot receive prepared inventory that has not been dispatched',()=>{
