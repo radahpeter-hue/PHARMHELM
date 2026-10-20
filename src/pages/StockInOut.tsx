@@ -1,3 +1,5 @@
+import { StockInRegister } from '../components/stock/StockInRegister';
+import { exportRecordsToExcel } from '../utils/excelExport';
 import { OperationalItemCode } from '../components/inventory/OperationalItemCode';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
@@ -1459,7 +1461,7 @@ const StockInWorkspace: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         </div>
       )}
       {operationalEnabled && inventoryView === 'operational'
-        ? <div className="space-y-5"><OperationalBranchReturnForm /><OperationalBranchReceiptQueue /></div>
+        ? <div className="space-y-5"><OperationalBranchReturnForm /><OperationalBranchReceiptQueue branches={branches} /></div>
         : <StockInTab branches={branches} />}
     </div>
   );
@@ -1483,11 +1485,6 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   const [invoiceLines, setInvoiceLines] = useState<TransferInvoiceLine[]>([]);
   const [receivingData, setReceivingData] = useState<Record<string, { accepted: number; queried: number; reason?: any }>>({});
   const [showHistory, setShowHistory] = useState(false);
-  const [historyDateRange, setHistoryDateRange] = useState({ 
-    start: '', 
-    end: '' 
-  });
-  const [receptionSearch, setReceptionSearch] = useState('');
   const [staff, setStaff] = useState<any[]>([]);
   const [invoiceLinesLoading, setInvoiceLinesLoading] = useState(false);
   const [invoiceLinesError, setInvoiceLinesError] = useState<string | null>(null);
@@ -1659,34 +1656,6 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       );
     }
   }, [profile?.tenantId, activeBranchId, showHistory]);
-
-  const displayedInvoices = invoices.filter(invoice => {
-    const invDate = (invoice.dispatched_at || invoice.createdAt || '').split('T')[0];
-    const matchesStart = !historyDateRange.start || invDate >= historyDateRange.start;
-    const matchesEnd = !historyDateRange.end || invDate <= historyDateRange.end;
-    
-    if (!matchesStart || !matchesEnd) return false;
-
-    if (receptionSearch.trim()) {
-      const q = receptionSearch.toLowerCase().trim();
-      const transferNum = (invoice.transfer_number || '').toLowerCase();
-      const invoiceId = (invoice.id || '').toLowerCase();
-      
-      const srcName = (invoice.source_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === invoice.source_branch_id)?.name || invoice.source_branch_name || 'Branch Transfer')).toLowerCase();
-      const destName = (invoice.destination_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === invoice.destination_branch_id)?.name || invoice.destination_branch_name || 'Current Branch')).toLowerCase();
-      const sender = getSenderName(invoice).toLowerCase();
-      const receiver = invoice.received_by ? (invoice.received_by_name || getUserName(invoice.received_by)).toLowerCase() : 'pending';
-      
-      return transferNum.includes(q) || 
-             invoiceId.includes(q) || 
-             srcName.includes(q) || 
-             destName.includes(q) || 
-             sender.includes(q) || 
-             receiver.includes(q);
-    }
-    
-    return true;
-  });
 
   if (!activeBranchId) {
     return (
@@ -2000,156 +1969,17 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
 
 return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex gap-2 p-1 bg-zinc-100 rounded-xl w-fit">
-          <button 
-            onClick={() => setShowHistory(false)}
-            className={cn(
-              "px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
-              !showHistory ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
-            )}
-          >
-            Pending Reception
-          </button>
-          <button 
-            onClick={() => setShowHistory(true)}
-            className={cn(
-              "px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
-              showHistory ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
-            )}
-          >
-            Reception History
-          </button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl min-w-[260px]">
-            <Search size={14} className="text-zinc-400" />
-            <input 
-              type="text" 
-              placeholder="Search ID, source, dest, sender..." 
-              value={receptionSearch} 
-              onChange={(e) => setReceptionSearch(e.target.value)}
-              className="bg-transparent border-none text-xs outline-none w-full placeholder-zinc-400 text-zinc-800"
-            />
-            {receptionSearch && (
-              <button onClick={() => setReceptionSearch('')} className="text-zinc-400 hover:text-zinc-600">
-                <X size={14} />
-              </button>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl">
-            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Dates:</span>
-            <input 
-              type="date" 
-              value={historyDateRange.start} 
-              onChange={(e) => setHistoryDateRange(prev => ({ ...prev, start: e.target.value }))}
-              className="bg-transparent border-none text-xs outline-none focus:ring-0 text-zinc-700 w-[110px]"
-            />
-            <span className="text-xs font-bold text-zinc-400">to</span>
-            <input 
-              type="date" 
-              value={historyDateRange.end} 
-              onChange={(e) => setHistoryDateRange(prev => ({ ...prev, end: e.target.value }))}
-              className="bg-transparent border-none text-xs outline-none focus:ring-0 text-zinc-700 w-[110px]"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
-                <th className="px-6 py-4">Invoice ID</th>
-                <th className="px-6 py-4">Source</th>
-                <th className="px-6 py-4">Destination</th>
-                <th className="px-6 py-4">Sent By &amp; When</th>
-                <th className="px-6 py-4">Received By &amp; When</th>
-                <th className="px-6 py-4 font-semibold text-zinc-700">Total Value</th>
-                <th className="px-6 py-4">Status</th>
-                <th className="px-6 py-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {displayedInvoices.map((invoice) => {
-                const srcName = invoice.source_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === invoice.source_branch_id)?.name || invoice.source_branch_name || 'Branch Transfer');
-                const destName = invoice.destination_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === invoice.destination_branch_id)?.name || invoice.destination_branch_name || 'Current Branch');
-                const sender = getSenderName(invoice);
-                const receiver = invoice.received_by ? (invoice.received_by_name || getUserName(invoice.received_by)) : 'Pending';
-                const totalWorth = invoice.total_value_ugx || (invoice.items || []).reduce((sum, item) => sum + ((item.qty_dispatched || 0) * (item.unit_cost_ugx || 0)), 0);
-                return (
-                  <tr key={invoice.id} className="hover:bg-zinc-50/50 transition-colors text-xs">
-                    <td className="px-6 py-4 font-bold text-zinc-900">{invoice.transfer_number}</td>
-                    <td className="px-6 py-4 text-zinc-600 font-semibold">{srcName}</td>
-                    <td className="px-6 py-4 text-zinc-700 font-semibold">{destName}</td>
-                    <td className="px-6 py-4 text-zinc-500">
-                      <p className="font-bold text-zinc-700">{sender}</p>
-                      <p className="text-[10px] text-zinc-400 font-mono mt-0.5">
-                        {invoice.dispatched_at ? new Date(invoice.dispatched_at).toLocaleString() : '--'}
-                      </p>
-                    </td>
-                    <td className="px-6 py-4 text-zinc-500">
-                      <p className="font-bold text-zinc-700">{receiver}</p>
-                      <p className="text-[10px] text-zinc-400 font-mono mt-0.5">
-                        {invoice.received_at ? new Date(invoice.received_at).toLocaleString() : 'Pending'}
-                      </p>
-                    </td>
-                    <td className="px-6 py-4 font-bold text-zinc-900 font-mono">
-                      UGX {totalWorth.toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={cn(
-                        "px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider",
-                        invoice.status === 'fully_accepted' ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
-                      )}>
-                        {invoice.status.replace(/_/g, ' ')}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex justify-end gap-2">
-                        {showHistory && (
-                          <button 
-                            onClick={() => downloadExcelGRN(invoice)}
-                            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-600 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 font-sans"
-                            title="Download Excel statement"
-                          >
-                            <Download size={14} /> Excel
-                          </button>
-                        )}
-                        {!showHistory ? (
-                          <button 
-                            onClick={() => handleOpenReceive(invoice)}
-                            className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition-colors shadow-sm"
-                          >
-                            {canOperateReception ? 'Receive & Verify' : 'View Details'}
-                          </button>
-                        ) : (
-                          <button 
-                            onClick={() => handleOpenReceive(invoice)}
-                            className="text-zinc-500 hover:text-zinc-700 text-xs font-bold bg-zinc-100 hover:bg-zinc-200 px-3 py-1.5 rounded-xl transition-all"
-                          >
-                            View Details
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-              {invoices.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-zinc-400 italic">
-                    {showHistory ? 'No reception history found.' : 'No incoming stock found.'}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <StockInRegister history={showHistory} onHistoryChange={setShowHistory} canReceive={canOperateReception}
+        rows={invoices.map(invoice => ({
+          id: invoice.id, number: invoice.transfer_number,
+          source: invoice.source_branch_id === 'HQ' ? 'Procurement Store' : (branches.find(b => b.id === invoice.source_branch_id)?.name || invoice.source_branch_name || 'Branch Transfer'),
+          destination: branches.find(b => b.id === invoice.destination_branch_id)?.name || invoice.destination_branch_name || 'Current Branch',
+          sender: getSenderName(invoice), sentAt: invoice.dispatched_at,
+          receiver: invoice.received_by ? (invoice.received_by_name || getUserName(invoice.received_by)) : 'Pending',
+          receivedAt: invoice.received_at, createdAt: invoice.createdAt,
+          value: invoice.total_value_ugx ?? (invoice.items || []).reduce((sum, item) => sum + ((item.qty_dispatched || 0) * (item.unit_cost_ugx || 0)), 0),
+          status: invoice.status, onOpen: () => void handleOpenReceive(invoice), onExport: () => void downloadExcelGRN(invoice)
+        }))}/>
 
       {selectedInvoice && (
         <div className="fixed inset-0 bg-zinc-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
@@ -2401,7 +2231,7 @@ const OperationalBranchReturnForm: React.FC = () => {
   return <section className="rounded-2xl border border-amber-200 bg-white p-5"><h3 className="font-black text-amber-950">Operational Inventory Return to HQ</h3><p className="text-xs text-amber-800 mt-1">Dispatch reduces this branch’s Operational stock. HQ adds it only after confirmed receipt.</p><form onSubmit={submit} className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3"><select required value={itemId} onChange={event => { setItemId(event.target.value); setRequestId(''); }} className="border rounded-xl px-3 py-2 text-sm"><option value="">Select Operational item</option>{items.map(item => <option key={item.id} value={item.id}>{item.name} · SOH {item.quantityInStock} {item.unitOfIssue}</option>)}</select><input type="number" min="0.001" step="any" required value={quantity} onChange={event => { setQuantity(event.target.value); setRequestId(''); }} placeholder="Quantity" className="border rounded-xl px-3 py-2 text-sm" /><input required maxLength={300} value={reason} onChange={event => { setReason(event.target.value); setRequestId(''); }} placeholder="Return reason" className="border rounded-xl px-3 py-2 text-sm" /><button disabled={!canReturn || saving || !itemId} className="rounded-xl bg-amber-700 text-white px-4 py-2 text-sm font-bold disabled:opacity-50">{saving ? 'Dispatching…' : 'Create return'}</button></form></section>;
 };
 
-export const OperationalBranchReceiptQueue: React.FC = () => {
+export const OperationalBranchReceiptQueue: React.FC<{ branches?: Branch[] }> = ({ branches = [] }) => {
   const { profile, activeBranchId, hasPermission } = useAuth();
   const enabled = useOperationalInventoryFeature();
   const [transfers, setTransfers] = useState<OperationalTransfer[]>([]);
@@ -2496,22 +2326,35 @@ export const OperationalBranchReceiptQueue: React.FC = () => {
     }
   };
 
+  const downloadOperationalReceipt = async (transfer: OperationalTransfer) => {
+    if (!profile?.tenantId || transfer.destinationBranchId !== activeBranchId) return;
+    try {
+      const records = await firestoreService.getDocumentsByQuery<OperationalTransferLine>('operational_transfer_lines', [
+        { field: 'tenantId', operator: '==', value: profile.tenantId },
+        { field: 'transferId', operator: '==', value: transfer.id }
+      ]);
+      await exportRecordsToExcel(records.map(line => ({
+        'Invoice ID': transfer.transferNumber, 'Source order': transfer.sourceOrderNumber || 'HQ distribution',
+        'Item': line.itemName, 'Dispatched quantity': line.quantityDispatched,
+        'Accepted quantity': line.quantityAccepted || 0, 'Queried quantity': line.quantityQueried || 0,
+        'Unit': line.unitOfIssue, 'Received at': transfer.receivedAt || '', 'Status': line.status
+      })), 'Operational receipt', `${transfer.transferNumber}.xlsx`);
+    } catch { toast.error('Unable to download the Operational receipt. Please retry.'); }
+  };
+
   return (
-    <section className="rounded-2xl border border-emerald-200 bg-white shadow-sm overflow-hidden">
-      <div className="p-5 border-b border-emerald-100 bg-emerald-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div><h3 className="font-black text-emerald-950">Operational Inventory Receipts</h3><p className="mt-1 text-xs text-emerald-800">Separate from sellable Stock In. Accepted units post to this branch’s Operational ledger.</p></div>
-        <div className="flex rounded-xl bg-white border border-emerald-100 p-1 w-fit">
-          <button onClick={() => setShowHistory(false)} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${!showHistory ? 'bg-emerald-700 text-white' : 'text-zinc-500'}`}>Pending</button>
-          <button onClick={() => setShowHistory(true)} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${showHistory ? 'bg-emerald-700 text-white' : 'text-zinc-500'}`}>History</button>
-        </div>
-      </div>
-      <div className="divide-y divide-zinc-100">
-        {visibleTransfers.map(transfer => <div key={transfer.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div><p className="font-bold text-zinc-900">{transfer.transferNumber}</p><p className="text-xs text-zinc-500">{transfer.deliveryRoute === 'DIRECT_BRANCH' ? 'Direct supplier delivery' : 'From HQ Operational Store'} · {transfer.sourceOrderNumber || 'HQ distribution'} · {transfer.status.replace(/_/g, ' ')}</p></div>
-          <button onClick={() => void openTransfer(transfer)} className="px-4 py-2 rounded-xl border border-emerald-200 text-emerald-800 text-xs font-black hover:bg-emerald-50">{showHistory ? 'View receipt' : canReceive ? 'Receive & verify' : 'View details'}</button>
-        </div>)}
-        {visibleTransfers.length === 0 && <p className="p-8 text-center text-sm text-zinc-400">{showHistory ? 'No Operational receipt history for this branch.' : 'No Operational transfers are awaiting receipt.'}</p>}
-      </div>
+    <section className="min-w-0 space-y-6">
+      <StockInRegister history={showHistory} onHistoryChange={setShowHistory} canReceive={canReceive}
+        rows={visibleTransfers.map(transfer => ({
+          id: transfer.id, number: transfer.transferNumber,
+          source: transfer.deliveryRoute === 'DIRECT_BRANCH' ? 'Direct supplier delivery' : 'HQ Operational Store',
+          destination: transfer.destinationBranchName || branches.find(branch => branch.id === transfer.destinationBranchId)?.name || 'Current Branch',
+          sender: transfer.dispatchedByName || 'Not recorded', sentAt: transfer.dispatchedAt,
+          receiver: transfer.receivedByName || (transfer.receivedAt ? 'Not recorded' : 'Pending'),
+          receivedAt: transfer.receivedAt, createdAt: transfer.createdAt, value: transfer.totalValueUGX || 0,
+          status: transfer.status, onOpen: () => void openTransfer(transfer),
+          onExport: () => void downloadOperationalReceipt(transfer)
+        }))}/>
 
       {selectedTransfer && <div className="fixed inset-0 z-[70] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
         <div className="flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl min-w-0 flex-col overflow-hidden rounded-2xl bg-white text-zinc-900 shadow-2xl sm:max-h-[calc(100dvh-2rem)]">

@@ -33,7 +33,7 @@ try {
  for(const width of [360,390,1280]) {
   const page=await browser.newPage({viewport:{width,height:844}});
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.getByRole('button',{name:'Receive & verify'}).click();
+  await page.getByRole('button',{name:/Receive & verify/i}).click();
   await page.getByText('Item code: OPS-000123',{exact:true}).waitFor();
   assert.equal(await page.getByText(line.masterItemId,{exact:false}).count(),0);
   assert.equal(await page.locator('body').evaluate(e=>e.scrollWidth<=innerWidth),true);
@@ -59,7 +59,7 @@ try {
  for(const scenario of ['foreign','missing','failed']) {
   const page=await browser.newPage({viewport:{width:390,height:844}});
   await page.goto(`http://127.0.0.1:${server.address().port}/?${scenario}`);
-  await page.getByRole('button',{name:'Receive & verify'}).click();
+  await page.getByRole('button',{name:/Receive & verify/i}).click();
   await page.getByText('Item code: Unavailable',{exact:true}).waitFor();
   assert.equal(await page.getByText('Item code: OPS-000123',{exact:true}).count(),0);
   assert.equal(await page.getByText(line.masterItemId,{exact:false}).count(),0);
