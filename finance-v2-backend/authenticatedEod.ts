@@ -1,5 +1,6 @@
 import type { Auth } from 'firebase-admin/auth';
 import type { Firestore } from 'firebase-admin/firestore';
+import { isActiveSale } from '../src/utils/activeSales';
 import { assignSaleToEodShift, assertUgx, eodCanonicalId, validateEodAmounts, type EodShift } from '../src/services/financeV2EodPolicy';
 
 /**
@@ -65,7 +66,7 @@ export async function executeAuthenticatedFinanceV2Eod(
   const token = await auth.verifyIdToken(idToken, true);
   const uid = token.uid;
   if (!uid) throw new Error('Authenticated identity missing');
-  if (!uid || !input.tenantId || !input.branchId || !input.shiftId) throw new Error('Invalid EOD identity');
+  if (!input || !input.tenantId || !input.branchId || !input.shiftId) throw new Error('Invalid EOD identity');
   if (!input.declared || typeof input.varianceReason !== 'string' || fields.some(k => !(k in input.declared))) throw new Error('All EOD declarations are required');
   for (const key of fields) assertUgx(input.declared[key]);
   const id = eodCanonicalId(input.tenantId, input.branchId, input.businessDate, input.shiftId);
@@ -112,6 +113,7 @@ export async function executeAuthenticatedFinanceV2Eod(
     const saleSnaps = await tx.get(salesQuery);
     const scoped = saleSnaps.docs.map(doc => ({ ...doc.data(), id: doc.id })).filter(sale => {
       if (sale.status !== 'completed' && sale.status !== 'active') return false;
+      if (!isActiveSale(sale)) return false;
       if (sale.revisionOfSaleId && !sale.isRevisionReplacement) throw new Error('Malformed POS revision metadata');
       if (['superseded', 'reversed', 'voided', 'cancelled'].includes(String(sale.revisionStatus || '').toLowerCase())) return false;
       if (sale.voided === true || sale.isVoided === true || sale.isDeleted === true || sale.status === 'deleted') return false;
