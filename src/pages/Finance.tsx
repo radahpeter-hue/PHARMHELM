@@ -1,5 +1,7 @@
 import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
+import { auth } from '../firebase';
+import { assignSaleToEodShift, validateEodAmounts, eodVariance, type EodShift } from '../services/financeV2EodPolicy';
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, 
@@ -250,6 +252,8 @@ const EODReconciliationTab: React.FC = () => {
   const isFinanceHead = hasAnyRole(profile, ['Finance Head']);
   const [revealed, setRevealed] = useState(false);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [configuredShifts, setConfiguredShifts] = useState<EodShift[]>([]);
+  const [selectedShiftId, setSelectedShiftId] = useState('');
   const [formData, setFormData] = useState({
     cash: 0,
     mtn: 0,
@@ -273,15 +277,34 @@ const EODReconciliationTab: React.FC = () => {
     }
   }, [profile?.tenantId]);
 
+  // Reuse the per-branch shift definitions from Settings, never hardcode the enabled schedule.
+  useEffect(() => {
+    if (!profile?.tenantId || !activeBranchId) return;
+    let cancelled = false;
+    firestoreService.getCollection<Branch>('branches', profile.tenantId).then(rows => {
+      if (cancelled) return;
+      const configured = rows.find(branch => branch.id === activeBranchId)?.shifts;
+      const shifts: EodShift[] = (['dayShift', 'eveningShift', 'nightShift'] as const)
+        .flatMap(id => {
+          const entry = configured?.[id];
+          return entry?.enabled && entry.startTime && entry.endTime
+            ? [{ id, enabled: true, startTime: entry.startTime, endTime: entry.endTime }]
+            : [];
+        });
+      setConfiguredShifts(shifts);
+      setSelectedShiftId(previous => shifts.some(shift => shift.id === previous) ? previous : shifts[0]?.id || '');
+    }).catch(() => { if (!cancelled) { setConfiguredShifts([]); setSelectedShiftId(''); } });
+    return () => { cancelled = true; };
+  }, [profile?.tenantId, activeBranchId]);
+
   // Dynamically compute system expected values from actual POS data for this branch & date
   const { computedExpected, relevantSalesCount } = React.useMemo(() => {
     const targetDate = formData.date;
     const filtered = sales.filter(s => {
-      const isCompleted = s.status === 'completed' || s.status === 'active';
-      const isSameBranch = s.branchId === activeBranchId;
-      if (!s.timestamp) return false;
-      const saleDate = s.timestamp.split('T')[0];
-      return isCompleted && isSameBranch && saleDate === targetDate;
+      if (!selectedShiftId || !isActiveSale(s) || s.branchId !== activeBranchId ||
+          !s.timestamp || (s.status !== 'completed' && s.status !== 'active')) return false;
+      const assigned = assignSaleToEodShift(s.timestamp, configuredShifts);
+      return assigned?.businessDate === targetDate && assigned.shiftId === selectedShiftId;
     });
 
     let cash = 0;
@@ -337,95 +360,50 @@ const EODReconciliationTab: React.FC = () => {
       },
       relevantSalesCount: filtered.length
     };
-  }, [sales, formData.date, activeBranchId]);
+  }, [sales, formData.date, activeBranchId, selectedShiftId, configuredShifts]);
 
+  // No client-side financial audit creation is allowed while V2 trusted posting is unavailable.
+  const [submittingEod, setSubmittingEod] = useState(false);
   const handleSubmit = async () => {
-    if (!profile) return;
+    if (submittingEod || !profile?.tenantId || !activeBranchId || !selectedShiftId) return;
+    const endpoint = import.meta.env.VITE_FINANCE_V2_EOD_API_URL;
+    if (!endpoint || !/^https:\/\//.test(endpoint)) {
+      toast.error('Trusted Finance EOD API has not been configured for this environment.');
+      return;
+    }
+    setSubmittingEod(true);
     try {
-      const cash_var = formData.cash - computedExpected.cash;
-      const mtn_var = formData.mtn - computedExpected.momo;
-      const airtel_var = formData.airtel - computedExpected.airtel;
-      const card_var = formData.card - computedExpected.card;
-      const insurance_var = formData.insurance - computedExpected.insurance;
-      const inst_var = formData.institutional_credit - computedExpected.institutional_credit;
-      const welfare_var = formData.staff_welfare - computedExpected.staff_welfare;
-
-      const total_act = 
-        formData.cash + 
-        formData.mtn + 
-        formData.airtel + 
-        formData.card + 
-        formData.insurance + 
-        formData.institutional_credit + 
-        formData.staff_welfare;
-
-      const total_exp = computedExpected.total;
-      const total_var = total_act - total_exp;
-
-      if (total_var !== 0 && !varianceReason.trim()) {
-        toast.warning("Please specify a reason for the discrepancy / variance to proceed.");
-        return;
-      }
-
-      await firestoreService.addDocument('eod_reconciliations', {
-        tenantId: profile.tenantId,
-        branch_id: activeBranchId || 'main',
-        reconciliation_date: formData.date,
-        cashier_id: profile.uid,
-        
-        cash_expected: computedExpected.cash,
-        cash_actual: formData.cash,
-        cash_variance: cash_var,
-
-        momo_expected: computedExpected.momo,
-        momo_actual: formData.mtn,
-        momo_variance: mtn_var,
-
-        airtel_expected: computedExpected.airtel,
-        airtel_actual: formData.airtel,
-        airtel_variance: airtel_var,
-
-        card_expected: computedExpected.card,
-        card_actual: formData.card,
-        card_variance: card_var,
-
-        insurance_expected: computedExpected.insurance,
-        insurance_actual: formData.insurance,
-        insurance_variance: insurance_var,
-
-        institutional_credit_expected: computedExpected.institutional_credit,
-        institutional_credit_actual: formData.institutional_credit,
-        institutional_credit_variance: inst_var,
-
-        staff_welfare_expected: computedExpected.staff_welfare,
-        staff_welfare_actual: formData.staff_welfare,
-        staff_welfare_variance: welfare_var,
-
-        total_expected: total_exp,
-        total_actual: total_act,
-        total_variance: total_var,
-
-        variance_reason: varianceReason,
-        status: 'Pending',
-        logged_by: profile.uid,
-        created_at: new Date().toISOString()
+      validateEodAmounts(
+        { cash: computedExpected.cash, mtn: computedExpected.momo, airtel: computedExpected.airtel,
+          card: computedExpected.card, insurance: computedExpected.insurance,
+          institutional_credit: computedExpected.institutional_credit, staff_welfare: computedExpected.staff_welfare },
+        { cash: formData.cash, mtn: formData.mtn, airtel: formData.airtel,
+          card: formData.card, insurance: formData.insurance,
+          institutional_credit: formData.institutional_credit, staff_welfare: formData.staff_welfare },
+        varianceReason
+      );
+      const user = auth.currentUser;
+      if (!user) throw new Error('Sign in before submitting EOD.');
+      const token = await user.getIdToken();
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          tenantId: profile.tenantId, branchId: activeBranchId, businessDate: formData.date,
+          shiftId: selectedShiftId, varianceReason,
+          declared: { cash: formData.cash, mtn: formData.mtn, airtel: formData.airtel,
+            card: formData.card, insurance: formData.insurance,
+            institutional_credit: formData.institutional_credit, staff_welfare: formData.staff_welfare }
+        })
       });
-
-      toast.success('EOD Reconciliation submitted successfully!');
+      if (!response.ok) throw new Error('EOD submission was rejected by the trusted service.');
+      const result = await response.json();
+      toast.success(result.replayed ? 'This shift was already reconciled; no duplicate created.' : 'Shift EOD reconciliation saved.');
       setRevealed(false);
-      setFormData({
-        cash: 0,
-        mtn: 0,
-        airtel: 0,
-        card: 0,
-        insurance: 0,
-        institutional_credit: 0,
-        staff_welfare: 0,
-        date: new Date().toISOString().split('T')[0]
-      });
-      setVarianceReason('');
     } catch (error) {
-      toast.error('Failed to submit reconciliation');
+      toast.error(error instanceof Error ? error.message : 'Unable to submit EOD.');
+    } finally {
+      setSubmittingEod(false);
     }
   };
 
@@ -463,6 +441,14 @@ const EODReconciliationTab: React.FC = () => {
         </div>
       </div>
 
+      <div className="mb-6 space-y-2">
+        <label htmlFor="eod-shift" className="block text-xs font-bold">Shift configured in Settings</label>
+        <select id="eod-shift" value={selectedShiftId} onChange={event => { setSelectedShiftId(event.target.value); setRevealed(false); }} className="w-full border border-zinc-200 rounded-xl p-3">
+          {configuredShifts.length === 0 && <option value="">No configured shift available</option>}
+          {configuredShifts.map(shift => <option key={shift.id} value={shift.id}>{shift.id} ({shift.startTime} to {shift.endTime})</option>)}
+        </select>
+        <p className="text-xs text-amber-700">EOD is submitted through the authenticated server only. Posting requires tenant and server enablement.</p>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Left column: Inputs */}
         <div className="lg:col-span-7 space-y-6">
@@ -587,7 +573,7 @@ const EODReconciliationTab: React.FC = () => {
               </div>
 
               <div className="pt-4 border-t border-zinc-100 space-y-4">
-                {(declaredTotals - computedExpected.total) !== 0 && (
+                {([formData.cash !== computedExpected.cash, formData.mtn !== computedExpected.momo, formData.airtel !== computedExpected.airtel, formData.card !== computedExpected.card, formData.insurance !== computedExpected.insurance, formData.institutional_credit !== computedExpected.institutional_credit, formData.staff_welfare !== computedExpected.staff_welfare].some(Boolean)) && (
                   <div className="space-y-2 animate-pulse-subtle">
                     <label className="text-xs font-black text-red-600 uppercase flex items-center gap-1.5">
                       <AlertTriangle size={14} /> Variance Reason Required
@@ -604,6 +590,8 @@ const EODReconciliationTab: React.FC = () => {
                 
                 <button 
                   onClick={handleSubmit}
+                  disabled={submittingEod || !selectedShiftId || !import.meta.env.VITE_FINANCE_V2_EOD_API_URL}
+                  title="Authenticated EOD submission"
                   className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-lg transition-all shadow-xl shadow-emerald-600/10"
                 >
                   Submit EOD Audit Report
@@ -630,7 +618,7 @@ const EODReconciliationTab: React.FC = () => {
 };
 
 const VarianceRow: React.FC<{ label: string, declared: number, expected: number }> = ({ label, declared, expected }) => {
-  const variance = declared - expected;
+  const variance = eodVariance(declared, expected);
   return (
     <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100 flex items-center justify-between">
       <div>
