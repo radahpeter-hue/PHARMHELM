@@ -102,7 +102,7 @@ export async function executeAuthenticatedFinanceV2Eod(
     const saleSnaps = await tx.get(salesQuery);
     const scoped = saleSnaps.docs.map(doc => ({ ...doc.data(), id: doc.id })).filter(sale => {
       if (sale.status !== 'completed' && sale.status !== 'active') return false;
-      if (sale.isRevisionReplacement === false && sale.revisionStatus === 'superseded') return false;
+      if (['superseded', 'reversed', 'voided', 'cancelled'].includes(String(sale.revisionStatus || '').toLowerCase())) return false;
       if (sale.voided === true || sale.isVoided === true || sale.isDeleted === true) return false;
       if (typeof sale.timestamp !== 'string') throw new Error('Sale without canonical timestamp');
       const shift = assignSaleToEodShift(sale.timestamp, shifts);
@@ -121,7 +121,7 @@ export async function executeAuthenticatedFinanceV2Eod(
       total_expected: totalExpected, total_actual: totalActual,
       total_variance: assessment.totalVariance,
       variance_reason: input.varianceReason.trim(),
-      sales_count: scoped.length, source_sale_ids: scoped.map(s => s.id),
+      sales_count: scoped.length,
       created_at: new Date().toISOString(), engineVersion: 2
     };
     const suffix: Record<Method, string> = {
