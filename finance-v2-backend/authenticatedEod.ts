@@ -1,6 +1,6 @@
 import type { Auth } from 'firebase-admin/auth';
 import type { Firestore } from 'firebase-admin/firestore';
-import { assignSaleToEodShift, assertUgx, eodCanonicalId, validateEodAmounts, type EodAmounts, type EodShift } from '../src/services/financeV2EodPolicy';
+import { assignSaleToEodShift, assertUgx, eodCanonicalId, validateEodAmounts, type EodShift } from '../src/services/financeV2EodPolicy';
 
 /**
  * Server-side EOD execution. This file is not a deployed endpoint.
@@ -64,8 +64,9 @@ export async function executeAuthenticatedFinanceV2Eod(
   if (!idToken || idToken.length < 20) throw new Error('Authentication required');
   const token = await auth.verifyIdToken(idToken, true);
   const uid = token.uid;
+  if (!uid) throw new Error('Authenticated identity missing');
   if (!uid || !input.tenantId || !input.branchId || !input.shiftId) throw new Error('Invalid EOD identity');
-  if (!input.declared || fields.some(k => !(k in input.declared))) throw new Error('All EOD declarations are required');
+  if (!input.declared || typeof input.varianceReason !== 'string' || fields.some(k => !(k in input.declared))) throw new Error('All EOD declarations are required');
   for (const key of fields) assertUgx(input.declared[key]);
   const id = eodCanonicalId(input.tenantId, input.branchId, input.businessDate, input.shiftId);
   const staffSnap = await db.doc('staff/' + uid).get();
@@ -102,8 +103,9 @@ export async function executeAuthenticatedFinanceV2Eod(
     const saleSnaps = await tx.get(salesQuery);
     const scoped = saleSnaps.docs.map(doc => ({ ...doc.data(), id: doc.id })).filter(sale => {
       if (sale.status !== 'completed' && sale.status !== 'active') return false;
+      if (sale.revisionOfSaleId && !sale.isRevisionReplacement) throw new Error('Malformed POS revision metadata');
       if (['superseded', 'reversed', 'voided', 'cancelled'].includes(String(sale.revisionStatus || '').toLowerCase())) return false;
-      if (sale.voided === true || sale.isVoided === true || sale.isDeleted === true) return false;
+      if (sale.voided === true || sale.isVoided === true || sale.isDeleted === true || sale.status === 'deleted') return false;
       if (typeof sale.timestamp !== 'string') throw new Error('Sale without canonical timestamp');
       const shift = assignSaleToEodShift(sale.timestamp, shifts);
       if (!shift) throw new Error('Completed sale cannot be assigned to configured shifts');
