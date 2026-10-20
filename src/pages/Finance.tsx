@@ -1,5 +1,6 @@
 import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
+import { auth } from '../firebase';
 import { assignSaleToEodShift, validateEodAmounts, eodVariance, type EodShift } from '../services/financeV2EodPolicy';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -362,8 +363,48 @@ const EODReconciliationTab: React.FC = () => {
   }, [sales, formData.date, activeBranchId, selectedShiftId, configuredShifts]);
 
   // No client-side financial audit creation is allowed while V2 trusted posting is unavailable.
-  const handleSubmit = () => {
-    toast.error('EOD V2 posting is unavailable until the authenticated atomic writer passes acceptance.');
+  const [submittingEod, setSubmittingEod] = useState(false);
+  const handleSubmit = async () => {
+    if (submittingEod || !profile?.tenantId || !activeBranchId || !selectedShiftId) return;
+    const endpoint = import.meta.env.VITE_FINANCE_V2_EOD_API_URL;
+    if (!endpoint || !/^https:\/\//.test(endpoint)) {
+      toast.error('Trusted Finance EOD API has not been configured for this environment.');
+      return;
+    }
+    setSubmittingEod(true);
+    try {
+      validateEodAmounts(
+        { cash: computedExpected.cash, mtn: computedExpected.momo, airtel: computedExpected.airtel,
+          card: computedExpected.card, insurance: computedExpected.insurance,
+          institutional_credit: computedExpected.institutional_credit, staff_welfare: computedExpected.staff_welfare },
+        { cash: formData.cash, mtn: formData.mtn, airtel: formData.airtel,
+          card: formData.card, insurance: formData.insurance,
+          institutional_credit: formData.institutional_credit, staff_welfare: formData.staff_welfare },
+        varianceReason
+      );
+      const user = auth.currentUser;
+      if (!user) throw new Error('Sign in before submitting EOD.');
+      const token = await user.getIdToken();
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          tenantId: profile.tenantId, branchId: activeBranchId, businessDate: formData.date,
+          shiftId: selectedShiftId, varianceReason,
+          declared: { cash: formData.cash, mtn: formData.mtn, airtel: formData.airtel,
+            card: formData.card, insurance: formData.insurance,
+            institutional_credit: formData.institutional_credit, staff_welfare: formData.staff_welfare }
+        })
+      });
+      if (!response.ok) throw new Error('EOD submission was rejected by the trusted service.');
+      const result = await response.json();
+      toast.success(result.replayed ? 'This shift was already reconciled; no duplicate created.' : 'Shift EOD reconciliation saved.');
+      setRevealed(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to submit EOD.');
+    } finally {
+      setSubmittingEod(false);
+    }
   };
 
   const declaredTotals = 
@@ -406,7 +447,7 @@ const EODReconciliationTab: React.FC = () => {
           {configuredShifts.length === 0 && <option value="">No configured shift available</option>}
           {configuredShifts.map(shift => <option key={shift.id} value={shift.id}>{shift.id} ({shift.startTime} to {shift.endTime})</option>)}
         </select>
-        <p className="text-xs text-amber-700">Development preview: EOD submission is disabled until the trusted atomic writer and audit rules are verified.</p>
+        <p className="text-xs text-amber-700">EOD is submitted through the authenticated server only. Posting requires tenant and server enablement.</p>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Left column: Inputs */}
@@ -549,8 +590,8 @@ const EODReconciliationTab: React.FC = () => {
                 
                 <button 
                   onClick={handleSubmit}
-                  disabled
-                  title="Awaiting authenticated atomic EOD writer"
+                  disabled={submittingEod || !selectedShiftId || !import.meta.env.VITE_FINANCE_V2_EOD_API_URL}
+                  title="Authenticated EOD submission"
                   className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-lg transition-all shadow-xl shadow-emerald-600/10"
                 >
                   Submit EOD Audit Report
