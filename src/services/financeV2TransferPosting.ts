@@ -72,7 +72,8 @@ export async function postFinanceV2Transfer(
       eventKind: 'EXTERNAL_TRANSFER_CHARGE_OPEX', amountUGX: plan.externalChargeExpenseUGX,
       currency: 'UGX', actorUid: input.actorUid, createdAt: now
     });
-    tx.set(requestRef, {...input, status:'posted', currency:'UGX', accountDeltas:auditDeltas,\n      movementCount:plan.movements.length, chargeEventId:plan.externalChargeExpenseUGX > 0 ? `${id}_charge` : null, createdAt:now});
+    tx.set(requestRef, {...input, status:'posted', currency:'UGX', accountDeltas:auditDeltas,
+      movementCount:plan.movements.length, chargeEventId:plan.externalChargeExpenseUGX > 0 ? `${id}_charge` : null, createdAt:now});
     return { transferId:id, replay:false };
   });
 }
