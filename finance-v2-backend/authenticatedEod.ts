@@ -92,6 +92,15 @@ export async function executeAuthenticatedFinanceV2Eod(
       if (existing.tenantId !== input.tenantId || existing.branch_id !== input.branchId ||
           existing.reconciliation_date !== input.businessDate || existing.shift_id !== input.shiftId)
         throw new Error('Canonical EOD ID collision');
+      const suffixes: Record<Method, string> = {
+        cash: 'cash', mtn: 'momo', airtel: 'airtel', card: 'card',
+        insurance: 'insurance', institutional_credit: 'institutional_credit', staff_welfare: 'staff_welfare'
+      };
+      for (const key of fields) {
+        if (existing[suffixes[key] + '_actual'] !== input.declared[key]) {
+          throw new Error('Conflicting EOD submission: this shift has already been reconciled.');
+        }
+      }
       return { id, replayed: true, record: existing };
     }
     const branchSnap = await tx.get(db.doc('branches/' + input.branchId));
