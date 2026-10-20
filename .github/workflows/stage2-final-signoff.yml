@@ -1,0 +1,27 @@
+name: Stage 2 final paid invoice reconciliation
+on:
+  push:
+    branches: [ops/stage2-final-signoff]
+permissions:
+  contents: read
+jobs:
+  final-readonly-reconciliation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --prefix /tmp/stage2-final --no-save --ignore-scripts firebase-admin
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - name: Read-only invoice payment, account and ledger reconciliation
+        run: |
+          cp scripts/audit-stage2-final-paid-invoice.mjs /tmp/stage2-final/payment.mjs
+          node /tmp/stage2-final/payment.mjs
+      - name: Confirm accepted Operational stock remains intact
+        run: |
+          cp scripts/audit-stage2-received-operational-order.mjs /tmp/stage2-final/inventory.mjs
+          node /tmp/stage2-final/inventory.mjs
