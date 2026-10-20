@@ -28,6 +28,11 @@ try {
     tenantId: 'tenant-a', branchId: 'branch-a', status: 'completed',
     timestamp: '2026-10-20T02:00:00Z', paymentMethod: 'cash', total: 10000
   });
+  await db.doc('sales/superseded-original').set({
+    tenantId: 'tenant-a', branchId: 'branch-a', status: 'completed',
+    timestamp: '2026-10-20T02:00:00Z', paymentMethod: 'cash', total: 8000,
+    supersededBySaleId: 'sale-1', revisionLifecycle: 'COMPLETED'
+  });
   await db.doc('sales/other-branch').set({
     tenantId: 'tenant-a', branchId: 'branch-b', status: 'completed',
     timestamp: '2026-10-20T02:00:00Z', paymentMethod: 'cash', total: 9999
