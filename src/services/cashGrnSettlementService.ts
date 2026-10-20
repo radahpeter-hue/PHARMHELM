@@ -25,7 +25,6 @@ export async function settleCashGrnDraft(input: CashGrnSettlementInput, connecti
   if (!tenantId || !actor.uid || !safeKey(tenantId) || !safeKey(draftId) || !safeKey(requestId) || !safeKey(paymentAccountId) || !positiveAmount(amountUGX) || externalReference.length < 3 || externalReference.length > 150) {
     throw new Error('Invalid settlement reference, identity or amount.');
   }
-  const settingsRef = doc(connection, 'system_settings', tenantId);
   const draftRef = doc(connection, 'management_expenses', draftId);
   const paymentId = `procurement_cash_settlement_${tenantId}_${draftId}_${requestId}`;
   const paymentRef = doc(connection, 'cash_grn_payments', paymentId);
@@ -35,8 +34,8 @@ export async function settleCashGrnDraft(input: CashGrnSettlementInput, connecti
   const cashLedgerRef = doc(connection, 'petty_cash_ledger', paymentId);
   const bankLedgerRef = doc(connection, 'banking_records', paymentId);
   try { return await runTransaction(connection, async tx => {
-    const [draft, payment, account, settings] = await Promise.all([
-      tx.get(draftRef), tx.get(paymentRef), tx.get(accountRef), tx.get(settingsRef)
+    const [draft, payment, account] = await Promise.all([
+      tx.get(draftRef), tx.get(paymentRef), tx.get(accountRef)
     ]);
     if (payment.exists()) {
       const existing = payment.data();
@@ -47,7 +46,6 @@ export async function settleCashGrnDraft(input: CashGrnSettlementInput, connecti
       }
       return { paymentId, alreadyProcessed:true, remainingUGX:Number(existing.remainingUGX) };
     }
-    if (!settings.exists() || settings.data().managementCashSettlementV1 !== true) throw new Error('Supplier settlement is awaiting Finance release activation.');
     if (!account.exists() || account.data().tenantId !== tenantId ||
       account.data().accountId !== paymentAccountId ||
       account.data().currency !== 'UGX' || account.data().initialized !== true ||

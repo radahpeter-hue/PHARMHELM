@@ -14,16 +14,12 @@ export function SupplierInvoicePaymentPanel({draftId,onSettled}:{draftId:string;
  const [amount,setAmount]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[confirm,setConfirm]=useState(false);
  const busyRef=useRef(false);
  const [history,setHistory]=useState<{id:string;reference:string;externalReference:string;amountUGX:number;remainingUGX:number}[]>([]);
- const [released,setReleased]=useState(false);
- const canPay=released&&hasPermission('finance','operate');
+ const canPay=hasPermission('finance','operate');
  useEffect(()=>{
   let disposed=false;setPayable(null);setError('');setConfirm(false);
   if(!profile?.tenantId)return;
   const tenantId=profile.tenantId;
   void (async()=>{
-   const settings=await getDoc(doc(db,'system_settings',tenantId));
-   if(!settings.exists()||settings.data().managementCashSettlementV1!==true)throw new Error('Supplier settlement is awaiting Finance release activation.');
-   if(!disposed)setReleased(true);
    const draft=await getDoc(doc(db,'management_expenses',draftId));
    if(!draft.exists()||draft.data().tenantId!==tenantId||draft.data().source!=='procurement_cash_grn')throw new Error('Linked supplier payment draft is unavailable.');
    const invoice=await getDoc(doc(db,'invoices',draft.data().invoiceId));

@@ -591,7 +591,6 @@ service cloud.firestore {
       allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
       allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
-        && get(/databases/$(database)/documents/system_settings/$(request.resource.data.tenantId)).data.managementCashAccountControlV1 == true
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
         && request.resource.data.accountId in ['management_petty_cash','management_bank']
         && request.resource.data.kind == (request.resource.data.accountId == 'management_bank' ? 'bank' : 'petty_cash')
@@ -615,7 +614,6 @@ service cloud.firestore {
         let legacy = getAfter(/databases/$(database)/documents/procurement_invoices/$(data.procurementInvoiceId)).data;
         let movement = getAfter(managementMovementPath(data.paymentAccountKind, paymentId)).data;
         return isFinance() && isTenantMember(data.tenantId)
-          && get(/databases/$(database)/documents/system_settings/$(data.tenantId)).data.managementCashSettlementV1 == true
           && data.processedBy == request.auth.uid
           && paymentId == 'procurement_cash_settlement_' + data.tenantId + '_' + data.draftId + '_' + data.requestId
           && data.amountUGX is int && data.amountUGX > 0

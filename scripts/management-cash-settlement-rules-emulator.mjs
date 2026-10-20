@@ -10,7 +10,8 @@ await build({entryPoints:['src/services/cashGrnSettlementService.ts','src/servic
 const {settleCashGrnDraft}=await import('../node_modules/.cache/finance-emulator/cashGrnSettlementService.js');
 const {postManagementCashEntry,createManagementFinanceWriteGroup,postManagementReceivablePayment}=await import('../node_modules/.cache/finance-emulator/managementCashPosting.js');
 const {registerManagementPaymentAccount}=await import('../node_modules/.cache/finance-emulator/managementPaymentAccountService.js');
-const tenantId='finance-test',financeUid='finance-secondary';
+let tenantId='finance-test';
+const financeUid='finance-secondary';
 const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-settlement-rules',firestore:{rules:readFileSync('firestore.rules','utf8')}});
 const actor=uid=>env.authenticatedContext(uid).firestore();
 const finance=actor(financeUid);
@@ -34,7 +35,6 @@ const value=async(c,id)=>admin(async db=>(await getDoc(doc(db,c,id))).data());
 const count=async c=>admin(async db=>(await getDocs(collection(db,c))).size);
 try {
  await admin(async db=>{
-  await setDoc(doc(db,'system_settings',tenantId),{tenantId,managementCashAccountControlV1:true,managementCashSettlementV1:true});
   for(const [uid,role,secondaryRoles,t] of [[financeUid,'IT Head',['Finance Officer'],tenantId],['finance-primary','Finance Head',[],tenantId],['procurement-only','IT Head',['Procurement Personnel'],tenantId],['logistics','Logistics Head',[],tenantId],['hr','HR Head',[],tenantId],['foreign-finance','Finance Head',[],'other']]) await setDoc(doc(db,'staff',uid),{tenantId:t,role,secondaryRoles,active:true,status:'active',assigned_branches:[]});
  });
  // First-time reconciliation is separate from settlement and preserves historical entries.
@@ -135,9 +135,24 @@ try {
  await assertSucceeds(postManagementCashEntry({tenantId,amount:1,type:'outgoing'},actor('custom-cash'),'custom-cash-post','custom-cash'));
  await assertFails(postManagementCashEntry({tenantId,amount:1,type:'outgoing'},actor('custom-foreign'),'foreign-realm-cannot-post','custom-foreign'));
  console.log('PASS compact Finance view and custom cash access preserve functional and tenant boundaries.');
- await admin(db=>updateDoc(doc(db,'system_settings',tenantId),{managementCashSettlementV1:false,managementCashAccountControlV1:false}));
+ await admin(db=>setDoc(doc(db,'system_settings',tenantId),{tenantId,managementCashSettlementV1:false,managementCashAccountControlV1:false}));
  await seed('unreleased');
- await assert.rejects(settleCashGrnDraft(input('unreleased','release-gate'),finance),/release activation/);
- console.log('PASS settlement stays disabled until explicit Finance release activation.');
+ await assertSucceeds(settleCashGrnDraft(input('unreleased','systemwide-release'),finance));
+ console.log('PASS obsolete pilot flags no longer restrict released Finance functionality.');
+ // Two unrelated tenants need no pilot settings, and keep independent account balances.
+ const originalTenant=tenantId;
+ const originalBalance=(await value('finance_payment_accounts',accountId('petty_cash'))).balanceUGX;
+ for(const nextTenant of ['new-tenant-alpha','new-tenant-beta']){
+  tenantId=nextTenant;
+  await admin(db=>setDoc(doc(db,'staff',financeUid),{tenantId,role:'Finance Head',active:true,status:'active'}));
+  await assertSucceeds(registerManagementPaymentAccount({tenantId,actorId:financeUid,kind:'petty_cash',name:'Own tenant Cash',reconciliationReference:'No historical ledger, verified zero opening'},finance));
+  assert.equal((await value('finance_payment_accounts',accountId('petty_cash'))).balanceUGX,0);
+  await seed(nextTenant,'petty_cash',50000);
+  await assertSucceeds(settleCashGrnDraft(input(nextTenant,'systemwide-payment'),finance));
+  assert.equal((await value('finance_payment_accounts',accountId('petty_cash'))).balanceUGX,12000);
+  await assertFails(getDoc(doc(finance,'finance_payment_accounts',`${originalTenant}_management_petty_cash`)));
+ }
+ assert.equal((await value('finance_payment_accounts',`${originalTenant}_management_petty_cash`)).balanceUGX,originalBalance);
+ console.log('PASS new tenants register and settle without pilot settings; original tenant balance and isolation preserved.');
  console.log('Management Cash/Bank settlement authenticated emulator acceptance passed.');
 } finally {await env.cleanup();}
