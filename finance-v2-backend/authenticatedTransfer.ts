@@ -22,6 +22,10 @@ export async function executeAuthenticatedFinanceV2Transfer(
  const actor:TrustedFinanceActor={uid:identity.uid,tenantId:String(staff.tenantId??''),
   active:staff.active===true&&staff.status==='active',canPostFinance:authorised};
  if(!actor.active||!actor.canPostFinance||actor.tenantId!==requested.tenantId)throw new Error('Finance actor is not authorised for tenant');
+ // Release permission is server-owned and tenant-specific, never request-supplied.
+ const controls=await db.doc('system_settings/'+requested.tenantId).get();
+ if(!controls.exists||controls.data()?.financeV2TrustedTransfersEnabled!==true)
+  throw new Error('Finance V2 tenant transfers remain disabled');
  const tenant=await db.doc('tenants/'+requested.tenantId).get();
  if(!tenant.exists||tenant.data()?.status==='suspended')throw new Error('Tenant unavailable for Finance V2');
  return postTrustedFinanceV2Transfer(createFinanceV2AdminStore(db),actor,requested);
