@@ -1,8 +1,4 @@
 import express from "express";
-import { initializeApp as initializeAdminApp, getApps as getAdminApps, applicationDefault } from "firebase-admin/app";
-import { getAuth as getAdminAuth } from "firebase-admin/auth";
-import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
-import { executeAuthenticatedFinanceV2Eod } from "./finance-v2-backend/authenticatedEod";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -30,32 +26,6 @@ async function startServer() {
   // API routes can go here
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
-  });
-
-  // Trusted EOD endpoint is off unless explicitly enabled in the server environment.
-  // Firebase Hosting SPA rewrites do not run this Express route; deployments must
-  // configure a real API origin and Admin SDK credentials before enabling the UI.
-  app.post("/api/finance-v2/eod", async (req, res) => {
-    if (process.env.FINANCE_V2_EOD_API_ENABLED !== 'true') {
-      return res.status(503).json({ error: 'Finance V2 EOD posting is disabled.' });
-    }
-    const bearer = req.get('authorization') || '';
-    if (!bearer.startsWith('Bearer ') || bearer.length > 8192) {
-      return res.status(401).json({ error: 'Bearer authentication is required.' });
-    }
-    try {
-      const adminApp = getAdminApps().find(item => item.name === 'pharmhelm-finance-v2')
-        || initializeAdminApp({ credential: applicationDefault(), projectId: firebaseConfig.projectId },
-          'pharmhelm-finance-v2');
-      const adminDb = getAdminFirestore(adminApp, firebaseConfig.firestoreDatabaseId);
-      const result = await executeAuthenticatedFinanceV2Eod(
-        getAdminAuth(adminApp), adminDb, bearer.slice(7), req.body
-      );
-      return res.status(result.replayed ? 200 : 201).json(result);
-    } catch (error) {
-      console.error('Trusted EOD request rejected:', error instanceof Error ? error.message : 'Unknown');
-      return res.status(400).json({ error: 'EOD reconciliation could not be submitted. Verify permissions, shift and source transactions.' });
-    }
   });
 
   // In-memory rate limiting and lockouts tracking
