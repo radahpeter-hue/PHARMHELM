@@ -28,7 +28,7 @@ export async function postFinanceV2Transfer(
     if (existing.exists()) {
       const data = existing.data();
       const fields = ['tenantId','requestId','sourceAccountId','destinationAccountId','chargePayerAccountId','principalUGX','chargeUGX','actorUid'] as const;
-      if (fields.some(field => data[field] !== input[field])) throw new Error('Transfer idempotency conflict.');
+      if (data.status !== 'posted' || data.currency !== 'UGX' || !Array.isArray(data.accountDeltas) || !Number.isSafeInteger(data.movementCount) || data.movementCount < 2 || fields.some(field => data[field] !== input[field])) throw new Error('Transfer idempotency conflict or incomplete posting.');
       return { transferId: id, replay: true };
     }
     const uniqueIds = [...new Set([input.sourceAccountId, input.destinationAccountId, input.chargePayerAccountId])];
