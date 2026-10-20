@@ -1275,7 +1275,11 @@ service cloud.firestore {
       allow create: if atomicCreditCreate(receivableId);
       allow update: if atomicCreditUpdate(receivableId);
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
+      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isFinance() && isTenantMember(resource.data.tenantId)
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId;
+      allow delete: if isFinance() && isTenantMember(resource.data.tenantId);
     }
 
     match /supplier_payables/{payableId} {

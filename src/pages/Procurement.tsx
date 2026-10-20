@@ -2806,7 +2806,7 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       await financeWrites.commit();
       financeMessages.forEach(({kind,message})=>toast[kind](message));
 
-      financeMessages.push({kind:'success',message:'Manual GRN recorded and inventory updated'});
+      toast.success('Manual GRN recorded and inventory updated');
       onClose();
     } catch (error: any) {
       console.error('Manual GRN Process Error:', error);

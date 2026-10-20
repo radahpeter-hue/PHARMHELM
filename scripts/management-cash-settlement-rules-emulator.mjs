@@ -112,6 +112,8 @@ try {
  assert.equal((await value('credit_receivables','receivable')).outstanding_ugx,0);
  console.log('PASS receivable-to-bank funding is atomic and duplicate-safe.');
 
+ await assertFails(updateDoc(doc(actor('foreign-finance'),'credit_receivables','receivable'),{outstanding_ugx:999999}));
+ await assertFails(updateDoc(doc(finance,'credit_receivables','receivable'),{tenantId:'other'}));
  await seed('denied');
  await assertFails(settleCashGrnDraft({...input('denied','wrong-role'),actor:{uid:'procurement-only',name:'Procurement'}},actor('procurement-only')));
  await assertFails(settleCashGrnDraft({...input('denied','foreign'),actor:{uid:'foreign-finance',name:'Other Finance'}},actor('foreign-finance')));

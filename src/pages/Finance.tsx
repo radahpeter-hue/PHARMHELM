@@ -1661,7 +1661,7 @@ const OldManagementExpenseLedger: React.FC = () => {
       await financeWrites.commit();
       financeMessages.forEach(({kind,message})=>toast[kind](message));
 
-      financeMessages.push({kind:'success',message:'Management expense approved and successfully deducted from petty cash!'});
+      toast.success('Management expense approved and successfully deducted from petty cash!');
     } catch (error) {
       toast.error('Failed to disburse management expense');
     }
@@ -2829,7 +2829,7 @@ const PettyCashManagement: React.FC = () => {
       await financeWrites.commit();
       financeMessages.forEach(({kind,message})=>toast[kind](message));
 
-      financeMessages.push({kind:'success',message:'Petty cash issued successfully'});
+      toast.success('Petty cash issued successfully');
       setSelectedIssue(null);
     } catch (error) {
       toast.error('Issuance failed');
@@ -2860,7 +2860,7 @@ const PettyCashManagement: React.FC = () => {
       await financeWrites.updateDocument('petty_cash_requisitions', req.id, { status: 'disbursed' });
       await financeWrites.commit();
       financeMessages.forEach(({kind,message})=>toast[kind](message));
-      financeMessages.push({kind:'success',message:'Cash disbursed successfully'});
+      toast.success('Cash disbursed successfully');
     } catch (error) {
       toast.error('Disbursement failed');
     }
@@ -3155,7 +3155,7 @@ const PettyCashModal: React.FC<{
       await financeWrites.commit();
       financeMessages.forEach(({kind,message})=>toast[kind](message));
 
-      financeMessages.push({kind:'success',message:type === 'incoming' ? 'Inflow logged successfully' : 'Issuance logged successfully'});
+      toast.success(type === 'incoming' ? 'Inflow logged successfully' : 'Issuance logged successfully');
       onClose();
     } catch (error) {
       console.error(error);
