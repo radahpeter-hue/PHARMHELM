@@ -28,7 +28,7 @@ export async function postTrustedFinanceV2Transfer(
   if(prior.exists){
    const d=prior.data();
    const keys=['tenantId','requestId','sourceAccountId','destinationAccountId','chargePayerAccountId','principalUGX','chargeUGX','actorUid'];
-   if(d.status!=='posted'||keys.some(k=>d[k]!==input[k]))throw new Error('Conflicting transfer replay');
+   if(d.status!=='posted'||d.currency!=='UGX'||!Array.isArray(d.accountDeltas)||d.accountDeltas.length<2||!Number.isSafeInteger(d.movementCount)||d.movementCount!==(input.chargeUGX>0?3:2)||d.chargeEventId!==(input.chargeUGX>0?`${id}_charge`:null)||keys.some(k=>d[k]!==input[k]))throw new Error('Conflicting or incomplete transfer replay');
    return {transferId:id,replay:true};
   }
   const ids=[...new Set([input.sourceAccountId,input.destinationAccountId,input.chargePayerAccountId])];
