@@ -46,6 +46,15 @@ export async function postFinanceV2Transfer(
     });
     const plan = planFinanceV2Transfer(input, accounts);
     const now = Timestamp.now();
+    // Record an account-specific before/after snapshot to support rule-side
+    // consistency checks and independent audit reconstruction.
+    const auditDeltas = plan.accountDeltas.map(m => {
+      const i = uniqueIds.indexOf(m.accountId);
+      return {
+        accountId:m.accountId, beforeUGX:accounts[i].balanceUGX,
+        deltaUGX:m.deltaUGX, afterUGX:accounts[i].balanceUGX + m.deltaUGX
+      };
+    });
     for (const movement of plan.accountDeltas) {
       const index = uniqueIds.indexOf(movement.accountId);
       tx.update(refs[index], { balanceUGX: accounts[index].balanceUGX + movement.deltaUGX,
@@ -54,7 +63,7 @@ export async function postFinanceV2Transfer(
     plan.movements.forEach((movement, index) => {
       tx.set(doc(connection, 'finance_v2_account_movements', `${id}_${index}`), {
         tenantId: input.tenantId, transferId: id, accountId: movement.accountId,
-        deltaUGX: movement.deltaUGX, purpose: movement.purpose,
+        deltaUGX: movement.deltaUGX, purpose: movement.purpose, movementIndex:index,
         actorUid: input.actorUid, createdAt: now
       });
     });
@@ -63,7 +72,7 @@ export async function postFinanceV2Transfer(
       eventKind: 'EXTERNAL_TRANSFER_CHARGE_OPEX', amountUGX: plan.externalChargeExpenseUGX,
       currency: 'UGX', actorUid: input.actorUid, createdAt: now
     });
-    tx.set(requestRef, {...input, status:'posted', createdAt:now});
+    tx.set(requestRef, {...input, status:'posted', currency:'UGX', accountDeltas:auditDeltas,\n      movementCount:plan.movements.length, chargeEventId:plan.externalChargeExpenseUGX > 0 ? `${id}_charge` : null, createdAt:now});
     return { transferId:id, replay:false };
   });
 }
