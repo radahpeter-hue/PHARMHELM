@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'src/components/inventory/**'
+      - 'src/components/stock/**'
+      - 'scripts/stock-in-register-ui-smoke.mjs'
       - 'src/components/procurement/OperationalHQStoreTab.tsx'
       - 'src/components/procurement/OperationalGrnRouteSelector.tsx'
       - 'src/pages/Procurement.tsx'
@@ -34,6 +36,7 @@ jobs:
           node scripts/operational-ui-smoke.mjs
           node scripts/operational-grn-route-ui-smoke.mjs
           node scripts/operational-receipt-identity-ui-smoke.mjs
+          node scripts/stock-in-register-ui-smoke.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -42,3 +45,4 @@ jobs:
             /tmp/operational-ui-*/*.png
             /tmp/operational-route-ui-*/*.png
             /tmp/receipt-identity-*/*.png
+            /tmp/stock-in-register-*/*.png

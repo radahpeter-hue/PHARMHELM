@@ -10,7 +10,7 @@ test('Stock In exposes two separate responsive Sellable and Operational workspac
   assert.match(section, /Stock In inventory type/);
   assert.match(section, /aria-pressed=\{inventoryView === 'sellable'\}/);
   assert.match(section, /aria-pressed=\{inventoryView === 'operational'\}/);
-  assert.match(section, /<OperationalBranchReceiptQueue \/>/);
+  assert.match(section, /<OperationalBranchReceiptQueue branches=\{branches\} \/>/);
   assert.match(section, /<StockInTab branches=\{branches\} \/>/);
   assert.match(section, /grid-cols-1 sm:grid-cols-2/);
 });
