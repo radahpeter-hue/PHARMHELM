@@ -38,6 +38,8 @@ try {
  await db.doc('staff/finance-u').update({role:'Logistics Head'});
  await assert.rejects(executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'wrong-role'},true),/not authorised/);
  await db.doc('staff/finance-u').update({role:'Finance Officer'});
+ await assert.rejects(executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'tenant-gate',principalUGX:2000,chargeUGX:100},true),/remain disabled/);
+ await db.doc('system_settings/test-tenant').set({financeV2TrustedTransfersEnabled:true});
  const authenticated=await executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'auth-ok',principalUGX:2000,chargeUGX:100},true);
  assert.equal(authenticated.replay,false);
  assert.equal((await source.get()).data().balanceUGX,2600);
