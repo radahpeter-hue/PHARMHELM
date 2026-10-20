@@ -12,6 +12,7 @@ interface EODReconciliation {
   tenantId: string;
   branch_id: string;
   reconciliation_date: string;
+  shift_id?: string;
   cashier_id: string;
   
   cash_expected: number;
@@ -198,6 +199,7 @@ export const EodReconciliationBox: React.FC = () => {
       return {
         'Date': formattedDate,
         'Branch': branchName,
+        'Shift': rec.shift_id || 'Legacy (unassigned)',
         'Cash (UGX)': rec.cash_actual || 0,
         'Card (UGX)': rec.card_actual || 0,
         'MoMo (UGX)': rec.momo_actual || 0,
@@ -214,6 +216,7 @@ export const EodReconciliationBox: React.FC = () => {
     exportData.push({
       'Date': 'TOTALS',
       'Branch': '',
+      'Shift': '',
       'Cash (UGX)': totals.cash,
       'Card (UGX)': totals.card,
       'MoMo (UGX)': totals.momo,
@@ -342,6 +345,7 @@ export const EodReconciliationBox: React.FC = () => {
                 <tr className="bg-zinc-50 border-b border-zinc-200 font-bold text-zinc-500 uppercase tracking-wider">
                   <th className="px-4 py-4">Date</th>
                   <th className="px-4 py-4">Branch</th>
+                  <th className="px-4 py-4">Shift</th>
                   <th className="px-4 py-4 text-right">Cash (UGX)</th>
                   <th className="px-4 py-4 text-right">Card (UGX)</th>
                   <th className="px-4 py-4 text-right">MoMo (UGX)</th>
@@ -361,6 +365,7 @@ export const EodReconciliationBox: React.FC = () => {
                     <tr key={rec.id} className="hover:bg-zinc-50/30 transition-all">
                       <td className="px-4 py-4 text-zinc-500 font-mono">{formattedDate}</td>
                       <td className="px-4 py-4 font-bold text-zinc-900">{branchName}</td>
+                      <td className="px-4 py-4 text-zinc-600">{rec.shift_id || "Legacy (unassigned)"}</td>
                       <td className="px-4 py-4 text-right font-mono">{rec.cash_actual?.toLocaleString() || 0}</td>
                       <td className="px-4 py-4 text-right font-mono">{rec.card_actual?.toLocaleString() || 0}</td>
                       <td className="px-4 py-4 text-right font-mono">{rec.momo_actual?.toLocaleString() || 0}</td>
@@ -377,6 +382,7 @@ export const EodReconciliationBox: React.FC = () => {
                 {/* Totals Summary Row */}
                 <tr className="bg-zinc-100/80 border-t-2 border-zinc-300 font-black text-zinc-950">
                   <td className="px-4 py-4 font-bold">TOTALS</td>
+                  <td className="px-4 py-4"></td>
                   <td className="px-4 py-4"></td>
                   <td className="px-4 py-4 text-right font-mono">{totals.cash.toLocaleString()}</td>
                   <td className="px-4 py-4 text-right font-mono">{totals.card.toLocaleString()}</td>
