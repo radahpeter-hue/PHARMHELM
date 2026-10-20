@@ -9,12 +9,13 @@ export function compactRuleSymbols(source){
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(stripped.match(/\b[A-Za-z_]\w*\b/g)||[]),functions=new Map(),variables=new Map();
  const reservedPaths=new Set([...stripped.matchAll(/\/([A-Za-z_]\w*)/g)].map(m=>m[1]));
- const unique=(prefix,index)=>{let name=`_${prefix}${index}`;while(names.has(name))name+='x';names.add(name);return name;};
+ const alphabet='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';let serial=0;
+ const unique=()=>{let index=serial++,suffix='';do{suffix=alphabet[index%52]+suffix;index=Math.floor(index/52)-1;}while(index>=0);let name='_'+suffix;while(names.has(name))name+='x';names.add(name);return name;};
  for(const m of stripped.matchAll(/\bfunction\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/g)){
-  if(!functions.has(m[1]))functions.set(m[1],unique('f',functions.size));
-  for(const name of m[2].split(',').map(s=>s.trim()).filter(Boolean))if(!reservedPaths.has(name)&&!variables.has(name))variables.set(name,unique('v',variables.size));
+  if(!functions.has(m[1]))functions.set(m[1],unique());
+  for(const name of m[2].split(',').map(s=>s.trim()).filter(Boolean))if(!reservedPaths.has(name)&&!variables.has(name))variables.set(name,unique());
  }
- for(const m of stripped.matchAll(/\blet\s+([A-Za-z_]\w*)\s*=/g))if(!reservedPaths.has(m[1])&&!variables.has(m[1]))variables.set(m[1],unique('v',variables.size));
+ for(const m of stripped.matchAll(/\blet\s+([A-Za-z_]\w*)\s*=/g))if(!reservedPaths.has(m[1])&&!variables.has(m[1]))variables.set(m[1],unique());
  let previous='';const output=[];
  for(const token of tokens){
   if(token.startsWith('//')||token.startsWith('/*')){output.push(' ');continue;}

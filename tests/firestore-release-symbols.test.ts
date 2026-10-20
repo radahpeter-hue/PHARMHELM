@@ -15,5 +15,5 @@ test('release compaction renames internal symbols while preserving paths, fields
 });
 test('release compaction does not collide with existing internal identifiers or rewrite property methods',()=>{
  const result=compactRuleSymbols(`function _f0(data) { let _v0 = data.get('value', 'a\\'b'); return _v0; }`);
- assert.match(result,/function _f0x\(/);assert.match(result,/\.get\('value', 'a\\'b'\)/);
+ assert.doesNotMatch(result,/function _f0\(/);assert.match(result,/\.get\('value', 'a\\'b'\)/);
 });
