@@ -479,7 +479,15 @@ service cloud.firestore {
     }
 
     function canViewFinance() {
-      return isFinance() || isITPersonnel() || hasCustomModuleView('finance');
+      // The functional custom Finance levels are a subset of view access.
+      // Evaluate that realm once and combine the unchanged built-in role sets.
+      return isAuthenticated() && (
+        hasAnyRole(['Finance Head','Finance Officer','Accountant','admin','Admin',
+          'IT Head','IT Support Staff','IT Support Personnel','IT Staff',
+          'owner','Owner','CEO','ceo','CEO / MD','ceo / md'])
+        || request.auth.token.get('email', '') in ['peterssentongo61@gmail.com', 'peter.sentongo@pharmhelm', 'peter.sentongo@pharmhelm.com']
+        || hasCustomModuleView('finance')
+      );
     }
 
     function hasBranchFinanceRole() {
@@ -514,11 +522,26 @@ service cloud.firestore {
       ];
     }
 
+    function hasCustomManagementCashAccess() {
+      let user = getUserData();
+      let configuredId = user.get('roleRealmId', '');
+      let realmId = configuredId is string && configuredId.size() > 0 ? configuredId
+        : user.tenantId + '_' + user.role.replace('\\s+', '_').lower();
+      let realmPath = /databases/$(database)/documents/role_realms_of_operation/$(realmId);
+      let realm = exists(realmPath) ? get(realmPath).data : {};
+      let permissions = realm.get('permissions', {});
+      let levels = ['view_functional', 'all'];
+      return isAuthenticated() && realm.get('tenantId', '') == user.tenantId
+        && realm.get('roleType', '') == 'custom' && realm.get('roleName', '') == user.role
+        && (permissions.get('finance', {}).get('accessLevel', '') in levels
+          || permissions.get('hr', {}).get('accessLevel', '') in levels
+          || permissions.get('logistics', {}).get('accessLevel', '') in levels
+          || permissions.get('procurement', {}).get('accessLevel', '') in levels);
+    }
     function canPostManagementCash() {
       return isAuthenticated() && (
         hasAnyRole(['Finance Head','Finance Officer','Accountant','HR Head','HR Support Personnel','HR Manager','Logistics Head','Transport & Logistics Personnel','Logistics Manager','Procurement Head','Procurement Officer','Procurement Manager','Procurement Personnel','admin','Admin'])
-        || hasCustomModuleFunctional('finance') || hasCustomModuleFunctional('hr')
-        || hasCustomModuleFunctional('logistics') || hasCustomModuleFunctional('procurement') || isAdmin());
+        || hasCustomManagementCashAccess() || isAdmin());
     }
     function managementAccountPath(tenantId, kind) {
       return /databases/$(database)/documents/finance_payment_accounts/$(tenantId + (kind == 'bank' ? '_management_bank' : '_management_petty_cash'));

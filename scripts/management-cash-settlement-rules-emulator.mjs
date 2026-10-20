@@ -123,6 +123,18 @@ try {
  await assertFails(updateDoc(doc(finance,'petty_cash_ledger','historical-opening'),{amount:999999}));
  await assertFails(postManagementCashEntry({tenantId,amount:60000,type:'outgoing'},finance,'overdraw',financeUid));
  console.log('PASS role and tenant isolation, immutable ledgers, unlinked account edits and unfunded batches denied.');
+ // Compact helpers retain the exact custom-role view/functional boundary.
+ await admin(async db=>{
+  for(const [uid,role,level,module] of [['custom-view','Finance Viewer','view_only','finance'],['custom-cash','Cash Operator','view_functional','hr'],['custom-foreign','Foreign Cash','all','finance']]){
+   await setDoc(doc(db,'staff',uid),{tenantId,role,roleRealmId:uid,status:'active',active:true});
+   await setDoc(doc(db,'role_realms_of_operation',uid),{tenantId:uid==='custom-foreign'?'other':tenantId,roleName:role,roleType:'custom',permissions:{[module]:{accessLevel:level}}});
+  }
+ });
+ await assertSucceeds(getDoc(doc(actor('custom-view'),'finance_payment_accounts',accountId('petty_cash'))));
+ await assertFails(postManagementCashEntry({tenantId,amount:1,type:'outgoing'},actor('custom-view'),'view-cannot-post','custom-view'));
+ await assertSucceeds(postManagementCashEntry({tenantId,amount:1,type:'outgoing'},actor('custom-cash'),'custom-cash-post','custom-cash'));
+ await assertFails(postManagementCashEntry({tenantId,amount:1,type:'outgoing'},actor('custom-foreign'),'foreign-realm-cannot-post','custom-foreign'));
+ console.log('PASS compact Finance view and custom cash access preserve functional and tenant boundaries.');
  await admin(db=>updateDoc(doc(db,'system_settings',tenantId),{managementCashSettlementV1:false,managementCashAccountControlV1:false}));
  await seed('unreleased');
  await assert.rejects(settleCashGrnDraft(input('unreleased','release-gate'),finance),/release activation/);
