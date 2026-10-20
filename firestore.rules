@@ -588,8 +588,8 @@ service cloud.firestore {
         && after.payment_status == (payment.remainingUGX == 0 ? 'paid' : 'partial');
     }
     match /finance_payment_accounts/{accountId} {
-      allow get: if canPostManagementCash() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
       allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
         && get(/databases/$(database)/documents/system_settings/$(request.resource.data.tenantId)).data.managementCashAccountControlV1 == true
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
@@ -635,8 +635,8 @@ service cloud.firestore {
           && movement.accountDocumentId == data.tenantId + '_' + data.paymentAccountId
           && data.excludeFromOpexRollup == true;
       }
-      allow get: if isFinance() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow get: if canViewFinance() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
       allow create: if validSettlement(request.resource.data);
       allow update, delete: if false;
     }
@@ -1242,7 +1242,7 @@ service cloud.firestore {
     }
     match /petty_cash_ledger/{entryId} {
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if canPostManagementCash() && isTenantMember(resource.data.tenantId);
+      allow list: if (canViewFinance() || canPostManagementCash()) && isTenantMember(resource.data.tenantId);
       allow create: if validManagementMovement(entryId, request.resource.data, 'petty_cash');
       allow update, delete: if false;
     }
@@ -1284,8 +1284,8 @@ service cloud.firestore {
     }
 
     match /banking_records/{recordId} {
-      allow get: if isFinance() && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow get: if canViewFinance() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
       allow create: if validManagementMovement(recordId, request.resource.data, 'bank');
       allow update, delete: if false;
     }

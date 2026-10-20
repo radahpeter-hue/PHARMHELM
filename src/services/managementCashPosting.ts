@@ -41,7 +41,7 @@ export function stageManagementCashEntry(
   const now = Timestamp.now();
   const payload = cleanRecord(data);
   writer.set(doc(connection, ledgerCollection, ledgerId), {
-    ...payload, accountDocumentId, accountDeltaUGX: delta, postedBy: actorId,
+    ...payload, amount:Math.abs(delta), date:payload.date||now.toDate().toISOString().slice(0,10), accountDocumentId, accountDeltaUGX: delta, postedBy: actorId,
     createdAt: now, updatedAt: now
   });
   writer.update(doc(connection, 'finance_payment_accounts', accountDocumentId), {

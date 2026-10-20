@@ -38,7 +38,9 @@ try{
   await page.getByText('Outstanding after payment: UGX 28,000.',{exact:false}).waitFor();
   const confirm=page.getByRole('button',{name:'Record supplier payment',exact:true});await confirm.scrollIntoViewIfNeeded();
   for(const locator of [amount,confirm]){await locator.scrollIntoViewIfNeeded();const box=await locator.boundingBox();assert.ok(box&&box.x>=0&&box.x+box.width<=width,'payment fields fit phone width');}
-  assert.equal(await page.locator('body').evaluate(e=>e.scrollWidth<=innerWidth),true);
+  await page.screenshot({path:path.join(output,`payment-${width}.png`),fullPage:true});
+  const overflow=await page.locator('body').evaluate(()=>[...document.querySelectorAll('body *')].filter(e=>{const r=e.getBoundingClientRect();return r.width&&r.right>innerWidth+1;}).map(e=>({tag:e.tagName,text:e.textContent?.slice(0,80),class:e.className,right:e.getBoundingClientRect().right})).slice(0,12));
+  assert.equal(await page.locator('body').evaluate(e=>e.scrollWidth<=innerWidth),true,JSON.stringify(overflow));
   assert.notEqual(await amount.evaluate(e=>getComputedStyle(e).color),'rgb(255, 255, 255)');
   await confirm.scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,`payment-${width}.png`),fullPage:true});
   await confirm.dblclick();await page.waitForFunction(()=>window.paymentCalls?.length===1);

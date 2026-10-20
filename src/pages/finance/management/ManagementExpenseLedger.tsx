@@ -655,7 +655,7 @@ export const ManagementExpenseLedger: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6 text-zinc-900">
       <ManagementPaymentAccounts />
       {/* Treasury Header */}
       <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 bg-white p-6 border border-zinc-200 rounded-[32px] shadow-sm">
@@ -663,7 +663,7 @@ export const ManagementExpenseLedger: React.FC = () => {
           <h2 className="text-2xl font-black text-zinc-950 tracking-tight">Management Expense Ledger</h2>
           <p className="text-xs text-zinc-500 font-medium">Log, audit, review, and confirm company HQ, HR, procurement, and administrative payments.</p>
         </div>
-        <div className="flex items-center gap-6 self-stretch lg:self-auto justify-between lg:justify-end border-t lg:border-t-0 pt-4 lg:pt-0">
+        <div className="flex min-w-0 flex-col items-stretch gap-4 sm:flex-row sm:items-center self-stretch lg:self-auto justify-between lg:justify-end border-t lg:border-t-0 pt-4 lg:pt-0">
           {/* Petty Cash Wallet summary */}
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center border border-emerald-100">
@@ -674,16 +674,16 @@ export const ManagementExpenseLedger: React.FC = () => {
               <p className="text-base font-black font-mono text-zinc-950">UGX {pettyCashBalance.toLocaleString()}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setIsManualModalOpen(true)}
-              className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-zinc-950 hover:bg-zinc-800 text-white rounded-xl shadow-sm transition-all"
+              className="flex min-h-11 items-center gap-1.5 px-4 py-2 text-xs font-bold bg-zinc-950 hover:bg-zinc-800 text-white rounded-xl shadow-sm transition-all"
             >
               <Plus size={14} /> Log Expense
             </button>
             <button
               onClick={handleExportExcel}
-              className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-[#1A5E38] hover:bg-[#124227] text-white rounded-xl shadow-sm transition-all"
+              className="flex min-h-11 items-center gap-1.5 px-4 py-2 text-xs font-bold bg-[#1A5E38] hover:bg-[#124227] text-white rounded-xl shadow-sm transition-all"
             >
               <Download size={14} /> Download Report
             </button>
@@ -693,7 +693,7 @@ export const ManagementExpenseLedger: React.FC = () => {
 
       {/* Advanced Filter Box */}
       <div className="bg-zinc-50 border border-zinc-200 p-6 rounded-[24px] shadow-sm space-y-4">
-        <div className="flex items-center justify-between border-b border-zinc-200/60 pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200/60 pb-3">
           <h4 className="font-extrabold text-zinc-900 text-sm flex items-center gap-2">
             <Filter size={16} className="text-zinc-500" />
             Filter and Search Ledger
@@ -707,21 +707,21 @@ export const ManagementExpenseLedger: React.FC = () => {
               setMinAmount('');
               setMaxAmount('');
             }}
-            className="text-[10px] font-bold text-zinc-400 hover:text-zinc-600 uppercase tracking-widest"
+            className="min-h-11 text-xs font-bold text-zinc-700 hover:text-zinc-950 uppercase tracking-wide"
           >
             Clear Filters
           </button>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {/* Search bar */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">Search Note/Ref</label>
+          <div className="min-w-0 space-y-1">
+            <label className="text-[10px] font-black text-zinc-700 uppercase tracking-widest block">Search Note/Ref</label>
             <div className="relative">
               <Search className="absolute left-3 top-2.5 text-zinc-400" size={16} />
               <input
                 type="text"
                 placeholder="Search..."
-                className="w-full pl-9 pr-4 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-zinc-950/5"
+                className="min-h-11 min-w-0 w-full text-zinc-900 pl-9 pr-4 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-zinc-950/5"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
@@ -729,32 +729,32 @@ export const ManagementExpenseLedger: React.FC = () => {
           </div>
 
           {/* Date range start */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">From Date</label>
+          <div className="min-w-0 space-y-1">
+            <label className="text-[10px] font-black text-zinc-700 uppercase tracking-widest block">From Date</label>
             <input
               type="date"
-              className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
+              className="min-h-11 min-w-0 w-full text-zinc-900 px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
               value={dateRange.start}
               onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
             />
           </div>
 
           {/* Date range end */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">To Date</label>
+          <div className="min-w-0 space-y-1">
+            <label className="text-[10px] font-black text-zinc-700 uppercase tracking-widest block">To Date</label>
             <input
               type="date"
-              className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
+              className="min-h-11 min-w-0 w-full text-zinc-900 px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
               value={dateRange.end}
               onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
             />
           </div>
 
           {/* Category selection */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">Expense Category</label>
+          <div className="min-w-0 space-y-1">
+            <label className="text-[10px] font-black text-zinc-700 uppercase tracking-widest block">Expense Category</label>
             <select
-              className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
+              className="min-h-11 min-w-0 w-full text-zinc-900 px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
               value={searchCategory}
               onChange={(e) => setSearchCategory(e.target.value)}
             >
@@ -763,10 +763,10 @@ export const ManagementExpenseLedger: React.FC = () => {
           </div>
 
           {/* Department selection */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">Department/Branch</label>
+          <div className="min-w-0 space-y-1">
+            <label className="text-[10px] font-black text-zinc-700 uppercase tracking-widest block">Department/Branch</label>
             <select
-              className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
+              className="min-h-11 min-w-0 w-full text-zinc-900 px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
               value={searchDepartment}
               onChange={(e) => setSearchDepartment(e.target.value)}
             >
@@ -775,10 +775,10 @@ export const ManagementExpenseLedger: React.FC = () => {
           </div>
 
           {/* Logged by selection */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">Logged By</label>
+          <div className="min-w-0 space-y-1">
+            <label className="text-[10px] font-black text-zinc-700 uppercase tracking-widest block">Logged By</label>
             <select
-              className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
+              className="min-h-11 min-w-0 w-full text-zinc-900 px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
               value={searchLoggedBy}
               onChange={(e) => setSearchLoggedBy(e.target.value)}
             >
@@ -787,24 +787,24 @@ export const ManagementExpenseLedger: React.FC = () => {
           </div>
 
           {/* Min Amount */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">Min Amount (UGX)</label>
+          <div className="min-w-0 space-y-1">
+            <label className="text-[10px] font-black text-zinc-700 uppercase tracking-widest block">Min Amount (UGX)</label>
             <input
               type="number"
               placeholder="Min..."
-              className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
+              className="min-h-11 min-w-0 w-full text-zinc-900 px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
               value={minAmount}
               onChange={(e) => setMinAmount(e.target.value)}
             />
           </div>
 
           {/* Max Amount */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">Max Amount (UGX)</label>
+          <div className="min-w-0 space-y-1">
+            <label className="text-[10px] font-black text-zinc-700 uppercase tracking-widest block">Max Amount (UGX)</label>
             <input
               type="number"
               placeholder="Max..."
-              className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
+              className="min-h-11 min-w-0 w-full text-zinc-900 px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-semibold outline-none"
               value={maxAmount}
               onChange={(e) => setMaxAmount(e.target.value)}
             />
