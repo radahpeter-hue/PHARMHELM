@@ -1,0 +1,31 @@
+name: Firestore compiled release size
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'firestore.rules'
+      - 'scripts/build-firestore-release-rules.mjs'
+      - 'scripts/validate-inactive-finance-rules.mjs'
+      - '.github/workflows/firestore-release-size.yml'
+permissions:
+  contents: read
+jobs:
+  activation-size:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Compile compact equivalent rule symbols
+        run: node scripts/build-firestore-release-rules.mjs
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - run: npm install --prefix /tmp/rules-size --no-save --ignore-scripts google-auth-library
+      - name: Require actual compiled executable to fit the activation limit
+        run: |
+          cp scripts/validate-inactive-finance-rules.mjs /tmp/rules-size/validate.mjs
+          node /tmp/rules-size/validate.mjs

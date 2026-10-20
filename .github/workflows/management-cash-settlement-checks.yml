@@ -11,6 +11,7 @@ on:
       - 'scripts/validate-inactive-finance-rules.mjs'
       - '.github/workflows/management-cash-settlement-checks.yml'
       - 'firestore.rules'
+      - 'scripts/build-firestore-release-rules.mjs'
 permissions:
   contents: read
 jobs:
@@ -30,6 +31,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - name: Compile equivalent rules before authenticated tests and release-size validation
+        run: node scripts/build-firestore-release-rules.mjs
       - run: npm run build
       - run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
       - name: Authenticated Cash/Bank settlement and competing writer tests
