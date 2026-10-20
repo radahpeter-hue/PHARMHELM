@@ -37,8 +37,8 @@ export async function postFinanceV2Transfer(
     const accounts: FinanceV2AccountSnapshot[] = snaps.map((snap, i) => {
       if (!snap.exists()) throw new Error('Transfer account is not registered.');
       const data = snap.data();
-      if (data.tenantId !== input.tenantId || data.accountId !== uniqueIds[i] || data.initialized !== true || data.currency !== 'UGX')
-        throw new Error('Account identity, currency or reconciliation invalid.');
+      if (data.tenantId !== input.tenantId || data.accountId !== uniqueIds[i] || data.initialized !== true || data.currency !== 'UGX' || data.controlVersion !== 2)
+        throw new Error('Account identity, V2 control version, currency or reconciliation invalid.');
       const normalizedKind = data.kind === 'bank' ? 'BANK' : data.kind === 'petty_cash' ? 'PETTY_CASH' : data.kind;
       return { tenantId: data.tenantId, accountId: data.accountId, kind: normalizedKind,
         balanceUGX: data.balanceUGX, branchId: data.branchId,
