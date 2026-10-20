@@ -1,5 +1,5 @@
 import type {Firestore} from 'firebase-admin/firestore';
-import type {TrustedFinanceStore,TrustedFinanceTransaction} from '../../src/services/financeV2TrustedTransferCore';
+import type {TrustedFinanceStore,TrustedFinanceTransaction} from '../src/services/financeV2TrustedTransferCore';
 
 /** Admin-only adapter for isolated emulator verification. No HTTP endpoint. */
 export function createFinanceV2AdminStore(db:Firestore):TrustedFinanceStore {
