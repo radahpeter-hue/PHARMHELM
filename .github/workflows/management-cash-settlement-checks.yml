@@ -8,6 +8,7 @@ on:
       - 'src/services/cashGrnSettlementService.ts'
       - 'src/components/finance/**'
       - 'scripts/management-cash-settlement-*.mjs'
+      - 'scripts/finance-v2-account-rules-emulator.mjs'
       - 'scripts/validate-inactive-finance-rules.mjs'
       - '.github/workflows/management-cash-settlement-checks.yml'
       - 'firestore.rules'
@@ -37,6 +38,8 @@ jobs:
       - run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
       - name: Authenticated Cash/Bank settlement and competing writer tests
         run: npx firebase emulators:exec --only firestore --project pharmhelm-finance-settlement-rules "node scripts/management-cash-settlement-rules-emulator.mjs"
+      - name: Authenticated Finance V2 account registration security tests
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-finance-v2-rules "node scripts/finance-v2-account-rules-emulator.mjs"
       - name: Install isolated mobile verification browser
         if: always()
         run: |
