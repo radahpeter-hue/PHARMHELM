@@ -38,25 +38,26 @@ try {
   await assertFails(setDoc(doc(finance,'finance_v2_account_movements','movement_1'),{tenantId:tenant,deltaUGX:100}));
   // Even a complete, mathematically balanced client transaction must fail until
   // the dedicated cross-document transfer rules are certified.
+  await admin(db=>updateDoc(account(db),{balanceUGX:500}));
   await admin(db=>setDoc(account(db,'cash_b'),{...payload,accountId:'cash_b',balanceUGX:0,openingBalanceUGX:0}));
   await assertFails(runTransaction(finance,async tx=>{
     const source=account(finance);
     const target=account(finance,'cash_b');
     const [beforeSource,beforeTarget]=await Promise.all([tx.get(source),tx.get(target)]);
-    assert.equal(beforeSource.data().balanceUGX,0);
+    assert.equal(beforeSource.data().balanceUGX,500);
     assert.equal(beforeTarget.data().balanceUGX,0);
     tx.set(doc(finance,'finance_v2_transfers','finance_v2_transfer_'+tenant+'_proof'),{
       tenantId:tenant,requestId:'proof',sourceAccountId:'cash_a',destinationAccountId:'cash_b',
       chargePayerAccountId:'cash_a',principalUGX:100,chargeUGX:0,actorUid:'finance-a',status:'posted'
     });
-    tx.update(source,{balanceUGX:-100,lastPostingId:'finance_v2_transfer_'+tenant+'_proof'});
+    tx.update(source,{balanceUGX:400,lastPostingId:'finance_v2_transfer_'+tenant+'_proof'});
     tx.update(target,{balanceUGX:100,lastPostingId:'finance_v2_transfer_'+tenant+'_proof'});
     tx.set(doc(finance,'finance_v2_account_movements','proof_0'),{tenantId:tenant,accountId:'cash_a',deltaUGX:-100});
     tx.set(doc(finance,'finance_v2_account_movements','proof_1'),{tenantId:tenant,accountId:'cash_b',deltaUGX:100});
   }));
-  assert.equal((await getDoc(account(finance))).data().balanceUGX,0);
+  assert.equal((await getDoc(account(finance))).data().balanceUGX,500);
   assert.equal((await getDoc(account(finance,'cash_b'))).data().balanceUGX,0);
   console.log('PASS complete but uncertified transfer transaction denied atomically with no balance movement');
-  assert.equal((await getDoc(account(finance))).data().balanceUGX,0);
+  assert.equal((await getDoc(account(finance))).data().balanceUGX,500);
   console.log('PASS wrong tenant, branch, actor, opening, direct balance and orphan postings denied');
 } finally {await env.cleanup();}
