@@ -3,7 +3,8 @@
  */
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-const token=process.env.GOOGLE_OAUTH_ACCESS_TOKEN;
+const {GoogleAuth}=await import('google-auth-library');
+const token=process.env.GOOGLE_OAUTH_ACCESS_TOKEN || await new GoogleAuth({scopes:['https://www.googleapis.com/auth/cloud-platform']}).getAccessToken();
 if(!token)throw new Error('Scoped CI authentication is required.');
 const project='gen-lang-client-0911422817',rules=readFileSync('firestore.rules','utf8');
 const response=await fetch(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({source:{files:[{name:'firestore.rules',content:rules}]}}),signal:AbortSignal.timeout(60000)});
