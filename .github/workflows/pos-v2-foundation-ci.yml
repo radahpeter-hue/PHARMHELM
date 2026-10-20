@@ -75,6 +75,8 @@ on:
       - 'src/types.ts'
       - 'src/types/sellingTier.ts'
       - 'firestore.rules'
+      - 'scripts/build-firestore-release-rules.mjs'
+      - 'tests/firestore-release-symbols.test.ts'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/pos-v2-foundation-ci.yml'
@@ -107,6 +109,9 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Compile equivalent rules before authenticated regression tests
+        run: node scripts/build-firestore-release-rules.mjs
 
       - name: Set up Java for Spark transaction integration tests
         uses: actions/setup-java@v4

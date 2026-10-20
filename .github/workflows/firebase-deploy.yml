@@ -42,6 +42,7 @@ jobs:
           echo "Building commit ${VITE_BUILD_SHA} at ${VITE_BUILD_TIME}"
           npm run lint
           npm run build
+          node scripts/build-firestore-release-rules.mjs
 
       - name: Authenticate to Firebase
         uses: google-github-actions/auth@v2

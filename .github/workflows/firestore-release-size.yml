@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'firestore.rules'
+      - 'scripts/build-firestore-release-rules.mjs'
       - 'scripts/validate-inactive-finance-rules.mjs'
       - '.github/workflows/firestore-release-size.yml'
 permissions:
@@ -18,6 +19,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Compile compact equivalent rule symbols
+        run: node scripts/build-firestore-release-rules.mjs
       - uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
