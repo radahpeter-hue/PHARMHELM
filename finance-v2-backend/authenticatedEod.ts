@@ -67,6 +67,10 @@ export async function executeAuthenticatedFinanceV2Eod(
   const uid = token.uid;
   if (!uid) throw new Error('Authenticated identity missing');
   if (!input || !input.tenantId || !input.branchId || !input.shiftId) throw new Error('Invalid EOD identity');
+  for (const segment of [input.tenantId, input.branchId, input.shiftId]) {
+    if (typeof segment !== 'string' || !segment.trim() || segment.includes('/') || segment === '.' || segment === '..')
+      throw new Error('Invalid EOD Firestore document identity');
+  }
   if (!input.declared || typeof input.varianceReason !== 'string' || fields.some(k => !(k in input.declared))) throw new Error('All EOD declarations are required');
   for (const key of fields) assertUgx(input.declared[key]);
   const id = eodCanonicalId(input.tenantId, input.branchId, input.businessDate, input.shiftId);
