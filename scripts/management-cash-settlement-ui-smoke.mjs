@@ -33,6 +33,7 @@ try{
  for(const width of [360,390,1280]){
   const page=await browser.newPage({viewport:{width,height:844}});await open(page);
   await page.getByLabel('Supplier payment account',{exact:true}).selectOption('management_petty_cash');
+  await page.getByText('Available balance: UGX 60,000',{exact:true}).waitFor();
   const amount=page.getByLabel('Supplier payment amount',{exact:true});await amount.fill('10000');
   await page.getByRole('button',{name:'Review supplier payment',exact:true}).click();
   await page.getByText('Outstanding after payment: UGX 28,000.',{exact:false}).waitFor();
