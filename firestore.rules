@@ -506,6 +506,7 @@ service cloud.firestore {
 
     function isProtectedFinanceCollection(collectionName) {
       return collectionName in [
+        'finance_v2_transfers', 'finance_v2_account_movements', 'finance_v2_events',
         'finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
         'credit_receivables', 'supplier_payables', 'banking_records',
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
@@ -587,6 +588,22 @@ service cloud.firestore {
         && after.diff(before).affectedKeys().hasOnly(['payment_status','lastPaymentId','updatedAt'])
         && after.payment_status == (payment.remainingUGX == 0 ? 'paid' : 'partial');
     }
+    // V2 financial postings are deliberately closed until atomic cross-document
+    // rules, authenticated emulator tests and opening balances are certified.
+    // Explicit protection also prevents permissive fallback matching.
+    match /finance_v2_transfers/{transferId} {
+      allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId);
+      allow create, update, delete: if false;
+    }
+    match /finance_v2_account_movements/{movementId} {
+      allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId);
+      allow create, update, delete: if false;
+    }
+    match /finance_v2_events/{eventId} {
+      allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId);
+      allow create, update, delete: if false;
+    }
+
     match /finance_payment_accounts/{accountId} {
       allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
