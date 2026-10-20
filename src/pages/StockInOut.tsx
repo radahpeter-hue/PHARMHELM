@@ -2331,7 +2331,8 @@ export const OperationalBranchReceiptQueue: React.FC<{ branches?: Branch[] }> = 
     try {
       const records = await firestoreService.getDocumentsByQuery<OperationalTransferLine>('operational_transfer_lines', [
         { field: 'tenantId', operator: '==', value: profile.tenantId },
-        { field: 'transferId', operator: '==', value: transfer.id }
+        { field: 'transferId', operator: '==', value: transfer.id },
+        { field: 'destinationBranchId', operator: '==', value: activeBranchId }
       ]);
       await exportRecordsToExcel(records.map(line => ({
         'Invoice ID': transfer.transferNumber, 'Source order': transfer.sourceOrderNumber || 'HQ distribution',
