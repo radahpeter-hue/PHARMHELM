@@ -31,7 +31,7 @@ test('trusted transfer posts full principal, separate fee and rejects replay mut
  assert.equal(data.get('finance_payment_accounts/t_cash')?.balanceUGX,11000);
  assert.equal(data.get('finance_v2_events/finance_v2_transfer_t_r_charge')?.amountUGX,300);
  assert.equal(await postTrustedFinanceV2Transfer(store,actor,input).then(x=>x.replay),true);
- await assert.rejects(postTrustedFinanceV2Transfer(store,actor,{...input,principalUGX:9999}),/Conflicting transfer replay/);
+ await assert.rejects(postTrustedFinanceV2Transfer(store,actor,{...input,principalUGX:9999}),/Conflicting or incomplete transfer replay/);
 });
 test('unauthorised and underfunded posting leaves store unchanged',async()=>{
  const {store,data}=fakeStore();
