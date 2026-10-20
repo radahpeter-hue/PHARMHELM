@@ -1,0 +1,1 @@
+{"name":"pharmhelm-finance-v2-emulator","private":true,"type":"module","dependencies":{"firebase-admin":"^13.0.0"},"description":"Development-only Firebase Admin adapter; no deployed entrypoint"}
