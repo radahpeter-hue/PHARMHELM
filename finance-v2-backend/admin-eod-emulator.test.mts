@@ -41,6 +41,12 @@ try {
     executeAuthenticatedFinanceV2Eod(token, db, 'test-token-authenticated', request)
   ]);
   assert.equal([first, second].filter(result => !result.replayed).length, 1);
+  await assert.rejects(
+    executeAuthenticatedFinanceV2Eod(token, db, 'test-token-authenticated', {
+      ...request, declared: { ...request.declared, cash: 9999 }, varianceReason: 'Changed count'
+    }),
+    /Conflicting/
+  );
   const id = eodCanonicalId('tenant-a', 'branch-a', '2026-10-19', 'nightShift');
   const record = (await db.doc('eod_reconciliations/' + id).get()).data()!;
   assert.equal(record.cash_expected, 10000);
