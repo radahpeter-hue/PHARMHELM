@@ -1283,10 +1283,10 @@ service cloud.firestore {
     }
 
     match /eod_reconciliations/{reconciliationId} {
+      // EOD posting must occur via the authenticated server with a deterministic ID.
+      // No browser may modify or delete the permanent EOD audit trail.
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewBranchFinance();
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+      allow create, update, delete: if false;
     }
 
     match /branch_expenses/{expenseId} {
