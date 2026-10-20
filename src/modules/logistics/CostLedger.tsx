@@ -1,3 +1,4 @@
+import { createManagementFinanceWriteGroup } from '../../services/managementCashPosting';
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, Search, Filter, Fuel, Settings, AlertTriangle, 
@@ -120,6 +121,8 @@ export const CostLedger: React.FC = () => {
     }
 
     try {
+      const financeMessages: {kind:'success'|'info';message:string}[] = [];
+      const financeWrites = createManagementFinanceWriteGroup(profile?.tenantId || '', profile?.uid || '');
       const expenseDate = formData.get('date') as string || new Date().toISOString().split('T')[0];
 
       if (activeTab === 'fuel') {
@@ -135,10 +138,10 @@ export const CostLedger: React.FC = () => {
           staff_id: profile?.uid,
           tenantId: profile?.tenantId,
         };
-        const docRef = await addDoc(collection(db, 'fuel_logs'), data);
+        const docRef = await financeWrites.add('fuel_logs', data);
         
         // Auto deduct from petty cash ledger (global)
-        await addDoc(collection(db, 'petty_cash_ledger'), {
+        await financeWrites.add('petty_cash_ledger', {
           tenantId: profile?.tenantId,
           date: data.date,
           amount: costVal,
@@ -151,7 +154,7 @@ export const CostLedger: React.FC = () => {
         });
 
         // Log to departmental petty cash ledger
-        await addDoc(collection(db, 'departmental_petty_cash_ledger'), {
+        await financeWrites.add('departmental_petty_cash_ledger', {
           tenantId: profile?.tenantId,
           department: 'Logistics',
           date: data.date,
@@ -166,7 +169,7 @@ export const CostLedger: React.FC = () => {
           created_at: new Date().toISOString()
         });
 
-        toast.success('Fuel log added and cost subtracted from petty cash!');
+        financeMessages.push({kind:'success',message:'Fuel log added and cost subtracted from petty cash!'});
       } else if (activeTab === 'maintenance') {
         const provider = formData.get('service_provider') as string;
         const serviceType = formData.get('service_type') as string;
@@ -183,10 +186,10 @@ export const CostLedger: React.FC = () => {
           staff_id: profile?.uid,
           tenantId: profile?.tenantId,
         };
-        const docRef = await addDoc(collection(db, 'maintenance_logs'), data);
+        const docRef = await financeWrites.add('maintenance_logs', data);
 
         // Auto deduct from petty cash ledger
-        await addDoc(collection(db, 'petty_cash_ledger'), {
+        await financeWrites.add('petty_cash_ledger', {
           tenantId: profile?.tenantId,
           date: data.date,
           amount: costVal,
@@ -199,7 +202,7 @@ export const CostLedger: React.FC = () => {
         });
 
         // Log to departmental petty cash ledger
-        await addDoc(collection(db, 'departmental_petty_cash_ledger'), {
+        await financeWrites.add('departmental_petty_cash_ledger', {
           tenantId: profile?.tenantId,
           department: 'Logistics',
           date: data.date,
@@ -214,7 +217,7 @@ export const CostLedger: React.FC = () => {
           created_at: new Date().toISOString()
         });
 
-        toast.success('Maintenance log added and cost subtracted from petty cash!');
+        financeMessages.push({kind:'success',message:'Maintenance log added and cost subtracted from petty cash!'});
       } else if (activeTab === 'fines') {
         const reason = formData.get('offence_description') as string;
         const data = {
@@ -227,10 +230,10 @@ export const CostLedger: React.FC = () => {
           notes: formData.get('notes') as string,
           tenantId: profile?.tenantId,
         };
-        const docRef = await addDoc(collection(db, 'traffic_fine_logs'), data);
+        const docRef = await financeWrites.add('traffic_fine_logs', data);
 
         // Auto deduct from petty cash ledger
-        await addDoc(collection(db, 'petty_cash_ledger'), {
+        await financeWrites.add('petty_cash_ledger', {
           tenantId: profile?.tenantId,
           date: data.date,
           amount: costVal,
@@ -243,7 +246,7 @@ export const CostLedger: React.FC = () => {
         });
 
         // Log to departmental petty cash ledger
-        await addDoc(collection(db, 'departmental_petty_cash_ledger'), {
+        await financeWrites.add('departmental_petty_cash_ledger', {
           tenantId: profile?.tenantId,
           department: 'Logistics',
           date: data.date,
@@ -258,7 +261,7 @@ export const CostLedger: React.FC = () => {
           created_at: new Date().toISOString()
         });
 
-        toast.success('Traffic fine logged and cost subtracted from petty cash!');
+        financeMessages.push({kind:'success',message:'Traffic fine logged and cost subtracted from petty cash!'});
       } else if (activeTab === 'general_expenses') {
         const category = formData.get('category') as string;
         const notes = formData.get('notes') as string;
@@ -271,10 +274,10 @@ export const CostLedger: React.FC = () => {
           tenantId: profile?.tenantId,
           created_at: new Date().toISOString()
         };
-        const docRef = await addDoc(collection(db, 'logistics_expenses'), data);
+        const docRef = await financeWrites.add('logistics_expenses', data);
 
         // Auto deduct from petty cash ledger
-        await addDoc(collection(db, 'petty_cash_ledger'), {
+        await financeWrites.add('petty_cash_ledger', {
           tenantId: profile?.tenantId,
           date: data.date,
           amount: costVal,
@@ -287,7 +290,7 @@ export const CostLedger: React.FC = () => {
         });
 
         // Log to departmental petty cash ledger
-        await addDoc(collection(db, 'departmental_petty_cash_ledger'), {
+        await financeWrites.add('departmental_petty_cash_ledger', {
           tenantId: profile?.tenantId,
           department: 'Logistics',
           date: data.date,
@@ -302,8 +305,10 @@ export const CostLedger: React.FC = () => {
           created_at: new Date().toISOString()
         });
 
-        toast.success('Other fleet expense logged and cost subtracted from petty cash!');
+        financeMessages.push({kind:'success',message:'Other fleet expense logged and cost subtracted from petty cash!'});
       }
+      await financeWrites.commit();
+      financeMessages.forEach(({kind,message})=>toast[kind](message));
       setIsModalOpen(false);
     } catch (error) {
       toast.error('Failed to save log');

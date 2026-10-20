@@ -1,3 +1,4 @@
+import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import React, { useState, useEffect } from 'react';
 import { 
   Heart, 
@@ -77,12 +78,14 @@ const Welfare: React.FC = () => {
     const difference = newLimit - oldLimit;
 
     try {
-      await firestoreService.updateDocument('staff', staffMember.id, {
+      const financeMessages: {kind:'success'|'info';message:string}[] = [];
+      const financeWrites = createManagementFinanceWriteGroup(profile?.tenantId || '', profile?.uid || '');
+      await financeWrites.updateDocument('staff', staffMember.id, {
         welfare_limit: newLimit
       });
 
       if (difference !== 0) {
-        await firestoreService.addDocument('petty_cash_ledger', {
+        await financeWrites.addDocument('petty_cash_ledger', {
           tenantId: profile.tenantId,
           amount: Math.abs(difference),
           type: difference > 0 ? 'withdrawal' : 'incoming',
@@ -92,8 +95,10 @@ const Welfare: React.FC = () => {
           created_by_name: profile.full_name || 'HR Administrator'
         });
       }
+      await financeWrites.commit();
+      financeMessages.forEach(({kind,message})=>toast[kind](message));
 
-      toast.success(`Welfare limit successfully adjusted for ${staffMember.full_name || staffMember.username}`);
+      financeMessages.push({kind:'success',message:`Welfare limit successfully adjusted for ${staffMember.full_name || staffMember.username}`});
     } catch (e) {
       console.error(e);
       toast.error('Failed to adjust welfare limit.');

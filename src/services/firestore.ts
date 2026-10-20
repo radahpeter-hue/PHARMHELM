@@ -1,3 +1,5 @@
+import { postManagementCashEntry, createManagementFinanceWriteGroup } from './managementCashPosting';
+import { auth } from '../firebase';
 import { 
   collection, 
   collectionGroup,
@@ -86,6 +88,11 @@ export const firestoreService = {
   addDocument: async (path: string, data: any) => {
     try {
       const cleanData = deepClean(data);
+      if (path === 'petty_cash_ledger') return (await postManagementCashEntry(cleanData)).id;
+      if (path === 'cashTransfers') {
+        const group = createManagementFinanceWriteGroup(cleanData.tenantId, auth.currentUser?.uid || '');
+        const ref = group.add(path, cleanData); await group.commit(); return ref.id;
+      }
       const docRef = await addDoc(collection(db, path), {
         ...cleanData,
         createdAt: serverTimestamp(),

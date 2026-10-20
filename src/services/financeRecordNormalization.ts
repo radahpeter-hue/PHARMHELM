@@ -19,9 +19,9 @@ export function dateInRange(value: any, start: string, end: string): boolean {
 
 export function normalizeInvoiceRecord(id: string, data: any) {
   const rawStatus = String(data.paymentStatus || data.payment_type || data.status || '').toLowerCase();
-  const paymentStatus = rawStatus === 'paid' ? 'cash'
+  const paymentStatus = ['paid','paid-in-full'].includes(rawStatus) ? 'paid'
     : rawStatus === 'unpaid' ? 'credit'
-      : rawStatus === 'paid-in-full' ? 'paid'
+      : ['partial','partially paid','partially_paid'].includes(rawStatus) ? 'partial'
         : rawStatus || 'credit';
   return {
     ...data,

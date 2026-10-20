@@ -42,6 +42,19 @@ try {
       report.linkedGrnFound=grn.exists&&grn.get('tenantId')===tenantId&&grn.get('invoice_id')===inv.id;
       const draft=await db.collection('management_expenses').doc('management_payment_draft_'+grnId).get();
       report.linkedDraftFound=draft.exists&&draft.get('tenantId')===tenantId&&draft.get('invoiceId')===inv.id;
+      const legacyId=grnId.startsWith('op_grn_')?`procurement_register_${grnId}`:`procurement_register_${grnId.slice(4)}`;
+      const legacy=await db.collection('procurement_invoices').doc(legacyId).get();
+      report.linkedProcurementInvoiceFound=legacy.exists&&legacy.get('tenantId')===tenantId&&legacy.get('grnId')===grnId&&grn.get('procurement_invoice_id')===legacyId;
+      report.settlementRecordsReady=report.linkedGrnFound&&report.linkedDraftFound&&report.linkedProcurementInvoiceFound
+        && x.paymentType==='cash'&&grn.get('payment_type')==='cash'
+        && draft.get('source')==='procurement_cash_grn'&&draft.get('excludeFromOpexRollup')===true
+        && Number(draft.get('amount'))===report.expectedInvoiceUGX
+        && Number(draft.get('paidAmountUGX')||0)===report.alreadyPaidUGX
+        && Number(legacy.get('paid_amount_ugx')||0)===report.alreadyPaidUGX
+        && Number(legacy.get('paidAmountUGX')||0)===report.alreadyPaidUGX
+        && ['draft','partial','approved'].includes(draft.get('status'));
+      if(!report.settlementRecordsReady)report.issues.push('SUPPLIER_SETTLEMENT_RECORDS_REQUIRE_RECONCILIATION');
+
     }
     if(!report.linkedGrnFound)report.issues.push('MISSING_CANONICAL_GRN_LINK');
     if(!report.linkedDraftFound)report.issues.push('MISSING_CASH_DRAFT_LINK');
@@ -54,6 +67,7 @@ try {
       const t=String(d.type||'').toLowerCase();
       balance+=['incoming','deposit','topup'].includes(t)?amount:-amount;
     }
+    report.cashLedgerBalanceUGX=balance;
     report.cashLedgerBalanceSufficient=report.cashLedgerAnomalies===0&&balance>=report.remainingUGX;
     if(report.cashLedgerAnomalies) report.issues.push('CASH_LEDGER_AMOUNT_ANOMALIES');
   }
@@ -62,3 +76,5 @@ try {
   writeFileSync(file,JSON.stringify(report,null,2));
 }
 console.log(JSON.stringify(report,null,2));
+
+if(report.issues.length)throw new Error(`Read-only Finance reconciliation found: ${report.issues.join(", ")}`);
