@@ -34,3 +34,12 @@ test('release rules forbid every V2 financial posting until authenticated transa
 test('insufficient aggregate source cash must fail before any write',()=>{
  assert.throws(()=>planFinanceV2Transfer(request,[{...accounts[0],balanceUGX:1000000},accounts[1]]),/Insufficient funds/);
 });
+
+test('transfer envelope contains immutable per-account audit deltas and charge linkage',()=>{
+ assert.match(writer,/const auditDeltas = plan\.accountDeltas\.map/);
+ assert.match(writer,/beforeUGX:accounts\[i\]\.balanceUGX/);
+ assert.match(writer,/afterUGX:accounts\[i\]\.balanceUGX \+ m\.deltaUGX/);
+ assert.match(writer,/accountDeltas:auditDeltas/);
+ assert.match(writer,/movementCount:plan\.movements\.length/);
+ assert.match(writer,/chargeEventId:/);
+});
