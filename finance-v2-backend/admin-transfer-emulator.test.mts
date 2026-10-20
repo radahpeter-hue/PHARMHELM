@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {initializeApp,deleteApp} from 'firebase-admin/app';
 import {getFirestore} from 'firebase-admin/firestore';
+import {executeAuthenticatedFinanceV2Transfer} from './authenticatedTransfer.ts';
 import {postTrustedFinanceV2Transfer} from '../src/services/financeV2TrustedTransferCore.ts';
 import {createFinanceV2AdminStore} from '../finance-v2-backend/adminStore.ts';
 if(!process.env.FIRESTORE_EMULATOR_HOST)throw Error('FIRESTORE_EMULATOR_HOST is mandatory');
@@ -27,5 +28,19 @@ try {
  await assert.rejects(postTrustedFinanceV2Transfer(store,actor,{...input,requestId:'unfunded',principalUGX:999999}),/Insufficient funds/);
  await assert.rejects(postTrustedFinanceV2Transfer(store,{...actor,canPostFinance:false},{...input,requestId:'unauthorised'}),/Unauthorised/);
  assert.equal((await source.get()).data().balanceUGX,4700);
+ await db.doc('staff/finance-u').create({tenantId:'test-tenant',active:true,status:'active',role:'Finance Officer',secondaryRoles:[]});
+ await db.doc('tenants/test-tenant').create({status:'active'});
+ const verifyIdToken=async(token)=>{if(token!=='test-token-authenticated')throw Error('Bad token');return {uid:'finance-u'}};
+ const verified={verifyIdToken};
+ await assert.rejects(executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'blocked'},false),/disabled/);
+ await assert.rejects(executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'impersonated',actorUid:'someone-else'},true),/mismatch/);
+ await assert.rejects(executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'cross-tenant',tenantId:'foreign'},true),/tenant/);
+ await db.doc('staff/finance-u').update({role:'Logistics Head'});
+ await assert.rejects(executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'wrong-role'},true),/not authorised/);
+ await db.doc('staff/finance-u').update({role:'Finance Officer'});
+ const authenticated=await executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'auth-ok',principalUGX:2000,chargeUGX:100},true);
+ assert.equal(authenticated.replay,false);
+ assert.equal((await source.get()).data().balanceUGX,2600);
+ console.log('PASS authenticated handler verifies token, staff role and tenant before transfer');
  console.log('PASS atomic Admin SDK emulator: one posting, idempotent simultaneous replay, conserved principal, separate charge, insufficient and unauthorised denial');
 }finally{await deleteApp(app);}
