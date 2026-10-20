@@ -1,0 +1,45 @@
+name: Authorized Stage 2 Finance account setup
+on:
+  push:
+    branches: [ops/stage2-finance-activation]
+    paths:
+      - '.github/workflows/stage2-finance-activation.yml'
+      - 'scripts/activate-stage2-finance.mjs'
+permissions:
+  contents: read
+jobs:
+  initialize-authorized-account:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+      FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test setup preflight without Firebase credentials or writes
+        run: node scripts/activation-preflight-test.mjs
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Compile the same release rules tested and deployed
+        run: node scripts/build-firestore-release-rules.mjs
+      - name: Require exact deployed Finance rules before account setup
+        run: bash scripts/verify-active-firestore-rules.sh
+      - name: Install isolated administrative initialization runtime
+        run: npm install --prefix /tmp/stage2-setup --no-save --ignore-scripts firebase-admin
+      - name: Reconcile opening account and activate settlement, without paying
+        env:
+          STAGE2_SETUP_AUTHORIZATION: MARTIN_PHARMA_ACCOUNT_SETUP_ONLY
+        run: |
+          cp scripts/activate-stage2-finance.mjs /tmp/stage2-setup/activate.mjs
+          node /tmp/stage2-setup/activate.mjs
+      - name: Verify invoice and inventory remain unchanged
+        run: |
+          cp scripts/audit-stage2-supplier-invoice.mjs /tmp/stage2-setup/finance-audit.mjs
+          cp scripts/audit-stage2-received-operational-order.mjs /tmp/stage2-setup/inventory-audit.mjs
+          node /tmp/stage2-setup/finance-audit.mjs
+          node /tmp/stage2-setup/inventory-audit.mjs
