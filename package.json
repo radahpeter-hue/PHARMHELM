@@ -37,8 +37,7 @@
     "three": "^0.185.1",
     "vite": "^6.2.0",
     "write-excel-file": "^4.1.1",
-    "zod": "^4.3.6",
-    "firebase-admin": "^13.0.0"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.0",
