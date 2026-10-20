@@ -43,3 +43,10 @@ test('transfer envelope contains immutable per-account audit deltas and charge l
  assert.match(writer,/movementCount:plan\.movements\.length/);
  assert.match(writer,/chargeEventId:/);
 });
+
+test('duplicate request is not accepted as complete when transfer envelope is incomplete',()=>{
+ assert.match(writer,/data\.status !== 'posted'/);
+ assert.match(writer,/data\.currency !== 'UGX'/);
+ assert.match(writer,/!Array\.isArray\(data\.accountDeltas\)/);
+ assert.match(writer,/data\.movementCount < 2/);
+});
