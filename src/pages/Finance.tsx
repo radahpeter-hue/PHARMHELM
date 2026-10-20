@@ -1,5 +1,6 @@
 import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
+import { assignSaleToEodShift, validateEodAmounts, eodVariance, type EodShift } from '../services/financeV2EodPolicy';
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, 
@@ -250,6 +251,8 @@ const EODReconciliationTab: React.FC = () => {
   const isFinanceHead = hasAnyRole(profile, ['Finance Head']);
   const [revealed, setRevealed] = useState(false);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [configuredShifts, setConfiguredShifts] = useState<EodShift[]>([]);
+  const [selectedShiftId, setSelectedShiftId] = useState('');
   const [formData, setFormData] = useState({
     cash: 0,
     mtn: 0,
@@ -273,15 +276,34 @@ const EODReconciliationTab: React.FC = () => {
     }
   }, [profile?.tenantId]);
 
+  // Reuse the per-branch shift definitions from Settings, never hardcode the enabled schedule.
+  useEffect(() => {
+    if (!profile?.tenantId || !activeBranchId) return;
+    let cancelled = false;
+    firestoreService.getCollection<Branch>('branches', profile.tenantId).then(rows => {
+      if (cancelled) return;
+      const configured = rows.find(branch => branch.id === activeBranchId)?.shifts;
+      const shifts: EodShift[] = (['dayShift', 'eveningShift', 'nightShift'] as const)
+        .flatMap(id => {
+          const entry = configured?.[id];
+          return entry?.enabled && entry.startTime && entry.endTime
+            ? [{ id, enabled: true, startTime: entry.startTime, endTime: entry.endTime }]
+            : [];
+        });
+      setConfiguredShifts(shifts);
+      setSelectedShiftId(previous => shifts.some(shift => shift.id === previous) ? previous : shifts[0]?.id || '');
+    }).catch(() => { if (!cancelled) { setConfiguredShifts([]); setSelectedShiftId(''); } });
+    return () => { cancelled = true; };
+  }, [profile?.tenantId, activeBranchId]);
+
   // Dynamically compute system expected values from actual POS data for this branch & date
   const { computedExpected, relevantSalesCount } = React.useMemo(() => {
     const targetDate = formData.date;
     const filtered = sales.filter(s => {
-      const isCompleted = s.status === 'completed' || s.status === 'active';
-      const isSameBranch = s.branchId === activeBranchId;
-      if (!s.timestamp) return false;
-      const saleDate = s.timestamp.split('T')[0];
-      return isCompleted && isSameBranch && saleDate === targetDate;
+      if (!selectedShiftId || !isActiveSale(s) || s.branchId !== activeBranchId ||
+          !s.timestamp || (s.status !== 'completed' && s.status !== 'active')) return false;
+      const assigned = assignSaleToEodShift(s.timestamp, configuredShifts);
+      return assigned?.businessDate === targetDate && assigned.shiftId === selectedShiftId;
     });
 
     let cash = 0;
@@ -337,11 +359,16 @@ const EODReconciliationTab: React.FC = () => {
       },
       relevantSalesCount: filtered.length
     };
-  }, [sales, formData.date, activeBranchId]);
+  }, [sales, formData.date, activeBranchId, selectedShiftId, configuredShifts]);
 
   const handleSubmit = async () => {
-    if (!profile) return;
+    if (!profile || !activeBranchId || !selectedShiftId) return;
     try {
+      validateEodAmounts(
+        { cash: computedExpected.cash, mtn: computedExpected.momo, airtel: computedExpected.airtel, card: computedExpected.card, insurance: computedExpected.insurance, institutional_credit: computedExpected.institutional_credit, staff_welfare: computedExpected.staff_welfare },
+        { cash: formData.cash, mtn: formData.mtn, airtel: formData.airtel, card: formData.card, insurance: formData.insurance, institutional_credit: formData.institutional_credit, staff_welfare: formData.staff_welfare },
+        varianceReason
+      );
       const cash_var = formData.cash - computedExpected.cash;
       const mtn_var = formData.mtn - computedExpected.momo;
       const airtel_var = formData.airtel - computedExpected.airtel;
@@ -367,10 +394,12 @@ const EODReconciliationTab: React.FC = () => {
         return;
       }
 
+      throw new Error('EOD V2 posting is disabled until the authenticated atomic writer is released.');
       await firestoreService.addDocument('eod_reconciliations', {
         tenantId: profile.tenantId,
         branch_id: activeBranchId || 'main',
         reconciliation_date: formData.date,
+        shift_id: selectedShiftId,
         cashier_id: profile.uid,
         
         cash_expected: computedExpected.cash,
@@ -425,7 +454,7 @@ const EODReconciliationTab: React.FC = () => {
       });
       setVarianceReason('');
     } catch (error) {
-      toast.error('Failed to submit reconciliation');
+      toast.error(error instanceof Error ? error.message : 'Failed to submit reconciliation');
     }
   };
 
@@ -463,6 +492,14 @@ const EODReconciliationTab: React.FC = () => {
         </div>
       </div>
 
+      <div className="mb-6 space-y-2">
+        <label htmlFor="eod-shift" className="block text-xs font-bold">Shift configured in Settings</label>
+        <select id="eod-shift" value={selectedShiftId} onChange={event => { setSelectedShiftId(event.target.value); setRevealed(false); }} className="w-full border border-zinc-200 rounded-xl p-3">
+          {configuredShifts.length === 0 && <option value="">No configured shift available</option>}
+          {configuredShifts.map(shift => <option key={shift.id} value={shift.id}>{shift.id} ({shift.startTime} to {shift.endTime})</option>)}
+        </select>
+        <p className="text-xs text-amber-700">Development preview: EOD submission is disabled until the trusted atomic writer and audit rules are verified.</p>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Left column: Inputs */}
         <div className="lg:col-span-7 space-y-6">
@@ -587,7 +624,7 @@ const EODReconciliationTab: React.FC = () => {
               </div>
 
               <div className="pt-4 border-t border-zinc-100 space-y-4">
-                {(declaredTotals - computedExpected.total) !== 0 && (
+                {([formData.cash !== computedExpected.cash, formData.mtn !== computedExpected.momo, formData.airtel !== computedExpected.airtel, formData.card !== computedExpected.card, formData.insurance !== computedExpected.insurance, formData.institutional_credit !== computedExpected.institutional_credit, formData.staff_welfare !== computedExpected.staff_welfare].some(Boolean)) && (
                   <div className="space-y-2 animate-pulse-subtle">
                     <label className="text-xs font-black text-red-600 uppercase flex items-center gap-1.5">
                       <AlertTriangle size={14} /> Variance Reason Required
@@ -604,6 +641,8 @@ const EODReconciliationTab: React.FC = () => {
                 
                 <button 
                   onClick={handleSubmit}
+                  disabled
+                  title="Awaiting authenticated atomic EOD writer"
                   className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-lg transition-all shadow-xl shadow-emerald-600/10"
                 >
                   Submit EOD Audit Report
@@ -630,7 +669,7 @@ const EODReconciliationTab: React.FC = () => {
 };
 
 const VarianceRow: React.FC<{ label: string, declared: number, expected: number }> = ({ label, declared, expected }) => {
-  const variance = declared - expected;
+  const variance = eodVariance(declared, expected);
   return (
     <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100 flex items-center justify-between">
       <div>
