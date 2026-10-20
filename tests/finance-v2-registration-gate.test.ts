@@ -13,11 +13,15 @@ test('registration service requires user identity, transaction, and zero opening
   assert.match(source,/if \(existing\.exists\(\)\)/);
   assert.match(source,/Account already registered/);
 });
-test('live rules still forbid registration of V2 controlVersion 2 accounts',()=>{
-  const match=rules.match(/match \/finance_payment_accounts\/\{accountId\} \{([\s\S]*?)\n    \}/);
+test('V2 account registration requires an explicit disabled-by-default tenant setting and zero opening',()=>{
+  const match=rules.match(/match \/finance_payment_accounts\/\\{accountId\\} \\{([\\s\\S]*?)\\n    \\}/);
   assert.ok(match);
-  assert.match(match[1],/request\.resource\.data\.controlVersion == 1/);
-  assert.match(match[1],/request\.resource\.data\.accountId in \['management_petty_cash','management_bank'\]/);
+  assert.match(match[1], /financeV2AccountRegistrationEnabled/);
+  assert.match(match[1], /openingBalanceUGX == 0/);
+  assert.match(match[1], /balanceUGX == 0/);
+  assert.match(match[1], /controlVersion == 2/);
+  assert.match(match[1], /isAssignedToBranch/);
+  assert.match(match[1], /validManagementAccountUpdate/);
 });
 test('registration contract prohibits inherited balances for branch cash',()=>{
   assert.throws(()=>planFinanceV2AccountRegistration({
