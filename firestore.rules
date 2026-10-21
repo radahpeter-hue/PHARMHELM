@@ -662,7 +662,7 @@ service cloud.firestore {
         && before.tenantId == after.tenantId
         && id == before.tenantId + '_' + before.accountId
         && t.tenantId == before.tenantId
-        && t.chargeUGX == 0 && sparkTransferActor(t)
+        && t.chargeUGX == 0 && t.actorUid == request.auth.uid
         && transferId == 'finance_v2_transfer_' + t.tenantId + '_' + t.requestId
         && (before.accountId == t.sourceAccountId || before.accountId == t.destinationAccountId)
         && after.diff(before).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
@@ -676,7 +676,7 @@ service cloud.firestore {
     function sparkMovementValid(id, d) {
       let t = getAfter(sparkTransferPath(d.transferId)).data;
       return d.transferId == 'finance_v2_transfer_' + d.tenantId + '_' + t.requestId
-        && d.tenantId == t.tenantId && sparkTransferActor(t)
+        && d.tenantId == t.tenantId && t.actorUid == request.auth.uid
         && id == d.transferId + '_' + d.movementIndex
         && d.movementIndex in [0, 1]
         && d.purpose == 'PRINCIPAL' && d.actorUid == request.auth.uid
