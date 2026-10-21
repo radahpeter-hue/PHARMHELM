@@ -980,15 +980,15 @@ service cloud.firestore {
 
     match /attendance/{attendanceId} {
       function submitterAllowed(branchId) {
-        return isHR() || isAssignedBranchManager(branchId) || ((isPOSOperator() || hasAnyRole(['Cashier','cashier'])) && isAssignedToBranch(branchId));
+        return isHR() || isAssignedBranchManager(branchId) || (hasAnyRole(['Cashier','cashier','Pharmacist','pharmacist','Dispenser','dispenser']) && isAssignedToBranch(branchId));
       }
       function reviewerAllowed(branchId) {
         return hasAnyRole(['HR Head','HR Support Personnel','HR Manager','admin','Admin'])
           || isAssignedBranchManager(branchId);
       }
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId)
-        && (isHR() || isAdmin() || isAssignedToBranch(resource.data.branch_id));
-      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId)
+      allow read: if isTenantMember(resource.data.tenantId)
+        && (isHR() || isAssignedToBranch(resource.data.branch_id));
+      allow create: if isTenantMember(request.resource.data.tenantId)
         && attendanceId == request.resource.data.tenantId + '_' + request.resource.data.staffId + '_' + request.resource.data.date
         && submitterAllowed(request.resource.data.branch_id)
         && request.resource.data.loggedByUid == request.auth.uid
@@ -996,16 +996,13 @@ service cloud.firestore {
         && request.resource.data.status in ['present', 'absent', 'on-leave']
         && request.resource.data.hours_worked is number
         && request.resource.data.hours_worked >= 0 && request.resource.data.hours_worked <= 24;
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId)
-        && request.resource.data.tenantId == resource.data.tenantId
-        && request.resource.data.staffId == resource.data.staffId
-        && request.resource.data.branch_id == resource.data.branch_id
+      allow update: if isTenantMember(resource.data.tenantId)
         && resource.data.get('approval_status','Submitted') == 'Submitted'
         && (
           (submitterAllowed(resource.data.branch_id)
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               'status', 'check_in_time', 'check_out_time', 'hours_worked', 'updatedAt'
-            ]) && request.resource.data.approval_status == resource.data.get('approval_status','Submitted'))
+            ]))
           ||
           (reviewerAllowed(resource.data.branch_id)
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
