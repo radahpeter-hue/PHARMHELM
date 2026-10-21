@@ -31,6 +31,13 @@ jobs:
           trap 'kill "$emulator_pid"' EXIT
           for attempt in $(seq 1 30); do curl -s http://127.0.0.1:8085/ > /dev/null && break; sleep 1; done
           export FIRESTORE_EMULATOR_HOST=127.0.0.1:8085
-          node --import tsx --test finance-v2-backend/admin-transfer-emulator.test.mts finance-v2-backend/admin-eod-emulator.test.mts
+          node --import tsx --test finance-v2-backend/admin-transfer-emulator.test.mts finance-v2-backend/admin-eod-emulator.test.mts finance-v2-backend/admin-pos-cash-emulator.test.mts
           node scripts/management-cash-settlement-rules-emulator.mjs
           node scripts/finance-v2-account-rules-emulator.mjs
+      - name: Build and smoke-test the isolated API container
+        run: |
+          docker build -f finance-v2-backend/Dockerfile -t pharmhelm-finance-v2-api .
+          docker run -d --name finance-v2-api-test -p 18080:8080 -e FINANCE_V2_API_ENABLED=true -e FIREBASE_PROJECT_ID=finance-v2-isolated -e FIRESTORE_DATABASE_ID="(default)" -e ALLOWED_ORIGIN=https://example.invalid pharmhelm-finance-v2-api
+          trap 'docker logs finance-v2-api-test; docker rm -f finance-v2-api-test' EXIT
+          for attempt in $(seq 1 30); do curl -s http://127.0.0.1:18080/ > /dev/null && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18080/api/finance-v2/accounts)" = 401

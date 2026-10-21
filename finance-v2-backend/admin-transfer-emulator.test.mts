@@ -17,7 +17,7 @@ const source=db.doc('finance_payment_accounts/test-tenant_bank');
 const destination=db.doc('finance_payment_accounts/test-tenant_cash');
 try {
  await source.create({tenantId:'test-tenant',accountId:'bank',kind:'BANK',currency:'UGX',controlVersion:2,initialized:true,active:true,balanceUGX:15000});
- await destination.create({tenantId:'test-tenant',accountId:'cash',kind:'BRANCH_CASH_SALES',currency:'UGX',controlVersion:2,initialized:true,active:true,balanceUGX:100});
+ await destination.create({tenantId:'test-tenant',accountId:'cash',kind:'PETTY_CASH',currency:'UGX',controlVersion:2,initialized:true,active:true,balanceUGX:100});
  const results=await Promise.all([postTrustedFinanceV2Transfer(store,actor,input),postTrustedFinanceV2Transfer(store,actor,input)]);
  assert.equal(results.filter(r=>!r.replay).length,1);
  assert.equal((await source.get()).data().balanceUGX,4700);

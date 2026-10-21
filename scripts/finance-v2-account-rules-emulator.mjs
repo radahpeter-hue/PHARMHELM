@@ -23,6 +23,9 @@ try {
     }
   });
   const finance=user('finance-a');
+  await assertFails(setDoc(doc(finance,'finance_v2_pos_cash_sources','forged'),{tenantId:tenant,cashUGX:500}));
+  await assertFails(updateDoc(doc(finance,'system_settings',tenant),{financeV2PosCashFundingEnabled:true}));
+  await assertSucceeds(updateDoc(doc(finance,'system_settings',tenant),{ordinaryFinancePreference:'preserved'}));
   await assertFails(setDoc(account(finance),payload));
   console.log('PASS default disabled gate blocks registration');
   await admin(db=>setDoc(doc(db,'system_settings',tenant),{tenantId:tenant,financeV2AccountRegistrationEnabled:true}));

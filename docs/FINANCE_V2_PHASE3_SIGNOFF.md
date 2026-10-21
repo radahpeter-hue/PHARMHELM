@@ -20,13 +20,13 @@ Frontend: VITE_FINANCE_V2_API_BASE_URL points to that HTTPS service origin; VITE
 
 ## Verification and remaining gates
 
-Local frontend test batch: 735 tests passed; frontend typecheck and Vite production build passed. Backend compilation passed after correcting a pre-existing Phase 2 sale snapshot inference error. Isolated Firestore Admin transfer and EOD acceptance passed, including concurrent duplicate requests, principal and separate fee, insufficient funds, conflicting retry, authentication and tenant checks, overnight EOD and canonical retry. Legacy Management Cash settlement authenticated rules acceptance passed, including new tenants and cross-tenant denial. Expected denial cases emit Firestore errors; the acceptance process exited successfully.
+Local frontend test batch: 739 tests passed; frontend typecheck and Vite production build passed. Backend compilation passed after correcting a pre-existing Phase 2 sale snapshot inference error. Isolated Firestore Admin transfer and EOD acceptance passed, including concurrent duplicate requests, principal and separate fee, insufficient funds, conflicting retry, authentication and tenant checks, overnight EOD and canonical retry. Legacy Management Cash settlement authenticated rules acceptance passed, including new tenants and cross-tenant denial. Expected denial cases emit Firestore errors; the acceptance process exited successfully.
 
 The expanded emulator batch also passed competing-transfer overdraft prevention, branch restriction, scoped treasury reads, restricted registration and uninitialized-account rejection. Current GitHub checks must still be inspected before release sign-off. The dedicated Finance V2 integration workflow installs both lockfiles, typechecks both packages, runs unit/build checks and the isolated Admin and legacy settlement acceptance suites. It applies to stacked PRs as well as main.
 
 Release blockers:
 
-1. POS does not have a verified V2 Branch Cash Sales funding/reversal contract. New V2 accounts start at zero. EOD never credits them. Sale/revision cash funding must be designed and tested with idempotent sale and reversal identities before claiming the complete POS → account → transfer path works operationally. No historical balances have been invented.
+1. The prospective POS cash funding and receipt-correction contract is implemented and emulator-tested in the follow-up described in FINANCE_V2_POS_CASH_INTEGRATION.md. New accounts still start at zero and historical balances are not migrated. Hosted operational validation remains required before release.
 2. Hosted API deployment, real Firebase token/service identity validation, named-database verification, frontend connectivity and tenant activation remain pending.
 3. Mobile layout uses native controls, wrapping cards and normal page scrolling; rendered desktop/mobile acceptance remains pending.
 4. Dedicated browser V2 registration/read/write-denial emulator acceptance passed. Treasury branch-read and registration-denial checks passed in the Admin suite. Rendered UI and broader delegated-role acceptance remain pending.

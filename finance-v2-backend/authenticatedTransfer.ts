@@ -29,5 +29,5 @@ export async function executeAuthenticatedFinanceV2Transfer(
   throw new Error('Finance V2 tenant transfers remain disabled');
  const tenant=await db.doc('tenants/'+requested.tenantId).get();
  if(!tenant.exists||tenant.data()?.status==='suspended')throw new Error('Tenant unavailable for Finance V2');
- return postTrustedFinanceV2Transfer(createFinanceV2AdminStore(db),actor,requested);
+ return postTrustedFinanceV2Transfer(createFinanceV2AdminStore(db,actor.uid,requested.destinationAccountId!==requested.sourceAccountId&&(requested.chargeUGX===0||requested.chargePayerAccountId!==requested.destinationAccountId)?requested.destinationAccountId:undefined),actor,requested);
 }

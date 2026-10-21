@@ -6,6 +6,7 @@
  */
 import {executeAuthenticatedFinanceV2Transfer} from './authenticatedTransfer.ts';
 import {readTreasury,registerTreasuryAccount} from './treasury.ts';
+import {startCashFundingWorker} from './cashFundingWorker';
 import { createServer } from 'node:http';
 import { initializeApp, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -22,6 +23,7 @@ if (!Number.isInteger(port) || port <= 0) throw new Error('Invalid PORT');
 const app = initializeApp({ credential: applicationDefault(), projectId });
 const db = getFirestore(app, databaseId);
 const auth = getAuth(app);
+startCashFundingWorker(db);
 
 createServer(async (req, res) => {
   const requestOrigin = req.headers.origin;

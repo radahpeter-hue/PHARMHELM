@@ -506,7 +506,7 @@ service cloud.firestore {
 
     function isProtectedFinanceCollection(collectionName) {
       return collectionName in [
-        'finance_v2_transfers', 'finance_v2_account_movements', 'finance_v2_events',
+        'finance_v2_transfers', 'finance_v2_account_movements', 'finance_v2_events', 'finance_v2_pos_cash_sources',
         'finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
         'credit_receivables', 'supplier_payables', 'banking_records',
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
@@ -598,6 +598,9 @@ service cloud.firestore {
     match /finance_v2_account_movements/{movementId} {
       allow get, list: if false; // Scoped history is served by the authenticated treasury API.
       allow create, update, delete: if false;
+    }
+    match /finance_v2_pos_cash_sources/{sourceId} {
+      allow read, write: if false;
     }
     match /finance_v2_events/{eventId} {
       allow get, list: if false; // Scoped history is served by the authenticated treasury API.
@@ -1026,9 +1029,20 @@ service cloud.firestore {
       allow write: if isHR() || isAdmin();
     }
 
+    function trustedFinanceKeys() {
+      return ['financeV2TrustedTransfersEnabled', 'financeV2AccountRegistrationEnabled',
+        'financeV2TrustedEodEnabled', 'financeV2PosCashFundingEnabled'];
+    }
     match /system_settings/{settingsId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
+      // Trusted Finance release controls can only be changed by an Admin service.
+      allow create: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId)
+        && !request.resource.data.keys().hasAny(trustedFinanceKeys());
+      allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(trustedFinanceKeys());
+      allow delete: if isSettingsAdmin() && isTenantMember(resource.data.tenantId)
+        && !resource.data.keys().hasAny(trustedFinanceKeys());
     }
 
     match /master_registries/{registryId} {
@@ -3175,6 +3189,10 @@ service cloud.firestore {
         && isAuthenticated()
         && ((request.method == 'get' && resource == null) || isTenantMember(resource.data.tenantId));
       allow write: if !dedicatedWriteCollection() && !isProtectedFinanceCollection(collectionName)
+        && (collectionName != 'system_settings'
+          || (request.method == 'create' && !request.resource.data.keys().hasAny(trustedFinanceKeys()))
+          || (request.method == 'update' && !request.resource.data.diff(resource.data).affectedKeys().hasAny(trustedFinanceKeys()))
+          || (request.method == 'delete' && !resource.data.keys().hasAny(trustedFinanceKeys())))
         && (request.method == 'delete'
           ? (isAdmin() && isTenantMember(resource.data.tenantId))
           : (isAuthenticated() && isTenantMember(request.resource.data.tenantId)
