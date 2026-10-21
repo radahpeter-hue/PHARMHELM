@@ -973,7 +973,20 @@ service cloud.firestore {
 
     match /advance_requests/{requestId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isHR() || isFinance() || isAdmin());
-      allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
+      allow create: if isAuthenticated()
+        && isOwner(request.resource.data.staffId)
+        && request.resource.data.staff_id == request.resource.data.staffId
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.hr_approval_status == 'Pending'
+        && request.resource.data.ceo_approval_status == 'Pending'
+        && request.resource.data.amount_requested is int
+        && request.resource.data.amount_requested > 0
+        && request.resource.data.amount == request.resource.data.amount_requested
+        && request.resource.data.amountRequested == request.resource.data.amount_requested
+        && request.resource.data.repayment_period_months is int
+        && request.resource.data.repayment_period_months >= 1
+        && request.resource.data.repayment_period_months <= 120;
       // Approvals modify only decision fields, never funds or request identity.
       // The final status must follow the two independently recorded decisions.
       allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId)
