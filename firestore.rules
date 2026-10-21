@@ -607,6 +607,29 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Finance V2 registration authority is deliberately separate from legacy isFinance(),
+    // which includes broad custom grants and token/email administrator fallbacks.
+    function canRegisterFinanceV2Account(data) {
+      let staffPath = /databases/$(database)/documents/staff/$(request.auth.uid);
+      let settingsPath = /databases/$(database)/documents/system_settings/$(data.tenantId);
+      let staff = get(staffPath).data;
+      let settings = get(settingsPath).data;
+      return request.auth != null
+        && exists(staffPath) && exists(settingsPath)
+        && staff.tenantId == data.tenantId
+        && staff.active == true && staff.status == 'active'
+        && (staff.role in ['Finance Head','Finance Officer','Accountant']
+          || staff.get('secondaryRoles', []).hasAny(['Finance Head','Finance Officer','Accountant']))
+        && settings.tenantId == data.tenantId
+        && settings.get('financeV2AccountRegistrationEnabled',false) == true
+        && (staff.role == 'Finance Head'
+          || staff.get('secondaryRoles', []).hasAny(['Finance Head'])
+          || ('branchId' in data && (
+            staff.get('assigned_branches', []).hasAny([data.branchId])
+            || staff.get('branch_id','') == data.branchId
+            || staff.get('default_branch_id','') == data.branchId)));
+    }
+
     match /finance_payment_accounts/{accountId} {
       allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || (isTenantMember(resource.data.tenantId) && resource.data.controlVersion == 1));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId) && resource.data.controlVersion == 1;
@@ -621,12 +644,21 @@ service cloud.firestore {
         && request.resource.data.registeredBy == request.auth.uid
         && request.resource.data.name is string && request.resource.data.name.size() > 0
         && request.resource.data.reconciliationReference is string && request.resource.data.reconciliationReference.size() >= 5;
-      // V2 registration uses the trusted API; browser registration stays closed.
-      allow create: if false && isFinance()
-        && request.resource.data.tenantId == getUserData().tenantId
-        && get(/databases/$(database)/documents/system_settings/$(request.resource.data.tenantId)).data.get('financeV2AccountRegistrationEnabled', false) == true
+      // Only new, zero-opening V2 accounts are eligible. No transfer/balance
+      // posting becomes available through this registration permission.
+      allow create: if canRegisterFinanceV2Account(request.resource.data)
+        && request.resource.data.keys().hasOnly(['tenantId','accountId','name','kind','branchId',
+          'currency','balanceUGX','openingBalanceUGX','reconciliationReference','initialized',
+          'controlVersion','active','registeredBy','lastPostingId','createdAt','updatedAt'])
+        && request.resource.data.keys().hasAll(['tenantId','accountId','name','kind',
+          'currency','balanceUGX','openingBalanceUGX','reconciliationReference','initialized',
+          'controlVersion','active','registeredBy','lastPostingId','createdAt','updatedAt'])
+        && request.resource.data.accountId is string
+        && request.resource.data.accountId.matches('^[A-Za-z0-9_-]{1,150}$')
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
         && !(request.resource.data.accountId in ['management_bank','management_petty_cash'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 150
         && request.resource.data.kind in ['BRANCH_CASH_SALES','BANK','MTN_MOBILE_MONEY','AIRTEL_MONEY','PETTY_CASH']
         && request.resource.data.controlVersion == 2 && request.resource.data.currency == 'UGX'
         && request.resource.data.initialized == true && request.resource.data.active == true
@@ -635,10 +667,14 @@ service cloud.firestore {
         && request.resource.data.lastPostingId == null
         && request.resource.data.reconciliationReference is string
         && request.resource.data.reconciliationReference.size() >= 5
+        && request.resource.data.reconciliationReference.size() <= 150
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
         && (!('branchId' in request.resource.data)
           ? request.resource.data.kind != 'BRANCH_CASH_SALES'
-          : (get(/databases/$(database)/documents/branches/$(request.resource.data.branchId)).data.tenantId == request.resource.data.tenantId
-            && isAssignedToBranch(request.resource.data.branchId)));
+          : (request.resource.data.branchId is string
+            && exists(/databases/$(database)/documents/branches/$(request.resource.data.branchId))
+            && get(/databases/$(database)/documents/branches/$(request.resource.data.branchId)).data.tenantId == request.resource.data.tenantId));
       allow update: if validManagementAccountUpdate(accountId, resource.data, request.resource.data);
       allow delete: if false;
     }
