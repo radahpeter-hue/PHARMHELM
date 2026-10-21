@@ -1,0 +1,51 @@
+name: Finance V2 integration
+on:
+  pull_request:
+    paths:
+      - 'finance-v2-backend/**'
+      - 'src/services/financeV2*'
+      - 'src/pages/finance/**'
+      - 'src/pages/Finance.tsx'
+      - 'tests/finance-v2-independent-host.test.ts'
+      - 'render.finance-v2.yaml'
+      - 'firestore.rules'
+      - 'scripts/finance-v2-account-rules-emulator.mjs'
+      - '.github/workflows/finance-v2-integration.yml'
+jobs:
+  finance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: npm ci && npm ci --prefix finance-v2-backend
+      - run: npm run typecheck && npx tsc -p finance-v2-backend/tsconfig.json && npm test && npm run build
+      - name: Isolated financial and permission acceptance
+        run: |
+          curl -fL https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v1.19.8.jar -o /tmp/firestore.jar
+          java -jar /tmp/firestore.jar --host=127.0.0.1 --port=8085 --project_id=finance-v2-admin-isolated > /tmp/emulator.log 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid"' EXIT
+          for attempt in $(seq 1 30); do curl -s http://127.0.0.1:8085/ > /dev/null && break; sleep 1; done
+          export FIRESTORE_EMULATOR_HOST=127.0.0.1:8085
+          node --import tsx --test finance-v2-backend/admin-transfer-emulator.test.mts finance-v2-backend/admin-eod-emulator.test.mts finance-v2-backend/admin-pos-cash-emulator.test.mts
+          node scripts/management-cash-settlement-rules-emulator.mjs
+          node scripts/finance-v2-account-rules-emulator.mjs
+      - name: Build and smoke-test the isolated API container
+        run: |
+          docker build -f finance-v2-backend/Dockerfile -t pharmhelm-finance-v2-api .
+          docker run -d --name finance-v2-api-test -p 18080:8080 -e FINANCE_V2_API_ENABLED=true -e FIREBASE_PROJECT_ID=finance-v2-isolated -e FIRESTORE_DATABASE_ID="(default)" -e ALLOWED_ORIGIN=https://example.invalid pharmhelm-finance-v2-api
+          trap 'docker logs finance-v2-api-test; docker rm -f finance-v2-api-test' EXIT
+          for attempt in $(seq 1 30); do curl -s http://127.0.0.1:18080/ > /dev/null && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18080/api/finance-v2/accounts)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/healthz)" = 200
+          docker rm -f finance-v2-api-test
+          docker run -d --name finance-v2-api-test -p 18080:8080 -e FINANCE_V2_HOST_PROFILE=render-free-pilot -e FINANCE_V2_ALLOWED_TENANTS=isolated-tenant -e FINANCE_V2_CASH_POLL_ENABLED=false -e FINANCE_V2_API_ENABLED=false -e FIREBASE_PROJECT_ID=finance-v2-isolated -e FIRESTORE_DATABASE_ID="(default)" -e ALLOWED_ORIGIN=https://example.invalid pharmhelm-finance-v2-api
+          for attempt in $(seq 1 30); do curl -s http://127.0.0.1:18080/healthz > /dev/null && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18080/api/finance-v2/transfers)" = 503

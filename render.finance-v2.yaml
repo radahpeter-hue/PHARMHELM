@@ -1,0 +1,30 @@
+# Opt-in pilot blueprint. Creating the service is a separate deployment action.
+services:
+  - type: web
+    name: pharmhelm-finance-v2-pilot
+    runtime: docker
+    plan: free
+    region: frankfurt
+    repo: https://github.com/radahpeter-hue/PHARMHELM
+    branch: feature/finance-v2-phase3-cash-banking
+    dockerfilePath: ./finance-v2-backend/Dockerfile
+    dockerContext: .
+    autoDeployTrigger: "off"
+    healthCheckPath: /healthz
+    envVars:
+      - key: FINANCE_V2_HOST_PROFILE
+        value: render-free-pilot
+      - key: FINANCE_V2_API_ENABLED
+        value: "false"
+      - key: FINANCE_V2_CASH_POLL_ENABLED
+        value: "false"
+      - key: FINANCE_V2_ALLOWED_TENANTS
+        value: zehqTDcKyrDAOHKK3stJ
+      - key: FIREBASE_PROJECT_ID
+        value: gen-lang-client-0911422817
+      - key: FIRESTORE_DATABASE_ID
+        value: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+      - key: ALLOWED_ORIGIN
+        value: https://mp.pharmhelm.com
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/finance-v2-service-account.json

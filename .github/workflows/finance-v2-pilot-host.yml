@@ -1,0 +1,29 @@
+name: Finance V2 pilot hosting preflight
+on:
+  push:
+    branches: [feature/finance-v2-phase3-cash-banking]
+    paths:
+      - '.github/workflows/finance-v2-pilot-host.yml'
+      - 'finance-v2-backend/deploymentPreflight.ts'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix finance-v2-backend
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - name: Inspect existing hosting capacity and named database without mutations
+        run: finance-v2-backend/node_modules/.bin/tsx finance-v2-backend/deploymentPreflight.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: finance-v2-deployment-preflight
+          path: finance-v2-deployment-preflight.json

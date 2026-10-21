@@ -40,6 +40,8 @@ jobs:
       # Hosting preview only. This workflow MUST NOT deploy Firestore rules,
       # write tenant data, or update the Firebase live Hosting channel.
       - name: Publish isolated Hosting preview channel
+        # Finance candidate currently has explicit no-deployment instructions.
+        if: github.head_ref != 'feature/finance-v2-phase3-cash-banking'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'

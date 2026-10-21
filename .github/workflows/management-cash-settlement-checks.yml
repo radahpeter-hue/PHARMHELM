@@ -8,6 +8,10 @@ on:
       - 'src/services/cashGrnSettlementService.ts'
       - 'src/components/finance/**'
       - 'scripts/management-cash-settlement-*.mjs'
+      - 'scripts/finance-v2-account-rules-emulator.mjs'
+      - 'scripts/finance-v2-cash-banking-ui-smoke.mjs'
+      - 'finance-v2-backend/**'
+      - 'src/services/financeV2TrustedTransferCore.ts'
       - 'scripts/validate-inactive-finance-rules.mjs'
       - '.github/workflows/management-cash-settlement-checks.yml'
       - 'firestore.rules'
@@ -16,7 +20,7 @@ permissions:
   contents: read
 jobs:
   authenticated-settlement:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +41,12 @@ jobs:
       - run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
       - name: Authenticated Cash/Bank settlement and competing writer tests
         run: npx firebase emulators:exec --only firestore --project pharmhelm-finance-settlement-rules "node scripts/management-cash-settlement-rules-emulator.mjs"
+      - name: Authenticated Finance V2 account registration security tests
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-finance-v2-rules "node scripts/finance-v2-account-rules-emulator.mjs"
+      - name: Isolated Admin SDK Finance V2 atomic transfer test
+        run: |
+          npm install --prefix finance-v2-backend --no-save --ignore-scripts --package-lock=false firebase-admin@13.5.0 tsx@4.21.0
+          npx firebase emulators:exec --only firestore --project finance-v2-admin-isolated "finance-v2-backend/node_modules/.bin/tsx finance-v2-backend/admin-transfer-emulator.test.mts"
       - name: Install isolated mobile verification browser
         if: always()
         run: |
@@ -46,12 +56,16 @@ jobs:
         if: always()
         env:
           PLAYWRIGHT_MODULE: /tmp/finance-browser/node_modules/playwright
-        run: node scripts/management-cash-settlement-ui-smoke.mjs
+        run: |
+          node scripts/management-cash-settlement-ui-smoke.mjs
+          node scripts/finance-v2-cash-banking-ui-smoke.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: management-payment-mobile-proof
-          path: /tmp/management-payment-ui-*/*.png
+          path: |
+            /tmp/management-payment-ui-*/*.png
+            /tmp/finance-v2-ui-*/*.png
       - name: Authenticate inactive ruleset validation
         if: success() && github.event.pull_request.head.repo.full_name == github.repository
         id: inactive_rules_auth
