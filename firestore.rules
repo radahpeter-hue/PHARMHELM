@@ -993,10 +993,20 @@ service cloud.firestore {
         && request.resource.data.tenantId == resource.data.tenantId
         && resource.data.status == 'Pending'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'hr_approval_status', 'hr_notes', 'ceo_approval_status', 'ceo_notes', 'status', 'updatedAt'
+          'hr_approval_status', 'hr_notes', 'hr_reviewed_by', 'ceo_approval_status', 'ceo_notes', 'ceo_reviewed_by', 'status', 'updatedAt'
         ])
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['hr_approval_status', 'hr_notes']) || isHR())
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['ceo_approval_status', 'ceo_notes']) || isCEO())
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['hr_approval_status', 'hr_notes', 'hr_reviewed_by'])
+          || (isHR()
+            && request.resource.data.hr_reviewed_by == request.auth.uid
+            && request.resource.data.hr_approval_status in ['Approved','Rejected']
+            && (!('ceo_reviewed_by' in resource.data) || resource.data.ceo_reviewed_by != request.auth.uid)))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['ceo_approval_status', 'ceo_notes', 'ceo_reviewed_by'])
+          || (isCEO()
+            && request.resource.data.ceo_reviewed_by == request.auth.uid
+            && request.resource.data.ceo_approval_status in ['Approved','Rejected']
+            && (!('hr_reviewed_by' in resource.data) || resource.data.hr_reviewed_by != request.auth.uid)))
+        && (!('hr_reviewed_by' in request.resource.data) || !('ceo_reviewed_by' in request.resource.data)
+          || request.resource.data.hr_reviewed_by != request.resource.data.ceo_reviewed_by)
         && request.resource.data.hr_approval_status in ['Pending','Approved','Rejected']
         && request.resource.data.ceo_approval_status in ['Pending','Approved','Rejected']
         && request.resource.data.status == (
