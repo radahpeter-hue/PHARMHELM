@@ -621,21 +621,11 @@ service cloud.firestore {
         && get(gatePath).data.get('financeV2AccountRegistrationEnabled',false) == true;
     }
 
-    function canReadBranchFinanceV2Account(data) {
-      return isAuthenticated()
-        && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
-        && getUserData().tenantId == data.tenantId
-        && getUserData().active == true && getUserData().status == 'active'
-        && hasAnyRole(['Finance Officer','Accountant'])
-        && data.get('branchId','') != ''
-        && getUserData().get('assigned_branches',[]).hasAny([data.branchId]);
-    }
-
     match /finance_payment_accounts/{accountId} {
       allow get: if ((canViewFinance() || canPostManagementCash()) && (resource == null || (isTenantMember(resource.data.tenantId) && resource.data.controlVersion == 1)))
-        || (resource != null && resource.data.controlVersion == 2 && (canRegisterFinanceV2Account(resource.data) || canReadBranchFinanceV2Account(resource.data)));
+        || (resource != null && resource.data.controlVersion == 2 && canRegisterFinanceV2Account(resource.data));
       allow list: if (canViewFinance() && isTenantMember(resource.data.tenantId) && resource.data.controlVersion == 1)
-        || (resource.data.controlVersion == 2 && (canRegisterFinanceV2Account(resource.data) || canReadBranchFinanceV2Account(resource.data)));
+        || (resource.data.controlVersion == 2 && canRegisterFinanceV2Account(resource.data));
       allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
         && request.resource.data.accountId in ['management_petty_cash','management_bank']
