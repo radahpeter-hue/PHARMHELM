@@ -119,6 +119,8 @@ export const AttendanceTracker: React.FC = () => {
           check_in_time: item.details.status === 'present' ? item.details.checkIn : null,
           check_out_time: item.details.status === 'present' ? item.details.checkOut : null,
           hours_worked: hours,
+          approval_status: 'Submitted',
+          loggedByUid: profile.uid,
           branch_id: staffMember.branch_id || ''
         });
         count++;
@@ -141,6 +143,11 @@ export const AttendanceTracker: React.FC = () => {
 
   const handleSaveRow = async (recordId: string) => {
     if (!editingFields) return;
+    const record = attendance.find(item => item.id === recordId);
+    if (!record || record.approval_status === 'Approved') {
+      toast.error('Approved timesheets are immutable. Use an audited correction workflow.');
+      return;
+    }
     try {
       const hours = editingFields.status === 'present' ? calculateHours(editingFields.checkIn, editingFields.checkOut) : 0;
       await firestoreService.updateDocument('attendance', recordId, {
@@ -157,7 +164,22 @@ export const AttendanceTracker: React.FC = () => {
     }
   };
 
+  const handleAttendanceReview = async (record: AttendanceRecord, decision: 'Approved' | 'Rejected') => {
+    if (!profile?.uid || !profile?.tenantId) return;
+    try {
+      await firestoreService.updateDocument('attendance', record.id, {
+        approval_status: decision,
+        approvedByUid: profile.uid
+      });
+      toast.success(`Timesheet ${decision.toLowerCase()}.`);
+    } catch {
+      toast.error('Timesheet approval requires authorized HR or Branch Manager access.');
+    }
+  };
+
   const handleDeleteRecord = async (recordId: string) => {
+    toast.error('Timesheet deletion is disabled to preserve payroll audit history.');
+    return;
     if (window.confirm('Are you sure you want to remove this attendance record?')) {
       try {
         await firestoreService.deleteDocument('attendance', recordId);
@@ -425,6 +447,7 @@ export const AttendanceTracker: React.FC = () => {
                           )}>
                             {hours} hrs
                           </span>
+                          <p className="text-[10px] mt-1 font-semibold text-slate-500">{record.approval_status || 'Unverified legacy entry'}</p>
                         </td>
                       </tr>
                     );
@@ -538,6 +561,12 @@ export const AttendanceTracker: React.FC = () => {
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
+                            {record.approval_status === 'Submitted' && (
+                              <>
+                                <button type="button" onClick={() => handleAttendanceReview(record, 'Approved')} title="Approve timesheet" className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg"><CheckCircle2 size={16}/></button>
+                                <button type="button" onClick={() => handleAttendanceReview(record, 'Rejected')} title="Reject timesheet" className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg"><XCircle size={16}/></button>
+                              </>
+                            )}
                             {isEditing ? (
                               <button 
                                 onClick={() => handleSaveRow(record.id)}
