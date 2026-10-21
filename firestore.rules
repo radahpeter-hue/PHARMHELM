@@ -983,7 +983,8 @@ service cloud.firestore {
         return isHR() || isAssignedBranchManager(branchId) || ((isPOSOperator() || hasAnyRole(['Cashier','cashier'])) && isAssignedToBranch(branchId));
       }
       function reviewerAllowed(branchId) {
-        return isHR() || isAssignedBranchManager(branchId);
+        return hasAnyRole(['HR Head','HR Support Personnel','HR Manager','admin','Admin'])
+          || isAssignedBranchManager(branchId);
       }
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId)
         && (isHR() || isAdmin() || isAssignedToBranch(resource.data.branch_id));
