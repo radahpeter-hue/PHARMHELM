@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {initializeTestEnvironment,assertFails,assertSucceeds} from '@firebase/rules-unit-testing';
-import {doc,setDoc,getDoc,updateDoc,runTransaction} from 'firebase/firestore';
+import {doc,setDoc,getDoc,updateDoc,runTransaction,serverTimestamp} from 'firebase/firestore';
 
 if (!process.env.FIRESTORE_EMULATOR_HOST) throw new Error('Firestore emulator required');
 const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-v2-rules',firestore:{rules:readFileSync('firestore.rules','utf8')}});
@@ -29,10 +29,11 @@ try {
   await assertFails(setDoc(account(finance),payload));
   console.log('PASS default disabled gate blocks registration');
   await admin(db=>setDoc(doc(db,'system_settings',tenant),{tenantId:tenant,financeV2AccountRegistrationEnabled:true}));
-  await assertFails(setDoc(account(finance),payload));
-  await admin(db=>setDoc(account(db),payload));
+  await assertSucceeds(setDoc(account(finance),{...payload,createdAt:serverTimestamp(),updatedAt:serverTimestamp()}));
   await assertFails(getDoc(account(finance)));
-  console.log('PASS browser registration and direct V2 account reads remain closed even with tenant gate enabled');
+  console.log('PASS eligible Finance Head can register zero-opening V2 account; V2 reads remain closed pending scoped read rules');
+  await assertFails(setDoc(account(finance,'cash_duplicate'),{...payload,accountId:'cash_duplicate',createdAt:serverTimestamp(),updatedAt:new Date()}));
+  await assertFails(setDoc(account(finance,'cash_extra'),{...payload,accountId:'cash_extra',extraField:1,createdAt:serverTimestamp(),updatedAt:serverTimestamp()}));
   await assertFails(setDoc(account(finance,'cash_positive'),{...payload,accountId:'cash_positive',balanceUGX:500,openingBalanceUGX:500}));
   await assertFails(setDoc(account(finance,'cash_wrong_actor'),{...payload,accountId:'cash_wrong_actor',registeredBy:'another'}));
   await assertFails(setDoc(account(user('finance-b'),'cash_foreign'),{...payload,accountId:'cash_foreign',registeredBy:'finance-b'}));
