@@ -57,6 +57,15 @@ function previousDay(date: string): string {
   return utc.toISOString().slice(0, 10);
 }
 
+/** Resolve the calendar date in the branch timezone, not the browser/UTC date. */
+export function eodBusinessDateNow(timeZone = 'Africa/Kampala', now = new Date()): string {
+  if (Number.isNaN(now.getTime())) throw new Error('Invalid current timestamp.');
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(now).map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 export function localEodDateTime(timestamp: string, timeZone: string): { date: string; time: string } {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) throw new Error('Invalid sale timestamp.');
