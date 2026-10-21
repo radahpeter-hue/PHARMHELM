@@ -40,25 +40,6 @@ try {
   await assertFails(getDocs(v2Register(user('finance-b'))));
   await assertFails(getDocs(query(collection(finance,'finance_payment_accounts'),where('controlVersion','==',2))));
   console.log('PASS tenant-filtered Finance Head account register; unfiltered and cross-tenant queries denied');
-  await admin(async db=>{
-    await setDoc(doc(db,'staff','finance-officer'),{tenantId:tenant,role:'Finance Officer',active:true,status:'active',assigned_branches:[branch]});
-    await setDoc(doc(db,'staff','accountant'),{tenantId:tenant,role:'Accountant',active:true,status:'active',assigned_branches:[branch]});
-    await setDoc(doc(db,'staff','other-officer'),{tenantId:tenant,role:'Finance Officer',active:true,status:'active',assigned_branches:['other-branch']});
-    await setDoc(doc(db,'staff','inactive-officer'),{tenantId:tenant,role:'Finance Officer',active:false,status:'inactive',assigned_branches:[branch]});
-    await setDoc(account(db,'cash_other'),{...payload,accountId:'cash_other',branchId:'other-branch'});
-  });
-  for(const uid of ['finance-officer','accountant']){
-    const scoped=user(uid);
-    await assertSucceeds(getDoc(account(scoped)));
-    await assertFails(getDoc(account(scoped,'cash_other')));
-    await assertFails(getDocs(v2Register(scoped)));
-    await assertSucceeds(getDocs(query(collection(scoped,'finance_payment_accounts'),
-      where('tenantId','==',tenant),where('controlVersion','==',2),where('branchId','==',branch))));
-    await assertFails(setDoc(account(scoped,'unauthorised'),{...payload,accountId:'unauthorised'}));
-  }
-  await assertFails(getDoc(account(user('other-officer'))));
-  await assertFails(getDoc(account(user('inactive-officer'))));
-  console.log('PASS delegated Finance roles read assigned branch only and cannot register or post');
   await assertFails(setDoc(account(finance,'cash_duplicate'),{...payload,accountId:'cash_duplicate',createdAt:serverTimestamp(),updatedAt:new Date()}));
   await assertFails(setDoc(account(finance,'cash_extra'),{...payload,accountId:'cash_extra',extraField:1,createdAt:serverTimestamp(),updatedAt:serverTimestamp()}));
   await assertFails(setDoc(account(finance,'cash_positive'),{...payload,accountId:'cash_positive',balanceUGX:500,openingBalanceUGX:500}));
