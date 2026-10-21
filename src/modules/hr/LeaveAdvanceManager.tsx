@@ -588,6 +588,7 @@ const ReviewAdvanceModal: React.FC<{
   isHR: boolean, 
   isCEO: boolean 
 }> = ({ request, onClose, isHR, isCEO }) => {
+  const { profile } = useAuth();
   const [notes, setNotes] = useState('');
   const [reviewCapacity, setReviewCapacity] = useState<'HR' | 'CEO'>(() => {
     if (isHR && isCEO) {
@@ -600,9 +601,11 @@ const ReviewAdvanceModal: React.FC<{
     const update: any = {};
     if (reviewCapacity === 'HR') {
       update.hr_approval_status = action;
+      update.hr_reviewed_by = profile?.uid || '';
       update.hr_notes = notes;
     } else {
       update.ceo_approval_status = action;
+      update.ceo_reviewed_by = profile?.uid || '';
       update.ceo_notes = notes;
     }
 
@@ -630,23 +633,6 @@ const ReviewAdvanceModal: React.FC<{
     }
   };
 
-  const handleApproveBoth = async () => {
-    const update: any = {
-      hr_approval_status: 'Approved',
-      hr_notes: notes || 'Approved as HR',
-      ceo_approval_status: 'Approved',
-      ceo_notes: notes || 'Approved as CEO / MD',
-      status: 'Approved'
-    };
-
-    try {
-      await firestoreService.updateDocument('advance_requests', request.id, update);
-      toast.success('Advance approvals recorded. Actual disbursement requires Finance settlement.');
-      onClose();
-    } catch (error) {
-      toast.error('Failed to update request');
-    }
-  };
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -758,14 +744,7 @@ const ReviewAdvanceModal: React.FC<{
                     </button>
                   </div>
 
-                  {isHR && isCEO && (
-                    <button 
-                      onClick={handleApproveBoth}
-                      className="w-full py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 border border-indigo-550"
-                    >
-                      <CheckCircle2 size={18} /> Approve Both (HR & CEO)
-                    </button>
-                  )}
+
                 </div>
               </div>
             )}
