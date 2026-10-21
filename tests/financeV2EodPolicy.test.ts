@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assignSaleToEodShift, eodCanonicalId, eodVariance, validateEodAmounts } from '../src/services/financeV2EodPolicy';
+import { assignSaleToEodShift, eodBusinessDateNow, eodCanonicalId, eodVariance, validateEodAmounts } from '../src/services/financeV2EodPolicy';
 
 const shifts = [
   { id: 'dayShift', enabled: true, startTime: '07:30', endTime: '17:00' },
@@ -56,4 +56,10 @@ test('canonical identities are stable and unambiguous', () => {
   assert.equal(id, eodCanonicalId('tenant', 'branch', '2026-10-20', 'nightShift'));
   assert.notEqual(id, eodCanonicalId('tenant', 'branch', '2026-10-21', 'nightShift'));
   assert.notEqual(eodCanonicalId('a_b', 'c', '2026-10-20', 'day'), eodCanonicalId('a', 'b_c', '2026-10-20', 'day'));
+});
+
+test('EOD default business date follows Uganda local date rather than UTC', () => {
+  assert.equal(eodBusinessDateNow('Africa/Kampala', new Date('2026-10-20T22:30:00Z')), '2026-10-21');
+  assert.equal(eodBusinessDateNow('Africa/Kampala', new Date('2026-10-21T20:30:00Z')), '2026-10-21');
+  assert.throws(() => eodBusinessDateNow('Africa/Kampala', new Date(Number.NaN)), /Invalid current timestamp/);
 });
