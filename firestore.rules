@@ -607,27 +607,18 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // Finance V2 registration authority is deliberately separate from legacy isFinance(),
-    // which includes broad custom grants and token/email administrator fallbacks.
+    // Initial Spark pilot: active Finance Head only. Branch-scoped delegated
+    // registration remains disabled until independently validated.
     function canRegisterFinanceV2Account(data) {
       let staffPath = /databases/$(database)/documents/staff/$(request.auth.uid);
-      let settingsPath = /databases/$(database)/documents/system_settings/$(data.tenantId);
-      let staff = get(staffPath).data;
-      let settings = get(settingsPath).data;
-      return request.auth != null
-        && exists(staffPath) && exists(settingsPath)
-        && staff.tenantId == data.tenantId
-        && staff.active == true && staff.status == 'active'
-        && (staff.role in ['Finance Head','Finance Officer','Accountant']
-          || staff.get('secondaryRoles', []).hasAny(['Finance Head','Finance Officer','Accountant']))
-        && settings.tenantId == data.tenantId
-        && settings.get('financeV2AccountRegistrationEnabled',false) == true
-        && (staff.role == 'Finance Head'
-          || staff.get('secondaryRoles', []).hasAny(['Finance Head'])
-          || ('branchId' in data && (
-            staff.get('assigned_branches', []).hasAny([data.branchId])
-            || staff.get('branch_id','') == data.branchId
-            || staff.get('default_branch_id','') == data.branchId)));
+      let gatePath = /databases/$(database)/documents/system_settings/$(data.tenantId);
+      return request.auth != null && exists(staffPath) && exists(gatePath)
+        && get(staffPath).data.tenantId == data.tenantId
+        && get(staffPath).data.active == true
+        && get(staffPath).data.status == 'active'
+        && get(staffPath).data.role == 'Finance Head'
+        && get(gatePath).data.tenantId == data.tenantId
+        && get(gatePath).data.get('financeV2AccountRegistrationEnabled',false) == true;
     }
 
     match /finance_payment_accounts/{accountId} {
