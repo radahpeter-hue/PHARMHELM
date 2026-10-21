@@ -54,6 +54,15 @@ test('Operational GRN refuses fractional UGX, fractional quantity and unsafe tot
   ]), /exceeds safe whole-number/);
 });
 
+test('Operational GRN validates received amounts before opening a transaction', () => {
+  const service = readFileSync(new URL('../src/services/operationalGrnService.ts', import.meta.url), 'utf8');
+  assert.match(service, /Number\.isSafeInteger\(quantity\)/);
+  assert.match(service, /Number\.isSafeInteger\(cost\)/);
+  assert.match(service, /Number\.isSafeInteger\(quantity \* cost\)/);
+  assert.match(service, /quantity > 0 && cost === 0/);
+  assert.ok(service.indexOf('Number.isSafeInteger(quantity)') < service.indexOf('return runTransaction(connection'));
+});
+
 test('Operational receipt cost preserves pack semantics and weighted value for later transfers', () => {
   assert.equal(operationalReceiptCostPerPack(0, 24, 0, 100, 12), 1200);
   assert.equal(operationalReceiptCostPerPack(12, 12, 1200, 200, 12), 1800);
