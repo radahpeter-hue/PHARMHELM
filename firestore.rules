@@ -624,7 +624,8 @@ service cloud.firestore {
     match /finance_payment_accounts/{accountId} {
       allow get: if ((canViewFinance() || canPostManagementCash()) && (resource == null || (isTenantMember(resource.data.tenantId) && resource.data.controlVersion == 1)))
         || (resource != null && resource.data.controlVersion == 2 && canRegisterFinanceV2Account(resource.data));
-      allow list: if canViewFinance() && isTenantMember(resource.data.tenantId) && resource.data.controlVersion == 1;
+      allow list: if (canViewFinance() && isTenantMember(resource.data.tenantId) && resource.data.controlVersion == 1)
+        || (resource.data.controlVersion == 2 && canRegisterFinanceV2Account(resource.data));
       allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
         && request.resource.data.accountId in ['management_petty_cash','management_bank']
