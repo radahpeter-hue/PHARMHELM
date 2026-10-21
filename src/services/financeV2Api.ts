@@ -6,6 +6,6 @@ export async function financeV2Api(action:string,input:unknown){
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),30000);
  try{
  const response=await fetch(`${base.replace(/\/$/,'')}/api/finance-v2/${action}`,{method:'POST',headers:{Authorization:`Bearer ${await user.getIdToken()}`,'Content-Type':'application/json'},body:JSON.stringify(input),signal:controller.signal});
- const result=await response.json();if(!response.ok)throw new Error(result.error||'Request rejected');return result;
+ const result=await response.json();if(!response.ok){const error=new Error(result.error||'Request rejected') as Error & {rejected?:boolean};error.rejected=response.status>=400&&response.status<500;throw error;}return result;
  }finally{clearTimeout(timer);}
 }
