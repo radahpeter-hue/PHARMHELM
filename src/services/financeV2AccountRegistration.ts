@@ -1,4 +1,4 @@
-import { doc, runTransaction, Timestamp, type Firestore } from 'firebase/firestore';
+import { doc, runTransaction, serverTimestamp, type Firestore } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { financeV2AccountDocumentId, planFinanceV2AccountRegistration, type FinanceV2AccountRegistration } from './financeV2AccountRegistryPolicy';
 
@@ -26,7 +26,7 @@ export async function registerFinanceV2Account(
       // Never interpret duplicate registration as authorisation to update a balance.
       throw new Error('Account already registered; reconcile the existing account instead.');
     }
-    tx.set(ref, {...planned, createdAt: Timestamp.now(), updatedAt: Timestamp.now()});
+    tx.set(ref, {...planned, createdAt: serverTimestamp(), updatedAt: serverTimestamp()});
     return {accountDocumentId, created:true};
   });
 }
