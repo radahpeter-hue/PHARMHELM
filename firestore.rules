@@ -621,11 +621,24 @@ service cloud.firestore {
         && get(gatePath).data.get('financeV2AccountRegistrationEnabled',false) == true;
     }
 
+    // Delegated Finance readers see assigned-branch V2 accounts only.
+    function canReadBranchFinanceV2Account(data) {
+      let staffPath = /databases/$(database)/documents/staff/$(request.auth.uid);
+      return request.auth != null && exists(staffPath)
+        && get(staffPath).data.tenantId == data.tenantId
+        && get(staffPath).data.active == true
+        && get(staffPath).data.status == 'active'
+        && get(staffPath).data.role in ['Finance Officer','Accountant']
+        && data.get('branchId','') != ''
+        && (get(staffPath).data.get('assigned_branches',[]).hasAny([data.branchId])
+          || get(staffPath).data.get('branch_id','') == data.branchId);
+    }
+
     match /finance_payment_accounts/{accountId} {
       allow get: if ((canViewFinance() || canPostManagementCash()) && (resource == null || (isTenantMember(resource.data.tenantId) && resource.data.controlVersion == 1)))
-        || (resource != null && resource.data.controlVersion == 2 && canRegisterFinanceV2Account(resource.data));
+        || (resource != null && resource.data.controlVersion == 2 && (canRegisterFinanceV2Account(resource.data) || canReadBranchFinanceV2Account(resource.data)));
       allow list: if (canViewFinance() && isTenantMember(resource.data.tenantId) && resource.data.controlVersion == 1)
-        || (resource.data.controlVersion == 2 && canRegisterFinanceV2Account(resource.data));
+        || (resource.data.controlVersion == 2 && (canRegisterFinanceV2Account(resource.data) || canReadBranchFinanceV2Account(resource.data)));
       allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
         && request.resource.data.accountId in ['management_petty_cash','management_bank']
