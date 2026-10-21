@@ -187,19 +187,11 @@ export const PayrollManager: React.FC = () => {
       // zero hours may be genuine, but HR must verify it rather than infer a salary.
       const basePay = loggedHours * hourlyRate;
 
-      // 4. Compute normal salary advance deductions in date range
-      let advanceDeduction = 0;
-      const activeAdvances = advances.filter(a => 
-        a.staff_id === member.id && 
-        a.status === 'Disbursed' &&
-        a.created_at && a.created_at.split('T')[0] >= fromDate && a.created_at.split('T')[0] <= toDate
-      );
-      activeAdvances.forEach(adv => {
-        const monthlyRepayment = adv.amount_requested / (adv.repayment_period_months || 1);
-        advanceDeduction += monthlyRepayment;
-      });
-
-      const advancesDesc = activeAdvances.map(a => `UGX ${(a.amount_requested / (a.repayment_period_months || 1)).toLocaleString()} repayment of UGX ${a.amount_requested.toLocaleString()}`).join('; ') || 'None';
+      // Recoveries require an independently verifiable disbursement, dated
+      // instalment schedule and remaining principal. Request status/date cannot
+      // establish a salary deduction. Preserve the payable until certified.
+      const advanceDeduction = 0;
+      const advancesDesc = 'Advance repayment pending verified disbursement and repayment ledger';
 
       // 4b. Fetch Leave requests during this period to capture approved/rejected outcomes
       const periodLeaves = leaveRequests.filter(l => 
