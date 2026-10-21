@@ -650,12 +650,10 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['tenantId','accountId','name','kind','branchId',
           'currency','balanceUGX','openingBalanceUGX','reconciliationReference','initialized',
           'controlVersion','active','registeredBy','lastPostingId','createdAt','updatedAt'])
-        && request.resource.data.accountId is string
         && request.resource.data.accountId.matches('^[A-Za-z0-9_-]{1,150}$')
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
         && !(request.resource.data.accountId in ['management_bank','management_petty_cash'])
-        && request.resource.data.name is string
-        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 150
+        && request.resource.data.name is string && request.resource.data.name.size() > 0
         && request.resource.data.kind in ['BRANCH_CASH_SALES','BANK','MTN_MOBILE_MONEY','AIRTEL_MONEY','PETTY_CASH']
         && request.resource.data.controlVersion == 2 && request.resource.data.currency == 'UGX'
         && request.resource.data.initialized == true && request.resource.data.active == true
@@ -663,13 +661,11 @@ service cloud.firestore {
         && request.resource.data.openingBalanceUGX == 0 && request.resource.data.balanceUGX == 0
         && request.resource.data.lastPostingId == null
         && request.resource.data.reconciliationReference is string
-        && request.resource.data.reconciliationReference.size() >= 5
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time
         && (!('branchId' in request.resource.data)
           ? request.resource.data.kind != 'BRANCH_CASH_SALES'
           : (request.resource.data.branchId is string
-            && exists(/databases/$(database)/documents/branches/$(request.resource.data.branchId))
             && get(/databases/$(database)/documents/branches/$(request.resource.data.branchId)).data.tenantId == request.resource.data.tenantId));
       allow update: if validManagementAccountUpdate(accountId, resource.data, request.resource.data);
       allow delete: if false;
