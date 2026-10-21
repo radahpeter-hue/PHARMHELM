@@ -27,8 +27,20 @@ export async function postFinanceV2Transfer(
     const existing = await tx.get(requestRef);
     if (existing.exists()) {
       const data = existing.data();
-      const fields = ['tenantId','requestId','sourceAccountId','destinationAccountId','chargePayerAccountId','principalUGX','chargeUGX','actorUid'] as const;
-      if (data.status !== 'posted' || data.currency !== 'UGX' || !Array.isArray(data.accountDeltas) || !Number.isSafeInteger(data.movementCount) || data.movementCount < 2 || fields.some(field => data[field] !== input[field])) throw new Error('Transfer idempotency conflict or incomplete posting.');
+      // Replays must match the full financial request, including the narrative,
+      // and the exact number of movements/charge evidence in the trusted core.
+      // A caller-controlled certification option is NOT a security boundary.
+      const fields = ['tenantId','requestId','sourceAccountId','destinationAccountId','chargePayerAccountId','principalUGX','chargeUGX','actorUid','description'] as const;
+      const expectedMovementCount = input.chargeUGX > 0 ? 3 : 2;
+      const expectedChargeEventId = input.chargeUGX > 0 ? `${id}_charge` : null;
+      if (data.status !== 'posted' || data.currency !== 'UGX' ||
+          !Array.isArray(data.accountDeltas) || data.accountDeltas.length < 2 ||
+          !Number.isSafeInteger(data.movementCount) ||
+          data.movementCount !== expectedMovementCount ||
+          data.chargeEventId !== expectedChargeEventId ||
+          fields.some(field => data[field] !== input[field])) {
+        throw new Error('Transfer idempotency conflict or incomplete posting.');
+      }
       return { transferId: id, replay: true };
     }
     const uniqueIds = [...new Set([input.sourceAccountId, input.destinationAccountId, input.chargePayerAccountId])];
