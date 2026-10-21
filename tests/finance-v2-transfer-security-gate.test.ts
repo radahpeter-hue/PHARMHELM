@@ -55,3 +55,8 @@ test('duplicate request is not accepted as complete when transfer envelope is in
  assert.match(writer,/expected\.get\(entry\.accountId\) !== entry\.deltaUGX/);
  assert.match(writer,/['"]description['"]/);
 });
+
+test('Spark transfer postings use Firestore server timestamps rather than client clocks',()=>{
+ assert.match(writer,/const now = serverTimestamp\(\)/);
+ assert.doesNotMatch(writer,/Timestamp\.now\(\)/);
+});
