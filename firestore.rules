@@ -974,7 +974,24 @@ service cloud.firestore {
     match /advance_requests/{requestId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isHR() || isFinance() || isAdmin());
       allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
-      allow update: if false; // Advance disbursement/repayment requires certified atomic accounting.
+      // Approvals modify only decision fields, never funds or request identity.
+      // The final status must follow the two independently recorded decisions.
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && resource.data.status == 'Pending'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'hr_approval_status', 'hr_notes', 'ceo_approval_status', 'ceo_notes', 'status', 'updatedAt'
+        ])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['hr_approval_status', 'hr_notes']) || isHR())
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['ceo_approval_status', 'ceo_notes']) || isCEO())
+        && request.resource.data.hr_approval_status in ['Pending','Approved','Rejected']
+        && request.resource.data.ceo_approval_status in ['Pending','Approved','Rejected']
+        && request.resource.data.status == (
+          request.resource.data.hr_approval_status == 'Rejected' || request.resource.data.ceo_approval_status == 'Rejected'
+          ? 'Rejected' : (
+            request.resource.data.hr_approval_status == 'Approved' && request.resource.data.ceo_approval_status == 'Approved'
+            ? 'Approved' : 'Pending'));
+
       allow delete: if false;
     }
 
