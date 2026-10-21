@@ -17,7 +17,7 @@ export async function treasuryAccess(auth:Pick<Auth,'verifyIdToken'>,db:Firestor
 export async function readTreasury(auth:Pick<Auth,'verifyIdToken'>,db:Firestore,token:string,tenantId:string){
  const access=await treasuryAccess(auth,db,token,tenantId);
  const accountDocs=await db.collection('finance_payment_accounts').where('tenantId','==',tenantId).get();
- const accounts=accountDocs.docs.map(d=>d.data()).filter(access.allows).map(a=>({accountId:a.accountId,name:a.name,kind:a.kind,branchId:a.branchId??null,currency:a.currency,balanceUGX:a.balanceUGX,controlVersion:a.controlVersion,initialized:a.initialized,active:a.active,updatedAt:typeof a.updatedAt==='string'?a.updatedAt:null}));
+ const accounts=accountDocs.docs.map(d=>d.data()).filter(access.allows).map(a=>({tenantId:a.tenantId,accountId:a.accountId,name:a.name,kind:a.kind,branchId:a.branchId??null,currency:a.currency,balanceUGX:a.balanceUGX,controlVersion:a.controlVersion,initialized:a.initialized,active:a.active,updatedAt:typeof a.updatedAt==='string'?a.updatedAt:null}));
  const ids=new Set(accounts.map(a=>a.accountId));
  const transfers=await db.collection('finance_v2_transfers').where('tenantId','==',tenantId).get();
  const history=transfers.docs.map(d=>({id:d.id,...d.data()} as Record<string,any>)).filter(t=>[t.sourceAccountId,t.destinationAccountId,t.chargePayerAccountId].every(id=>ids.has(id))).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,200);

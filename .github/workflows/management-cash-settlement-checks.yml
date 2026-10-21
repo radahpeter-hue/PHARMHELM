@@ -9,6 +9,7 @@ on:
       - 'src/components/finance/**'
       - 'scripts/management-cash-settlement-*.mjs'
       - 'scripts/finance-v2-account-rules-emulator.mjs'
+      - 'scripts/finance-v2-cash-banking-ui-smoke.mjs'
       - 'finance-v2-backend/**'
       - 'src/services/financeV2TrustedTransferCore.ts'
       - 'scripts/validate-inactive-finance-rules.mjs'
@@ -55,12 +56,16 @@ jobs:
         if: always()
         env:
           PLAYWRIGHT_MODULE: /tmp/finance-browser/node_modules/playwright
-        run: node scripts/management-cash-settlement-ui-smoke.mjs
+        run: |
+          node scripts/management-cash-settlement-ui-smoke.mjs
+          node scripts/finance-v2-cash-banking-ui-smoke.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: management-payment-mobile-proof
-          path: /tmp/management-payment-ui-*/*.png
+          path: |
+            /tmp/management-payment-ui-*/*.png
+            /tmp/finance-v2-ui-*/*.png
       - name: Authenticate inactive ruleset validation
         if: success() && github.event.pull_request.head.repo.full_name == github.repository
         id: inactive_rules_auth

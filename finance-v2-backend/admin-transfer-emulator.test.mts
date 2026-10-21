@@ -4,6 +4,7 @@ import {initializeApp,deleteApp} from 'firebase-admin/app';
 import {getFirestore} from 'firebase-admin/firestore';
 import {executeAuthenticatedFinanceV2Transfer} from './authenticatedTransfer.ts';
 import {postTrustedFinanceV2Transfer} from '../src/services/financeV2TrustedTransferCore.ts';
+import {planFinanceV2Transfer} from '../src/services/financeV2TransferPolicy.ts';
 import {readTreasury,registerTreasuryAccount} from './treasury.ts';
 import {createFinanceV2AdminStore} from '../finance-v2-backend/adminStore.ts';
 if(!process.env.FIRESTORE_EMULATOR_HOST)throw Error('FIRESTORE_EMULATOR_HOST is mandatory');
@@ -54,6 +55,7 @@ try {
  await executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'branch-ok',principalUGX:100,chargeUGX:0},true);
  const treasury=await readTreasury(verified,db,'test-token-authenticated','test-tenant');
  assert.equal(treasury.accounts.length,2);
+ assert.equal(planFinanceV2Transfer({...input,principalUGX:100,chargeUGX:0},treasury.accounts as any).accountDeltas.length,2);
  await source.update({branchId:'other'});
  assert.equal((await readTreasury(verified,db,'test-token-authenticated','test-tenant')).accounts.length,1);
  await assert.rejects(registerTreasuryAccount(verified,db,'test-token-authenticated',{tenantId:'test-tenant'}),/Registration disabled/);
