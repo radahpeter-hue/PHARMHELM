@@ -177,17 +177,8 @@ export const AttendanceTracker: React.FC = () => {
     }
   };
 
-  const handleDeleteRecord = async (recordId: string) => {
+  const handleDeleteRecord = async (_recordId: string) => {
     toast.error('Timesheet deletion is disabled to preserve payroll audit history.');
-    return;
-    if (window.confirm('Are you sure you want to remove this attendance record?')) {
-      try {
-        await firestoreService.deleteDocument('attendance', recordId);
-        toast.success('Attendance record removed');
-      } catch (error) {
-        toast.error('Failed to delete attendance record');
-      }
-    }
   };
 
   const handleExportCSV = () => {
