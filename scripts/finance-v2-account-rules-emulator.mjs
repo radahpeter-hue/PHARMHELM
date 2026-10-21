@@ -30,8 +30,9 @@ try {
   console.log('PASS default disabled gate blocks registration');
   await admin(db=>setDoc(doc(db,'system_settings',tenant),{tenantId:tenant,financeV2AccountRegistrationEnabled:true}));
   await assertSucceeds(setDoc(account(finance),{...payload,createdAt:serverTimestamp(),updatedAt:serverTimestamp()}));
-  await assertFails(getDoc(account(finance)));
-  console.log('PASS eligible Finance Head can register zero-opening V2 account; V2 reads remain closed pending scoped read rules');
+  await assertSucceeds(getDoc(account(finance)));
+  await assertFails(getDoc(account(user('finance-b'))));
+  console.log('PASS gated Finance Head can register and read own-tenant V2 account; cross-tenant read blocked');
   await assertFails(setDoc(account(finance,'cash_duplicate'),{...payload,accountId:'cash_duplicate',createdAt:serverTimestamp(),updatedAt:new Date()}));
   await assertFails(setDoc(account(finance,'cash_extra'),{...payload,accountId:'cash_extra',extraField:1,createdAt:serverTimestamp(),updatedAt:serverTimestamp()}));
   await assertFails(setDoc(account(finance,'cash_positive'),{...payload,accountId:'cash_positive',balanceUGX:500,openingBalanceUGX:500}));
