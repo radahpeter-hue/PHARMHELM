@@ -47,8 +47,8 @@ try {
     check_in_time: '08:00', check_out_time: '16:00',
     loggedByUid: 'logger', approval_status: 'Submitted'
   };
-  await assertSucceeds(setDoc(doc(logger, 'attendance', 'timesheet-1'), timesheet));
-  await assertFails(setDoc(doc(logger, 'attendance', 'forged-approved'), { ...timesheet, approval_status: 'Approved' }));
+  await assertSucceeds(setDoc(doc(logger, 'attendance', 'tenant-a_employee_2026-10-20'), timesheet));
+  await assertFails(setDoc(doc(logger, 'attendance', 'tenant-a_employee_2026-10-21'), { ...timesheet, approval_status: 'Approved' }));
   await assertFails(updateDoc(doc(logger, 'attendance', 'timesheet-1'), { approval_status: 'Approved', approvedByUid: 'logger' }));
   await assertSucceeds(updateDoc(doc(hr, 'attendance', 'timesheet-1'), { approval_status: 'Approved', approvedByUid: 'hr' }));
   await assertFails(updateDoc(doc(hr, 'attendance', 'timesheet-1'), { hours_worked: 10 }));
