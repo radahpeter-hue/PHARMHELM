@@ -348,93 +348,10 @@ export const PayrollManager: React.FC = () => {
     toast.success(`Payslip evaluated for ${reviewingRecord.staffName}`);
   };
 
-  // Spark release gate: the legacy writer stores payroll and payslips separately and
-  // cannot prove an all-or-nothing, rules-enforced, unique-period commitment.
-  // Until its canonical atomic writer is certified, no payroll is financially finalized.
+  // Posting stays disabled until a deterministic, authenticated, atomic writer
+  // and enforceable Firestore rules have passed emulator tests and release review.
   const handleFinalizeAndCommit = async () => {
-    toast.error('Payroll finalization is disabled pending certified atomic Spark posting and statutory policy verification. Draft review remains available.');
-    return;
-    if (!profile?.tenantId) return;
-
-    if (!draftPayroll.length || draftPayroll.some(item => !item.reviewed)) {
-      toast.error('Every payroll entry must be reviewed before finalization.');
-      return;
-    }
-    const invalid = draftPayroll.map(item => validatePayrollDraft(item)).find(Boolean);
-    if (invalid) { toast.error(invalid); return; }
-    if (draftPayroll.some(item => payroll.some(existing => existing.staffId === item.staffId && existing.month === new Date(toDate).toLocaleString('default', { month: 'long', year: 'numeric' }) && existing.tenantId === profile.tenantId))) {
-      toast.error('A payroll record already exists for one or more staff members in this period.');
-      return;
-    }
-    setIsGenerating(true);
-    try {
-      const monthLabel = new Date(toDate).toLocaleString('default', { month: 'long', year: 'numeric' });
-      const yearInt = new Date(toDate).getFullYear();
-
-      for (const item of draftPayroll) {
-        // Find matching staff to copy properties (like branchId)
-        const staffMember = canonicalStaff.find(s => s.id === item.staffId);
-        
-        // 1. Add to main payroll ledger
-        const payrollData = {
-          tenantId: profile.tenantId,
-          staffId: item.staffId,
-          staff_name: item.staffName,
-          month: monthLabel,
-          year: yearInt,
-          base_salary: item.baseSalary,
-          allowances: item.bonuses,
-          bonus_notes: item.bonusNotes,
-          deductions: item.deductions,
-          advance_deduction: item.advanceDeduction,
-          fine_deduction: item.fineDeduction,
-          nssf_employee: item.nssfEmployee,
-          nssf_employer: item.nssfEmployer,
-          paye: item.paye,
-          net_salary: item.netSalary,
-          status: 'pending_payment', // Finalization is not disbursement.
-          generated_at: new Date().toISOString(),
-          branch_id: staffMember?.branch_id || 'HQ'
-        };
-
-        await firestoreService.addDocument('payroll', payrollData);
-
-        // 2. Feed Welfare Payslips portal
-        const payslipRecord: any = {
-          tenantId: profile.tenantId,
-          staffId: item.staffId,
-          month: new Date(toDate).toISOString().slice(0, 7), // "YYYY-MM" format
-          year: yearInt,
-          netPayable: item.netSalary,
-          basePay: item.baseSalary,
-          allowances: item.bonuses,
-          allowancesNotes: item.bonusNotes,
-          deductions: item.deductions,
-          advanceDeduction: item.advanceDeduction,
-          fineDeduction: item.fineDeduction,
-          nssfEmployee: item.nssfEmployee,
-          paye: item.paye,
-          unpaidLeaveDeduction: item.unpaidLeaveDeduction || 0,
-          approvedLeavesDesc: item.approvedLeavesDesc || 'None',
-          rejectedLeavesDesc: item.rejectedLeavesDesc || 'None',
-          advancesDesc: item.advancesDesc || 'None',
-          generatedAt: new Date().toISOString()
-        };
-
-        await firestoreService.addDocument('payslips', payslipRecord);
-      }
-
-      // No management expense or cash posting here: payroll preparation cannot fabricate payment evidence.
-      // The future certified posting path must recognize liabilities and payments independently.
-
-      toast.success(`Payroll records finalized for review, with no payment or expense posted.`);
-      setDraftPayroll([]);
-      setIsDraftMode(false);
-    } catch (error) {
-      toast.error('Failed to commit payroll records.');
-    } finally {
-      setIsGenerating(false);
-    }
+    toast.error('Payroll posting is unavailable until the Spark-native atomic writer and approval policy are certified.');
   };
 
   // Export payroll report to CSV
