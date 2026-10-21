@@ -623,18 +623,8 @@ service cloud.firestore {
         && t.sourceAccountId != t.destinationAccountId
         && t.chargePayerAccountId == t.sourceAccountId
         && t.principalUGX is int && t.principalUGX > 0
-        && t.principalUGX <= 9007199254740991 && t.chargeUGX == 0
-        && t.status == 'posted' && t.currency == 'UGX'
+        && t.chargeUGX == 0 && t.status == 'posted' && t.currency == 'UGX'
         && t.movementCount == 2 && t.chargeEventId == null
-        && t.accountDeltas.size() == 2
-        && t.accountDeltas[0].accountId == t.sourceAccountId
-        && t.accountDeltas[0].beforeUGX == from.balanceUGX
-        && t.accountDeltas[0].deltaUGX == -t.principalUGX
-        && t.accountDeltas[0].afterUGX == from.balanceUGX - t.principalUGX
-        && t.accountDeltas[1].accountId == t.destinationAccountId
-        && t.accountDeltas[1].beforeUGX == to.balanceUGX
-        && t.accountDeltas[1].deltaUGX == t.principalUGX
-        && t.accountDeltas[1].afterUGX == to.balanceUGX + t.principalUGX
         && from.tenantId == t.tenantId && to.tenantId == t.tenantId
         && from.controlVersion == 2 && to.controlVersion == 2
         && from.initialized == true && to.initialized == true
@@ -643,20 +633,26 @@ service cloud.firestore {
         && from.balanceUGX is int && to.balanceUGX is int
         && from.balanceUGX >= t.principalUGX
         && to.balanceUGX <= 9007199254740991 - t.principalUGX
+        && t.accountDeltas == [
+          {'accountId':t.sourceAccountId,'beforeUGX':from.balanceUGX,'deltaUGX':-t.principalUGX,'afterUGX':from.balanceUGX-t.principalUGX},
+          {'accountId':t.destinationAccountId,'beforeUGX':to.balanceUGX,'deltaUGX':t.principalUGX,'afterUGX':to.balanceUGX+t.principalUGX}
+        ]
         && fromAfter.balanceUGX == from.balanceUGX - t.principalUGX
         && toAfter.balanceUGX == to.balanceUGX + t.principalUGX
         && fromAfter.lastPostingId == id && toAfter.lastPostingId == id
         && fromAfter.diff(from).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
         && toAfter.diff(to).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
         && fromAfter.updatedAt == request.time && toAfter.updatedAt == request.time
-        && debit.tenantId == t.tenantId && debit.transferId == id
-        && debit.accountId == t.sourceAccountId && debit.deltaUGX == -t.principalUGX
-        && debit.purpose == 'PRINCIPAL' && debit.movementIndex == 0
-        && debit.actorUid == request.auth.uid && debit.createdAt == request.time
-        && credit.tenantId == t.tenantId && credit.transferId == id
-        && credit.accountId == t.destinationAccountId && credit.deltaUGX == t.principalUGX
-        && credit.purpose == 'PRINCIPAL' && credit.movementIndex == 1
-        && credit.actorUid == request.auth.uid && credit.createdAt == request.time
+        && debit == {
+          'tenantId':t.tenantId,'transferId':id,'accountId':t.sourceAccountId,
+          'deltaUGX':-t.principalUGX,'purpose':'PRINCIPAL','movementIndex':0,
+          'actorUid':request.auth.uid,'createdAt':request.time
+        }
+        && credit == {
+          'tenantId':t.tenantId,'transferId':id,'accountId':t.destinationAccountId,
+          'deltaUGX':t.principalUGX,'purpose':'PRINCIPAL','movementIndex':1,
+          'actorUid':request.auth.uid,'createdAt':request.time
+        }
         && t.createdAt == request.time;
     }
     function sparkAccountTransferUpdate(id, before, after) {
