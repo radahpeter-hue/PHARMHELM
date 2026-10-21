@@ -6,6 +6,7 @@ on:
       - 'src/services/financeV2*'
       - 'src/pages/finance/**'
       - 'firestore.rules'
+      - 'scripts/finance-v2-account-rules-emulator.mjs'
       - '.github/workflows/finance-v2-integration.yml'
 jobs:
   finance:
@@ -32,3 +33,4 @@ jobs:
           export FIRESTORE_EMULATOR_HOST=127.0.0.1:8085
           node --import tsx --test finance-v2-backend/admin-transfer-emulator.test.mts finance-v2-backend/admin-eod-emulator.test.mts
           node scripts/management-cash-settlement-rules-emulator.mjs
+          node scripts/finance-v2-account-rules-emulator.mjs

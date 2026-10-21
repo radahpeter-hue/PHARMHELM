@@ -29,7 +29,7 @@ Release blockers:
 1. POS does not have a verified V2 Branch Cash Sales funding/reversal contract. New V2 accounts start at zero. EOD never credits them. Sale/revision cash funding must be designed and tested with idempotent sale and reversal identities before claiming the complete POS → account → transfer path works operationally. No historical balances have been invented.
 2. Hosted API deployment, real Firebase token/service identity validation, named-database verification, frontend connectivity and tenant activation remain pending.
 3. Mobile layout uses native controls, wrapping cards and normal page scrolling; rendered desktop/mobile acceptance remains pending.
-4. Full branch-scoped read/registration and forbidden direct V2 read rules require dedicated emulator coverage beyond the legacy settlement regression. Rules compiled release-size check must pass in CI.
-5. Current candidate CI results must be inspected. Do not rely on historical Phase 1 green checks.
+4. Dedicated browser V2 registration/read/write-denial emulator acceptance passed. Treasury branch-read and registration-denial checks passed in the Admin suite. Rendered UI and broader delegated-role acceptance remain pending.
+5. Initial candidate 21279ff4 passed Finance V2 integration, Firestore compiled release size and Masaka preview CI. Current final-commit checks must also be inspected; do not substitute these results for its status.
 
 Development is implemented but not operationally signed off. Phases 1–3 and #85 are combined into a test candidate; the integration checkpoint remains open until these release gates pass. No merge or activation is authorised by this report.

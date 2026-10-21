@@ -6,7 +6,7 @@ import {doc,setDoc,getDoc,updateDoc,runTransaction} from 'firebase/firestore';
 
 if (!process.env.FIRESTORE_EMULATOR_HOST) throw new Error('Firestore emulator required');
 const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-v2-rules',firestore:{rules:readFileSync('firestore.rules','utf8')}});
-const admin=fn=>env.withSecurityRulesDisabled(async ctx=>fn(ctx.firestore()));
+const admin=async fn=>{let result;await env.withSecurityRulesDisabled(async ctx=>{result=await fn(ctx.firestore());});return result;};
 const user=uid=>env.authenticatedContext(uid).firestore();
 const tenant='finance-v2-tenant',branch='branch-a';
 const payload={tenantId:tenant,accountId:'cash_a',name:'Branch Cash',kind:'BRANCH_CASH_SALES',branchId:branch,
@@ -26,8 +26,10 @@ try {
   await assertFails(setDoc(account(finance),payload));
   console.log('PASS default disabled gate blocks registration');
   await admin(db=>setDoc(doc(db,'system_settings',tenant),{tenantId:tenant,financeV2AccountRegistrationEnabled:true}));
-  await assertSucceeds(setDoc(account(finance),payload));
-  console.log('PASS authorised zero opening branch account');
+  await assertFails(setDoc(account(finance),payload));
+  await admin(db=>setDoc(account(db),payload));
+  await assertFails(getDoc(account(finance)));
+  console.log('PASS browser registration and direct V2 account reads remain closed even with tenant gate enabled');
   await assertFails(setDoc(account(finance,'cash_positive'),{...payload,accountId:'cash_positive',balanceUGX:500,openingBalanceUGX:500}));
   await assertFails(setDoc(account(finance,'cash_wrong_actor'),{...payload,accountId:'cash_wrong_actor',registeredBy:'another'}));
   await assertFails(setDoc(account(user('finance-b'),'cash_foreign'),{...payload,accountId:'cash_foreign',registeredBy:'finance-b'}));
@@ -55,9 +57,9 @@ try {
     tx.set(doc(finance,'finance_v2_account_movements','proof_0'),{tenantId:tenant,accountId:'cash_a',deltaUGX:-100});
     tx.set(doc(finance,'finance_v2_account_movements','proof_1'),{tenantId:tenant,accountId:'cash_b',deltaUGX:100});
   }));
-  assert.equal((await getDoc(account(finance))).data().balanceUGX,500);
-  assert.equal((await getDoc(account(finance,'cash_b'))).data().balanceUGX,0);
+  assert.equal(await admin(async db=>(await getDoc(account(db))).data().balanceUGX),500);
+  assert.equal(await admin(async db=>(await getDoc(account(db,'cash_b'))).data().balanceUGX),0);
   console.log('PASS complete but uncertified transfer transaction denied atomically with no balance movement');
-  assert.equal((await getDoc(account(finance))).data().balanceUGX,500);
+  assert.equal(await admin(async db=>(await getDoc(account(db))).data().balanceUGX),500);
   console.log('PASS wrong tenant, branch, actor, opening, direct balance and orphan postings denied');
 } finally {await env.cleanup();}
