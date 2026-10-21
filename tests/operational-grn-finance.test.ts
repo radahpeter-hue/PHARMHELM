@@ -43,6 +43,26 @@ test('GRN event policy rejects missing subtype and invalid value or quantity', (
   assert.throws(() => planOperationalGrnFinanceEvents([{ operationalType: 'FIXED_ASSET', itemId: 'x', itemName: 'x', quantity: -1, totalValueUGX: 1 }]), /must be valid/);
 });
 
+test('Operational GRN refuses fractional UGX, fractional quantity and unsafe totals before writing events', () => {
+  const valid = { operationalType: 'CONSUMABLE_OPERATIONAL' as const, itemId: 'paper', itemName: 'Paper', quantity: 1, totalValueUGX: 1 };
+  assert.throws(() => planOperationalGrnFinanceEvents([{ ...valid, quantity: 1.5 }]), /whole numbers/);
+  assert.throws(() => planOperationalGrnFinanceEvents([{ ...valid, totalValueUGX: 1.5 }]), /whole numbers/);
+  assert.throws(() => planOperationalGrnFinanceEvents([{ ...valid, totalValueUGX: Number.MAX_SAFE_INTEGER + 1 }]), /whole numbers/);
+  assert.throws(() => planOperationalGrnFinanceEvents([
+    { ...valid, itemId: 'a', totalValueUGX: Number.MAX_SAFE_INTEGER },
+    { ...valid, itemId: 'b', totalValueUGX: 1 }
+  ]), /exceeds safe whole-number/);
+});
+
+test('Operational GRN validates received amounts before opening a transaction', () => {
+  const service = readFileSync(new URL('../src/services/operationalGrnService.ts', import.meta.url), 'utf8');
+  assert.match(service, /Number\.isSafeInteger\(quantity\)/);
+  assert.match(service, /Number\.isSafeInteger\(cost\)/);
+  assert.match(service, /Number\.isSafeInteger\(quantity \* cost\)/);
+  assert.match(service, /quantity > 0 && cost === 0/);
+  assert.ok(service.indexOf('Number.isSafeInteger(quantity)') < service.indexOf('return runTransaction(connection'));
+});
+
 test('Operational receipt cost preserves pack semantics and weighted value for later transfers', () => {
   assert.equal(operationalReceiptCostPerPack(0, 24, 0, 100, 12), 1200);
   assert.equal(operationalReceiptCostPerPack(12, 12, 1200, 200, 12), 1800);

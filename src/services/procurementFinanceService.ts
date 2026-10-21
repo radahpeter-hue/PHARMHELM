@@ -99,7 +99,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
       });
       continue;
     }
-    if (!Number.isFinite(edit.qty) || edit.qty < 0 || edit.qty > line.qty_ordered) {
+    if (!Number.isSafeInteger(edit.qty) || edit.qty < 0 || edit.qty > line.qty_ordered) {
       throw new Error(`Received quantity is invalid for ${line.product_name || line.product_id}.`);
     }
     if (!edit.batch.trim()) throw new Error(`Batch number is required for ${line.product_name || line.product_id}.`);
@@ -118,6 +118,11 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
           status: 'pending', createdAt: now
         }
       });
+    }
+
+    if (!Number.isSafeInteger(line.unit_cost_ugx) || Number(line.unit_cost_ugx) <= 0 ||
+        !Number.isSafeInteger(edit.qty * line.unit_cost_ugx)) {
+      throw new Error(`Received stock requires a positive whole UGX unit cost and safe total for ${line.product_name || line.product_id}.`);
     }
 
     const item = {
@@ -148,6 +153,9 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
     });
   }
 
+  if (!Number.isSafeInteger(financeValue) || !Number.isSafeInteger(transferValue)) {
+    throw new Error('GRN total exceeds the safe whole-number UGX range.');
+  }
   if (receivedItems.length === 0) throw new Error('At least one received product is required.');
   const supplierLine = lines.find(l => l.supplier_type !== 'internal_hq' && l.supplier_type !== 'internal_warehouse');
   const supplierId = supplierLine?.supplier_id || 'UNKNOWN';
