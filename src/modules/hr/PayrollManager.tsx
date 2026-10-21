@@ -348,8 +348,12 @@ export const PayrollManager: React.FC = () => {
     toast.success(`Payslip evaluated for ${reviewingRecord.staffName}`);
   };
 
-  // Permanently save and finalize reviewed payrolls to Firebase
+  // Spark release gate: the legacy writer stores payroll and payslips separately and
+  // cannot prove an all-or-nothing, rules-enforced, unique-period commitment.
+  // Until its canonical atomic writer is certified, no payroll is financially finalized.
   const handleFinalizeAndCommit = async () => {
+    toast.error('Payroll finalization is disabled pending certified atomic Spark posting and statutory policy verification. Draft review remains available.');
+    return;
     if (!profile?.tenantId) return;
 
     if (!draftPayroll.length || draftPayroll.some(item => !item.reviewed)) {
