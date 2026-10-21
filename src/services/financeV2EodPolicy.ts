@@ -27,12 +27,16 @@ export function validateEodAmounts(expected: EodAmounts, declared: EodAmounts, r
   const variances: EodAmounts = {};
   let totalVariance = 0;
   for (const method of methods) {
-    const variance = eodVariance(declared[method] ?? 0, expected[method] ?? 0);
+    // Validate the source amounts independently. In particular, missing fields
+    // are zero but a malformed present field must never silently become zero.
+    const expectedAmount = Object.prototype.hasOwnProperty.call(expected, method) ? expected[method] : 0;
+    const declaredAmount = Object.prototype.hasOwnProperty.call(declared, method) ? declared[method] : 0;
+    const variance = eodVariance(declaredAmount, expectedAmount);
     variances[method] = variance;
     totalVariance += variance;
     if (!Number.isSafeInteger(totalVariance)) throw new Error('EOD total exceeds supported UGX precision.');
   }
-  // A net zero variance can conceal offsetting shortages and surpluses.
+  // A net zero can conceal offsetting shortages and surpluses.
   if (Object.values(variances).some(value => value !== 0) && !reason.trim()) {
     throw new Error('A reason is required for every genuine payment-method variance.');
   }
