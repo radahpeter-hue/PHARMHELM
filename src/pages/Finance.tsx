@@ -1,7 +1,7 @@
 import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
 import { financeV2Api, financeV2ApiConfigured } from '../services/financeV2Api';
-import { assignSaleToEodShift, validateEodAmounts, eodVariance, type EodShift } from '../services/financeV2EodPolicy';
+import { assignSaleToEodShift, eodBusinessDateNow, validateEodAmounts, eodVariance, type EodShift } from '../services/financeV2EodPolicy';
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, 
@@ -262,7 +262,7 @@ const EODReconciliationTab: React.FC = () => {
     insurance: 0,
     institutional_credit: 0,
     staff_welfare: 0,
-    date: new Date().toISOString().split('T')[0]
+    date: eodBusinessDateNow()
   });
 
   const [varianceReason, setVarianceReason] = useState('');
