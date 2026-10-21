@@ -100,5 +100,40 @@ try {
   assert.equal(await admin(async db=>(await getDoc(account(db,'cash_b'))).data().balanceUGX),0);
   console.log('PASS complete but uncertified transfer transaction denied atomically with no balance movement');
   assert.equal(await admin(async db=>(await getDoc(account(db))).data().balanceUGX),500);
+
+  // Exercise the actual Spark transaction, not only a pure calculator.
+  // The pilot remains disabled by default and is enabled only inside the emulator.
+  await admin(db=>updateDoc(doc(db,'system_settings',tenant),{financeV2SparkTransferPilotEnabled:true}));
+  const pilotId='finance_v2_transfer_'+tenant+'_pilot_1';
+  await assertSucceeds(runTransaction(finance,async tx=>{
+    const fromRef=account(finance),toRef=account(finance,'cash_b');
+    const [fromSnap,toSnap]=await Promise.all([tx.get(fromRef),tx.get(toRef)]);
+    const from=fromSnap.data().balanceUGX,to=toSnap.data().balanceUGX;
+    tx.update(fromRef,{balanceUGX:from-100,lastPostingId:pilotId,updatedAt:serverTimestamp()});
+    tx.update(toRef,{balanceUGX:to+100,lastPostingId:pilotId,updatedAt:serverTimestamp()});
+    tx.set(doc(finance,'finance_v2_account_movements',pilotId+'_0'),{
+      tenantId:tenant,transferId:pilotId,accountId:'cash_a',deltaUGX:-100,purpose:'PRINCIPAL',
+      movementIndex:0,actorUid:'finance-a',createdAt:serverTimestamp()
+    });
+    tx.set(doc(finance,'finance_v2_account_movements',pilotId+'_1'),{
+      tenantId:tenant,transferId:pilotId,accountId:'cash_b',deltaUGX:100,purpose:'PRINCIPAL',
+      movementIndex:1,actorUid:'finance-a',createdAt:serverTimestamp()
+    });
+    tx.set(doc(finance,'finance_v2_transfers',pilotId),{
+      tenantId:tenant,requestId:'pilot_1',sourceAccountId:'cash_a',destinationAccountId:'cash_b',
+      chargePayerAccountId:'cash_a',principalUGX:100,chargeUGX:0,actorUid:'finance-a',
+      status:'posted',currency:'UGX',accountDeltas:[
+        {accountId:'cash_a',beforeUGX:from,deltaUGX:-100,afterUGX:from-100},
+        {accountId:'cash_b',beforeUGX:to,deltaUGX:100,afterUGX:to+100}
+      ],movementCount:2,chargeEventId:null,createdAt:serverTimestamp()
+    });
+  }));
+  assert.equal(await admin(async db=>(await getDoc(account(db))).data().balanceUGX),400);
+  assert.equal(await admin(async db=>(await getDoc(account(db,'cash_b'))).data().balanceUGX),100);
+  console.log('PASS authenticated zero-charge pilot transfer posts exactly one paired debit and credit');
+  await assertFails(updateDoc(account(finance),{balanceUGX:999999}));
+  await assertFails(setDoc(doc(finance,'finance_v2_transfers',pilotId),{tenantId:tenant,principalUGX:100}));
+  console.log('PASS forged direct balance and immutable transfer replay rejected with pilot active');
+
   console.log('PASS wrong tenant, branch, actor, opening, direct balance and orphan postings denied');
 } finally {await env.cleanup();}
