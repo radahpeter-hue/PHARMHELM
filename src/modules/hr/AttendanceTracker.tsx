@@ -438,7 +438,6 @@ export const AttendanceTracker: React.FC = () => {
                           )}>
                             {hours} hrs
                           </span>
-                          <p className="text-[10px] mt-1 font-semibold text-slate-500">{record.approval_status || 'Unverified legacy entry'}</p>
                         </td>
                       </tr>
                     );
@@ -549,6 +548,7 @@ export const AttendanceTracker: React.FC = () => {
                           )}>
                             {hours} hrs
                           </span>
+                          <p className="text-[10px] mt-1 font-semibold text-slate-500">{record.approval_status || 'Unverified legacy entry'}</p>
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
