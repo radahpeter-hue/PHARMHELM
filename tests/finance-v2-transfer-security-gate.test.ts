@@ -48,5 +48,8 @@ test('duplicate request is not accepted as complete when transfer envelope is in
  assert.match(writer,/data\.status !== 'posted'/);
  assert.match(writer,/data\.currency !== 'UGX'/);
  assert.match(writer,/!Array\.isArray\(data\.accountDeltas\)/);
- assert.match(writer,/data\.movementCount < 2/);
+ assert.match(writer,/data\\.movementCount !== expectedMovementCount/);
+ assert.match(writer,/data\\.chargeEventId !== expectedChargeEventId/);
+ assert.match(writer,/data\\.accountDeltas\\.length < 2/);
+ assert.match(writer,/['"]description['"]/);
 });
