@@ -1,4 +1,4 @@
-import { doc, runTransaction, Timestamp, type Firestore } from 'firebase/firestore';
+import { doc, runTransaction, serverTimestamp, type Firestore } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { planFinanceV2Transfer, type FinanceV2AccountSnapshot, type FinanceV2TransferInput } from './financeV2TransferPolicy';
 
@@ -75,7 +75,7 @@ export async function postFinanceV2Transfer(
         active: data.active !== false };
     });
     const plan = planFinanceV2Transfer(input, accounts);
-    const now = Timestamp.now();
+    const now = serverTimestamp();
     // Record an account-specific before/after snapshot to support rule-side
     // consistency checks and independent audit reconstruction.
     const auditDeltas = plan.accountDeltas.map(m => {
