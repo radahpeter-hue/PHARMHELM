@@ -621,25 +621,9 @@ const ReviewAdvanceModal: React.FC<{
 
     try {
       await firestoreService.updateDocument('advance_requests', request.id, update);
-      if (update.status === 'Approved') {
-        await firestoreService.addDocument('management_expenses', {
-          tenantId: request.tenantId || '',
-          category: 'Salaries - Advance Request',
-          department: 'HR',
-          description: `Salary Advance Request: ${request.staff_name} (ID: ${request.staff_id?.slice(-6)})`,
-          amount_ugx: parseFloat(request.amount_requested as any) || 0,
-          expense_date: new Date().toISOString().split('T')[0],
-          payment_method: 'Petty Cash',
-          status: 'Pending',
-          logged_by: 'HR System - Advance',
-          created_at: new Date().toISOString(),
-          source: 'hr_advance',
-          excludeFromOpexRollup: false
-        });
-        toast.success(`Advance fully approved & sent to Finance Management Expenses!`);
-      } else {
-        toast.success(`Request ${action.toLowerCase()} as ${reviewCapacity}`);
-      }
+      toast.success(update.status === 'Approved'
+        ? 'Advance approved. No payment or expense has been posted.'
+        : `Request ${action.toLowerCase()} as ${reviewCapacity}`);
       onClose();
     } catch (error) {
       toast.error('Failed to update request');
@@ -657,21 +641,7 @@ const ReviewAdvanceModal: React.FC<{
 
     try {
       await firestoreService.updateDocument('advance_requests', request.id, update);
-      await firestoreService.addDocument('management_expenses', {
-        tenantId: request.tenantId || '',
-        category: 'Salaries - Advance Request',
-        department: 'HR',
-        description: `Salary Advance Request: ${request.staff_name} (ID: ${request.staff_id?.slice(-6)})`,
-        amount_ugx: parseFloat(request.amount_requested as any) || 0,
-        expense_date: new Date().toISOString().split('T')[0],
-        payment_method: 'Petty Cash',
-        status: 'Pending',
-        logged_by: 'HR System - Advance',
-        created_at: new Date().toISOString(),
-        source: 'hr_advance',
-        excludeFromOpexRollup: false
-      });
-      toast.success('Approved both levels successfully & sent to Finance Management Expenses');
+      toast.success('Advance approvals recorded. Actual disbursement requires Finance settlement.');
       onClose();
     } catch (error) {
       toast.error('Failed to update request');
