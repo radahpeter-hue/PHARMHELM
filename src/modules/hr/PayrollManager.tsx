@@ -183,6 +183,8 @@ export const PayrollManager: React.FC = () => {
       const loggedHours = loggedHoursFromAttendance; // No attendance evidence must never imply full-time attendance.
 
       // 3. Gross Payments dynamically derived from multiplying hours worked and hourly rate (plus fallback/adjustments)
+      // Payroll drafting is blocked when the period lacks reliable attendance;
+      // zero hours may be genuine, but HR must verify it rather than infer a salary.
       const basePay = loggedHours * hourlyRate;
 
       // 4. Compute normal salary advance deductions in date range
@@ -238,8 +240,8 @@ export const PayrollManager: React.FC = () => {
       const isRegularStaff = empType === 'Full-Time' || empType === 'Part-Time';
       
       const hasNssf = taxEnabled && isRegularStaff && (member.nssfEligible !== false); // default true unless explicitly checked false
-      const nssfEmployee = hasNssf ? basePay * 0.05 : 0;
-      const nssfEmployer = hasNssf ? basePay * 0.10 : 0;
+      const nssfEmployee = hasNssf ? Math.round(basePay * 0.05) : 0;
+      const nssfEmployer = hasNssf ? Math.round(basePay * 0.10) : 0;
 
       // Progressive PAYE Tax (Uganda) & Withholding Taxes
       let paye = 0;
@@ -267,7 +269,7 @@ export const PayrollManager: React.FC = () => {
         }
       }
 
-      const totalDeductions = advanceDeduction + fineDeduction + nssfEmployee + paye + unpaidLeaveDeduction;
+      const totalDeductions = Math.round(advanceDeduction + fineDeduction + nssfEmployee + paye + unpaidLeaveDeduction);
 
       draftRecords.push({
         staffId: member.id,
@@ -276,8 +278,8 @@ export const PayrollManager: React.FC = () => {
         employeeId: member.tin || member.id.slice(0, 8),
         remunerationType: member.remunerationType || 'Salary',
         loggedHours,
-        baseSalary: basePay, // Saved as computed gross pay so existing UI/downstream works
-        expectedPay: basePay,
+        baseSalary: Math.round(basePay), // Whole-number UGX draft; statutory policy remains subject to verification
+        expectedPay: Math.round(basePay),
         bonuses: 0,
         bonusNotes: '',
         deductions: totalDeductions,
@@ -285,8 +287,8 @@ export const PayrollManager: React.FC = () => {
         fineDeduction,
         nssfEmployee,
         nssfEmployer,
-        paye,
-        netSalary: basePay - totalDeductions,
+        paye: Math.round(paye),
+        netSalary: Math.round(basePay) - totalDeductions,
         reviewed: false,
         profileBaseSalary: salaryBase,
         expectedHoursInMonth,
