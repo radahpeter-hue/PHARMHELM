@@ -41,6 +41,7 @@ try {
   await assertFails(updateDoc(doc(ceo, 'advance_requests', 'advance-test'), { amount_requested: 200000 }));
   await assertFails(setDoc(doc(hr, 'payroll', 'fake-paid'), { tenantId: 'tenant-a', staffId: 'employee', status: 'paid', net_salary: 100000 }));
   await assertFails(setDoc(doc(hr, 'payslips', 'fake-paid'), { tenantId: 'tenant-a', staffId: 'employee', netPayable: 100000 }));
+  console.log('Advance approval and payroll write denials validated; checking attendance.');
   const timesheet = {
     tenantId: 'tenant-a', staffId: 'employee', staff_name: 'Test Employee',
     branch_id: 'b1', date: '2026-10-20', status: 'present', hours_worked: 8,
@@ -54,6 +55,7 @@ try {
   await assertFails(updateDoc(doc(hr, 'attendance', 'timesheet-1'), { hours_worked: 10 }));
   await assertFails(updateDoc(doc(hr, 'attendance', 'timesheet-1'), { approval_status: 'Submitted' }));
   await assertSucceeds(getDoc(doc(hr, 'advance_requests', 'advance-test')));
+  console.log('Attendance approval and immutable-history denials validated; checking privacy.');
   await env.withSecurityRulesDisabled(async admin => {
     await setDoc(doc(admin.firestore(), 'payroll', 'other-payroll'), {
       tenantId: 'tenant-a', staffId: 'other-employee', net_salary: 500000, status: 'approved_unpaid'
