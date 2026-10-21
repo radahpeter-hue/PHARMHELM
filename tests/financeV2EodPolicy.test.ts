@@ -29,6 +29,14 @@ test('invalid or fractional UGX is rejected', () => {
   assert.throws(() => eodVariance(-1, 1), /integer/);
 });
 
+test('EOD rejects malformed expected or declared method values instead of defaulting to zero', () => {
+  assert.throws(() => validateEodAmounts({ cash: Number.NaN }, { cash: 0 }, 'invalid source'), /safe integer/);
+  assert.throws(() => validateEodAmounts({ cash: 0 }, { cash: Number.POSITIVE_INFINITY }, 'invalid declaration'), /safe integer/);
+  assert.throws(() => validateEodAmounts({ cash: 0 }, { cash: 1.5 }, 'fractional declaration'), /safe integer/);
+  assert.throws(() => validateEodAmounts({ cash: 0 }, { cash: -1 }, 'negative declaration'), /safe integer/);
+  assert.deepEqual(validateEodAmounts({ cash: 0 }, { cash: 0 }, ''), { variances: { cash: 0 }, totalVariance: 0 });
+});
+
 test('overnight shift is attributed to start date using branch timezone', () => {
   assert.deepEqual(assignSaleToEodShift('2026-10-20T02:00:00Z', shifts), { businessDate: '2026-10-19', shiftId: 'nightShift' });
   assert.deepEqual(assignSaleToEodShift('2026-10-19T19:00:00Z', shifts), { businessDate: '2026-10-19', shiftId: 'nightShift' });
