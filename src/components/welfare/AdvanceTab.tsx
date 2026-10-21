@@ -15,6 +15,7 @@ import { firestoreService } from '../../services/firestore';
 import { AdvanceRequest } from '../../types';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
+import { validateAdvanceRequest, sumApprovedUnpaidAdvanceRequests } from '../../services/hrAdvancePolicy';
 
 const AdvanceTab: React.FC = () => {
   const { profile } = useAuth();
@@ -45,8 +46,9 @@ const AdvanceTab: React.FC = () => {
     if (!profile?.uid || !profile?.tenantId) return;
 
     const amount = Number(formData.amount_requested);
-    if (amount <= 0) {
-      toast.error('Invalid amount');
+    const validationError = validateAdvanceRequest(amount, formData.repayment_period_months);
+    if (validationError) {
+      toast.error(validationError);
       return;
     }
 
@@ -108,9 +110,9 @@ const AdvanceTab: React.FC = () => {
               <DollarSign size={24} />
             </div>
             <div>
-              <p className="text-xs font-black text-zinc-400 uppercase tracking-widest">Outstanding Balance</p>
+              <p className="text-xs font-black text-zinc-400 uppercase tracking-widest">Approved, not yet disbursed</p>
               <h3 className="text-2xl font-black text-zinc-900">
-                UGX {requests.reduce((sum, r) => sum + (r.status === 'Approved' ? r.amount_requested : 0), 0).toLocaleString()}
+                UGX {sumApprovedUnpaidAdvanceRequests(requests).toLocaleString()}
               </h3>
             </div>
           </div>
