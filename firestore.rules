@@ -590,84 +590,16 @@ service cloud.firestore {
         && after.diff(before).affectedKeys().hasOnly(['payment_status','lastPaymentId','updatedAt'])
         && after.payment_status == (payment.remainingUGX == 0 ? 'paid' : 'partial');
     }
-    // Zero-charge, two-account Spark pilot only. The account and movement
-    // rules require a NEW envelope in the same atomic commit.
-    function v2Path(id) { return /databases/$(database)/documents/finance_v2_transfers/$(id); }
-    function v2Acc(tenant,id) { return /databases/$(database)/documents/finance_payment_accounts/$(tenant + '_' + id); }
-    function v2Move(id,index) { return /databases/$(database)/documents/finance_v2_account_movements/$(id + '_' + index); }
-    function sparkTransferValid(id,t) {
-      let a = get(v2Acc(t.tenantId,t.sourceAccountId)).data;
-      let b = get(v2Acc(t.tenantId,t.destinationAccountId)).data;
-      let afterA = getAfter(v2Acc(t.tenantId,t.sourceAccountId)).data;
-      let afterB = getAfter(v2Acc(t.tenantId,t.destinationAccountId)).data;
-      let m0 = getAfter(v2Move(id,'0')).data;
-      let m1 = getAfter(v2Move(id,'1')).data;
-      return request.auth != null && t.actorUid == request.auth.uid
-        && get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.role == 'Finance Head'
-        && get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.tenantId == t.tenantId
-        && get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.active == true
-        && get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.status == 'active'
-        && get(/databases/$(database)/documents/system_settings/$(t.tenantId)).data.get('financeV2SparkTransferPilotEnabled',false) == true
-        && id == 'finance_v2_transfer_' + t.tenantId + '_' + t.requestId
-        && t.sourceAccountId != t.destinationAccountId
-        && t.chargePayerAccountId == t.sourceAccountId && t.chargeUGX == 0
-        && t.principalUGX is int && t.principalUGX > 0
-        && t.status == 'posted' && t.currency == 'UGX' && t.movementCount == 2 && t.chargeEventId == null
-        && a.tenantId == t.tenantId && b.tenantId == t.tenantId
-        && a.controlVersion == 2 && b.controlVersion == 2
-        && a.active == true && b.active == true && a.initialized == true && b.initialized == true
-        && a.currency == 'UGX' && b.currency == 'UGX'
-        && a.balanceUGX is int && b.balanceUGX is int
-        && a.balanceUGX >= t.principalUGX && b.balanceUGX <= 9007199254740991 - t.principalUGX
-        && t.accountDeltas == [
-          {'accountId':t.sourceAccountId,'beforeUGX':a.balanceUGX,'deltaUGX':-t.principalUGX,'afterUGX':a.balanceUGX-t.principalUGX},
-          {'accountId':t.destinationAccountId,'beforeUGX':b.balanceUGX,'deltaUGX':t.principalUGX,'afterUGX':b.balanceUGX+t.principalUGX}
-        ]
-        && afterA.balanceUGX == a.balanceUGX - t.principalUGX
-        && afterB.balanceUGX == b.balanceUGX + t.principalUGX
-        && afterA.lastPostingId == id && afterB.lastPostingId == id
-        && afterA.diff(a).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
-        && afterB.diff(b).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
-        && m0.accountId == t.sourceAccountId && m0.deltaUGX == -t.principalUGX
-        && m1.accountId == t.destinationAccountId && m1.deltaUGX == t.principalUGX
-        && m0.transferId == id && m1.transferId == id
-        && m0.actorUid == request.auth.uid && m1.actorUid == request.auth.uid;
-    }
-    function sparkAccountTransferUpdate(id,before,after) {
-      let t = getAfter(v2Path(after.lastPostingId)).data;
-      return request.auth != null && !exists(v2Path(after.lastPostingId))
-        && id == before.tenantId + '_' + before.accountId
-        && t.actorUid == request.auth.uid && t.tenantId == before.tenantId
-        && t.chargeUGX == 0
-        && after.diff(before).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
-        && after.updatedAt == request.time
-        && ((before.accountId == t.sourceAccountId && after.balanceUGX == before.balanceUGX - t.principalUGX)
-          || (before.accountId == t.destinationAccountId && after.balanceUGX == before.balanceUGX + t.principalUGX));
-    }
-    function sparkMovementValid(id,d) {
-      let t = getAfter(v2Path(d.transferId)).data;
-      return request.auth != null && !exists(v2Path(d.transferId))
-        && t.actorUid == request.auth.uid && t.tenantId == d.tenantId
-        && id == d.transferId + '_' + d.movementIndex
-        && d.movementIndex in [0,1] && d.purpose == 'PRINCIPAL'
-        && d.actorUid == request.auth.uid && d.createdAt == request.time
-        && d.accountId == (d.movementIndex == 0 ? t.sourceAccountId : t.destinationAccountId)
-        && d.deltaUGX == (d.movementIndex == 0 ? -t.principalUGX : t.principalUGX);
-    }
     // V2 financial postings are deliberately closed until atomic cross-document
     // rules, authenticated emulator tests and opening balances are certified.
     // Explicit protection also prevents permissive fallback matching.
     match /finance_v2_transfers/{transferId} {
-      allow get: if request.auth != null && resource != null && request.auth.uid == resource.data.actorUid && isTenantMember(resource.data.tenantId);
-      allow list: if false;
-      allow create: if sparkTransferValid(transferId, request.resource.data);
-      allow update, delete: if false;
+      allow get, list: if false; // Scoped history is served by the authenticated treasury API.
+      allow create, update, delete: if false;
     }
     match /finance_v2_account_movements/{movementId} {
-      allow get: if request.auth != null && resource != null && isTenantMember(resource.data.tenantId);
-      allow list: if false;
-      allow create: if sparkMovementValid(movementId, request.resource.data);
-      allow update, delete: if false;
+      allow get, list: if false; // Scoped history is served by the authenticated treasury API.
+      allow create, update, delete: if false;
     }
     match /finance_v2_pos_cash_sources/{sourceId} {
       allow read, write: if false;
@@ -744,8 +676,7 @@ service cloud.firestore {
           ? request.resource.data.kind != 'BRANCH_CASH_SALES'
           : (request.resource.data.branchId is string
             && get(/databases/$(database)/documents/branches/$(request.resource.data.branchId)).data.tenantId == request.resource.data.tenantId));
-      allow update: if validManagementAccountUpdate(accountId, resource.data, request.resource.data)
-        || sparkAccountTransferUpdate(accountId, resource.data, request.resource.data);
+      allow update: if validManagementAccountUpdate(accountId, resource.data, request.resource.data);
       allow delete: if false;
     }
     match /cash_grn_payments/{paymentId} {
