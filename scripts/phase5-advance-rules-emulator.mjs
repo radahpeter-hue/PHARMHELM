@@ -22,6 +22,7 @@ const request = {
 };
 const employee = env.authenticatedContext('employee', { tenantId: 'tenant-a', role: 'Employee' }).firestore();
 const hr = env.authenticatedContext('hr', { tenantId: 'tenant-a', role: 'HR Head' }).firestore();
+const logger = env.authenticatedContext('logger', { tenantId: 'tenant-a', role: 'HR Support Personnel' }).firestore();
 const ceo = env.authenticatedContext('ceo', { tenantId: 'tenant-a', role: 'CEO' }).firestore();
 const outsider = env.authenticatedContext('outsider', { tenantId: 'tenant-b', role: 'Finance Head' }).firestore();
 const advance = doc(employee, 'advance_requests', 'advance-test');
@@ -40,6 +41,18 @@ try {
   await assertFails(updateDoc(doc(ceo, 'advance_requests', 'advance-test'), { amount_requested: 200000 }));
   await assertFails(setDoc(doc(hr, 'payroll', 'fake-paid'), { tenantId: 'tenant-a', staffId: 'employee', status: 'paid', net_salary: 100000 }));
   await assertFails(setDoc(doc(hr, 'payslips', 'fake-paid'), { tenantId: 'tenant-a', staffId: 'employee', netPayable: 100000 }));
+  const timesheet = {
+    tenantId: 'tenant-a', staffId: 'employee', staff_name: 'Test Employee',
+    branch_id: 'b1', date: '2026-10-20', status: 'present', hours_worked: 8,
+    check_in_time: '08:00', check_out_time: '16:00',
+    loggedByUid: 'logger', approval_status: 'Submitted'
+  };
+  await assertSucceeds(setDoc(doc(logger, 'attendance', 'timesheet-1'), timesheet));
+  await assertFails(setDoc(doc(logger, 'attendance', 'forged-approved'), { ...timesheet, approval_status: 'Approved' }));
+  await assertFails(updateDoc(doc(logger, 'attendance', 'timesheet-1'), { approval_status: 'Approved', approvedByUid: 'logger' }));
+  await assertSucceeds(updateDoc(doc(hr, 'attendance', 'timesheet-1'), { approval_status: 'Approved', approvedByUid: 'hr' }));
+  await assertFails(updateDoc(doc(hr, 'attendance', 'timesheet-1'), { hours_worked: 10 }));
+  await assertFails(updateDoc(doc(hr, 'attendance', 'timesheet-1'), { approval_status: 'Submitted' }));
   await assertSucceeds(getDoc(doc(hr, 'advance_requests', 'advance-test')));
   console.log('Phase 5 advance authorization and forbidden payroll writes: PASS');
 } finally {
