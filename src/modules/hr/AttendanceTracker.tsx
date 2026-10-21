@@ -9,6 +9,7 @@ import { firestoreService } from '../../services/firestore';
 import { Staff, AttendanceRecord } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
+import { submitAttendanceRecord } from '../../services/attendancePosting';
 
 export const AttendanceTracker: React.FC = () => {
   const { profile } = useAuth();
@@ -110,7 +111,7 @@ export const AttendanceTracker: React.FC = () => {
 
         const hours = item.details.status === 'present' ? calculateHours(item.details.checkIn, item.details.checkOut) : 0;
 
-        await firestoreService.addDocument('attendance', {
+        await submitAttendanceRecord({
           tenantId: profile.tenantId,
           staffId: item.id,
           staff_name: staffMember.full_name,
@@ -119,7 +120,6 @@ export const AttendanceTracker: React.FC = () => {
           check_in_time: item.details.status === 'present' ? item.details.checkIn : null,
           check_out_time: item.details.status === 'present' ? item.details.checkOut : null,
           hours_worked: hours,
-          approval_status: 'Submitted',
           loggedByUid: profile.uid,
           branch_id: staffMember.branch_id || ''
         });
