@@ -30,6 +30,8 @@ service cloud.firestore {
       };
     }
 
+    function canReadTenantResource() { return isAuthenticated() && isTenantMember(resource.data.tenantId); }
+
     function isTenantMember(tenantId) {
       return isAuthenticated() && (
         getUserData().get('tenantId', request.auth.token.get('tenantId', '')) == tenantId
@@ -774,7 +776,7 @@ service cloud.firestore {
     // ===============================================================
 
     match /vehicles/{vehicleId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow create: if isLogisticsHead() && isTenantMember(request.resource.data.tenantId);
       allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
@@ -788,7 +790,7 @@ service cloud.firestore {
     }
 
     match /trip_legs/{legId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow create: if isLogisticsHead() && isTenantMember(request.resource.data.tenantId);
       allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
@@ -1055,7 +1057,7 @@ service cloud.firestore {
         'financeV2TrustedEodEnabled', 'financeV2PosCashFundingEnabled'];
     }
     match /system_settings/{settingsId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       // Trusted Finance release controls can only be changed by an Admin service.
       allow create: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId)
         && !request.resource.data.keys().hasAny(trustedFinanceKeys());
@@ -1067,19 +1069,19 @@ service cloud.firestore {
     }
 
     match /master_registries/{registryId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow write: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
     }
 
     match /role_realms_of_operation/{realmId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow create: if isITPersonnel() && isTenantMember(request.resource.data.tenantId);
       allow update: if isITPersonnel() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isITPersonnel() && isTenantMember(resource.data.tenantId);
     }
 
     match /hr_roles/{roleId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow create: if isITPersonnel() && isTenantMember(request.resource.data.tenantId);
       allow update: if isITPersonnel() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isITPersonnel() && isTenantMember(resource.data.tenantId);
@@ -1485,47 +1487,47 @@ service cloud.firestore {
     }
 
     match /expiry_logs/{logId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow write: if isQA() || isBranchManager();
     }
 
     match /quarantine_logs/{logId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow write: if isQA() || isBranchManager();
     }
 
     match /room_temp_logs/{logId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow write: if isQA() || isBranchManager() || isAuthenticated(); // Staff can log
     }
 
     match /fridge_temp_logs/{logId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow write: if isQA() || isBranchManager() || isAuthenticated(); // Staff can log
     }
 
     match /cleaning_tasks/{taskId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow write: if isQA() || isBranchManager();
     }
 
     match /cleaning_logs/{logId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow write: if isAuthenticated(); // Staff can log completion
     }
 
     match /recalls/{recallId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow write: if isQA() || isAdmin();
     }
 
     match /premises_licenses/{licenseId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow write: if isQA() || isAdmin();
     }
 
     match /cme_sessions/{sessionId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow write: if isQA() || isHR() || isAdmin();
     }
 
@@ -1535,7 +1537,7 @@ service cloud.firestore {
     }
 
     match /appraisal_cycles/{cycleId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow write: if isQA() || isHR() || isAdmin();
     }
 
@@ -2243,7 +2245,7 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow create: if isInventoryOperator()
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.inventoryClass == 'SELLABLE';
@@ -2278,7 +2280,7 @@ service cloud.firestore {
     }
 
     match /product_batches/{batchId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow create: if isInventoryOperator() && isTenantMember(request.resource.data.tenantId)
         && (
           !("sourceType" in request.resource.data) ||
@@ -2331,7 +2333,7 @@ service cloud.firestore {
           );
       }
 
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
 
       allow create: if isTenantMember(request.resource.data.tenantId)
         && sessionId == request.resource.data.tenantId + '_' + request.resource.data.branchId
@@ -2687,7 +2689,7 @@ service cloud.firestore {
               && exists(sellableItemPath)
               && get(sellableItemPath).data.tenantId == request.resource.data.tenantId));
       }
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow create: if (isStockOperator() || (
           isProcurement()
           && request.resource.data.get('inventoryClass', '') == 'SELLABLE'
@@ -2714,7 +2716,7 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isProcurement();
     }
     match /billable_services/{serviceId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow create: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
       allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
@@ -3053,7 +3055,7 @@ service cloud.firestore {
     }
 
     match /welfare_records/{recordId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
+      allow read: if canReadTenantResource();
       allow create: if isHR() && isTenantMember(request.resource.data.tenantId);
       allow update: if isHR() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isHR() && isTenantMember(resource.data.tenantId);
