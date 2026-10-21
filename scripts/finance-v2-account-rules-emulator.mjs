@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {initializeTestEnvironment,assertFails,assertSucceeds} from '@firebase/rules-unit-testing';
-import {doc,setDoc,getDoc,updateDoc,runTransaction,serverTimestamp} from 'firebase/firestore';
+import {doc,setDoc,getDoc,updateDoc,runTransaction,serverTimestamp,collection,query,where,getDocs} from 'firebase/firestore';
 
 if (!process.env.FIRESTORE_EMULATOR_HOST) throw new Error('Firestore emulator required');
 const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-v2-rules',firestore:{rules:readFileSync('firestore.rules','utf8')}});
@@ -33,6 +33,13 @@ try {
   await assertSucceeds(getDoc(account(finance)));
   await assertFails(getDoc(account(user('finance-b'))));
   console.log('PASS gated Finance Head can register and read own-tenant V2 account; cross-tenant read blocked');
+  // Rules are not query filters: the reader must constrain both tenant and V2 version.
+  const v2Register = db => query(collection(db,'finance_payment_accounts'),where('tenantId','==',tenant),where('controlVersion','==',2));
+  await assertSucceeds(getDocs(v2Register(finance)));
+  await assertFails(getDocs(collection(finance,'finance_payment_accounts')));
+  await assertFails(getDocs(v2Register(user('finance-b'))));
+  await assertFails(getDocs(query(collection(finance,'finance_payment_accounts'),where('controlVersion','==',2))));
+  console.log('PASS tenant-filtered Finance Head account register; unfiltered and cross-tenant queries denied');
   await assertFails(setDoc(account(finance,'cash_duplicate'),{...payload,accountId:'cash_duplicate',createdAt:serverTimestamp(),updatedAt:new Date()}));
   await assertFails(setDoc(account(finance,'cash_extra'),{...payload,accountId:'cash_extra',extraField:1,createdAt:serverTimestamp(),updatedAt:serverTimestamp()}));
   await assertFails(setDoc(account(finance,'cash_positive'),{...payload,accountId:'cash_positive',balanceUGX:500,openingBalanceUGX:500}));
