@@ -974,7 +974,7 @@ service cloud.firestore {
     // Submitted attendance is distinct from a manager-approved payroll timesheet.
     match /attendance/{attendanceId} {
       function submitterAllowed(branchId) {
-        return isHR() || isAssignedBranchManager(branchId) || (isPOSOperator() && isAssignedToBranch(branchId));
+        return isHR() || isAssignedBranchManager(branchId) || ((isPOSOperator() || hasAnyRole(['Cashier','cashier'])) && isAssignedToBranch(branchId));
       }
       function reviewerAllowed(branchId) {
         return isHR() || isAssignedBranchManager(branchId);
