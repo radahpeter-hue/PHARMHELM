@@ -1,5 +1,7 @@
 # Finance V2 Firestore security contract — implementation gate
 
+> Historical design checklist. The current backend candidate intentionally denies direct browser V2 posting. The Spark-only revision in FINANCE_V2_SPARK_CONSTRAINT.md supersedes this document's stale implementation-status and positive-opening-balance discussion. Newly registered V2 accounts must start at zero. A browser rules path still requires independent certification; none is enabled by this document.
+
 Status: DESIGN ONLY. Do not activate new finance_v2_* writes or register accounts until these rules are implemented, tested with authenticated emulator identities, and approved.
 
 ## Existing rule compatibility

@@ -1,5 +1,7 @@
 # Approved pilot deployment: verified infrastructure blocker
 
+> Superseded on 21 October 2026: the owner requires Spark with no payment or billing upgrade. Do not execute the Cloud Run provisioning/deployment instructions below. They remain historical evidence only. Follow FINANCE_V2_SPARK_CONSTRAINT.md. Cloud Run requires billing and is outside the authorised scope.
+
 Owner approved the next deployment step. A read-only authenticated check ran successfully in GitHub Actions run 39562006225, commit 97defc82a882ef2cadcf0b52b1dba2f0a495eeed. No further owner approval for that same deployment step is being requested; actual cloud access and runtime provisioning are missing.
 
 Confirmed:
