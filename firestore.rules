@@ -675,7 +675,7 @@ service cloud.firestore {
             && after.balanceUGX == before.balanceUGX - t.principalUGX)
           || (before.accountId == t.destinationAccountId
             && after.balanceUGX == before.balanceUGX + t.principalUGX))
-        && sparkTransferValid(transferId, t);
+        && !exists(sparkTransferPath(transferId));
     }
     function sparkMovementValid(id, d) {
       let t = getAfter(sparkTransferPath(d.transferId)).data;
@@ -687,7 +687,7 @@ service cloud.firestore {
         && d.createdAt == request.time
         && d.accountId == (d.movementIndex == 0 ? t.sourceAccountId : t.destinationAccountId)
         && d.deltaUGX == (d.movementIndex == 0 ? -t.principalUGX : t.principalUGX)
-        && sparkTransferValid(d.transferId, t);
+        && !exists(sparkTransferPath(d.transferId));
     }
     // V2 financial postings are deliberately closed until atomic cross-document
     // rules, authenticated emulator tests and opening balances are certified.
