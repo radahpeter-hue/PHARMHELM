@@ -49,11 +49,12 @@ try {
     loggedByUid: 'logger', approval_status: 'Submitted'
   };
   await assertSucceeds(setDoc(doc(logger, 'attendance', 'tenant-a_employee_2026-10-20'), timesheet));
-  await assertFails(setDoc(doc(logger, 'attendance', 'tenant-a_employee_2026-10-21'), { ...timesheet, approval_status: 'Approved' }));
-  await assertFails(updateDoc(doc(logger, 'attendance', 'timesheet-1'), { approval_status: 'Approved', approvedByUid: 'logger' }));
-  await assertSucceeds(updateDoc(doc(hr, 'attendance', 'timesheet-1'), { approval_status: 'Approved', approvedByUid: 'hr' }));
-  await assertFails(updateDoc(doc(hr, 'attendance', 'timesheet-1'), { hours_worked: 10 }));
-  await assertFails(updateDoc(doc(hr, 'attendance', 'timesheet-1'), { approval_status: 'Submitted' }));
+  await assertFails(setDoc(doc(logger, 'attendance', 'tenant-a_employee_2026-10-21'), { ...timesheet, date: '2026-10-21', approval_status: 'Approved' }));
+  await assertFails(updateDoc(doc(logger, 'attendance', 'tenant-a_employee_2026-10-20'), { approval_status: 'Approved', approvedByUid: 'logger' }));
+  console.log('Attendance submitted; checking independent HR approval.');
+  await assertSucceeds(updateDoc(doc(hr, 'attendance', 'tenant-a_employee_2026-10-20'), { approval_status: 'Approved', approvedByUid: 'hr' }));
+  await assertFails(updateDoc(doc(hr, 'attendance', 'tenant-a_employee_2026-10-20'), { hours_worked: 10 }));
+  await assertFails(updateDoc(doc(hr, 'attendance', 'tenant-a_employee_2026-10-20'), { approval_status: 'Submitted' }));
   await assertSucceeds(getDoc(doc(hr, 'advance_requests', 'advance-test')));
   console.log('Attendance approval and immutable-history denials validated; checking privacy.');
   await env.withSecurityRulesDisabled(async admin => {
