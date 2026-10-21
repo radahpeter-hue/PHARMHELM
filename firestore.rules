@@ -660,7 +660,7 @@ service cloud.firestore {
         && request.resource.data.registeredBy == request.auth.uid
         && request.resource.data.openingBalanceUGX == 0 && request.resource.data.balanceUGX == 0
         && request.resource.data.lastPostingId == null
-        && request.resource.data.reconciliationReference is string
+        && request.resource.data.reconciliationReference is string && request.resource.data.reconciliationReference.size() >= 5
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time
         && (!('branchId' in request.resource.data)
