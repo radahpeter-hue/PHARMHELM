@@ -623,21 +623,9 @@ service cloud.firestore {
 
     match /finance_payment_accounts/{accountId} {
       allow get: if ((canViewFinance() || canPostManagementCash()) && (resource == null || (isTenantMember(resource.data.tenantId) && resource.data.controlVersion == 1)))
-        || (resource != null && resource.data.controlVersion == 2 && (canRegisterFinanceV2Account(resource.data)
-          || (isAuthenticated() && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
-            && getUserData().tenantId == resource.data.tenantId
-            && getUserData().active == true && getUserData().status == 'active'
-            && hasAnyRole(['Finance Officer','Accountant'])
-            && resource.data.get('branchId','') != ''
-            && getUserData().get('assigned_branches',[]).hasAny([resource.data.branchId]))));
+        || (resource != null && resource.data.controlVersion == 2 && canRegisterFinanceV2Account(resource.data));
       allow list: if (canViewFinance() && isTenantMember(resource.data.tenantId) && resource.data.controlVersion == 1)
-        || (resource.data.controlVersion == 2 && (canRegisterFinanceV2Account(resource.data)
-          || (isAuthenticated() && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
-            && getUserData().tenantId == resource.data.tenantId
-            && getUserData().active == true && getUserData().status == 'active'
-            && hasAnyRole(['Finance Officer','Accountant'])
-            && resource.data.get('branchId','') != ''
-            && getUserData().get('assigned_branches',[]).hasAny([resource.data.branchId]))));
+        || (resource.data.controlVersion == 2 && canRegisterFinanceV2Account(resource.data));
       allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
         && request.resource.data.accountId in ['management_petty_cash','management_bank']
