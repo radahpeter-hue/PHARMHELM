@@ -980,7 +980,7 @@ service cloud.firestore {
 
     match /attendance/{attendanceId} {
       function submitterAllowed(branchId) {
-        return isHR() || isAssignedBranchManager(branchId) || (hasAnyRole(['Cashier','cashier','Pharmacist','pharmacist','Dispenser','dispenser']) && isAssignedToBranch(branchId));
+        return isHR() || isAssignedBranchManager(branchId);
       }
       function reviewerAllowed(branchId) {
         return hasAnyRole(['HR Head','HR Support Personnel','HR Manager','admin','Admin'])
