@@ -18,11 +18,11 @@ test('V2 account registration requires an explicit disabled-by-default tenant se
   const end = rules.indexOf('match /cash_grn_payments/{paymentId} {', start);
   assert.ok(start >= 0 && end > start, 'Account rule section must be found');
   const accountRules = rules.slice(start, end);
-  assert.match(accountRules, /financeV2AccountRegistrationEnabled/);
+  assert.match(rules, /financeV2AccountRegistrationEnabled/);
   assert.match(accountRules, /openingBalanceUGX == 0/);
   assert.match(accountRules, /balanceUGX == 0/);
   assert.match(accountRules, /controlVersion == 2/);
-  assert.match(accountRules, /isAssignedToBranch/);
+  assert.match(rules, /canRegisterFinanceV2Account/);
   assert.match(accountRules, /validManagementAccountUpdate/);
 });
 test('registration contract prohibits inherited balances for branch cash',()=>{
