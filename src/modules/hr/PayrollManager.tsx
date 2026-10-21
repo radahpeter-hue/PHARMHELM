@@ -171,16 +171,16 @@ export const PayrollManager: React.FC = () => {
       // Expected Remunerations Per Hour: Base Salary divided by expected work hours of the month
       const hourlyRate = expectedHoursInMonth > 0 ? (salaryBase / expectedHoursInMonth) : 0;
 
-      // 2. Fetch actually worked hours in the selected period from the attendance ledger
+      // 2. Only approved timesheets contribute payable hours. Submitted or legacy records need HR reconciliation.
       const matchingHoursList = attendance.filter(a => 
         a.staffId === member.id && 
         a.date >= fromDate && 
         a.date <= toDate && 
-        a.status === 'present'
+        a.status === 'present' && a.approval_status === 'Approved'
       );
       const loggedHoursFromAttendance = matchingHoursList.reduce((sum, item) => sum + (item.hours_worked || 0), 0);
 
-      // Missing attendance is not evidence of worked hours; leave entitlements require independent verification.
+      // Unapproved or absent attendance is not evidence of payable hours; HR must verify timesheets.
       const loggedHours = loggedHoursFromAttendance; // No attendance evidence must never imply full-time attendance.
 
       // 3. Gross Payments dynamically derived from multiplying hours worked and hourly rate (plus fallback/adjustments)
