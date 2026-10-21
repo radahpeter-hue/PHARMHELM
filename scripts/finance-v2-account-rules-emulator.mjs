@@ -54,7 +54,7 @@ try {
   await assertFails(getDoc(account(user('delegated-b'))));
   await assertFails(getDoc(account(user('inactive-delegated'))));
   console.log('PASS delegated roles cannot escape tenant or assigned branch boundaries');
-  await assertFails(setDoc(account(finance,'cash_duplicate'),{...payload,accountId:'cash_duplicate',createdAt:serverTimestamp(),updatedAt:new Date()}));
+  await assertFails(setDoc(account(finance,'cash_duplicate'),{...payload,accountId:'cash_duplicate',createdAt:serverTimestamp(),updatedAt:new Date('2020-01-01T00:00:00.000Z')}));
   await assertFails(setDoc(account(finance,'cash_extra'),{...payload,accountId:'cash_extra',extraField:1,createdAt:serverTimestamp(),updatedAt:serverTimestamp()}));
   await assertFails(setDoc(account(finance,'cash_positive'),{...payload,accountId:'cash_positive',balanceUGX:500,openingBalanceUGX:500}));
   await assertFails(setDoc(account(finance,'cash_wrong_actor'),{...payload,accountId:'cash_wrong_actor',registeredBy:'another'}));
