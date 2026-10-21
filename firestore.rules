@@ -988,6 +988,7 @@ service cloud.firestore {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId)
         && (isHR() || isAdmin() || isAssignedToBranch(resource.data.branch_id));
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId)
+        && attendanceId == request.resource.data.tenantId + '_' + request.resource.data.staffId + '_' + request.resource.data.date
         && submitterAllowed(request.resource.data.branch_id)
         && request.resource.data.loggedByUid == request.auth.uid
         && request.resource.data.approval_status == 'Submitted'
