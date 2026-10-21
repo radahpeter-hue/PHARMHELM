@@ -590,16 +590,119 @@ service cloud.firestore {
         && after.diff(before).affectedKeys().hasOnly(['payment_status','lastPaymentId','updatedAt'])
         && after.payment_status == (payment.remainingUGX == 0 ? 'paid' : 'partial');
     }
+    // Spark pilot: exactly two-account, zero-charge transfer. Every debit, credit,
+    // envelope and immutable movement is required within one atomic transaction.
+    // No fee, three-account transfer or POS funding is enabled by this pilot.
+    function sparkTransferPath(id) {
+      return /databases/$(database)/documents/finance_v2_transfers/$(id);
+    }
+    function sparkAccountPath(tenant, id) {
+      return /databases/$(database)/documents/finance_payment_accounts/$(tenant + '_' + id);
+    }
+    function sparkMovementPath(id, index) {
+      return /databases/$(database)/documents/finance_v2_account_movements/$(id + '_' + index);
+    }
+    function sparkTransferActor(transfer) {
+      let staff = get(/databases/$(database)/documents/staff/$(request.auth.uid)).data;
+      let settings = get(/databases/$(database)/documents/system_settings/$(transfer.tenantId)).data;
+      return request.auth != null && transfer.actorUid == request.auth.uid
+        && staff.tenantId == transfer.tenantId && staff.active == true
+        && staff.status == 'active' && staff.role == 'Finance Head'
+        && settings.tenantId == transfer.tenantId
+        && settings.get('financeV2SparkTransferPilotEnabled', false) == true;
+    }
+    function sparkTransferValid(id, t) {
+      let from = get(sparkAccountPath(t.tenantId, t.sourceAccountId)).data;
+      let to = get(sparkAccountPath(t.tenantId, t.destinationAccountId)).data;
+      let fromAfter = getAfter(sparkAccountPath(t.tenantId, t.sourceAccountId)).data;
+      let toAfter = getAfter(sparkAccountPath(t.tenantId, t.destinationAccountId)).data;
+      let debit = getAfter(sparkMovementPath(id, '0')).data;
+      let credit = getAfter(sparkMovementPath(id, '1')).data;
+      return sparkTransferActor(t)
+        && id == 'finance_v2_transfer_' + t.tenantId + '_' + t.requestId
+        && t.sourceAccountId != t.destinationAccountId
+        && t.chargePayerAccountId == t.sourceAccountId
+        && t.principalUGX is int && t.principalUGX > 0
+        && t.principalUGX <= 9007199254740991 && t.chargeUGX == 0
+        && t.status == 'posted' && t.currency == 'UGX'
+        && t.movementCount == 2 && t.chargeEventId == null
+        && t.accountDeltas.size() == 2
+        && t.accountDeltas[0].accountId == t.sourceAccountId
+        && t.accountDeltas[0].beforeUGX == from.balanceUGX
+        && t.accountDeltas[0].deltaUGX == -t.principalUGX
+        && t.accountDeltas[0].afterUGX == from.balanceUGX - t.principalUGX
+        && t.accountDeltas[1].accountId == t.destinationAccountId
+        && t.accountDeltas[1].beforeUGX == to.balanceUGX
+        && t.accountDeltas[1].deltaUGX == t.principalUGX
+        && t.accountDeltas[1].afterUGX == to.balanceUGX + t.principalUGX
+        && from.tenantId == t.tenantId && to.tenantId == t.tenantId
+        && from.controlVersion == 2 && to.controlVersion == 2
+        && from.initialized == true && to.initialized == true
+        && from.active == true && to.active == true
+        && from.currency == 'UGX' && to.currency == 'UGX'
+        && from.balanceUGX is int && to.balanceUGX is int
+        && from.balanceUGX >= t.principalUGX
+        && to.balanceUGX <= 9007199254740991 - t.principalUGX
+        && fromAfter.balanceUGX == from.balanceUGX - t.principalUGX
+        && toAfter.balanceUGX == to.balanceUGX + t.principalUGX
+        && fromAfter.lastPostingId == id && toAfter.lastPostingId == id
+        && fromAfter.diff(from).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
+        && toAfter.diff(to).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
+        && fromAfter.updatedAt == request.time && toAfter.updatedAt == request.time
+        && debit.tenantId == t.tenantId && debit.transferId == id
+        && debit.accountId == t.sourceAccountId && debit.deltaUGX == -t.principalUGX
+        && debit.purpose == 'PRINCIPAL' && debit.movementIndex == 0
+        && debit.actorUid == request.auth.uid && debit.createdAt == request.time
+        && credit.tenantId == t.tenantId && credit.transferId == id
+        && credit.accountId == t.destinationAccountId && credit.deltaUGX == t.principalUGX
+        && credit.purpose == 'PRINCIPAL' && credit.movementIndex == 1
+        && credit.actorUid == request.auth.uid && credit.createdAt == request.time
+        && t.createdAt == request.time;
+    }
+    function sparkAccountTransferUpdate(id, before, after) {
+      let transferId = after.lastPostingId;
+      let t = getAfter(sparkTransferPath(transferId)).data;
+      return before.controlVersion == 2 && after.controlVersion == 2
+        && before.tenantId == after.tenantId
+        && id == before.tenantId + '_' + before.accountId
+        && t.tenantId == before.tenantId
+        && t.chargeUGX == 0 && sparkTransferActor(t)
+        && transferId == 'finance_v2_transfer_' + t.tenantId + '_' + t.requestId
+        && (before.accountId == t.sourceAccountId || before.accountId == t.destinationAccountId)
+        && after.diff(before).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
+        && after.updatedAt == request.time
+        && ((before.accountId == t.sourceAccountId
+            && after.balanceUGX == before.balanceUGX - t.principalUGX)
+          || (before.accountId == t.destinationAccountId
+            && after.balanceUGX == before.balanceUGX + t.principalUGX))
+        && sparkTransferValid(transferId, t);
+    }
+    function sparkMovementValid(id, d) {
+      let t = getAfter(sparkTransferPath(d.transferId)).data;
+      return d.transferId == 'finance_v2_transfer_' + d.tenantId + '_' + t.requestId
+        && d.tenantId == t.tenantId && sparkTransferActor(t)
+        && id == d.transferId + '_' + d.movementIndex
+        && d.movementIndex in [0, 1]
+        && d.purpose == 'PRINCIPAL' && d.actorUid == request.auth.uid
+        && d.createdAt == request.time
+        && d.accountId == (d.movementIndex == 0 ? t.sourceAccountId : t.destinationAccountId)
+        && d.deltaUGX == (d.movementIndex == 0 ? -t.principalUGX : t.principalUGX)
+        && sparkTransferValid(d.transferId, t);
+    }
     // V2 financial postings are deliberately closed until atomic cross-document
     // rules, authenticated emulator tests and opening balances are certified.
     // Explicit protection also prevents permissive fallback matching.
     match /finance_v2_transfers/{transferId} {
-      allow get, list: if false; // Scoped history is served by the authenticated treasury API.
-      allow create, update, delete: if false;
+      allow get: if request.auth != null && resource != null && sparkTransferActor(resource.data);
+      allow list: if false;
+      allow create: if sparkTransferValid(transferId, request.resource.data);
+      allow update, delete: if false;
     }
     match /finance_v2_account_movements/{movementId} {
-      allow get, list: if false; // Scoped history is served by the authenticated treasury API.
-      allow create, update, delete: if false;
+      allow get: if request.auth != null && resource != null && sparkTransferActor(get(sparkTransferPath(resource.data.transferId)).data);
+      allow list: if false;
+      allow create: if sparkMovementValid(movementId, request.resource.data);
+      allow update, delete: if false;
     }
     match /finance_v2_pos_cash_sources/{sourceId} {
       allow read, write: if false;
@@ -676,7 +779,8 @@ service cloud.firestore {
           ? request.resource.data.kind != 'BRANCH_CASH_SALES'
           : (request.resource.data.branchId is string
             && get(/databases/$(database)/documents/branches/$(request.resource.data.branchId)).data.tenantId == request.resource.data.tenantId));
-      allow update: if validManagementAccountUpdate(accountId, resource.data, request.resource.data);
+      allow update: if validManagementAccountUpdate(accountId, resource.data, request.resource.data)
+        || sparkAccountTransferUpdate(accountId, resource.data, request.resource.data);
       allow delete: if false;
     }
     match /cash_grn_payments/{paymentId} {
