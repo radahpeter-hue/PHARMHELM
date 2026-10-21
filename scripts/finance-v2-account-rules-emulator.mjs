@@ -63,6 +63,19 @@ try {
   await assertFails(updateDoc(account(finance),{balanceUGX:999999}));
   await assertFails(setDoc(doc(finance,'finance_v2_transfers','transfer_1'),{tenantId:tenant,amountUGX:100}));
   await assertFails(setDoc(doc(finance,'finance_v2_events','event_1'),{tenantId:tenant,amountUGX:100}));
+  // Prospective cash and shift EOD remain disabled until their canonical
+  // sale/payment evidence can be enforced by the rules engine.
+  await assertFails(setDoc(doc(finance,'eod_reconciliations','forged_shift'),{
+    tenantId:tenant,branch_id:branch,reconciliation_date:'2026-10-21',
+    shift_id:'nightShift',cash_expected:500,cash_actual:500,cash_variance:0,
+    status:'verified'
+  }));
+  await assertFails(setDoc(doc(finance,'finance_v2_pos_cash_sources','forged_cash'),{
+    tenantId:tenant,branchId:branch,saleId:'fabricated',cashUGX:500,
+    accountId:'cash_a',sourceType:'POS_SALE_COMMITTED'
+  }));
+  await assertFails(updateDoc(account(finance),{balanceUGX:1000000,lastPostingId:'fabricated_sale'}));
+
   await assertFails(setDoc(doc(finance,'finance_v2_account_movements','movement_1'),{tenantId:tenant,deltaUGX:100}));
   // Even a complete, mathematically balanced client transaction must fail until
   // the dedicated cross-document transfer rules are certified.
