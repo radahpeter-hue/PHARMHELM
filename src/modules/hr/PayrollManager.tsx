@@ -11,6 +11,7 @@ import { Staff, AdvanceRequest, TrafficFineLog, Payslip } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
 import { deduplicateStaff } from '../../utils/deduplicateStaff';
+import { validatePayrollDraft } from '../../services/hrPayrollPolicy';
 
 interface DraftPayrollRecord {
   staffId: string;
@@ -179,7 +180,7 @@ export const PayrollManager: React.FC = () => {
       const loggedHoursFromAttendance = matchingHoursList.reduce((sum, item) => sum + (item.hours_worked || 0), 0);
 
       // Robust fallback: if they are salaried and did not log attendance, we default loggedHours to expectedHoursInMonth so they get standard salary
-      const loggedHours = loggedHoursFromAttendance > 0 ? loggedHoursFromAttendance : expectedHoursInMonth;
+      const loggedHours = loggedHoursFromAttendance; // No attendance evidence must never imply full-time attendance.
 
       // 3. Gross Payments dynamically derived from multiplying hours worked and hourly rate (plus fallback/adjustments)
       const basePay = loggedHours * hourlyRate;
@@ -188,7 +189,7 @@ export const PayrollManager: React.FC = () => {
       let advanceDeduction = 0;
       const activeAdvances = advances.filter(a => 
         a.staff_id === member.id && 
-        (a.status === 'Approved' || a.status === 'Disbursed') &&
+        a.status === 'Disbursed' &&
         a.created_at && a.created_at.split('T')[0] >= fromDate && a.created_at.split('T')[0] <= toDate
       );
       activeAdvances.forEach(adv => {
@@ -321,6 +322,8 @@ export const PayrollManager: React.FC = () => {
 
     const customDeductionsSum = editAdvanceDeduction + editFineDeduction + editNSSFEmployee + editPAYE + editCustomDeduction;
     const computedNet = reviewingRecord.baseSalary + editBonus - customDeductionsSum;
+    const error = validatePayrollDraft({ baseSalary: reviewingRecord.baseSalary, bonuses: editBonus, deductions: customDeductionsSum, netSalary: computedNet });
+    if (error) { toast.error(error); return; }
 
     const updatedDraft = draftPayroll.map(item => {
       if (item.staffId === reviewingRecord.staffId) {
@@ -349,6 +352,16 @@ export const PayrollManager: React.FC = () => {
   const handleFinalizeAndCommit = async () => {
     if (!profile?.tenantId) return;
 
+    if (!draftPayroll.length || draftPayroll.some(item => !item.reviewed)) {
+      toast.error('Every payroll entry must be reviewed before finalization.');
+      return;
+    }
+    const invalid = draftPayroll.map(item => validatePayrollDraft(item)).find(Boolean);
+    if (invalid) { toast.error(invalid); return; }
+    if (draftPayroll.some(item => payroll.some(existing => existing.staffId === item.staffId && existing.month === new Date(toDate).toLocaleString('default', { month: 'long', year: 'numeric' }) && existing.tenantId === profile.tenantId))) {
+      toast.error('A payroll record already exists for one or more staff members in this period.');
+      return;
+    }
     setIsGenerating(true);
     try {
       const monthLabel = new Date(toDate).toLocaleString('default', { month: 'long', year: 'numeric' });
@@ -375,8 +388,7 @@ export const PayrollManager: React.FC = () => {
           nssf_employer: item.nssfEmployer,
           paye: item.paye,
           net_salary: item.netSalary,
-          status: 'paid', // marked finalized and paid
-          paid_date: new Date().toISOString().split('T')[0],
+          status: 'pending_payment', // Finalization is not disbursement.
           generated_at: new Date().toISOString(),
           branch_id: staffMember?.branch_id || 'HQ'
         };
@@ -408,26 +420,10 @@ export const PayrollManager: React.FC = () => {
         await firestoreService.addDocument('payslips', payslipRecord);
       }
 
-      // Calculate total net salary for the request to Finance
-      const totalNetPayable = draftPayroll.reduce((sum, item) => sum + (item.netSalary || 0), 0);
-      
-      // Log as management expense request representing HR Payroll
-      await firestoreService.addDocument('management_expenses', {
-        tenantId: profile.tenantId,
-        category: 'Salaries - Payroll Disbursal',
-        department: 'HR',
-        description: `HR Payroll Disbursal Request: Period ${monthLabel} (Total Net Payable for ${draftPayroll.length} staff members)`,
-        amount_ugx: totalNetPayable,
-        expense_date: new Date().toISOString().split('T')[0],
-        payment_method: 'Petty Cash',
-        status: 'Pending',
-        logged_by: 'HR System',
-        created_at: new Date().toISOString(),
-        source: 'hr_salary',
-        excludeFromOpexRollup: false
-      });
+      // No management expense or cash posting here: payroll preparation cannot fabricate payment evidence.
+      // The future certified posting path must recognize liabilities and payments independently.
 
-      toast.success(`Successfully finalized payroll, published payslips, and transmitted disbursal request to Finance.`);
+      toast.success(`Payroll records finalized for review, with no payment or expense posted.`);
       setDraftPayroll([]);
       setIsDraftMode(false);
     } catch (error) {
