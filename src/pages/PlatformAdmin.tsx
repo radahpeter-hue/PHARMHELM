@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, 
   Plus, 
@@ -32,7 +32,11 @@ import {
   Wifi,
   ShieldAlert,
   RefreshCw,
-  Menu
+  Menu,
+  ChevronLeft,
+  ChevronRight,
+  Calendar,
+  Filter
 } from 'lucide-react';
 import { collection, query, getDocs, getDoc, addDoc, updateDoc, deleteDoc, doc, orderBy, limit, where, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth, registerAuthUser } from '../firebase';
@@ -90,6 +94,8 @@ const PlatformAdmin = () => {
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [accountPage, setAccountPage] = useState(1);
+  const [accountSearchQuery, setAccountSearchQuery] = useState('');
 
   // 2. Subscription Module States
   const [selectedTenantForSub, setSelectedTenantForSub] = useState<string>('');
@@ -131,6 +137,64 @@ const PlatformAdmin = () => {
   // 3b. Platform Audit Logs States
   const [platformAuditLogs, setPlatformAuditLogs] = useState<any[]>([]);
   const [loadingAudit, setLoadingAudit] = useState(false);
+  const [auditStartDate, setAuditStartDate] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
+  const [auditEndDate, setAuditEndDate] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
+
+  // Sorted and filtered accounts (Alphabetical order & 50 accounts per page)
+  const sortedAndFilteredAccounts = useMemo(() => {
+    const list = [...staffAccounts].sort((a, b) => {
+      const nameA = (a.full_name || a.name || a.username || '').toLowerCase();
+      const nameB = (b.full_name || b.name || b.username || '').toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+    if (!accountSearchQuery.trim()) return list;
+    const q = accountSearchQuery.toLowerCase().trim();
+    return list.filter(acc => 
+      (acc.full_name || '').toLowerCase().includes(q) ||
+      (acc.username || '').toLowerCase().includes(q) ||
+      (acc.role || '').toLowerCase().includes(q) ||
+      (acc.authEmail || '').toLowerCase().includes(q)
+    );
+  }, [staffAccounts, accountSearchQuery]);
+
+  const ACCOUNTS_PER_PAGE = 50;
+  const totalAccountPages = Math.max(1, Math.ceil(sortedAndFilteredAccounts.length / ACCOUNTS_PER_PAGE));
+  const currentAccountPage = Math.min(accountPage, totalAccountPages);
+  const startAccountIndex = (currentAccountPage - 1) * ACCOUNTS_PER_PAGE;
+  const endAccountIndex = Math.min(startAccountIndex + ACCOUNTS_PER_PAGE, sortedAndFilteredAccounts.length);
+  const paginatedAccounts = sortedAndFilteredAccounts.slice(startAccountIndex, endAccountIndex);
+
+  // Filtered platform audit logs by date range (default today)
+  const filteredPlatformAuditLogs = useMemo(() => {
+    if (!auditStartDate && !auditEndDate) return platformAuditLogs;
+
+    return platformAuditLogs.filter(log => {
+      if (!log.timestamp) return false;
+      let logDate: Date;
+      if (typeof log.timestamp === 'string') {
+        logDate = new Date(log.timestamp);
+      } else if (log.timestamp.seconds) {
+        logDate = new Date(log.timestamp.seconds * 1000);
+      } else if (typeof log.timestamp.toDate === 'function') {
+        logDate = log.timestamp.toDate();
+      } else {
+        logDate = new Date(log.timestamp);
+      }
+
+      if (isNaN(logDate.getTime())) return false;
+
+      const logDateStr = format(logDate, 'yyyy-MM-dd');
+
+      if (auditStartDate && auditEndDate) {
+        return logDateStr >= auditStartDate && logDateStr <= auditEndDate;
+      } else if (auditStartDate) {
+        return logDateStr >= auditStartDate;
+      } else if (auditEndDate) {
+        return logDateStr <= auditEndDate;
+      }
+      return true;
+    });
+  }, [platformAuditLogs, auditStartDate, auditEndDate]);
 
   // 4. TMC Handlers Module States
   const [handlers, setHandlers] = useState<any[]>([]);
@@ -522,7 +586,7 @@ const PlatformAdmin = () => {
   const fetchPlatformAuditLogs = async () => {
     setLoadingAudit(true);
     try {
-      const q = query(collection(db, 'platform_audit_logs'), orderBy('timestamp', 'desc'), limit(100));
+      const q = query(collection(db, 'platform_audit_logs'), orderBy('timestamp', 'desc'), limit(1000));
       const snap = await getDocs(q);
       const logs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setPlatformAuditLogs(logs);
@@ -857,7 +921,7 @@ const PlatformAdmin = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#E4E3E0] flex font-sans overflow-hidden">
+    <div className="min-h-screen bg-[#E4E3E0] text-zinc-900 flex font-sans overflow-hidden">
       {mobileNavOpen && (
         <button
           className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm md:hidden"
@@ -982,13 +1046,6 @@ const PlatformAdmin = () => {
               <p className="text-[10px] text-white/40 uppercase tracking-wider">{(platformProfile?.role || 'admin').replace('_', ' ')}</p>
             </div>
           </div>
-          <button 
-            onClick={() => setTenantSlugAndMode('radah')}
-            className="w-full flex items-center gap-3 px-4 py-3 mb-2 rounded-xl text-sm font-medium text-emerald-400 hover:bg-emerald-400/10 transition-all border border-emerald-500/20"
-          >
-            <ExternalLink size={18} />
-            Enter Tenant ERP
-          </button>
           <button 
             onClick={logout}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-red-400 hover:bg-red-400/10 transition-all"
@@ -1347,16 +1404,20 @@ const PlatformAdmin = () => {
 
           {activeTab === 'accounts' && (
             <div className="space-y-6">
-              <div className="bg-white p-6 rounded-3xl border border-[#141414]/5 shadow-sm">
+              <div className="bg-white p-6 rounded-3xl border border-[#141414]/5 shadow-sm text-zinc-900">
                 <div className="flex items-center justify-between flex-wrap gap-4">
                   <div>
-                    <h3 className="text-sm font-bold uppercase tracking-widest mb-1">Select Tenant Platform</h3>
-                    <p className="text-xs text-[#141414]/40">Manage and override staff user credentials for specific tenant environments.</p>
+                    <h3 className="text-sm font-bold uppercase tracking-widest mb-1 text-zinc-900">Select Tenant Platform</h3>
+                    <p className="text-xs text-zinc-500">Manage and override staff user credentials for specific tenant environments.</p>
                   </div>
                   <select 
-                    className="px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-emerald-500/20 w-64"
+                    className="px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-emerald-500/20 w-64 text-zinc-900 cursor-pointer"
                     value={selectedTenantForAccounts}
-                    onChange={(e) => setSelectedTenantForAccounts(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedTenantForAccounts(e.target.value);
+                      setAccountPage(1);
+                      setAccountSearchQuery('');
+                    }}
                   >
                     <option value="">-- Choose Tenant --</option>
                     {tenants.map(t => (
@@ -1367,132 +1428,235 @@ const PlatformAdmin = () => {
               </div>
 
               {selectedTenantForAccounts ? (
-                <div className="bg-white rounded-3xl border border-[#141414]/5 shadow-sm overflow-hidden">
-                  <div className="p-6 border-b border-[#141414]/5">
-                    <h4 className="text-sm font-bold uppercase tracking-widest">Active Staff Profiles</h4>
+                <div className="bg-white rounded-3xl border border-[#141414]/5 shadow-sm overflow-hidden text-zinc-900">
+                  <div className="p-6 border-b border-[#141414]/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2.5">
+                        <h4 className="text-sm font-bold uppercase tracking-widest text-zinc-900">Active Staff Profiles</h4>
+                        <span className="text-xs bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full font-bold border border-emerald-100">
+                          {sortedAndFilteredAccounts.length} {sortedAndFilteredAccounts.length === 1 ? 'account' : 'accounts'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-500 mt-1">Organized alphabetically (A–Z) &bull; 50 accounts per page</p>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={14} />
+                        <input
+                          type="text"
+                          placeholder="Search accounts by name or role..."
+                          value={accountSearchQuery}
+                          onChange={(e) => {
+                            setAccountSearchQuery(e.target.value);
+                            setAccountPage(1);
+                          }}
+                          className="pl-9 pr-8 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-emerald-500/20 w-64 sm:w-72 transition-all"
+                        />
+                        {accountSearchQuery && (
+                          <button
+                            onClick={() => {
+                              setAccountSearchQuery('');
+                              setAccountPage(1);
+                            }}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 p-0.5"
+                            title="Clear search"
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
                   
                   {loadingAccounts ? (
-                    <div className="p-12 text-center text-zinc-400">
+                    <div className="p-12 text-center text-zinc-500">
                       <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-emerald-500 mx-auto mb-4"></div>
                       Fetching user accounts...
                     </div>
-                  ) : staffAccounts.length === 0 ? (
-                    <div className="p-12 text-center text-zinc-400 text-sm">
-                      No staff member accounts found for this tenant platform.
+                  ) : sortedAndFilteredAccounts.length === 0 ? (
+                    <div className="p-12 text-center text-zinc-500 text-sm">
+                      {accountSearchQuery ? (
+                        <>
+                          <p className="font-semibold text-zinc-700 mb-1">No matching accounts found</p>
+                          <p className="text-xs text-zinc-400">No staff members match the query "{accountSearchQuery}".</p>
+                          <button 
+                            onClick={() => {
+                              setAccountSearchQuery('');
+                              setAccountPage(1);
+                            }}
+                            className="mt-3 px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-800 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                          >
+                            Clear Search
+                          </button>
+                        </>
+                      ) : (
+                        "No staff member accounts found for this tenant platform."
+                      )}
                     </div>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-sm border-collapse">
-                        <thead>
-                          <tr className="bg-zinc-50 border-b border-[#141414]/5 text-[10px] font-bold uppercase tracking-widest text-[#141414]/40">
-                            <th className="p-6">Full Name</th>
-                            <th className="p-6">Login Username</th>
-                            <th className="p-6">Firebase Auth Email</th>
-                            <th className="p-6">System Role</th>
-                            <th className="p-6">Status</th>
-                            <th className="p-6">Password / Recover Key</th>
-                            <th className="p-6 text-right">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-100">
-                          {(() => {
-                            const tenantObj = tenants.find(t => t.id === selectedTenantForAccounts);
-                            const tenantAcronym = tenantObj?.acronym?.toLowerCase().trim() || tenantObj?.slug?.toLowerCase().trim() || 'radah';
-                            
-                            return staffAccounts.map((account) => {
-                              const fullUsername = account.username.includes('.pharmhelm.com') 
-                                ? account.username 
-                                : `${account.username}.${tenantAcronym}.pharmhelm.com`;
-                                
-                              const firebaseEmail = account.authEmail || (
-                                account.username.includes('@') 
-                                  ? account.username 
-                                  : `${account.username}@${tenantAcronym}.pharmhelm.com`
-                              );
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm border-collapse">
+                          <thead>
+                            <tr className="bg-zinc-50 border-b border-[#141414]/5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                              <th className="p-6">Full Name</th>
+                              <th className="p-6">Login Username</th>
+                              <th className="p-6">Firebase Auth Email</th>
+                              <th className="p-6">System Role</th>
+                              <th className="p-6">Status</th>
+                              <th className="p-6">Password / Recover Key</th>
+                              <th className="p-6 text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-100">
+                            {(() => {
+                              const tenantObj = tenants.find(t => t.id === selectedTenantForAccounts);
+                              const tenantAcronym = tenantObj?.acronym?.toLowerCase().trim() || tenantObj?.slug?.toLowerCase().trim() || 'radah';
                               
-                              return (
-                                <tr key={account.id} className="hover:bg-zinc-50/50 transition-colors">
-                                  <td className="p-6 font-bold text-zinc-900">{account.full_name}</td>
-                                  <td className="p-6 font-mono text-xs text-zinc-600 bg-zinc-50/30">
-                                    <div className="space-y-1">
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="text-zinc-400 text-[10px] uppercase font-bold tracking-wider">Short:</span>
-                                        <span className="font-bold">{account.username}</span>
+                              return paginatedAccounts.map((account) => {
+                                const fullUsername = account.username.includes('.pharmhelm.com') 
+                                  ? account.username 
+                                  : `${account.username}.${tenantAcronym}.pharmhelm.com`;
+                                  
+                                const firebaseEmail = account.authEmail || (
+                                  account.username.includes('@') 
+                                    ? account.username 
+                                    : `${account.username}@${tenantAcronym}.pharmhelm.com`
+                                );
+                                
+                                return (
+                                  <tr key={account.id} className="hover:bg-zinc-50/50 transition-colors">
+                                    <td className="p-6 font-bold text-zinc-900">{account.full_name}</td>
+                                    <td className="p-6 font-mono text-xs text-zinc-600 bg-zinc-50/30">
+                                      <div className="space-y-1">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-zinc-500 text-[10px] uppercase font-bold tracking-wider">Short:</span>
+                                          <span className="font-bold text-zinc-900">{account.username}</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-zinc-500 text-[10px] uppercase font-bold tracking-wider">Full:</span>
+                                          <span className="text-zinc-700">{fullUsername}</span>
+                                        </div>
                                       </div>
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="text-zinc-400 text-[10px] uppercase font-bold tracking-wider">Full:</span>
-                                        <span>{fullUsername}</span>
+                                    </td>
+                                    <td className="p-6 font-mono text-xs text-zinc-600 bg-emerald-50/30">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-bold text-emerald-800">{firebaseEmail}</span>
+                                        <button 
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(firebaseEmail);
+                                            toast.success('Firebase Auth Email copied!');
+                                          }}
+                                          className="text-xs text-emerald-600 hover:underline font-bold cursor-pointer"
+                                        >
+                                          Copy
+                                        </button>
                                       </div>
-                                    </div>
-                                  </td>
-                                  <td className="p-6 font-mono text-xs text-zinc-600 bg-emerald-50/30">
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-bold text-emerald-800">{firebaseEmail}</span>
-                                      <button 
-                                        onClick={() => {
-                                          navigator.clipboard.writeText(firebaseEmail);
-                                          toast.success('Firebase Auth Email copied!');
-                                        }}
-                                        className="text-xs text-emerald-600 hover:underline font-bold"
-                                      >
-                                        Copy
-                                      </button>
-                                    </div>
-                                  </td>
-                                  <td className="p-6">
-                                    <span className="text-xs bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider">
-                                      {account.role}
-                                    </span>
-                                  </td>
-                                  <td className="p-6">
-                                    <span className={cn(
-                                      "text-xs font-bold px-2.5 py-1 rounded-full",
-                                      account.status === 'active' || account.active ? "bg-emerald-100 text-emerald-800" : "bg-zinc-100 text-zinc-600"
-                                    )}>
-                                      {account.status || 'active'}
-                                    </span>
-                                  </td>
-                                  <td className="p-6">
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-mono text-xs font-bold text-zinc-700 bg-zinc-100 px-2 py-1 rounded">
-                                        {account.password || '••••••••'}
+                                    </td>
+                                    <td className="p-6">
+                                      <span className="text-xs bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider">
+                                        {account.role}
                                       </span>
-                                      <button 
+                                    </td>
+                                    <td className="p-6">
+                                      <span className={cn(
+                                        "text-xs font-bold px-2.5 py-1 rounded-full",
+                                        account.status === 'active' || account.active ? "bg-emerald-100 text-emerald-800" : "bg-zinc-100 text-zinc-600"
+                                      )}>
+                                        {account.status || 'active'}
+                                      </span>
+                                    </td>
+                                    <td className="p-6">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-mono text-xs font-bold text-zinc-700 bg-zinc-100 px-2 py-1 rounded">
+                                          {account.password || '••••••••'}
+                                        </span>
+                                        <button 
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(account.password || '');
+                                            toast.success('Password copied to clipboard!');
+                                          }}
+                                          className="text-xs text-emerald-600 hover:underline font-bold cursor-pointer"
+                                          disabled={!account.password}
+                                        >
+                                          Copy
+                                        </button>
+                                      </div>
+                                    </td>
+                                    <td className="p-6 text-right">
+                                      <button
                                         onClick={() => {
-                                          navigator.clipboard.writeText(account.password || '');
-                                          toast.success('Password copied to clipboard!');
+                                          setOverrideUserId(account.id);
+                                          setOverrideUserFullName(account.full_name);
+                                          setShowPasswordModal(true);
                                         }}
-                                        className="text-xs text-emerald-600 hover:underline font-bold"
-                                        disabled={!account.password}
+                                        className="px-4 py-2 bg-[#141414] text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition-all shadow-sm cursor-pointer"
                                       >
-                                        Copy
+                                        Override Password
                                       </button>
-                                    </div>
-                                  </td>
-                                  <td className="p-6 text-right">
-                                    <button
-                                      onClick={() => {
-                                        setOverrideUserId(account.id);
-                                        setOverrideUserFullName(account.full_name);
-                                        setShowPasswordModal(true);
-                                      }}
-                                      className="px-4 py-2 bg-[#141414] text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition-all shadow-sm"
-                                    >
-                                      Override Password
-                                    </button>
-                                  </td>
-                                </tr>
-                              );
-                            });
-                          })()}
-                        </tbody>
-                      </table>
-                    </div>
+                                    </td>
+                                  </tr>
+                                );
+                              });
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Pagination Controls */}
+                      <div className="p-4 sm:p-6 border-t border-[#141414]/5 flex flex-col sm:flex-row items-center justify-between gap-4 bg-zinc-50/50 text-zinc-700">
+                        <p className="text-xs text-zinc-500">
+                          Showing <span className="font-bold text-zinc-800">{sortedAndFilteredAccounts.length === 0 ? 0 : startAccountIndex + 1}</span> to <span className="font-bold text-zinc-800">{endAccountIndex}</span> of <span className="font-bold text-zinc-800">{sortedAndFilteredAccounts.length}</span> accounts (Page {currentAccountPage} of {totalAccountPages})
+                        </p>
+                        
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setAccountPage(1)}
+                            disabled={currentAccountPage === 1}
+                            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+                            title="First Page"
+                          >
+                            First
+                          </button>
+                          <button
+                            onClick={() => setAccountPage(prev => Math.max(1, prev - 1))}
+                            disabled={currentAccountPage === 1}
+                            className="p-1.5 text-xs font-bold rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1 cursor-pointer"
+                            title="Previous Page"
+                          >
+                            <ChevronLeft size={16} />
+                            <span className="hidden sm:inline">Prev</span>
+                          </button>
+                          
+                          <div className="px-3 py-1.5 text-xs font-bold bg-zinc-900 text-white rounded-lg">
+                            {currentAccountPage} / {totalAccountPages}
+                          </div>
+
+                          <button
+                            onClick={() => setAccountPage(prev => Math.min(totalAccountPages, prev + 1))}
+                            disabled={currentAccountPage >= totalAccountPages}
+                            className="p-1.5 text-xs font-bold rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1 cursor-pointer"
+                            title="Next Page"
+                          >
+                            <span className="hidden sm:inline">Next</span>
+                            <ChevronRight size={16} />
+                          </button>
+                          <button
+                            onClick={() => setAccountPage(totalAccountPages)}
+                            disabled={currentAccountPage >= totalAccountPages}
+                            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+                            title="Last Page"
+                          >
+                            Last
+                          </button>
+                        </div>
+                      </div>
+                    </>
                   )}
                 </div>
               ) : (
-                <div className="bg-white rounded-3xl p-12 text-center border border-[#141414]/5 shadow-sm">
+                <div className="bg-white rounded-3xl p-12 text-center border border-[#141414]/5 shadow-sm text-zinc-900">
                   <p className="text-zinc-400 text-sm">Please select a tenant from the dropdown menu to manage staff accounts.</p>
                 </div>
               )}
@@ -2598,75 +2762,220 @@ const PlatformAdmin = () => {
 
           {activeTab === 'audit' && (
             <div className="space-y-6">
-              {/* Stats & Controls */}
-              <div className="flex justify-between items-center bg-white p-6 rounded-3xl border border-[#141414]/5 shadow-sm">
-                <div>
-                  <h3 className="text-sm font-bold uppercase tracking-widest text-zinc-900">Platform Security Audit Log</h3>
-                  <p className="text-xs text-zinc-400 mt-0.5">Immutable records of administrative, subscription, and billing changes.</p>
+              {/* Stats & Controls Header */}
+              <div className="bg-white p-6 rounded-3xl border border-[#141414]/5 shadow-sm space-y-4 text-zinc-900">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-bold uppercase tracking-widest text-zinc-900">Platform Security Audit Log</h3>
+                    <p className="text-xs text-zinc-500 mt-0.5">Immutable records of administrative, subscription, and billing changes.</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => fetchPlatformAuditLogs()}
+                      className="p-2.5 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border border-zinc-200"
+                      title="Refresh Log"
+                    >
+                      <RefreshCw size={14} className={loadingAudit ? "animate-spin" : ""} />
+                      <span>Refresh</span>
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (filteredPlatformAuditLogs.length === 0) {
+                          toast.error('No logs available in the selected date range to export.');
+                          return;
+                        }
+                        const headers = ['Timestamp', 'Action', 'Details', 'Target ID', 'Operator', 'IP Address'];
+                        const rows = filteredPlatformAuditLogs.map(l => [
+                          l.timestamp,
+                          l.action,
+                          l.details,
+                          l.targetId || 'N/A',
+                          l.performedBy,
+                          l.ipAddress || '127.0.0.1'
+                        ]);
+                        const csvContent = "data:text/csv;charset=utf-8," 
+                          + [headers.join(','), ...rows.map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))].join('\n');
+                        const encodedUri = encodeURI(csvContent);
+                        const link = document.createElement("a");
+                        link.setAttribute("href", encodedUri);
+                        const dateSuffix = auditStartDate && auditEndDate 
+                          ? `${auditStartDate}_to_${auditEndDate}`
+                          : (auditStartDate || auditEndDate || 'all_time');
+                        link.setAttribute("download", `pharmhelm_tmc_audit_log_${dateSuffix}.csv`);
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        toast.success(`Platform audit trail (${filteredPlatformAuditLogs.length} records) exported as CSV!`);
+                      }}
+                      className="px-4 py-2.5 bg-zinc-900 text-white hover:bg-zinc-800 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm"
+                    >
+                      <FileText size={14} />
+                      <span>Export CSV Ledger ({filteredPlatformAuditLogs.length})</span>
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <button 
-                    onClick={() => fetchPlatformAuditLogs()}
-                    className="p-2.5 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
-                    title="Refresh Log"
-                  >
-                    <RefreshCw size={14} className={loadingAudit ? "animate-spin" : ""} />
-                    Refresh
-                  </button>
-                  <button 
-                    onClick={() => {
-                      if (platformAuditLogs.length === 0) {
-                        toast.error('No logs available to export.');
-                        return;
-                      }
-                      const headers = ['Timestamp', 'Action', 'Details', 'Target ID', 'Operator', 'IP Address'];
-                      const rows = platformAuditLogs.map(l => [
-                        l.timestamp,
-                        l.action,
-                        l.details,
-                        l.targetId || 'N/A',
-                        l.performedBy,
-                        l.ipAddress || '127.0.0.1'
-                      ]);
-                      const csvContent = "data:text/csv;charset=utf-8," 
-                        + [headers.join(','), ...rows.map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))].join('\n');
-                      const encodedUri = encodeURI(csvContent);
-                      const link = document.createElement("a");
-                      link.setAttribute("href", encodedUri);
-                      link.setAttribute("download", `pharmhelm_tmc_audit_log_${new Date().toISOString().split('T')[0]}.csv`);
-                      document.body.appendChild(link);
-                      link.click();
-                      document.body.removeChild(link);
-                      toast.success('Platform audit trail exported as CSV!');
-                    }}
-                    className="px-4 py-2.5 bg-zinc-900 text-white hover:bg-zinc-800 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer"
-                  >
-                    <FileText size={14} />
-                    Export CSV Ledger
-                  </button>
+
+                {/* Date Filter Bar */}
+                <div className="pt-4 border-t border-zinc-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-zinc-700">
+                      <Calendar size={14} className="text-emerald-600" />
+                      <span>Audit Date:</span>
+                    </div>
+
+                    {/* Date Inputs */}
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-1.5 text-xs">
+                        <span className="text-zinc-500 font-medium">From:</span>
+                        <input
+                          type="date"
+                          value={auditStartDate}
+                          onChange={(e) => setAuditStartDate(e.target.value)}
+                          className="bg-transparent text-zinc-900 outline-none font-medium cursor-pointer"
+                        />
+                      </div>
+                      <span className="text-zinc-400 text-xs">to</span>
+                      <div className="flex items-center gap-1.5 bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-1.5 text-xs">
+                        <span className="text-zinc-500 font-medium">To:</span>
+                        <input
+                          type="date"
+                          value={auditEndDate}
+                          onChange={(e) => setAuditEndDate(e.target.value)}
+                          className="bg-transparent text-zinc-900 outline-none font-medium cursor-pointer"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Quick Preset Buttons */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const today = format(new Date(), 'yyyy-MM-dd');
+                          setAuditStartDate(today);
+                          setAuditEndDate(today);
+                        }}
+                        className={cn(
+                          "px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                          auditStartDate === format(new Date(), 'yyyy-MM-dd') && auditEndDate === format(new Date(), 'yyyy-MM-dd')
+                            ? "bg-emerald-600 text-white shadow-sm"
+                            : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+                        )}
+                      >
+                        Today
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const y = new Date();
+                          y.setDate(y.getDate() - 1);
+                          const yStr = format(y, 'yyyy-MM-dd');
+                          setAuditStartDate(yStr);
+                          setAuditEndDate(yStr);
+                        }}
+                        className={cn(
+                          "px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                          (() => {
+                            const y = new Date();
+                            y.setDate(y.getDate() - 1);
+                            const yStr = format(y, 'yyyy-MM-dd');
+                            return auditStartDate === yStr && auditEndDate === yStr;
+                          })()
+                            ? "bg-emerald-600 text-white shadow-sm"
+                            : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+                        )}
+                      >
+                        Yesterday
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d7 = new Date();
+                          d7.setDate(d7.getDate() - 7);
+                          setAuditStartDate(format(d7, 'yyyy-MM-dd'));
+                          setAuditEndDate(format(new Date(), 'yyyy-MM-dd'));
+                        }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-zinc-100 text-zinc-700 hover:bg-zinc-200 transition-all cursor-pointer"
+                      >
+                        Last 7 Days
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d30 = new Date();
+                          d30.setDate(d30.getDate() - 30);
+                          setAuditStartDate(format(d30, 'yyyy-MM-dd'));
+                          setAuditEndDate(format(new Date(), 'yyyy-MM-dd'));
+                        }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-zinc-100 text-zinc-700 hover:bg-zinc-200 transition-all cursor-pointer"
+                      >
+                        Last 30 Days
+                      </button>
+                      {(auditStartDate || auditEndDate) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuditStartDate('');
+                            setAuditEndDate('');
+                          }}
+                          className="px-3 py-1.5 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 border border-red-200 transition-all cursor-pointer"
+                        >
+                          Clear Filter (All Time)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-zinc-500 font-medium">
+                    Showing <span className="font-bold text-zinc-800">{filteredPlatformAuditLogs.length}</span> of <span className="font-bold text-zinc-800">{platformAuditLogs.length}</span> total logs
+                    {auditStartDate && auditEndDate && auditStartDate === auditEndDate && (
+                      <span className="text-emerald-700 font-bold ml-1.5">
+                        ({auditStartDate === format(new Date(), 'yyyy-MM-dd') ? 'Today' : auditStartDate})
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 
               {/* Table ledger */}
-              <div className="bg-white rounded-3xl border border-[#141414]/5 shadow-sm overflow-hidden">
+              <div className="bg-white rounded-3xl border border-[#141414]/5 shadow-sm overflow-hidden text-zinc-900">
                 {loadingAudit ? (
-                  <div className="p-12 text-center text-zinc-400">
+                  <div className="p-12 text-center text-zinc-500">
                     <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-emerald-500 mx-auto mb-4"></div>
                     Loading audit trail...
                   </div>
-                ) : platformAuditLogs.length === 0 ? (
-                  <div className="p-12 text-center text-[#141414]/40">
+                ) : filteredPlatformAuditLogs.length === 0 ? (
+                  <div className="p-12 text-center text-[#141414]/60">
                     <div className="h-16 w-16 bg-zinc-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
                       <Clock className="text-zinc-300" size={32} />
                     </div>
-                    <p className="text-sm font-medium text-zinc-400 mb-2">No Platform Audit Logs recorded yet.</p>
-                    <p className="text-xs text-zinc-400 max-w-sm mx-auto">Try activating a subscription or provision a new tenant to generate immutable ledger items.</p>
+                    <p className="text-sm font-bold text-zinc-800 mb-1">
+                      {platformAuditLogs.length === 0 
+                        ? "No Platform Audit Logs recorded yet."
+                        : "No audit logs found for the selected date range."}
+                    </p>
+                    <p className="text-xs text-zinc-500 max-w-md mx-auto mb-4">
+                      {platformAuditLogs.length === 0
+                        ? "Try activating a subscription or provision a new tenant to generate immutable ledger items."
+                        : `No audit activities were found between ${auditStartDate || 'the beginning'} and ${auditEndDate || 'today'}. Adjust the dates above or click below to view all recorded logs.`}
+                    </p>
+                    {platformAuditLogs.length > 0 && (
+                      <button
+                        onClick={() => {
+                          setAuditStartDate('');
+                          setAuditEndDate('');
+                        }}
+                        className="px-4 py-2 bg-zinc-900 text-white hover:bg-zinc-800 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                      >
+                        View All Recorded Logs ({platformAuditLogs.length})
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm border-collapse">
                       <thead>
-                        <tr className="bg-zinc-50 border-b border-[#141414]/5 text-[10px] font-bold uppercase tracking-widest text-[#141414]/40">
+                        <tr className="bg-zinc-50 border-b border-[#141414]/5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
                           <th className="p-6">Timestamp</th>
                           <th className="p-6">Action</th>
                           <th className="p-6">Details</th>
@@ -2675,9 +2984,9 @@ const PlatformAdmin = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-100">
-                        {platformAuditLogs.map((log) => (
+                        {filteredPlatformAuditLogs.map((log) => (
                           <tr key={log.id} className="hover:bg-zinc-50/50 transition-colors">
-                            <td className="p-6 font-mono text-xs text-zinc-500 whitespace-nowrap">
+                            <td className="p-6 font-mono text-xs text-zinc-600 whitespace-nowrap">
                               {log.timestamp ? format(new Date(log.timestamp), 'yyyy-MM-dd HH:mm:ss') : 'N/A'}
                             </td>
                             <td className="p-6 whitespace-nowrap">
@@ -2694,7 +3003,7 @@ const PlatformAdmin = () => {
                                 {log.action}
                               </span>
                             </td>
-                            <td className="p-6 text-zinc-700 font-medium min-w-[300px]">
+                            <td className="p-6 text-zinc-800 font-medium min-w-[300px]">
                               {log.details}
                             </td>
                             <td className="p-6 whitespace-nowrap">
@@ -2703,7 +3012,7 @@ const PlatformAdmin = () => {
                                 <span className="font-bold text-zinc-800 text-xs">{log.performedBy}</span>
                               </div>
                             </td>
-                            <td className="p-6 font-mono text-xs text-zinc-400 whitespace-nowrap">
+                            <td className="p-6 font-mono text-xs text-zinc-500 whitespace-nowrap">
                               {log.ipAddress || '197.239.4.15'}
                             </td>
                           </tr>
@@ -2754,9 +3063,9 @@ const PlatformAdmin = () => {
       {/* Staff Override Password Modal */}
       {showPasswordModal && (
         <div className="fixed inset-0 bg-[#141414]/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl p-8 max-w-md w-full border border-zinc-200 shadow-2xl">
-            <h3 className="text-lg font-bold mb-2">Override Staff Password</h3>
-            <p className="text-xs text-zinc-500 mb-6">Updating credentials for <strong>{overrideUserFullName}</strong>.</p>
+          <div className="bg-white rounded-3xl p-8 max-w-md w-full border border-zinc-200 shadow-2xl text-zinc-900">
+            <h3 className="text-lg font-bold mb-2 text-zinc-900">Override Staff Password</h3>
+            <p className="text-xs text-zinc-500 mb-6">Updating credentials for <strong className="text-zinc-900">{overrideUserFullName}</strong>.</p>
             <div className="space-y-4 mb-6">
               <div className="space-y-2">
                 <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">New Password</label>
