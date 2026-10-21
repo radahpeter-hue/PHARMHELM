@@ -1434,6 +1434,9 @@ export interface Payslip {
 
 export interface AttendanceRecord {
   id: string;
+  approval_status?: 'Submitted' | 'Approved' | 'Rejected';
+  loggedByUid?: string;
+  approvedByUid?: string;
   staffId: string;
   tenantId?: string;
   date: string;
