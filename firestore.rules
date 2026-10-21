@@ -621,15 +621,14 @@ service cloud.firestore {
         && get(gatePath).data.get('financeV2AccountRegistrationEnabled',false) == true;
     }
 
-    // Delegated Finance account readers require a verified staff assignment.
     function canReadBranchFinanceV2Account(data) {
-      let staff = get(/databases/$(database)/documents/staff/$(request.auth.uid)).data;
-      return request.auth != null
-        && staff.tenantId == data.tenantId
-        && staff.active == true && staff.status == 'active'
-        && staff.role in ['Finance Officer','Accountant']
+      return isAuthenticated()
+        && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
+        && getUserData().tenantId == data.tenantId
+        && getUserData().active == true && getUserData().status == 'active'
+        && hasAnyRole(['Finance Officer','Accountant'])
         && data.get('branchId','') != ''
-        && staff.get('assigned_branches',[]).hasAny([data.branchId]);
+        && getUserData().get('assigned_branches',[]).hasAny([data.branchId]);
     }
 
     match /finance_payment_accounts/{accountId} {
