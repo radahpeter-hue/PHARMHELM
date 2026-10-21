@@ -1,5 +1,7 @@
 # Finance V2: Spark-only implementation revision
 
+> Superseded implementation choice: FINANCE_V2_SPARK_PILOT.md selects the independently hosted trusted API fallback authorised in the Phase 2 instructions. The rules-only conversion below remains an evaluated alternative, not a mandatory release prerequisite. Spark/no-payment and financial-integrity constraints remain binding.
+
 Decision date: 21 October 2026. Owner requires Firebase Spark with no paid hosting, billing attachment, Blaze upgrade or payment-dependent deployment. This supersedes the Cloud Run pilot instructions in FINANCE_V2_DEPLOYMENT_PREFLIGHT.md and the hosted release route in FINANCE_V2_PHASE3_SIGNOFF.md. Previous approval to deploy does not authorise billing or a plan change.
 
 ## Retained work

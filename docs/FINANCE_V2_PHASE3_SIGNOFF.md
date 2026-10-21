@@ -1,5 +1,7 @@
 # Finance V2 Phase 3 development and integration checkpoint
 
+> Current release candidate: FINANCE_V2_SPARK_PILOT.md documents the independently hosted free pilot, shared EOD/treasury API, executed acceptance and remaining hosted gates. No Cloud Run/Blaze deployment is selected. The historical backend details below remain reference evidence.
+
 > Release-route revision, 21 October 2026: the owner requires Spark with no paid hosting or billing upgrade. The backend-dependent operational route described below is not approved for release. FINANCE_V2_SPARK_CONSTRAINT.md records the revised scope and open certification gates. Existing green backend tests do not certify Spark client/rules posting.
 
 Candidate combines main bfa5c2e, Phase 1 ed03c47, Phase 2 f7e1cca and supplier settlement PR #85 (538d942). Main and PRs #85–#87 were inspected directly on GitHub; all three PRs remain open, #86 and #87 draft. Phase 2 descends from Phase 1; #85 was merged into this development candidate without conflicts. No production merge, deployment, activation, balance migration or operational financial posting was performed.

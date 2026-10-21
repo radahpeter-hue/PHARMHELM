@@ -2,3 +2,7 @@
 **/node_modules
 dist
 .env*
+**/*service-account*.json
+**/*credentials*.json
+**/application_default_credentials.json
+secrets
