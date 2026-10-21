@@ -19,7 +19,7 @@ function safeUGX(amount: number): number {
 }
 export function calculateUgandaResidentPaye(monthlyGrossUGX: number, payPeriodEndISO: string): number {
   const gross = safeUGX(monthlyGrossUGX);
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(payPeriodEndISO) || Number.isNaN(Date.parse(payPeriodEndISO))) {
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(payPeriodEndISO) || Number.isNaN(Date.parse(payPeriodEndISO))) {
     throw new Error('Valid payroll period end date is required');
   }
   let tax: number;
