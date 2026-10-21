@@ -179,7 +179,7 @@ export const PayrollManager: React.FC = () => {
       );
       const loggedHoursFromAttendance = matchingHoursList.reduce((sum, item) => sum + (item.hours_worked || 0), 0);
 
-      // Robust fallback: if they are salaried and did not log attendance, we default loggedHours to expectedHoursInMonth so they get standard salary
+      // Missing attendance is not evidence of worked hours; leave entitlements require independent verification.
       const loggedHours = loggedHoursFromAttendance; // No attendance evidence must never imply full-time attendance.
 
       // 3. Gross Payments dynamically derived from multiplying hours worked and hourly rate (plus fallback/adjustments)
@@ -300,6 +300,15 @@ export const PayrollManager: React.FC = () => {
       });
     });
 
+    // Draft calculations must not imply a payable when attendance, deductions,
+    // or statutory rounding produce invalid money values.
+    const invalid = draftRecords.find(record => validatePayrollDraft(record));
+    if (invalid) {
+      setDraftPayroll([]);
+      setIsDraftMode(false);
+      toast.error(`Payroll draft requires correction for ${invalid.staffName}: ${validatePayrollDraft(invalid)}`);
+      return;
+    }
     setDraftPayroll(draftRecords);
     setIsDraftMode(true);
     toast.success(`Generated payroll drafts for period ${fromDate} to ${toDate}`);
@@ -372,7 +381,7 @@ export const PayrollManager: React.FC = () => {
       'Advances Repayment', 
       'Fines Recoveries', 
       'Total Deductions', 
-      'Net Disbursed'
+      'Net Payable (not proof of payment)'
     ];
 
     const rows = recordsToExport.map(r => {
