@@ -54,7 +54,19 @@ try {
   await assertFails(updateDoc(doc(hr, 'attendance', 'timesheet-1'), { hours_worked: 10 }));
   await assertFails(updateDoc(doc(hr, 'attendance', 'timesheet-1'), { approval_status: 'Submitted' }));
   await assertSucceeds(getDoc(doc(hr, 'advance_requests', 'advance-test')));
-  console.log('Phase 5 advance authorization and forbidden payroll writes: PASS');
+  await env.withSecurityRulesDisabled(async admin => {
+    await setDoc(doc(admin.firestore(), 'payroll', 'other-payroll'), {
+      tenantId: 'tenant-a', staffId: 'other-employee', net_salary: 500000, status: 'approved_unpaid'
+    });
+    await setDoc(doc(admin.firestore(), 'payslips', 'other-payslip'), {
+      tenantId: 'tenant-a', staffId: 'other-employee', netPayable: 500000
+    });
+  });
+  await assertFails(getDoc(doc(employee, 'payroll', 'other-payroll')));
+  await assertFails(getDoc(doc(employee, 'payslips', 'other-payslip')));
+  await assertFails(getDoc(doc(outsider, 'payroll', 'other-payroll')));
+  await assertSucceeds(getDoc(doc(hr, 'payroll', 'other-payroll')));
+  console.log('Phase 5 HR privacy, approvals and forbidden payroll writes: PASS');
 } finally {
   await env.cleanup();
 }
