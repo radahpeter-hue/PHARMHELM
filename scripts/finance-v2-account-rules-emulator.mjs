@@ -40,6 +40,20 @@ try {
   await assertFails(getDocs(v2Register(user('finance-b'))));
   await assertFails(getDocs(query(collection(finance,'finance_payment_accounts'),where('controlVersion','==',2))));
   console.log('PASS tenant-filtered Finance Head account register; unfiltered and cross-tenant queries denied');
+  await admin(async db=>{
+    await setDoc(doc(db,'staff','delegated-a'),{tenantId:tenant,role:'Finance Officer',active:true,status:'active',assigned_branches:[branch]});
+    await setDoc(doc(db,'staff','delegated-b'),{tenantId:tenant,role:'Accountant',active:true,status:'active',assigned_branches:['other-branch']});
+    await setDoc(doc(db,'staff','inactive-delegated'),{tenantId:tenant,role:'Finance Officer',active:false,status:'inactive',assigned_branches:[branch]});
+    await setDoc(account(db,'cash_other'),{...payload,accountId:'cash_other',branchId:'other-branch'});
+  });
+  await assertSucceeds(getDoc(account(user('delegated-a'))));
+  await assertFails(getDoc(account(user('delegated-a'),'cash_other')));
+  await assertFails(getDocs(v2Register(user('delegated-a'))));
+  await assertSucceeds(getDocs(query(collection(user('delegated-a'),'finance_payment_accounts'),
+    where('tenantId','==',tenant),where('controlVersion','==',2),where('branchId','==',branch))));
+  await assertFails(getDoc(account(user('delegated-b'))));
+  await assertFails(getDoc(account(user('inactive-delegated'))));
+  console.log('PASS delegated roles cannot escape tenant or assigned branch boundaries');
   await assertFails(setDoc(account(finance,'cash_duplicate'),{...payload,accountId:'cash_duplicate',createdAt:serverTimestamp(),updatedAt:new Date()}));
   await assertFails(setDoc(account(finance,'cash_extra'),{...payload,accountId:'cash_extra',extraField:1,createdAt:serverTimestamp(),updatedAt:serverTimestamp()}));
   await assertFails(setDoc(account(finance,'cash_positive'),{...payload,accountId:'cash_positive',balanceUGX:500,openingBalanceUGX:500}));
