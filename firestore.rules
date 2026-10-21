@@ -650,9 +650,6 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['tenantId','accountId','name','kind','branchId',
           'currency','balanceUGX','openingBalanceUGX','reconciliationReference','initialized',
           'controlVersion','active','registeredBy','lastPostingId','createdAt','updatedAt'])
-        && request.resource.data.keys().hasAll(['tenantId','accountId','name','kind',
-          'currency','balanceUGX','openingBalanceUGX','reconciliationReference','initialized',
-          'controlVersion','active','registeredBy','lastPostingId','createdAt','updatedAt'])
         && request.resource.data.accountId is string
         && request.resource.data.accountId.matches('^[A-Za-z0-9_-]{1,150}$')
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
@@ -667,7 +664,6 @@ service cloud.firestore {
         && request.resource.data.lastPostingId == null
         && request.resource.data.reconciliationReference is string
         && request.resource.data.reconciliationReference.size() >= 5
-        && request.resource.data.reconciliationReference.size() <= 150
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time
         && (!('branchId' in request.resource.data)
