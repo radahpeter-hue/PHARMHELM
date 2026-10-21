@@ -38,7 +38,25 @@ export async function postFinanceV2Transfer(
           !Number.isSafeInteger(data.movementCount) ||
           data.movementCount !== expectedMovementCount ||
           data.chargeEventId !== expectedChargeEventId ||
-          fields.some(field => data[field] !== input[field])) {
+          fields.some(field => data[field] !== input[field]) ||
+          !data.accountDeltas.every((entry: unknown) => {
+            if (!entry || typeof entry !== 'object') return false;
+            const delta = entry as {accountId?: unknown; beforeUGX?: unknown; deltaUGX?: unknown; afterUGX?: unknown};
+            return typeof delta.accountId === 'string' &&
+              Number.isSafeInteger(delta.beforeUGX) && Number.isSafeInteger(delta.deltaUGX) &&
+              Number.isSafeInteger(delta.afterUGX) &&
+              (delta.beforeUGX as number) + (delta.deltaUGX as number) === delta.afterUGX;
+          }) ||
+          (() => {
+            const expected = new Map<string, number>();
+            expected.set(input.sourceAccountId, -input.principalUGX);
+            expected.set(input.destinationAccountId, input.principalUGX);
+            if (input.chargeUGX > 0) expected.set(input.chargePayerAccountId,
+              (expected.get(input.chargePayerAccountId) ?? 0) - input.chargeUGX);
+            return data.accountDeltas.length !== expected.size ||
+              data.accountDeltas.some((entry: {accountId: string; deltaUGX: number}) =>
+                expected.get(entry.accountId) !== entry.deltaUGX);
+          })()) {
         throw new Error('Transfer idempotency conflict or incomplete posting.');
       }
       return { transferId: id, replay: true };
