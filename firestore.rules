@@ -974,13 +974,13 @@ service cloud.firestore {
     match /advance_requests/{requestId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isHR() || isFinance() || isAdmin());
       allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && (isHR() || isFinance() || isAdmin());
-      allow delete: if isAdmin();
+      allow update: if false; // Advance disbursement/repayment requires certified atomic accounting.
+      allow delete: if false;
     }
 
     match /payslips/{payslipId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isFinance() || isAdmin());
-      allow write: if isFinance() || isAdmin();
+      allow create, update, delete: if false; // Only certified atomic payroll posting may create payslips.
     }
 
     match /cme_records/{recordId} {
@@ -3123,7 +3123,7 @@ service cloud.firestore {
         return collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox'];
       }
       function dedicatedWriteCollection() {
-        return dedicatedCollection() || collectionName in ['hr_roles', 'product_batches', 'products', 'role_realms_of_operation', 'sales'];
+        return dedicatedCollection() || collectionName in ['hr_roles', 'product_batches', 'products', 'role_realms_of_operation', 'sales', 'payroll', 'payslips', 'advance_requests'];
       }
       function immutableFallbackIdentities() {
         return true
