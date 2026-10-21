@@ -100,6 +100,12 @@ const AdvanceTab: React.FC = () => {
     }
   };
 
+  // Historical malformed records must surface a reconciliation warning, not crash Welfare.
+  const approvedUndisbursedTotal = (() => {
+    try { return sumApprovedUnpaidAdvanceRequests(requests); }
+    catch { return null; }
+  })();
+
   return (
     <div className="space-y-6">
       {/* Summary Stats */}
@@ -112,7 +118,7 @@ const AdvanceTab: React.FC = () => {
             <div>
               <p className="text-xs font-black text-zinc-400 uppercase tracking-widest">Approved, not yet disbursed</p>
               <h3 className="text-2xl font-black text-zinc-900">
-                UGX {sumApprovedUnpaidAdvanceRequests(requests).toLocaleString()}
+                UGX {approvedUndisbursedTotal === null ? 'Requires reconciliation' : approvedUndisbursedTotal.toLocaleString()}
               </h3>
             </div>
           </div>
