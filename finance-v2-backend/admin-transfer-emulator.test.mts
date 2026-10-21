@@ -4,6 +4,7 @@ import {initializeApp,deleteApp} from 'firebase-admin/app';
 import {getFirestore} from 'firebase-admin/firestore';
 import {executeAuthenticatedFinanceV2Transfer} from './authenticatedTransfer.ts';
 import {postTrustedFinanceV2Transfer} from '../src/services/financeV2TrustedTransferCore.ts';
+import {readTreasury,registerTreasuryAccount} from './treasury.ts';
 import {createFinanceV2AdminStore} from '../finance-v2-backend/adminStore.ts';
 if(!process.env.FIRESTORE_EMULATOR_HOST)throw Error('FIRESTORE_EMULATOR_HOST is mandatory');
 const app=initializeApp({projectId:'finance-v2-admin-isolated'});
@@ -28,7 +29,7 @@ try {
  await assert.rejects(postTrustedFinanceV2Transfer(store,actor,{...input,requestId:'unfunded',principalUGX:999999}),/Insufficient funds/);
  await assert.rejects(postTrustedFinanceV2Transfer(store,{...actor,canPostFinance:false},{...input,requestId:'unauthorised'}),/Unauthorised/);
  assert.equal((await source.get()).data().balanceUGX,4700);
- await db.doc('staff/finance-u').create({tenantId:'test-tenant',active:true,status:'active',role:'Finance Officer',secondaryRoles:[]});
+ await db.doc('staff/finance-u').create({tenantId:'test-tenant',active:true,status:'active',role:'Finance Head',secondaryRoles:[]});
  await db.doc('tenants/test-tenant').create({status:'active'});
  const verifyIdToken=async(token)=>{if(token!=='test-token-authenticated')throw Error('Bad token');return {uid:'finance-u'}};
  const verified={verifyIdToken};
@@ -37,12 +38,29 @@ try {
  await assert.rejects(executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'cross-tenant',tenantId:'foreign'},true),/tenant/);
  await db.doc('staff/finance-u').update({role:'Logistics Head'});
  await assert.rejects(executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'wrong-role'},true),/not authorised/);
- await db.doc('staff/finance-u').update({role:'Finance Officer'});
+ await db.doc('staff/finance-u').update({role:'Finance Head'});
  await assert.rejects(executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'tenant-gate',principalUGX:2000,chargeUGX:100},true),/remain disabled/);
  await db.doc('system_settings/test-tenant').set({financeV2TrustedTransfersEnabled:true});
  const authenticated=await executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'auth-ok',principalUGX:2000,chargeUGX:100},true);
  assert.equal(authenticated.replay,false);
  assert.equal((await source.get()).data().balanceUGX,2600);
+ // Competing requests cannot overdraw the same account.
+ const competing=await Promise.allSettled(['race-a','race-b'].map(requestId=>executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId,principalUGX:2000,chargeUGX:0},true)));
+ assert.equal(competing.filter(r=>r.status==='fulfilled').length,1);
+ assert.equal((await source.get()).data().balanceUGX,600);
+ await db.doc('staff/finance-u').update({role:'Finance Officer',assigned_branches:['masaka']});
+ await assert.rejects(executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'wrong-branch',principalUGX:100,chargeUGX:0},true),/branch scope/);
+ await source.update({branchId:'masaka'});await destination.update({branchId:'masaka'});
+ await executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'branch-ok',principalUGX:100,chargeUGX:0},true);
+ const treasury=await readTreasury(verified,db,'test-token-authenticated','test-tenant');
+ assert.equal(treasury.accounts.length,2);
+ await source.update({branchId:'other'});
+ assert.equal((await readTreasury(verified,db,'test-token-authenticated','test-tenant')).accounts.length,1);
+ await assert.rejects(registerTreasuryAccount(verified,db,'test-token-authenticated',{tenantId:'test-tenant'}),/Registration disabled/);
+ await source.update({branchId:'masaka'});
+ await destination.update({initialized:false});
+ await assert.rejects(executeAuthenticatedFinanceV2Transfer(verified,db,'test-token-authenticated',{...input,requestId:'uninitialized',principalUGX:100,chargeUGX:0},true),/Invalid V2 account/);
+ await assert.rejects(executeAuthenticatedFinanceV2Transfer(verified,db,'bad-token-value-more-than-20',{...input,requestId:'invalid-token'},true),/Bad token/);
  console.log('PASS authenticated handler verifies token, staff role and tenant before transfer');
  console.log('PASS atomic Admin SDK emulator: one posting, idempotent simultaneous replay, conserved principal, separate charge, insufficient and unauthorised denial');
 }finally{await deleteApp(app);}

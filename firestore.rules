@@ -592,23 +592,22 @@ service cloud.firestore {
     // rules, authenticated emulator tests and opening balances are certified.
     // Explicit protection also prevents permissive fallback matching.
     match /finance_v2_transfers/{transferId} {
-      allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId);
+      allow get, list: if false; // Scoped history is served by the authenticated treasury API.
       allow create, update, delete: if false;
     }
     match /finance_v2_account_movements/{movementId} {
-      allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId);
+      allow get, list: if false; // Scoped history is served by the authenticated treasury API.
       allow create, update, delete: if false;
     }
     match /finance_v2_events/{eventId} {
-      allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId);
+      allow get, list: if false; // Scoped history is served by the authenticated treasury API.
       allow create, update, delete: if false;
     }
 
     match /finance_payment_accounts/{accountId} {
-      allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
+      allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || (isTenantMember(resource.data.tenantId) && resource.data.controlVersion == 1));
+      allow list: if canViewFinance() && isTenantMember(resource.data.tenantId) && resource.data.controlVersion == 1;
       allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
-        && get(/databases/$(database)/documents/system_settings/$(request.resource.data.tenantId)).data.managementCashAccountControlV1 == true
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
         && request.resource.data.accountId in ['management_petty_cash','management_bank']
         && request.resource.data.kind == (request.resource.data.accountId == 'management_bank' ? 'bank' : 'petty_cash')
@@ -619,8 +618,8 @@ service cloud.firestore {
         && request.resource.data.registeredBy == request.auth.uid
         && request.resource.data.name is string && request.resource.data.name.size() > 0
         && request.resource.data.reconciliationReference is string && request.resource.data.reconciliationReference.size() >= 5;
-      // V2 zero-opening registration. The tenant feature gate remains disabled.
-      allow create: if isFinance()
+      // V2 registration uses the trusted API; browser registration stays closed.
+      allow create: if false && isFinance()
         && request.resource.data.tenantId == getUserData().tenantId
         && get(/databases/$(database)/documents/system_settings/$(request.resource.data.tenantId)).data.get('financeV2AccountRegistrationEnabled', false) == true
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
@@ -650,7 +649,6 @@ service cloud.firestore {
         let legacy = getAfter(/databases/$(database)/documents/procurement_invoices/$(data.procurementInvoiceId)).data;
         let movement = getAfter(managementMovementPath(data.paymentAccountKind, paymentId)).data;
         return isFinance() && isTenantMember(data.tenantId)
-          && get(/databases/$(database)/documents/system_settings/$(data.tenantId)).data.managementCashSettlementV1 == true
           && data.processedBy == request.auth.uid
           && paymentId == 'procurement_cash_settlement_' + data.tenantId + '_' + data.draftId + '_' + data.requestId
           && data.amountUGX is int && data.amountUGX > 0

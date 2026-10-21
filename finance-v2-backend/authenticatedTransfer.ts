@@ -20,7 +20,8 @@ export async function executeAuthenticatedFinanceV2Transfer(
  const roles=[staff.role,...(Array.isArray(staff.secondaryRoles)?staff.secondaryRoles:[])];
  const authorised=roles.some(role=>['Finance Head','Finance Officer','Accountant'].includes(role));
  const actor:TrustedFinanceActor={uid:identity.uid,tenantId:String(staff.tenantId??''),
-  active:staff.active===true&&staff.status==='active',canPostFinance:authorised};
+  active:staff.active===true&&staff.status==='active',canPostFinance:authorised, organisationWide:roles.includes('Finance Head'),
+  allowedBranchIds:[staff.branch_id,staff.default_branch_id,...(Array.isArray(staff.assigned_branches)?staff.assigned_branches:[])].filter(v=>typeof v==='string')};
  if(!actor.active||!actor.canPostFinance||actor.tenantId!==requested.tenantId)throw new Error('Finance actor is not authorised for tenant');
  // Release permission is server-owned and tenant-specific, never request-supplied.
  const controls=await db.doc('system_settings/'+requested.tenantId).get();

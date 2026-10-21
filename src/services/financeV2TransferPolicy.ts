@@ -23,6 +23,7 @@ export interface FinanceV2TransferInput {
   principalUGX: number;
   chargeUGX: number;
   actorUid: string;
+  description?: string;
 }
 
 export interface FinanceV2TransferPlan {
@@ -46,6 +47,7 @@ export function planFinanceV2Transfer(input: FinanceV2TransferInput, accounts: r
   if (!validMoney(input.principalUGX) || input.principalUGX === 0) throw new Error('Principal must be positive whole UGX');
   if (!validMoney(input.chargeUGX)) throw new Error('Charge must be non-negative whole UGX');
 
+  if(input.description!==undefined && (typeof input.description!=='string'||input.description.trim().length<3||input.description.length>500))throw new Error('Description must contain 3 to 500 characters');
   const byId = new Map<string, FinanceV2AccountSnapshot>();
   for (const account of accounts) {
     if (byId.has(account.accountId)) throw new Error('Duplicate account identity');
@@ -54,6 +56,7 @@ export function planFinanceV2Transfer(input: FinanceV2TransferInput, accounts: r
   for (const id of [input.sourceAccountId, input.destinationAccountId, input.chargePayerAccountId]) {
     const account = byId.get(id);
     if (!account || account.tenantId !== input.tenantId || !account.active) throw new Error('Account missing, inactive or outside tenant');
+    if (!['BRANCH_CASH_SALES','BANK','MTN_MOBILE_MONEY','AIRTEL_MONEY','PETTY_CASH'].includes(account.kind)) throw new Error('Unsupported account kind');
     if (!validMoney(account.balanceUGX)) throw new Error('Invalid account balance');
   }
 

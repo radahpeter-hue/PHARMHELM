@@ -10,7 +10,7 @@ export interface TrustedFinanceTransaction {
 export interface TrustedFinanceStore {
  runTransaction:<T>(fn:(tx:TrustedFinanceTransaction)=>Promise<T>)=>Promise<T>;
 }
-export interface TrustedFinanceActor {uid:string; tenantId:string; active:boolean; canPostFinance:boolean}
+export interface TrustedFinanceActor {uid:string; tenantId:string; active:boolean; canPostFinance:boolean; allowedBranchIds?:readonly string[]; organisationWide?:boolean}
 
 /** Server-only transaction core. The caller must verify the actor with Admin Auth,
  * resolve roles and tenant membership from trusted records, and gate rollout.
@@ -27,7 +27,7 @@ export async function postTrustedFinanceV2Transfer(
   const prior=await tx.get(transferPath);
   if(prior.exists){
    const d=prior.data();
-   const keys=['tenantId','requestId','sourceAccountId','destinationAccountId','chargePayerAccountId','principalUGX','chargeUGX','actorUid'];
+   const keys=['tenantId','requestId','sourceAccountId','destinationAccountId','chargePayerAccountId','principalUGX','chargeUGX','actorUid','description'];
    if(d.status!=='posted'||d.currency!=='UGX'||!Array.isArray(d.accountDeltas)||d.accountDeltas.length<2||!Number.isSafeInteger(d.movementCount)||d.movementCount!==(input.chargeUGX>0?3:2)||d.chargeEventId!==(input.chargeUGX>0?`${id}_charge`:null)||keys.some(k=>d[k]!==input[k]))throw new Error('Conflicting or incomplete transfer replay');
    return {transferId:id,replay:true};
   }
@@ -43,6 +43,7 @@ export async function postTrustedFinanceV2Transfer(
    return {tenantId:input.tenantId,accountId:ids[i],kind:data.kind as FinanceV2AccountSnapshot['kind'],
     balanceUGX:data.balanceUGX as number,active:true,branchId:data.branchId as string|undefined};
   });
+  if(actor.organisationWide===false && accounts.some(a=>!a.branchId||!actor.allowedBranchIds?.includes(a.branchId))) throw new Error('Account outside authorised branch scope');
   const planned=planFinanceV2Transfer(input,accounts);
   const auditDeltas=planned.accountDeltas.map(delta=>{
    const before=accounts.find(a=>a.accountId===delta.accountId)!.balanceUGX;

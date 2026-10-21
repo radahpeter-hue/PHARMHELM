@@ -1,0 +1,34 @@
+name: Finance V2 integration
+on:
+  pull_request:
+    paths:
+      - 'finance-v2-backend/**'
+      - 'src/services/financeV2*'
+      - 'src/pages/finance/**'
+      - 'firestore.rules'
+      - '.github/workflows/finance-v2-integration.yml'
+jobs:
+  finance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: npm ci && npm ci --prefix finance-v2-backend
+      - run: npm run typecheck && npx tsc -p finance-v2-backend/tsconfig.json && npm test && npm run build
+      - name: Isolated financial and permission acceptance
+        run: |
+          curl -fL https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v1.19.8.jar -o /tmp/firestore.jar
+          java -jar /tmp/firestore.jar --host=127.0.0.1 --port=8085 --project_id=finance-v2-admin-isolated > /tmp/emulator.log 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid"' EXIT
+          for attempt in $(seq 1 30); do curl -s http://127.0.0.1:8085/ > /dev/null && break; sleep 1; done
+          export FIRESTORE_EMULATOR_HOST=127.0.0.1:8085
+          node --import tsx --test finance-v2-backend/admin-transfer-emulator.test.mts finance-v2-backend/admin-eod-emulator.test.mts
+          node scripts/management-cash-settlement-rules-emulator.mjs

@@ -115,7 +115,7 @@ export async function executeAuthenticatedFinanceV2Eod(
     if (!shifts.some(shift => shift.id === input.shiftId && shift.enabled)) throw new Error('Selected shift is disabled');
     const salesQuery = db.collection('sales').where('tenantId', '==', input.tenantId).where('branchId', '==', input.branchId);
     const saleSnaps = await tx.get(salesQuery);
-    const scoped = saleSnaps.docs.map(doc => ({ ...doc.data(), id: doc.id })).filter(sale => {
+    const scoped = saleSnaps.docs.map(doc => ({ ...doc.data(), id: doc.id } as Record<string, any>)).filter(sale => {
       if (sale.status !== 'completed' && sale.status !== 'active') return false;
       if (!isActiveSale(sale)) return false;
       if (sale.revisionOfSaleId && !sale.isRevisionReplacement) throw new Error('Malformed POS revision metadata');

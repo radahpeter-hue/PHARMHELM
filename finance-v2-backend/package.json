@@ -1,12 +1,12 @@
 {
-  "name": "pharmhelm-finance-v2-emulator",
+  "name": "pharmhelm-finance-v2-api",
   "private": true,
   "type": "module",
   "dependencies": {
     "firebase-admin": "^13.0.0",
     "tsx": "^4.21.0"
   },
-  "description": "Development-only Firebase Admin adapter; no deployed entrypoint",
+  "description": "Authenticated, tenant-gated Finance V2 API and isolated acceptance",
   "scripts": {
     "start": "tsx serveEod.ts",
     "test:eod:emulator": "node --import tsx --test admin-eod-emulator.test.mts"

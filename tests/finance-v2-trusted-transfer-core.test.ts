@@ -39,3 +39,10 @@ test('unauthorised and underfunded posting leaves store unchanged',async()=>{
  await assert.rejects(postTrustedFinanceV2Transfer(store,actor,{...input,principalUGX:999999}),/Insufficient funds/);
  assert.equal(data.size,2);
 });
+test('restricted actor cannot post organisation or another branch accounts',async()=>{
+ const {store,data}=fakeStore();
+ await assert.rejects(postTrustedFinanceV2Transfer(store,{...actor,organisationWide:false,allowedBranchIds:['masaka']},input),/branch scope/);
+ assert.equal(data.size,2);
+ for(const key of ['finance_payment_accounts/t_bank','finance_payment_accounts/t_cash'])data.set(key,{...data.get(key),branchId:'masaka'});
+ assert.equal((await postTrustedFinanceV2Transfer(store,{...actor,organisationWide:false,allowedBranchIds:['masaka']},input)).replay,false);
+});
