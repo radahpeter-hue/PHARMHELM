@@ -307,8 +307,24 @@ export const PayrollManager: React.FC = () => {
   const handleSaveReviewModal = () => {
     if (!reviewingRecord) return;
 
-    const customDeductionsSum = editAdvanceDeduction + editFineDeduction + editNSSFEmployee + editPAYE + editCustomDeduction;
-    const computedNet = reviewingRecord.baseSalary + editBonus - customDeductionsSum;
+    if (!Number.isSafeInteger(editBonus) || editBonus < 0) {
+      toast.error('Bonuses must be non-negative whole-number UGX.');
+      return;
+    }
+    const currentStaffMember = canonicalStaff.find(member => member.id === reviewingRecord.staffId);
+    const employmentType = (currentStaffMember as any)?.employmentType || 'Full-Time';
+    const regularEmployee = employmentType === 'Full-Time' || employmentType === 'Part-Time';
+    const taxEnabled = systemSettings ? systemSettings.process_tax_deductibles !== false : true;
+    const gross = reviewingRecord.baseSalary + editBonus;
+    if (!Number.isSafeInteger(gross)) { toast.error('Unsafe payroll gross amount.'); return; }
+    const nssfCalculation = calculateUgandaNssf(gross,
+      taxEnabled && regularEmployee && currentStaffMember?.nssfEligible !== false);
+    const approvedNssfEmployee = regularEmployee ? nssfCalculation.employee : editNSSFEmployee;
+    const approvedPaye = taxEnabled && regularEmployee
+      ? calculateUgandaResidentPaye(gross, toDate)
+      : editPAYE;
+    const customDeductionsSum = editAdvanceDeduction + editFineDeduction + approvedNssfEmployee + approvedPaye + editCustomDeduction;
+    const computedNet = gross - customDeductionsSum;
     const error = validatePayrollDraft({ baseSalary: reviewingRecord.baseSalary, bonuses: editBonus, deductions: customDeductionsSum, netSalary: computedNet });
     if (error) { toast.error(error); return; }
 
@@ -320,8 +336,9 @@ export const PayrollManager: React.FC = () => {
           bonusNotes: editBonusNotes,
           advanceDeduction: editAdvanceDeduction,
           fineDeduction: editFineDeduction,
-          paye: editPAYE,
-          nssfEmployee: editNSSFEmployee,
+          paye: approvedPaye,
+          nssfEmployee: approvedNssfEmployee,
+          nssfEmployer: regularEmployee ? nssfCalculation.employer : item.nssfEmployer,
           deductions: customDeductionsSum,
           netSalary: computedNet,
           reviewed: true
