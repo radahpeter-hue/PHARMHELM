@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
 import { deduplicateStaff } from '../../utils/deduplicateStaff';
 import { validatePayrollDraft } from '../../services/hrPayrollPolicy';
+import { calculateUgandaResidentPaye, calculateUgandaNssf } from '../../services/ugandaPayrollTaxPolicy';
 
 interface DraftPayrollRecord {
   staffId: string;
@@ -231,35 +232,18 @@ export const PayrollManager: React.FC = () => {
       const empType = (member as any).employmentType || 'Full-Time';
       const isRegularStaff = empType === 'Full-Time' || empType === 'Part-Time';
       
-      const hasNssf = taxEnabled && isRegularStaff && (member.nssfEligible !== false); // default true unless explicitly checked false
-      const nssfEmployee = hasNssf ? Math.round(basePay * 0.05) : 0;
-      const nssfEmployer = hasNssf ? Math.round(basePay * 0.10) : 0;
+      const hasNssf = taxEnabled && isRegularStaff && member.nssfEligible !== false;
+      const nssf = calculateUgandaNssf(Math.round(basePay), hasNssf);
+      const nssfEmployee = nssf.employee;
+      const nssfEmployer = nssf.employer;
 
-      // Progressive PAYE Tax (Uganda) & Withholding Taxes
-      let paye = 0;
-      if (taxEnabled) {
-        if (isRegularStaff) {
-          const taxableIncome = basePay - nssfEmployee;
-          if (taxableIncome > 235000) {
-            if (taxableIncome <= 335000) {
-              paye = (taxableIncome - 235000) * 0.10;
-            } else if (taxableIncome <= 410000) {
-              paye = 10000 + (taxableIncome - 335000) * 0.20;
-            } else {
-              paye = 10000 + 15000 + (taxableIncome - 410000) * 0.30;
-              if (taxableIncome > 10000000) {
-                paye += (taxableIncome - 10000000) * 0.10;
-              }
-            }
-          }
-        } else if (empType === 'Resident Consultant') {
-          paye = basePay * 0.06;
-        } else if (empType === 'Non-Resident Consultant') {
-          paye = basePay * 0.15;
-        } else if (empType === 'Independent Contractor / Self-Employed') {
-          paye = basePay * 0.06;
-        }
-      }
+      // Resident monthly PAYE uses dated URA tax bands on gross earnings.
+      // PAYE is calculated before employee NSSF deductions.
+      // Consultant withholding and secondary employment require separate
+      // documented tax treatment, not hardcoded contractor assumptions.
+      const paye = taxEnabled && isRegularStaff
+        ? calculateUgandaResidentPaye(Math.round(basePay), toDate)
+        : 0;
 
       const totalDeductions = Math.round(advanceDeduction + fineDeduction + nssfEmployee + paye + unpaidLeaveDeduction);
 
