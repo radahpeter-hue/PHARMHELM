@@ -23,8 +23,8 @@ test('V2 writer is inaccessible without explicit certification and V2 accounts',
  assert.match(writer,/runTransaction\(connection/);
  assert.match(writer,/Transfer idempotency conflict/);
 });
-test('Spark posting is exclusively gated by atomic two-account rules while POS and fees remain closed',()=>{
- for(const name of ['finance_v2_events']){
+test('release rules forbid every V2 financial posting until authenticated transaction rules exist',()=>{
+ for(const name of ['finance_v2_transfers','finance_v2_account_movements','finance_v2_events']){
   const i=rules.indexOf('match /'+name+'/{');
   assert.ok(i>=0,name);
   const block=rules.slice(i,rules.indexOf('\n    }',i));
