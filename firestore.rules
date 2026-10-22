@@ -1068,7 +1068,9 @@ service cloud.firestore {
         && request.resource.data.status == 'approved_unpaid'
         && request.resource.data.finalizedBy == request.auth.uid
         && request.resource.data.netPayable is int && request.resource.data.netPayable >= 0
-        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.netSalary == request.resource.data.netPayable;
+        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.netSalary == request.resource.data.netPayable
+        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.staffId == request.resource.data.staffId
+        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.period == request.resource.data.period;
       allow update, delete: if false;
     }
 
