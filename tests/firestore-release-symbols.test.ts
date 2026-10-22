@@ -17,3 +17,17 @@ test('release compaction does not collide with existing internal identifiers or 
  const result=compactRuleSymbols(`function _f0(data) { let _v0 = data.get('value', 'a\\'b'); return _v0; }`);
  assert.doesNotMatch(result,/function _f0\(/);assert.match(result,/\.get\('value', 'a\\'b'\)/);
 });
+test('tenant factoring preserves exact scope and quoted expressions', async () => {
+ const {shareTenantPredicates} = await import('../scripts/build-firestore-release-rules.mjs');
+ const source = `service cloud.firestore { match /databases/{database}/documents {
+ function isTenantMember(tenantId) { return tenantId == request.auth.token.tenantId; }
+ match /entries/{id} { allow read: if isTenantMember(resource.data.tenantId);
+ allow create: if isTenantMember(request.resource.data.tenantId) && request.resource.data.note == 'isTenantMember(resource.data.tenantId)'; }
+ }}`;
+ const factored = shareTenantPredicates(source);
+ assert.match(factored,/allow read: if sharedExistingTenant\(\)/);
+ assert.match(factored,/allow create: if sharedRequestedTenant\(\)/);
+ assert.match(factored,/'isTenantMember\(resource.data.tenantId\)'/);
+ assert.match(factored,/function sharedExistingTenant\(\) \{ return isTenantMember\(resource.data.tenantId\); \}/);
+ assert.match(factored,/function sharedRequestedTenant\(\) \{ return isTenantMember\(request.resource.data.tenantId\); \}/);
+});
