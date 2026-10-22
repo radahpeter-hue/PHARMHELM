@@ -974,13 +974,91 @@ service cloud.firestore {
       allow delete: if isHR();
     }
 
+    // Salary accrual uses an exact HR-approved snapshot, never a browser review flag.
+    function payrollScope(data) {
+      return isAuthenticated() && getUserData().tenantId == data.tenantId
+        && isAssignedToBranch(data.snapshot.branchId);
+    }
+    function validPayrollSnapshot(data) {
+      let d = data.snapshot;
+      let employee = get(/databases/$(database)/documents/staff/$(d.staffId)).data;
+      return d.keys().hasOnly(['staffId','staffName','branchId','period','baseSalary','bonuses','deductions','netSalary','paye','nssfEmployee','nssfEmployer','advanceDeduction','fineDeduction','unpaidLeaveDeduction','otherDeductions'])
+        && d.period.matches('^[0-9]{4}-(0[1-9]|1[0-2])$')
+        && employee.tenantId == data.tenantId && employee.branch_id == d.branchId
+        && d.staffName is string && d.staffName.size() > 0
+        && d.baseSalary is int && d.baseSalary >= 0 && d.baseSalary <= 9007199254740991
+        && d.bonuses is int && d.bonuses >= 0
+        && d.deductions is int && d.deductions >= 0
+        && d.netSalary is int && d.netSalary >= 0
+        && d.paye is int && d.paye >= 0 && d.nssfEmployee is int && d.nssfEmployee >= 0
+        && d.nssfEmployer is int && d.nssfEmployer >= 0
+        && d.fineDeduction is int && d.fineDeduction >= 0
+        && d.unpaidLeaveDeduction is int && d.unpaidLeaveDeduction >= 0
+        && d.otherDeductions is int && d.otherDeductions >= 0
+        && d.advanceDeduction == 0
+        && d.baseSalary + d.bonuses <= 9007199254740991
+        && d.baseSalary + d.bonuses + d.nssfEmployer <= 9007199254740991
+        && d.paye + d.nssfEmployee + d.fineDeduction + d.unpaidLeaveDeduction + d.otherDeductions == d.deductions
+        && d.baseSalary + d.bonuses == d.netSalary + d.deductions;
+    }
+    match /payroll_approvals/{id} {
+      allow get: if isAuthenticated() && (resource == null || (payrollScope(resource.data) && (isHR() || isFinance())));
+      allow list: if payrollScope(resource.data) && (isHR() || isFinance());
+      allow create, update: if isHR() && payrollScope(request.resource.data)
+        && validPayrollSnapshot(request.resource.data)
+        && id == request.resource.data.tenantId + '_' + request.resource.data.snapshot.staffId + '_' + request.resource.data.snapshot.period
+        && !existsAfter(/databases/$(database)/documents/payroll/$(id))
+        && request.resource.data.keys().hasOnly(['tenantId','snapshot','revision','status','approvedBy','approvedAt','reason'])
+        && request.resource.data.approvedBy == request.auth.uid && request.resource.data.approvedAt == request.time
+        && request.resource.data.reason is string && request.resource.data.reason.size() >= 3
+        && request.resource.data.status in ['approved','rejected','superseded']
+        && request.resource.data.revision == (resource == null ? 1 : resource.data.revision + 1)
+        && (resource == null || request.resource.data.tenantId == resource.data.tenantId)
+        && !exists(/databases/$(database)/documents/payroll_approvals/$(id)/revisions/$(string(request.resource.data.revision)))
+        && getAfter(/databases/$(database)/documents/payroll_approvals/$(id)/revisions/$(string(request.resource.data.revision))).data == request.resource.data;
+      allow delete: if false;
+      match /revisions/{revision} {
+        allow read: if payrollScope(resource.data) && (isHR() || isFinance());
+        allow create: if isHR() && payrollScope(request.resource.data)
+          && revision == string(request.resource.data.revision)
+          && getAfter(/databases/$(database)/documents/payroll_approvals/$(id)).data == request.resource.data;
+        allow update, delete: if false;
+      }
+    }
+    function approvedPayroll(id, data) {
+      let approval = get(/databases/$(database)/documents/payroll_approvals/$(id)).data;
+      let d = data.snapshot;
+      return payrollScope(data) && approval.status == 'approved'
+        && approval.tenantId == data.tenantId && approval.snapshot == d
+        && approval.approvedBy != request.auth.uid && data.hrApprovedBy == approval.approvedBy
+        && data.approvalRevision == approval.revision
+        && getAfter(/databases/$(database)/documents/payroll_approvals/$(id)).data == approval
+        && data.finalizedAt == request.time
+        && data.staffId == d.staffId && data.staff_name == d.staffName && data.branch_id == d.branchId
+        && data.period == d.period && data.month == d.period
+        && data.baseSalary == d.baseSalary && data.base_salary == d.baseSalary
+        && data.bonuses == d.bonuses && data.deductions == d.deductions && data.netSalary == d.netSalary && data.net_salary == d.netSalary
+        && data.paye == d.paye && data.nssfEmployee == d.nssfEmployee && data.nssfEmployer == d.nssfEmployer
+        && data.nssf_employee == d.nssfEmployee && data.nssf_employer == d.nssfEmployer
+        && data.advanceDeduction == 0 && data.advance_deduction == 0
+        && data.fineDeduction == d.fineDeduction && data.fine_deduction == d.fineDeduction
+        && data.unpaidLeaveDeduction == d.unpaidLeaveDeduction
+        && data.salaryExpenseUGX == d.baseSalary + d.bonuses - d.unpaidLeaveDeduction
+        && data.employerNssfExpenseUGX == d.nssfEmployer && data.payePayableUGX == d.paye
+        && data.nssfPayableUGX == d.nssfEmployee + d.nssfEmployer
+        && data.otherDeductionsPayableUGX == d.fineDeduction + d.otherDeductions
+        && data.netSalaryPayableUGX == d.netSalary && data.accountingReference == id;
+    }
+
     // Submitted attendance is distinct from a manager-approved payroll timesheet.
     match /payroll/{payrollId} {
+      allow get: if (isHR() || isFinance()) && resource == null;
       allow read: if isTenantMember(resource.data.tenantId)
         && (isHR() || isFinance() || isCEO() || isOwner(resource.data.staffId));
       allow create: if isFinance() && getUserData().tenantId == request.resource.data.tenantId
         && payrollId == request.resource.data.tenantId + '_' + request.resource.data.staffId + '_' + request.resource.data.period
         && request.resource.data.payrollId == payrollId
+        && approvedPayroll(payrollId, request.resource.data)
         && request.resource.data.status == 'approved_unpaid'
         && request.resource.data.finalizedBy == request.auth.uid
         && request.resource.data.baseSalary is int && request.resource.data.bonuses is int
@@ -1062,15 +1140,16 @@ service cloud.firestore {
     }
 
     match /payslips/{payslipId} {
+      function pairedPayslip(data) {
+        let payroll = getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data;
+        return data.diff(payroll).affectedKeys().hasOnly(['base_salary','net_salary','nssf_employee','nssf_employer','advance_deduction','fine_deduction','year','netPayable','basePay','allowances'])
+          && data.netPayable == payroll.netSalary && data.basePay == payroll.baseSalary
+          && data.allowances == payroll.bonuses && data.year == int(payroll.period.split('-')[0]);
+      }
+      allow get: if (isHR() || isFinance()) && resource == null;
       allow read: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isFinance());
       allow create: if isFinance() && getUserData().tenantId == request.resource.data.tenantId
-        && payslipId == request.resource.data.payrollId
-        && request.resource.data.status == 'approved_unpaid'
-        && request.resource.data.finalizedBy == request.auth.uid
-        && request.resource.data.netPayable is int && request.resource.data.netPayable >= 0
-        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.netSalary == request.resource.data.netPayable
-        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.staffId == request.resource.data.staffId
-        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.period == request.resource.data.period;
+        && payslipId == request.resource.data.payrollId && pairedPayslip(request.resource.data);
       allow update, delete: if false;
     }
 
@@ -3211,7 +3290,7 @@ service cloud.firestore {
     // Share exclusions and dispatch by method instead of compiling five copies.
     match /{collectionName}/{docId} {
       function dedicatedCollection() {
-        return collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox','payroll','payslips','advance_requests','attendance'];
+        return collectionName in ['payroll_approvals','identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox','payroll','payslips','advance_requests','attendance'];
       }
       function dedicatedWriteCollection() {
         return dedicatedCollection() || collectionName in ['hr_roles', 'product_batches', 'products', 'role_realms_of_operation', 'sales', 'payroll', 'payslips', 'advance_requests', 'attendance'];

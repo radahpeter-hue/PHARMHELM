@@ -1,6 +1,7 @@
 import { doc, runTransaction, serverTimestamp, type Firestore } from 'firebase/firestore';
 import { db } from '../firebase';
 import { validatePayrollDraft } from './hrPayrollPolicy';
+import { payrollSnapshot } from './hrPayrollApproval';
 
 export interface FinalPayrollInput {
   staffId: string; staffName: string; branchId: string; period: string;
@@ -17,6 +18,7 @@ export async function finalizePayrollDraft(
   if (!/^[A-Za-z0-9_-]{1,150}$/.test(input.tenantId) || !input.actorUid
       || input.records.length === 0 || input.records.length > 100) throw new Error('Invalid payroll scope or empty period');
   const ids = new Set<string>();
+  const approvals = new Map<string, any>();
   for (const record of input.records) {
     if (!/^[A-Za-z0-9_-]{1,150}$/.test(record.staffId)
         || !/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(record.period) || !record.reviewed
@@ -37,7 +39,12 @@ export async function finalizePayrollDraft(
   await runTransaction(connection, async tx => {
     // Reads before writes; one transaction must include every employee and paired payslip.
     for (const row of rows) {
-      const [payroll,payslip] = await Promise.all([tx.get(row.payroll),tx.get(row.payslip)]);
+      const [payroll,payslip,approval] = await Promise.all([tx.get(row.payroll),tx.get(row.payslip),tx.get(doc(connection,'payroll_approvals',row.id))]);
+      const expected = payrollSnapshot(row.record);
+      if (!approval.exists() || approval.data().status !== 'approved' || approval.data().approvedBy === input.actorUid
+          || Object.entries(expected).some(([key,value]) => approval.data().snapshot[key] !== value))
+        throw new Error('Matching independent HR approval is required.');
+      approvals.set(row.id, approval.data());
       if (payroll.exists() || payslip.exists()) throw new Error('Payroll already finalized or requires reconciliation');
     }
     for (const {record,id,payroll,payslip} of rows) {
@@ -48,6 +55,13 @@ export async function finalizePayrollDraft(
         deductions: record.deductions, paye: record.paye, nssfEmployee: record.nssfEmployee,
         nssfEmployer: record.nssfEmployer, advanceDeduction: record.advanceDeduction,
         fineDeduction: record.fineDeduction, unpaidLeaveDeduction: record.unpaidLeaveDeduction,
+        approvalRevision: approvals.get(id).revision, hrApprovedBy: approvals.get(id).approvedBy,
+        snapshot: payrollSnapshot(record),
+        salaryExpenseUGX: record.baseSalary + record.bonuses - record.unpaidLeaveDeduction,
+        employerNssfExpenseUGX: record.nssfEmployer,
+        payePayableUGX: record.paye, nssfPayableUGX: record.nssfEmployee + record.nssfEmployer,
+        otherDeductionsPayableUGX: record.deductions - record.paye - record.nssfEmployee - record.unpaidLeaveDeduction,
+        netSalaryPayableUGX: record.netSalary, accountingReference: id,
         status: 'approved_unpaid'
       };
       tx.set(payroll, {...common, staff_name: record.staffName, branch_id: record.branchId,

@@ -28,4 +28,4 @@ jobs:
       - name: Install Firebase emulator tools
         run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
       - name: Authenticated payroll and advance rule denials
-        run: npx firebase emulators:exec --only firestore --project phase5-advance-rules "node scripts/phase5-advance-rules-emulator.mjs"
+        run: npx firebase emulators:exec --only firestore --project phase5-advance-rules "node --import tsx scripts/phase5-advance-rules-emulator.mjs"

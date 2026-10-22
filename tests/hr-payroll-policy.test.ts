@@ -7,3 +7,8 @@ test('reject invalid arithmetic and negative net', () => {
   assert.ok(validatePayrollDraft({baseSalary:100000,bonuses:0,deductions:120000,netSalary:-20000}));
   assert.ok(validatePayrollDraft({baseSalary:1.5,bonuses:0,deductions:0,netSalary:1.5}));
 });
+
+test('full payroll objects validate monetary fields without treating identity as money', () => {
+  const employee = {baseSalary:100000, bonuses:0, deductions:0, netSalary:100000, staffId:'employee', reviewed:true};
+  assert.equal(validatePayrollDraft(employee), null);
+});

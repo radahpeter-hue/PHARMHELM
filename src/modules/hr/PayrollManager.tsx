@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
 import { deduplicateStaff } from '../../utils/deduplicateStaff';
 import { validatePayrollDraft } from '../../services/hrPayrollPolicy';
+import { attestPayroll } from '../../services/hrPayrollApproval';
 import { finalizePayrollDraft } from '../../services/hrPayrollFinalization';
 import { calculateUgandaResidentPaye, calculateUgandaNssf } from '../../services/ugandaPayrollTaxPolicy';
 
@@ -353,7 +354,7 @@ export const PayrollManager: React.FC = () => {
     toast.success(`Payslip evaluated for ${reviewingRecord.staffName}`);
   };
 
-  const handleFinalizeAndCommit = async () => {
+  const handleFinalizeAndCommit = async (hrAttestation = false) => {
     if (!profile?.tenantId || !profile?.uid || isGenerating) return;
     if (!draftPayroll.length || draftPayroll.some(item => !item.reviewed) || fromDate.slice(0,7) !== toDate.slice(0,7)) {
       toast.error('Review all payroll drafts and select one calendar month.');
@@ -361,7 +362,7 @@ export const PayrollManager: React.FC = () => {
     }
     setIsGenerating(true);
     try {
-      await finalizePayrollDraft({
+      await (hrAttestation ? attestPayroll : finalizePayrollDraft)({
         tenantId: profile.tenantId,
         actorUid: profile.uid,
         records: draftPayroll.map(item => ({
@@ -375,7 +376,7 @@ export const PayrollManager: React.FC = () => {
           unpaidLeaveDeduction: item.unpaidLeaveDeduction || 0, reviewed: item.reviewed
         }))
       });
-      toast.success('Payroll finalized as unpaid; no cash balance changed.');
+      toast.success(hrAttestation ? 'HR approval saved. A different Finance operator must finalize the matching draft.' : 'Salary obligations recognized as unpaid; no cash balance changed.');
       setDraftPayroll([]);
       setIsDraftMode(false);
     } catch (error) {
@@ -750,12 +751,16 @@ export const PayrollManager: React.FC = () => {
               >
                 <Download size={14} /> Export Draft CSV
               </button>
+              <button onClick={() => handleFinalizeAndCommit(true)} disabled={isGenerating}
+                className="bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold">
+                Record HR approval
+              </button>
               <button 
-                onClick={handleFinalizeAndCommit}
+                onClick={() => handleFinalizeAndCommit(false)}
                 disabled={isGenerating}
                 className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors flex items-center gap-1.5"
               >
-                <Save size={14} /> Commit & Disburse payslips
+                <Save size={14} /> Finalize unpaid payroll
               </button>
             </div>
           </div>
