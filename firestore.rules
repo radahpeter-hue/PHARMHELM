@@ -510,7 +510,7 @@ service cloud.firestore {
     function isProtectedFinanceCollection(collectionName) {
       return collectionName in [
         'finance_v2_transfers','finance_v2_events','finance_v2_account_movements','finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
-        'credit_receivables', 'supplier_payables', 'banking_records',
+        'credit_receivables', 'supplier_payables', 'banking_records', 'welfare_records', 'staff',
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
         'petty_cash_ledger', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
         'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
@@ -664,24 +664,17 @@ service cloud.firestore {
         && after.outstandingUGX == before.outstandingUGX - event.amountUGX
         && after.paidUGX == before.paidUGX + event.amountUGX && after.updatedAt == request.time;
     }
-    function salaryDisbursement(id, d) {
-      let p = get(/databases/$(database)/documents/payroll/$(d.payrollId)).data;
-      let before = get(/databases/$(database)/documents/payroll/$(d.payrollId)/state/current).data;
-      let after = getAfter(/databases/$(database)/documents/payroll/$(d.payrollId)/state/current).data;
+    function disbursementFunding(id, d) {
       let account = get(/databases/$(database)/documents/finance_payment_accounts/$(d.tenantId + '_' + d.accountId)).data;
       let accountAfter = getAfter(/databases/$(database)/documents/finance_payment_accounts/$(d.tenantId + '_' + d.accountId)).data;
       return isFinance() && getUserData().tenantId == d.tenantId && isAssignedToBranch(d.branchId) && isAssignedToBranch(account.branchId)
         && get(/databases/$(database)/documents/system_settings/$(d.tenantId)).data.phase5SalarySettlementEnabled == true
-        && d.sourceType == 'SALARY_SETTLEMENT' && d.sourceId == d.payrollId && id == 'salary_' + d.payrollId + '_' + d.requestId
         && d.eventId == id && d.actorUid == request.auth.uid && d.createdAt == request.time
         && d.currency == 'UGX' && d.amountUGX is int && d.amountUGX > 0 && d.chargeUGX is int && d.chargeUGX >= 0
         && d.amountUGX + d.chargeUGX <= 9007199254740991 && d.expenseUGX == d.chargeUGX
         && d.externalReference.matches('^[A-Z0-9_.-]{3,100}$')
         && d.recipientReference is string && d.recipientReference.size() >= 3 && d.recipientReference.size() <= 150
         && d.paymentDate.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
-        && p.tenantId == d.tenantId && p.branch_id == d.branchId && p.status == 'approved_unpaid'
-        && before.voided == false && d.amountUGX <= before.outstandingUGX && after.lastAction == id
-        && after.outstandingUGX == before.outstandingUGX - d.amountUGX && after.paidUGX == before.paidUGX + d.amountUGX
         && account.controlVersion == 2 && account.tenantId == d.tenantId && account.initialized == true && account.active == true
         && account.salaryEligible == true && account.currency == 'UGX'
         && (account.branchId == d.branchId || (account.branchId == 'HQ' && account.salaryBranchIds.hasAny([d.branchId])))
@@ -691,10 +684,104 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/finance_v2_account_movements/$(id + '_principal')).data.eventId == id
         && (d.chargeUGX == 0 || getAfter(/databases/$(database)/documents/finance_v2_account_movements/$(id + '_charge')).data.eventId == id);
     }
+    function salaryDisbursement(id, d) {
+      let p = get(/databases/$(database)/documents/payroll/$(d.payrollId)).data;
+      let before = get(/databases/$(database)/documents/payroll/$(d.payrollId)/state/current).data;
+      let after = getAfter(/databases/$(database)/documents/payroll/$(d.payrollId)/state/current).data;
+      return d.sourceType == 'SALARY_SETTLEMENT' && d.sourceId == d.payrollId && id == 'salary_' + d.payrollId + '_' + d.requestId
+        && p.tenantId == d.tenantId && p.branch_id == d.branchId && p.status == 'approved_unpaid'
+        && p.hrApprovedBy != request.auth.uid && p.staffId != request.auth.uid
+        && before.voided == false && d.amountUGX <= before.outstandingUGX && after.lastAction == id
+        && after.outstandingUGX == before.outstandingUGX - d.amountUGX && after.paidUGX == before.paidUGX + d.amountUGX;
+    }
+    function welfareScope(d) {
+      return getUserData().tenantId == d.tenantId && ((isFinance() || isHR()) && isAssignedToBranch(d.branchId) || d.staffId == request.auth.uid);
+    }
+    function welfareRecognition(id,d) {
+      let r = get(/databases/$(database)/documents/welfare_records/$(d.sourceId)).data;
+      let approval = get(/databases/$(database)/documents/welfare_records/$(d.sourceId)/approval/current).data;
+      let state = getAfter(/databases/$(database)/documents/welfare_records/$(d.sourceId)/state/current).data;
+      return isFinance() && welfareScope(r) && r.kind == 'BENEFIT' && r.actorUid != request.auth.uid && r.staffId != request.auth.uid
+        && approval.snapshot == r && approval.decision == 'approved' && approval.approvedBy != request.auth.uid
+        && !exists(/databases/$(database)/documents/welfare_records/$(d.sourceId)/state/current)
+        && d.sourceType == 'WELFARE_RECOGNITION' && id == 'welfare_accrual_' + d.sourceId && d.eventId == id
+        && d.tenantId == r.tenantId && d.branchId == r.branchId && d.actorUid == request.auth.uid && d.createdAt == request.time
+        && d.amountUGX == r.amountUGX && d.expenseUGX == r.amountUGX && d.payableUGX == r.amountUGX
+        && state.principalUGX == r.amountUGX && state.outstandingUGX == r.amountUGX && state.settledUGX == 0 && state.lastAction == id;
+    }
+    function welfareDisbursement(id,d) {
+      return d.sourceId == d.obligationId && (d.kind == 'ADVANCE'
+        ? advanceDisbursement(id,d) : d.kind == 'BENEFIT' && benefitDisbursement(id,d));
+    }
+    function advanceDisbursement(id,d) {
+      let r = get(/databases/$(database)/documents/advance_requests/$(d.obligationId)).data;
+      let employee = get(/databases/$(database)/documents/staff/$(r.staffId)).data;
+      let state = getAfter(/databases/$(database)/documents/advance_requests/$(d.obligationId)/state/current).data;
+      return d.sourceType == 'ADVANCE_DISBURSEMENT' && id == 'advance_' + d.obligationId + '_' + d.requestId
+        && r.tenantId == d.tenantId && employee.tenantId == d.tenantId && employee.branch_id == d.branchId && r.staffId == r.staff_id
+        && r.status == 'Approved' && r.hr_approval_status == 'Approved' && r.ceo_approval_status == 'Approved'
+        && r.hr_reviewed_by != r.ceo_reviewed_by && r.hr_reviewed_by != request.auth.uid && r.ceo_reviewed_by != request.auth.uid && r.staffId != request.auth.uid
+        && r.amount_requested == d.amountUGX && r.amount == d.amountUGX && r.amountRequested == d.amountUGX
+        && d.receivableUGX == d.amountUGX
+        && !exists(/databases/$(database)/documents/advance_requests/$(d.obligationId)/state/current)
+        && state.staffId == r.staffId && state.principalUGX == d.amountUGX && state.outstandingUGX == d.amountUGX && state.recoveredUGX == 0
+        && state.disbursementEventId == id && state.lastAction == id
+        && getAfter(/databases/$(database)/documents/advance_requests/$(d.obligationId)/settlements/$(d.requestId)).data == d;
+    }
+    function benefitDisbursement(id,d) {
+      let r = get(/databases/$(database)/documents/welfare_records/$(d.obligationId)).data;
+      let before = get(/databases/$(database)/documents/welfare_records/$(d.obligationId)/state/current).data;
+      let after = getAfter(/databases/$(database)/documents/welfare_records/$(d.obligationId)/state/current).data;
+      return d.sourceType == 'WELFARE_SETTLEMENT' && id == 'welfare_' + d.obligationId + '_' + d.requestId
+        && r.tenantId == d.tenantId && r.branchId == d.branchId && r.staffId != request.auth.uid && r.actorUid != request.auth.uid
+        && get(/databases/$(database)/documents/welfare_records/$(d.obligationId)/approval/current).data.approvedBy != request.auth.uid && d.receivableUGX == 0
+        && d.amountUGX <= before.outstandingUGX && after.outstandingUGX == before.outstandingUGX - d.amountUGX
+        && after.settledUGX == before.settledUGX + d.amountUGX && after.lastAction == id
+        && getAfter(/databases/$(database)/documents/welfare_records/$(d.obligationId)/settlements/$(d.requestId)).data == d;
+    }
+    match /{welfareCollection}/{sourceId}/settlements/{requestId} {
+      allow read: if welfareCollection in ['advance_requests','welfare_records'] && welfareScope(get(/databases/$(database)/documents/$(welfareCollection)/$(sourceId)/state/current).data);
+      allow create: if welfareCollection in ['advance_requests','welfare_records'] && isFinance()
+        && request.resource.data.kind == (welfareCollection == 'advance_requests' ? 'ADVANCE' : 'BENEFIT')
+        && request.resource.data.obligationId == sourceId && request.resource.data.requestId == requestId
+        && !exists(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId))
+        && getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId)).data == request.resource.data
+        && getAfter(/databases/$(database)/documents/finance_payment_accounts/$(request.resource.data.tenantId + '_' + request.resource.data.accountId)/payment_references/$(request.resource.data.externalReference)).data.eventId == request.resource.data.eventId;
+      allow update, delete: if false;
+    }
+    match /{welfareCollection}/{sourceId}/state/{stateId} {
+      allow read: if welfareCollection in ['advance_requests','welfare_records'] && (resource == null ? (isHR() || isFinance()) : welfareScope(resource.data));
+      allow create: if welfareCollection in ['advance_requests','welfare_records'] && stateId == 'current' && isFinance()
+        && getUserData().tenantId == request.resource.data.tenantId && isAssignedToBranch(request.resource.data.branchId)
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.tenantId == getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction)).data.tenantId
+        && request.resource.data.branchId == getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction)).data.branchId
+        && (welfareCollection == 'advance_requests'
+          ? getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction)).data.sourceType == 'ADVANCE_DISBURSEMENT'
+            && getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction)).data.obligationId == sourceId
+          : getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction)).data.sourceType == 'WELFARE_RECOGNITION'
+            && getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction)).data.sourceId == sourceId
+            && request.resource.data.staffId == get(/databases/$(database)/documents/welfare_records/$(sourceId)).data.staffId)
+        && !exists(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction));
+      allow update: if welfareCollection in ['advance_requests','welfare_records'] && stateId == 'current' && isFinance() && welfareScope(resource.data)
+        && (welfareCollection == 'advance_requests' ? advanceRecoveryState(sourceId,resource.data,request.resource.data)
+          : benefitState(sourceId,resource.data,request.resource.data));
+      allow delete: if false;
+    }
+    function benefitState(id,before,after) {
+      let e = getAfter(/databases/$(database)/documents/finance_v2_events/$(after.lastAction)).data;
+      return after.diff(before).affectedKeys().hasOnly(['outstandingUGX','settledUGX','lastAction','updatedAt'])
+        && !exists(/databases/$(database)/documents/finance_v2_events/$(after.lastAction))
+        && e.sourceType == 'WELFARE_SETTLEMENT' && e.obligationId == id && e.amountUGX > 0 && e.amountUGX <= before.outstandingUGX
+        && after.outstandingUGX == before.outstandingUGX - e.amountUGX && after.settledUGX == before.settledUGX + e.amountUGX && after.updatedAt == request.time;
+    }
     match /finance_v2_events/{id} {
       allow get: if isFinance() && (resource == null || (getUserData().tenantId == resource.data.tenantId && isAssignedToBranch(resource.data.branchId)));
       allow list: if isFinance() && getUserData().tenantId == resource.data.tenantId && isAssignedToBranch(resource.data.branchId);
-      allow create: if request.resource.data.sourceType == 'ACCOUNT_OPENING' ? accountOpening(id,request.resource.data) : salaryDisbursement(id, request.resource.data);
+      allow create: if request.resource.data.sourceType == 'ACCOUNT_OPENING' ? accountOpening(id,request.resource.data)
+        : request.resource.data.sourceType == 'WELFARE_RECOGNITION' ? welfareRecognition(id,request.resource.data)
+        : disbursementFunding(id,request.resource.data) && (request.resource.data.sourceType == 'SALARY_SETTLEMENT'
+          ? salaryDisbursement(id,request.resource.data) : welfareDisbursement(id,request.resource.data));
       allow update, delete: if false;
     }
     match /finance_v2_account_movements/{id} {
@@ -1089,6 +1176,7 @@ service cloud.firestore {
       // activation/support updates but cannot silently change the HR-assigned role realm.
       allow update: if atomicWelfareBalance(staffId);
       allow update: if isAuthenticated()
+        && isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
         && (!('employee_id' in resource.data) || request.resource.data.employee_id == resource.data.employee_id)
         && (!('staff_code' in resource.data) || request.resource.data.staff_code == resource.data.staff_code)
         && (
@@ -1106,7 +1194,7 @@ service cloud.firestore {
             'legacyStaffId', 'roleRealmId'
           ]))
       );
-      allow delete: if isAdmin() || isIT();
+      allow delete: if (isAdmin() || isIT()) && isTenantMember(resource.data.tenantId);
     }
 
     match /leave_requests/{requestId} {
@@ -1121,10 +1209,49 @@ service cloud.firestore {
       return isAuthenticated() && getUserData().tenantId == data.tenantId
         && isAssignedToBranch(data.snapshot.branchId);
     }
+    function verifiedAdvance(tenantId,d) {
+      let state = get(/databases/$(database)/documents/advance_requests/$(d.advanceId)/state/current).data;
+      let event = get(/databases/$(database)/documents/finance_v2_events/$(state.disbursementEventId)).data;
+      return d.advanceId is string && state.tenantId == tenantId && state.staffId == d.staffId && state.branchId == d.branchId
+        && state.outstandingUGX >= d.advanceDeduction && event.sourceType == 'ADVANCE_DISBURSEMENT'
+        && event.obligationId == d.advanceId && event.tenantId == tenantId && event.amountUGX == state.principalUGX;
+    }
+    function payrollAdvanceRecovery(id,data) {
+      let d = data.snapshot;
+      let before = get(/databases/$(database)/documents/advance_requests/$(d.advanceId)/state/current).data;
+      let after = getAfter(/databases/$(database)/documents/advance_requests/$(d.advanceId)/state/current).data;
+      let recovery = getAfter(/databases/$(database)/documents/advance_requests/$(d.advanceId)/recoveries/$(id)).data;
+      return verifiedAdvance(data.tenantId,d) && data.advanceId == d.advanceId && data.advanceRecoveryUGX == d.advanceDeduction
+        && after.outstandingUGX == before.outstandingUGX - d.advanceDeduction && after.recoveredUGX == before.recoveredUGX + d.advanceDeduction
+        && after.lastAction == id && recovery.payrollId == id && recovery.deltaUGX == d.advanceDeduction;
+    }
+    function advanceRecoveryState(id,before,after) {
+      let recovery = getAfter(/databases/$(database)/documents/advance_requests/$(id)/recoveries/$(after.lastAction)).data;
+      return after.diff(before).affectedKeys().hasOnly(['outstandingUGX','recoveredUGX','lastAction','updatedAt'])
+        && !exists(/databases/$(database)/documents/advance_requests/$(id)/recoveries/$(after.lastAction))
+        && after.updatedAt == request.time && recovery.actorUid == request.auth.uid
+        && after.outstandingUGX == before.outstandingUGX - recovery.deltaUGX && after.recoveredUGX == before.recoveredUGX + recovery.deltaUGX
+        && after.outstandingUGX >= 0 && after.recoveredUGX >= 0 && after.outstandingUGX + after.recoveredUGX == before.principalUGX;
+    }
+    match /advance_requests/{advanceId}/recoveries/{recoveryId} {
+      function validRecovery(d) {
+        let p = getAfter(/databases/$(database)/documents/payroll/$(d.payrollId)).data;
+        let state = getAfter(/databases/$(database)/documents/advance_requests/$(advanceId)/state/current).data;
+        return isFinance() && welfareScope(state) && p.tenantId == d.tenantId && p.staffId == d.staffId && p.branch_id == d.branchId
+          && p.snapshot.advanceId == advanceId && d.actorUid == request.auth.uid && d.createdAt == request.time && state.lastAction == recoveryId
+          && (d.deltaUGX > 0 ? (recoveryId == d.payrollId && d.deltaUGX == p.advanceDeduction && !exists(/databases/$(database)/documents/payroll/$(d.payrollId)))
+            : d.deltaUGX == -p.advanceDeduction && recoveryId == 'void_' + d.payrollId
+              && !exists(/databases/$(database)/documents/payroll/$(d.payrollId)/corrections/void)
+              && getAfter(/databases/$(database)/documents/payroll/$(d.payrollId)/corrections/void).data.postedBy == request.auth.uid);
+      }
+      allow read: if welfareScope(resource.data);
+      allow create: if validRecovery(request.resource.data);
+      allow update, delete: if false;
+    }
     function validPayrollSnapshot(data) {
       let d = data.snapshot;
       let employee = get(/databases/$(database)/documents/staff/$(d.staffId)).data;
-      return d.keys().hasOnly(['staffId','staffName','branchId','period','baseSalary','bonuses','deductions','netSalary','paye','nssfEmployee','nssfEmployer','advanceDeduction','fineDeduction','unpaidLeaveDeduction','otherDeductions'])
+      return d.keys().hasOnly(['staffId','staffName','branchId','period','baseSalary','bonuses','deductions','netSalary','paye','nssfEmployee','nssfEmployer','advanceDeduction','advanceId','fineDeduction','unpaidLeaveDeduction','otherDeductions'])
         && d.period.matches('^[0-9]{4}-(0[1-9]|1[0-2])$')
         && employee.tenantId == data.tenantId && employee.branch_id == d.branchId
         && d.staffName is string && d.staffName.size() > 0
@@ -1137,10 +1264,10 @@ service cloud.firestore {
         && d.fineDeduction is int && d.fineDeduction >= 0
         && d.unpaidLeaveDeduction is int && d.unpaidLeaveDeduction >= 0
         && d.otherDeductions is int && d.otherDeductions >= 0
-        && d.advanceDeduction == 0
+        && d.advanceDeduction is int && d.advanceDeduction >= 0 && (d.advanceDeduction == 0 || verifiedAdvance(data.tenantId,d))
         && d.baseSalary + d.bonuses <= 9007199254740991
         && d.baseSalary + d.bonuses + d.nssfEmployer <= 9007199254740991
-        && d.paye + d.nssfEmployee + d.fineDeduction + d.unpaidLeaveDeduction + d.otherDeductions == d.deductions
+        && d.paye + d.nssfEmployee + d.advanceDeduction + d.fineDeduction + d.unpaidLeaveDeduction + d.otherDeductions == d.deductions
         && d.baseSalary + d.bonuses == d.netSalary + d.deductions;
     }
     match /payroll_approvals/{id} {
@@ -1182,7 +1309,8 @@ service cloud.firestore {
         && data.bonuses == d.bonuses && data.deductions == d.deductions && data.netSalary == d.netSalary && data.net_salary == d.netSalary
         && data.paye == d.paye && data.nssfEmployee == d.nssfEmployee && data.nssfEmployer == d.nssfEmployer
         && data.nssf_employee == d.nssfEmployee && data.nssf_employer == d.nssfEmployer
-        && data.advanceDeduction == 0 && data.advance_deduction == 0
+        && data.advanceDeduction == d.advanceDeduction && data.advance_deduction == d.advanceDeduction
+        && (d.advanceDeduction == 0 || payrollAdvanceRecovery(id,data))
         && data.fineDeduction == d.fineDeduction && data.fine_deduction == d.fineDeduction
         && data.unpaidLeaveDeduction == d.unpaidLeaveDeduction
         && data.salaryExpenseUGX == d.baseSalary + d.bonuses - d.unpaidLeaveDeduction
@@ -1244,7 +1372,9 @@ service cloud.firestore {
           && data.reversesPayrollId == id && before.paidUGX == 0 && before.voided == false && after.voided == true
           && data.salaryExpenseUGX == -payroll.salaryExpenseUGX && data.employerNssfExpenseUGX == -payroll.employerNssfExpenseUGX
           && data.payePayableUGX == -payroll.payePayableUGX && data.nssfPayableUGX == -payroll.nssfPayableUGX
-          && data.otherDeductionsPayableUGX == -payroll.otherDeductionsPayableUGX && data.netSalaryPayableUGX == -payroll.netSalaryPayableUGX;
+          && data.otherDeductionsPayableUGX == -payroll.otherDeductionsPayableUGX && data.netSalaryPayableUGX == -payroll.netSalaryPayableUGX
+          && (payroll.advanceDeduction == 0 || (getAfter(/databases/$(database)/documents/advance_requests/$(payroll.advanceId)/recoveries/$('void_' + id)).data.deltaUGX == -payroll.advanceDeduction
+            && getAfter(/databases/$(database)/documents/advance_requests/$(payroll.advanceId)/state/current).data.lastAction == 'void_' + id));
       }
       allow get: if isAuthenticated() && (resource == null || (payrollScope(resource.data) && (isHR() || isFinance())));
       allow list: if payrollScope(resource.data) && (isHR() || isFinance());
@@ -1282,10 +1412,13 @@ service cloud.firestore {
     }
 
     match /advance_requests/{requestId} {
-      allow read: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isHR() || isFinance());
+      allow get: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || ((isHR() || isFinance())
+        && isAssignedToBranch(get(/databases/$(database)/documents/staff/$(resource.data.staffId)).data.branch_id)));
+      allow list: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || ((isHR() || isFinance()) && isAssignedToBranch(resource.data.branchId)));
       allow create: if isAuthenticated()
         && isOwner(request.resource.data.staffId)
         && request.resource.data.staff_id == request.resource.data.staffId
+        && request.resource.data.branchId == get(/databases/$(database)/documents/staff/$(request.resource.data.staffId)).data.branch_id
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.status == 'Pending'
         && request.resource.data.hr_approval_status == 'Pending'
@@ -1300,6 +1433,7 @@ service cloud.firestore {
       // Approvals modify only decision fields, never funds or request identity.
       // The final status must follow the two independently recorded decisions.
       allow update: if isTenantMember(resource.data.tenantId)
+        && isAssignedToBranch(get(/databases/$(database)/documents/staff/$(resource.data.staffId)).data.branch_id)
         && request.resource.data.tenantId == resource.data.tenantId
         && resource.data.status == 'Pending'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -3344,10 +3478,28 @@ service cloud.firestore {
     }
 
     match /welfare_records/{recordId} {
-      allow read: if isTenantMember(resource.data.tenantId);
-      allow create: if isHR() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isHR() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isHR() && isTenantMember(resource.data.tenantId);
+      allow get: if (isHR() || isFinance()) && resource == null;
+      allow read: if welfareScope(resource.data);
+      allow create: if isHR() && welfareScope(request.resource.data)
+        && request.resource.data.keys().hasOnly(['id','tenantId','staffId','branchId','amountUGX','reason','actorUid','kind','status','createdAt'])
+        && recordId == request.resource.data.id && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.staffId != request.auth.uid && request.resource.data.kind == 'BENEFIT' && request.resource.data.status == 'Requested'
+        && request.resource.data.amountUGX is int && request.resource.data.amountUGX > 0 && request.resource.data.amountUGX <= 9007199254740991
+        && request.resource.data.createdAt == request.time && request.resource.data.reason is string && request.resource.data.reason.size() >= 5
+        && get(/databases/$(database)/documents/staff/$(request.resource.data.staffId)).data.tenantId == request.resource.data.tenantId
+        && get(/databases/$(database)/documents/staff/$(request.resource.data.staffId)).data.branch_id == request.resource.data.branchId;
+      allow update, delete: if false;
+      match /approval/{approvalId} {
+        allow read: if resource == null ? (isHR() || isFinance()) : welfareScope(resource.data.snapshot);
+        allow create: if approvalId == 'current' && isCEO() && getUserData().tenantId == request.resource.data.tenantId
+          && request.resource.data.snapshot == get(/databases/$(database)/documents/welfare_records/$(recordId)).data
+          && request.resource.data.snapshot.actorUid != request.auth.uid && request.resource.data.snapshot.staffId != request.auth.uid
+          && request.resource.data.tenantId == request.resource.data.snapshot.tenantId && request.resource.data.branchId == request.resource.data.snapshot.branchId
+          && request.resource.data.approvedBy == request.auth.uid && request.resource.data.approvedAt == request.time
+          && request.resource.data.reason is string && request.resource.data.reason.size() >= 5
+          && request.resource.data.decision in ['approved','rejected'];
+        allow update, delete: if false;
+      }
     }
 
     // Stock In physical receipt and its movement intent are committed together.

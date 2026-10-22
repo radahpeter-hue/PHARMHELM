@@ -56,6 +56,7 @@ const AdvanceTab: React.FC = () => {
       const newRequest: Omit<AdvanceRequest, 'id'> = {
         tenantId: profile.tenantId,
         staffId: profile.uid,
+        branchId: profile.branch_id,
         staff_id: profile.uid,
         staff_name: profile.full_name || profile.displayName || 'Unknown',
         amount: amount,

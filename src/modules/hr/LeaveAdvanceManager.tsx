@@ -19,6 +19,9 @@ import { LeaveRequest, AdvanceRequest, Staff } from '../../types';
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import {WelfareFinancePanel} from './components/WelfareFinancePanel';
+import {collection,onSnapshot,query,where} from 'firebase/firestore';
+import {db} from '../../firebase';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -48,7 +51,8 @@ export const LeaveAdvanceManager: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId) {
       const unsubLeave = firestoreService.subscribeToCollection<LeaveRequest>('leave_requests', profile.tenantId, setLeaveRequests);
-      const unsubAdvance = firestoreService.subscribeToCollection<AdvanceRequest>('advance_requests', profile.tenantId, setAdvanceRequests);
+      const ids=[...new Set([...(profile.assigned_branches||[]),profile.branch_id,profile.default_branch_id].filter(Boolean))].slice(0,30);
+      const unsubAdvance = ids.length ? onSnapshot(query(collection(db,'advance_requests'),where('tenantId','==',profile.tenantId),where('branchId','in',ids)),s=>setAdvanceRequests(s.docs.map(d=>({id:d.id,...d.data()} as AdvanceRequest))),()=>toast.error('Advance register access denied. Legacy requests can be reviewed by request ID.')) : ()=>{};
       const unsubStaff = firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setStaff);
 
       return () => {
@@ -75,6 +79,7 @@ export const LeaveAdvanceManager: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {profile&&<WelfareFinancePanel profile={profile}/>}
       {/* DATE FILTER BAR */}
       <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-xl flex flex-col md:flex-row items-stretch md:items-center justify-between gap-6">
         <div className="space-y-1">

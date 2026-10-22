@@ -1299,6 +1299,7 @@ export interface AdvanceRequest {
   id: string;
   tenantId: string;
   staffId: string;
+  branchId?: string;
   staff_id?: string;
   staff_name?: string;
   amount: number;

@@ -24,11 +24,25 @@ export async function voidUnpaidPayroll(input: {payrollId: string; actorUid: str
         || position.data().paidUGX !== 0 || position.data().voided || approval.data().approvedBy === input.actorUid)
       throw new Error('Independent HR approval and a wholly unpaid obligation are required.');
     const p = payroll.data();
+    let advancePosition:any;
+    if(p.advanceDeduction > 0) {
+      const advance=await tx.get(doc(connection,'advance_requests',p.advanceId,'state','current'));
+      if(!advance.exists() || advance.data().recoveredUGX < p.advanceDeduction)throw new Error('Advance recovery reversal needs reconciliation.');
+      advancePosition=advance.data();
+    }
     tx.set(reversal, {tenantId:p.tenantId, snapshot:p.snapshot, reversesPayrollId:input.payrollId,
       postedBy:input.actorUid, postedAt:serverTimestamp(), reason:approval.data().reason,
       salaryExpenseUGX:-p.salaryExpenseUGX, employerNssfExpenseUGX:-p.employerNssfExpenseUGX,
       payePayableUGX:-p.payePayableUGX,nssfPayableUGX:-p.nssfPayableUGX,
       otherDeductionsPayableUGX:-p.otherDeductionsPayableUGX,netSalaryPayableUGX:-p.netSalaryPayableUGX});
     tx.update(state,{outstandingUGX:0,voided:true,lastAction:'void',updatedAt:serverTimestamp()});
+    if(advancePosition) {
+      const root=doc(connection,'advance_requests',p.advanceId);
+      const action='void_'+input.payrollId;
+      tx.set(doc(root,'recoveries',action),{tenantId:p.tenantId,branchId:p.branch_id,staffId:p.staffId,payrollId:input.payrollId,
+        deltaUGX:-p.advanceDeduction,actorUid:input.actorUid,createdAt:serverTimestamp()});
+      tx.update(doc(root,'state','current'),{outstandingUGX:advancePosition.outstandingUGX+p.advanceDeduction,
+        recoveredUGX:advancePosition.recoveredUGX-p.advanceDeduction,lastAction:action,updatedAt:serverTimestamp()});
+    }
   });
 }

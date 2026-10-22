@@ -10,6 +10,7 @@ export function payrollSnapshot(record: FinalPayrollInput) {
     netSalary: record.netSalary, paye: record.paye, nssfEmployee: record.nssfEmployee,
     nssfEmployer: record.nssfEmployer, advanceDeduction: record.advanceDeduction,
     fineDeduction: record.fineDeduction, unpaidLeaveDeduction: record.unpaidLeaveDeduction,
+    ...(record.advanceDeduction > 0 ? {advanceId: record.advanceId} : {}),
     otherDeductions: record.deductions - record.paye - record.nssfEmployee - record.advanceDeduction
       - record.fineDeduction - record.unpaidLeaveDeduction
   };
@@ -17,8 +18,8 @@ export function payrollSnapshot(record: FinalPayrollInput) {
   if (issue) throw new Error(issue);
   if (Object.entries(value).some(([key, amount]) => typeof amount === 'number' && (!Number.isSafeInteger(amount) || amount < 0)))
     throw new Error('Invalid payroll component');
-  // Fail closed until verified advance principal can be recovered atomically.
-  if (value.advanceDeduction !== 0) throw new Error('Advance recovery requires a certified disbursement and receivable posting.');
+  if (value.advanceDeduction > 0 && !/^[A-Za-z0-9_-]{1,150}$/.test(value.advanceId || ''))
+    throw new Error('Advance recovery requires a certified disbursement and receivable posting reference.');
   return value;
 }
 

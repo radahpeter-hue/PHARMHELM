@@ -16,6 +16,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { approvedPayableHours } from '../../services/hrPayrollAttendancePolicy';
 import { SalarySettlementPanel } from './components/SalarySettlementPanel';
+import {WelfareFinancePanel} from './components/WelfareFinancePanel';
 import { requestPayrollVoid, voidUnpaidPayroll } from '../../services/hrPayrollCorrection';
 import { attestPayroll } from '../../services/hrPayrollApproval';
 import { finalizePayrollDraft } from '../../services/hrPayrollFinalization';
@@ -34,6 +35,7 @@ interface DraftPayrollRecord {
   bonusNotes: string;
   deductions: number;
   advanceDeduction: number;
+  advanceId?: string;
   fineDeduction: number;
   nssfEmployee: number;
   nssfEmployer: number;
@@ -57,7 +59,6 @@ export const PayrollManager: React.FC = () => {
   // Payroll tax processing is controlled by tenant settings, not subscription tier.
   const [staff, setStaff] = useState<Staff[]>([]);
   const [payroll, setPayroll] = useState<any[]>([]);
-  const [advances, setAdvances] = useState<AdvanceRequest[]>([]);
   const [fines, setFines] = useState<TrafficFineLog[]>([]);
   const [attendance, setAttendance] = useState<any[]>([]);
   const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
@@ -96,6 +97,7 @@ export const PayrollManager: React.FC = () => {
   const [editBonus, setEditBonus] = useState(0);
   const [editBonusNotes, setEditBonusNotes] = useState('');
   const [editAdvanceDeduction, setEditAdvanceDeduction] = useState(0);
+  const [editAdvanceId,setEditAdvanceId] = useState('');
   const [editFineDeduction, setEditFineDeduction] = useState(0);
   const [editPAYE, setEditPAYE] = useState(0);
   const [editNSSFEmployee, setEditNSSFEmployee] = useState(0);
@@ -104,7 +106,6 @@ export const PayrollManager: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId) {
       firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setStaff);
-      firestoreService.subscribeToCollection<AdvanceRequest>('advance_requests', profile.tenantId, setAdvances);
       firestoreService.subscribeToCollection<TrafficFineLog>('traffic_fine_logs', profile.tenantId, setFines);
       firestoreService.subscribeToCollection<any>('attendance', profile.tenantId, setAttendance);
       firestoreService.subscribeToCollection<any>('cme_sessions', profile.tenantId, setCmeSessions);
@@ -294,6 +295,7 @@ export const PayrollManager: React.FC = () => {
     setEditBonus(record.bonuses);
     setEditBonusNotes(record.bonusNotes);
     setEditAdvanceDeduction(record.advanceDeduction);
+    setEditAdvanceId(record.advanceId || '');
     setEditFineDeduction(record.fineDeduction);
     setEditPAYE(record.paye);
     setEditNSSFEmployee(record.nssfEmployee);
@@ -331,6 +333,7 @@ export const PayrollManager: React.FC = () => {
           bonuses: editBonus,
           bonusNotes: editBonusNotes,
           advanceDeduction: editAdvanceDeduction,
+          advanceId: editAdvanceId,
           fineDeduction: editFineDeduction,
           paye: approvedPaye,
           nssfEmployee: approvedNssfEmployee,
@@ -390,6 +393,7 @@ export const PayrollManager: React.FC = () => {
           netSalary: item.netSalary, paye: item.paye,
           nssfEmployee: item.nssfEmployee, nssfEmployer: item.nssfEmployer,
           advanceDeduction: item.advanceDeduction, fineDeduction: item.fineDeduction,
+          advanceId: item.advanceId,
           unpaidLeaveDeduction: item.unpaidLeaveDeduction || 0, reviewed: item.reviewed
         }))
       });
@@ -606,6 +610,7 @@ export const PayrollManager: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {profile&&<WelfareFinancePanel profile={profile}/>}
       {/* Financial Info Banner */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-slate-900 p-6 rounded-[32px] text-white shadow-xl shadow-slate-200 relative overflow-hidden group">
@@ -1216,6 +1221,7 @@ export const PayrollManager: React.FC = () => {
 
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-zinc-500 uppercase ml-1">Salary Advance Repayment</label>
+                    <label className="text-xs block">Verified advance request ID<input className="border rounded p-2 w-full" value={editAdvanceId} onChange={e=>setEditAdvanceId(e.target.value)} placeholder="Required for a recovery"/></label>
                     <input 
                       type="number"
                       className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-rose-600 text-xs outline-none focus:ring-2 focus:ring-indigo-500/20"

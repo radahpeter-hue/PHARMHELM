@@ -1,4 +1,5 @@
 import {requestAccountOpening,approveAccountOpening,postAccountOpening} from '../src/services/financeV2Opening.ts';
+import {requestWelfareBenefit,approveWelfareBenefit,recognizeWelfareBenefit,settleWelfare} from '../src/services/hrWelfareSettlement.ts';
 import { settleSalary, registerSalaryFundingAccount } from '../src/services/financeV2Disbursement.ts';
 import assert from 'node:assert/strict';
 import { requestPayrollVoid, voidUnpaidPayroll } from '../src/services/hrPayrollCorrection.ts';
@@ -17,6 +18,7 @@ const request = {
   tenantId: 'tenant-a',
   staffId: 'employee',
   staff_id: 'employee',
+  branchId: 'b1',
   amount: 100000,
   amountRequested: 100000,
   amount_requested: 100000,
@@ -232,7 +234,7 @@ try {
   await assertSucceeds(registerSalaryFundingAccount(newAccount,finance));
   await assert.rejects(registerSalaryFundingAccount({...newAccount,accountId:'forged_opening',openingBalanceUGX:100000},finance),/zero-opening/);
   const openingScope={tenantId:'tenant-a',accountId:'new_zero',actorUid:'finance'};
-  const openingRequest={...openingScope,amountUGX:200000,externalReference:'OPENING-001',evidence:'Controlled emulator bank reconciliation, no existing duplicate balance.'};
+  const openingRequest={...openingScope,amountUGX:300000,externalReference:'OPENING-001',evidence:'Controlled emulator bank reconciliation, no existing duplicate balance.'};
   await assert.rejects(postAccountOpening(openingScope,finance),/Independent/);
   const rawOpening=(omit='')=>{const eventId='opening_tenant-a_OPENING-001';const b=writeBatch(finance);b.set(doc(finance,'finance_v2_events',eventId),{...openingScope,eventId,sourceType:'ACCOUNT_OPENING',branchId:'b1',amountUGX:200000,chargeUGX:0,externalReference:'OPENING-001',beforeUGX:0,afterUGX:200000,expenseUGX:0,revenueUGX:0,currency:'UGX',createdAt:serverTimestamp()});b.update(doc(finance,'finance_payment_accounts','tenant-a_new_zero'),{balanceUGX:200000,lastPostingId:eventId,updatedAt:serverTimestamp()});if(omit!=='movement')b.set(doc(finance,'finance_v2_account_movements',eventId+'_principal'),{...openingScope,eventId,purpose:'PRINCIPAL',deltaUGX:200000,beforeUGX:0,afterUGX:200000,createdAt:serverTimestamp()});return b.commit();};
   await assertFails(rawOpening()); // No approval, despite a fully paired malicious browser batch.
@@ -246,10 +248,10 @@ try {
   await assertFails(rawOpening('movement'));
   const openingPosted=await assertSucceeds(postAccountOpening(openingScope,finance));
   assert.equal((await postAccountOpening(openingScope,finance)).replay,true);
-  assert.equal((await getDoc(doc(finance,'finance_payment_accounts','tenant-a_new_zero'))).data().balanceUGX,200000);
+  assert.equal((await getDoc(doc(finance,'finance_payment_accounts','tenant-a_new_zero'))).data().balanceUGX,300000);
   const openingEvent=(await getDoc(doc(finance,'finance_v2_events',openingPosted.eventId))).data();
   assert.equal(openingEvent.expenseUGX,0);assert.equal(openingEvent.revenueUGX,0);
-  assert.equal((await getDoc(doc(finance,'finance_v2_account_movements',openingPosted.eventId+'_principal'))).data().deltaUGX,200000);
+  assert.equal((await getDoc(doc(finance,'finance_v2_account_movements',openingPosted.eventId+'_principal'))).data().deltaUGX,300000);
   await assertFails(updateDoc(doc(ceo,'finance_payment_accounts','tenant-a_new_zero','opening','approval'),{reason:'rewrite approval'}));
   await assert.rejects(requestAccountOpening({...openingRequest,amountUGX:300000},finance),/unused/);
   await assertSucceeds(registerSalaryFundingAccount({...newAccount,accountId:'duplicate_opening'},finance));
@@ -285,6 +287,86 @@ try {
   assert.equal(reversed.salaryExpenseUGX + posted.salaryExpenseUGX, 0);
   await assertFails(updateDoc(doc(finance,'payroll',voidInput.payrollId,'corrections','void'),{reason:'erase evidence'}));
   console.log('Atomic payroll + payslip creates allowed together, single writes and mutation denied');
+  const welfarePayment={tenantId:'tenant-a',obligationId:'advance-test',kind:'ADVANCE',actorUid:'finance',accountId:'new_zero',requestId:'advance-first',amountUGX:100000,chargeUGX:1000,externalReference:'ADVANCE-001',recipientReference:'Verified employee bank account',paymentDate:'2026-10-22'};
+  await setDoc(doc(employee,'advance_requests','unpaid-advance'),request);
+  await updateDoc(doc(hr,'advance_requests','unpaid-advance'),{hr_approval_status:'Approved',hr_reviewed_by:'hr',hr_notes:'Reviewed'});
+  await updateDoc(doc(ceo,'advance_requests','unpaid-advance'),{ceo_approval_status:'Approved',ceo_reviewed_by:'ceo',ceo_notes:'Approved',status:'Approved'});
+  await assertFails(attestPayroll({tenantId:'tenant-a',actorUid:'hr',records:[{...snapshot,period:'2028-01',advanceId:'unpaid-advance',advanceDeduction:10000,deductions:110000,netSalary:390000,reviewed:true}]},hr));
+  const fundedBefore=(await getDoc(doc(finance,'finance_payment_accounts','tenant-a_new_zero'))).data().balanceUGX;
+  await assertFails(settleWelfare({...welfarePayment,actorUid:'wrong-branch'},wrongBranch));
+  await assertFails(settleWelfare({...welfarePayment,actorUid:'outsider'},outsider));
+  await assert.rejects(settleWelfare({...welfarePayment,actorUid:'ceo'},ceo),/distinct approvals/);
+  const disbursement=await assertSucceeds(settleWelfare(welfarePayment,finance));
+  assert.equal((await settleWelfare(welfarePayment,finance)).replay,true);
+  assert.equal((await getDoc(doc(finance,'finance_payment_accounts','tenant-a_new_zero'))).data().balanceUGX,fundedBefore-101000);
+  assert.equal((await getDoc(doc(finance,'finance_v2_events',disbursement.eventId))).data().receivableUGX,100000);
+  assert.equal((await getDoc(doc(finance,'finance_v2_events',disbursement.eventId))).data().expenseUGX,1000);
+  await assert.rejects(settleWelfare({...welfarePayment,requestId:'second',externalReference:'ADVANCE-002'},finance),/exactly one/);
+  await assertFails(updateDoc(doc(finance,'advance_requests','advance-test','state','current'),{outstandingUGX:0}));
+  async function rawWelfare(input,omit='') {
+    const coll=input.kind==='ADVANCE'?'advance_requests':'welfare_records';
+    const root=doc(finance,coll,input.obligationId),account=doc(finance,'finance_payment_accounts','tenant-a_new_zero');
+    const a=(await getDoc(account)).data(),s=(await getDoc(doc(root,'state','current'))).data();
+    const eventId=(input.kind==='ADVANCE'?'advance_':'welfare_')+input.obligationId+'_'+input.requestId;
+    const event={...input,eventId,sourceType:input.kind==='ADVANCE'?'ADVANCE_DISBURSEMENT':'WELFARE_SETTLEMENT',sourceId:input.obligationId,branchId:'b1',beforeUGX:a.balanceUGX,afterUGX:a.balanceUGX-input.amountUGX-input.chargeUGX,currency:'UGX',expenseUGX:input.chargeUGX,receivableUGX:input.kind==='ADVANCE'?input.amountUGX:0,createdAt:serverTimestamp()};
+    const b=writeBatch(finance);b.set(doc(finance,'finance_v2_events',eventId),event);b.set(doc(root,'settlements',input.requestId),event);
+    b.update(account,{balanceUGX:event.afterUGX,lastPostingId:eventId,updatedAt:serverTimestamp()});
+    if(omit!=='claim')b.set(doc(account,'payment_references',input.externalReference),{tenantId:input.tenantId,accountId:input.accountId,eventId,createdAt:serverTimestamp()});
+    if(omit!=='state') {
+      if(input.kind==='ADVANCE')b.set(doc(root,'state','current'),{tenantId:'tenant-a',branchId:'b1',staffId:'employee',principalUGX:input.amountUGX,outstandingUGX:input.amountUGX,recoveredUGX:0,disbursementEventId:eventId,lastAction:eventId,updatedAt:serverTimestamp()});
+      else b.update(doc(root,'state','current'),{outstandingUGX:s.outstandingUGX-input.amountUGX,settledUGX:s.settledUGX+input.amountUGX,lastAction:eventId,updatedAt:serverTimestamp()});
+    }
+    if(omit!=='principal')b.set(doc(finance,'finance_v2_account_movements',eventId+'_principal'),{tenantId:input.tenantId,eventId,accountId:input.accountId,actorUid:input.actorUid,purpose:'PRINCIPAL',deltaUGX:-input.amountUGX,beforeUGX:event.beforeUGX,afterUGX:event.beforeUGX-input.amountUGX,createdAt:serverTimestamp()});
+    if(input.chargeUGX)b.set(doc(finance,'finance_v2_account_movements',eventId+'_charge'),{tenantId:input.tenantId,eventId,accountId:input.accountId,actorUid:input.actorUid,purpose:'CHARGE',deltaUGX:-input.chargeUGX,beforeUGX:event.beforeUGX-input.amountUGX,afterUGX:event.afterUGX,createdAt:serverTimestamp()});
+    return b.commit();
+  }
+  await assertFails(rawWelfare({...welfarePayment,requestId:'raw-double',externalReference:'RAW-DOUBLE'}));
+  const recoveryRecord={...snapshot,period:'2028-03',advanceId:'advance-test',advanceDeduction:40000,deductions:140000,netSalary:360000,reviewed:true};
+  await attestPayroll({tenantId:'tenant-a',actorUid:'hr',records:[recoveryRecord]},hr);
+  await finalizePayrollDraft({tenantId:'tenant-a',actorUid:'finance',records:[recoveryRecord]},finance);
+  await finalizePayrollDraft({tenantId:'tenant-a',actorUid:'finance',records:[recoveryRecord]},finance);
+  assert.equal((await getDoc(doc(finance,'advance_requests','advance-test','state','current'))).data().outstandingUGX,60000);
+  const recoveryPayroll=(await getDoc(doc(finance,'payroll','tenant-a_employee_2028-03'))).data();
+  assert.equal(recoveryPayroll.otherDeductionsPayableUGX,0,'Advance recovery is an asset offset, not a new payable or expense');
+  const competingRecoveries=['2028-04','2028-05'].map(period=>({...recoveryRecord,period,advanceDeduction:50000,deductions:150000,netSalary:350000}));
+  await attestPayroll({tenantId:'tenant-a',actorUid:'hr',records:competingRecoveries},hr);
+  const recoveryRace=await Promise.allSettled(competingRecoveries.map(record=>finalizePayrollDraft({tenantId:'tenant-a',actorUid:'finance',records:[record]},finance)));
+  assert.equal(recoveryRace.filter(r=>r.status==='fulfilled').length,1,'Concurrent recoveries cannot exceed principal');
+  assert.equal((await getDoc(doc(finance,'advance_requests','advance-test','state','current'))).data().outstandingUGX,10000);
+  await requestPayrollVoid({payrollId:'tenant-a_employee_2028-03',actorUid:'hr',reason:'Controlled recovery reversal'},hr);
+  await voidUnpaidPayroll({payrollId:'tenant-a_employee_2028-03',actorUid:'finance'},finance);
+  assert.equal((await getDoc(doc(finance,'advance_requests','advance-test','state','current'))).data().outstandingUGX,50000);
+  assert.equal((await getDoc(doc(finance,'finance_payment_accounts','tenant-a_new_zero'))).data().balanceUGX,fundedBefore-101000,'Payroll recovery and reversal never change cash');
+  await assertFails(updateDoc(doc(hr,'advance_requests','advance-test','recoveries','tenant-a_employee_2028-03'),{deltaUGX:1}));
+  const benefit={tenantId:'tenant-a',id:'benefit-test',staffId:'employee',branchId:'b1',amountUGX:20000,reason:'Controlled non-repayable medical claim',actorUid:'hr'};
+  await requestWelfareBenefit(benefit,hr);
+  await assert.rejects(recognizeWelfareBenefit({id:benefit.id,actorUid:'finance'},finance),/approval/);
+  await approveWelfareBenefit({id:benefit.id,actorUid:'ceo',reason:'Verified eligible benefit claim'},ceo);
+  const bankBeforeBenefit=(await getDoc(doc(finance,'finance_payment_accounts','tenant-a_new_zero'))).data().balanceUGX;
+  await recognizeWelfareBenefit({id:benefit.id,actorUid:'finance'},finance);
+  await recognizeWelfareBenefit({id:benefit.id,actorUid:'finance'},finance);
+  assert.equal((await getDoc(doc(finance,'finance_payment_accounts','tenant-a_new_zero'))).data().balanceUGX,bankBeforeBenefit);
+  assert.equal((await getDoc(doc(finance,'welfare_records',benefit.id,'state','current'))).data().outstandingUGX,20000);
+  const benefitPayment={...welfarePayment,kind:'BENEFIT',obligationId:benefit.id,requestId:'benefit-part',amountUGX:5000,chargeUGX:100,externalReference:'BENEFIT-001'};
+  for(const omit of ['state','principal','claim'])await assertFails(rawWelfare({...benefitPayment,requestId:'raw-'+omit,externalReference:'RAW-'+omit.toUpperCase()},omit));
+  await assertFails(rawWelfare({...benefitPayment,requestId:'fraction',amountUGX:1.5,externalReference:'RAW-FRACTION'}));
+  await assertFails(rawWelfare({...benefitPayment,requestId:'overpay',amountUGX:20001,externalReference:'RAW-OVERPAY'}));
+  await assertSucceeds(settleWelfare(benefitPayment,finance));
+  await assert.rejects(settleWelfare({...benefitPayment,requestId:'other',externalReference:'BENEFIT-002',amountUGX:15001},finance),/outstanding/);
+  await assertSucceeds(settleWelfare({...benefitPayment,requestId:'benefit-full',externalReference:'BENEFIT-FULL',amountUGX:15000,chargeUGX:0},finance));
+  assert.equal((await getDoc(doc(finance,'welfare_records',benefit.id,'state','current'))).data().outstandingUGX,0);
+  assert.equal((await getDoc(doc(finance,'finance_payment_accounts','tenant-a_new_zero'))).data().balanceUGX,bankBeforeBenefit-20100);
+  await assertFails(updateDoc(doc(hr,'welfare_records',benefit.id),{amountUGX:1}));
+  await assertFails(setDoc(doc(employee,'welfare_records','forged-benefit'),{...benefit,id:'forged-benefit',actorUid:'employee',createdAt:serverTimestamp()}));
+  await assertFails(getDoc(doc(outsider,'welfare_records',benefit.id)));
+  await assertFails(getDoc(doc(wrongBranch,'welfare_records',benefit.id)));
+  await requestWelfareBenefit({...benefit,id:'rejected-benefit'},hr);
+  await approveWelfareBenefit({id:'rejected-benefit',actorUid:'ceo',reason:'Ineligible benefit request',decision:'rejected'},ceo);
+  await assert.rejects(recognizeWelfareBenefit({id:'rejected-benefit',actorUid:'finance'},finance),/approval/);
+  await assertFails(updateDoc(doc(employee,'staff','employee'),{role:'Finance Head'}));
+  await assertFails(updateDoc(doc(employee,'staff','finance'),{role:'Employee'}));
+  await assertFails(updateDoc(doc(hr,'staff','employee'),{tenantId:'tenant-b'}));
+  console.log('Welfare unpaid recognition, funded settlement, advance receivable, bounded concurrent recoveries and controlled reversal: PASS');
   console.log('Phase 5 HR privacy, approvals and forbidden payroll writes: PASS');
 } finally {
   await env.cleanup();

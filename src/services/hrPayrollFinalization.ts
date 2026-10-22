@@ -8,6 +8,7 @@ export interface FinalPayrollInput {
   baseSalary: number; bonuses: number; deductions: number; netSalary: number;
   paye: number; nssfEmployee: number; nssfEmployer: number;
   advanceDeduction: number; fineDeduction: number; unpaidLeaveDeduction: number;
+  advanceId?: string;
   reviewed: boolean;
 }
 /** Finalization records a payable, NOT an account movement or evidence of salary payment. */
@@ -39,6 +40,7 @@ export async function finalizePayrollDraft(
   // One atomic employee accrual per transaction keeps Security Rules document-access
   // budgets bounded for large payroll runs. A failed employee never leaves a partial payslip.
   for (const row of rows) await runTransaction(connection, async tx => {
+    let advancePosition: any;
     {
       const [payroll,payslip,approval,position] = await Promise.all([tx.get(row.payroll),tx.get(row.payslip),tx.get(doc(connection,'payroll_approvals',row.id)),tx.get(doc(row.payroll,'state','current'))]);
       const expected = payrollSnapshot(row.record);
@@ -53,6 +55,12 @@ export async function finalizePayrollDraft(
             && Object.entries(expected).every(([key,value]) => payroll.data().snapshot?.[key] === value && payslip.data().snapshot?.[key] === value))
           return; // Exact retry resumes a large run without recognizing any obligation twice.
         throw new Error('Payroll already finalized, reversed or requires reconciliation');
+      }
+      if(row.record.advanceDeduction > 0) {
+        const advance = await tx.get(doc(connection,'advance_requests',row.record.advanceId!,'state','current'));
+        if(!advance.exists() || advance.data().tenantId !== input.tenantId || advance.data().staffId !== row.record.staffId
+          || advance.data().outstandingUGX < row.record.advanceDeduction) throw new Error('Verified advance balance is insufficient.');
+        advancePosition = advance.data();
       }
     }
     {
@@ -69,7 +77,8 @@ export async function finalizePayrollDraft(
         salaryExpenseUGX: record.baseSalary + record.bonuses - record.unpaidLeaveDeduction,
         employerNssfExpenseUGX: record.nssfEmployer,
         payePayableUGX: record.paye, nssfPayableUGX: record.nssfEmployee + record.nssfEmployer,
-        otherDeductionsPayableUGX: record.deductions - record.paye - record.nssfEmployee - record.unpaidLeaveDeduction,
+        otherDeductionsPayableUGX: record.deductions - record.paye - record.nssfEmployee - record.unpaidLeaveDeduction - record.advanceDeduction,
+        advanceId: record.advanceId || '', advanceRecoveryUGX: record.advanceDeduction,
         netSalaryPayableUGX: record.netSalary, accountingReference: id,
         status: 'approved_unpaid'
       };
@@ -82,6 +91,13 @@ export async function finalizePayrollDraft(
       tx.set(payslip, {...common, staff_name: record.staffName, branch_id: record.branchId,
         month: record.period, year: Number(record.period.slice(0,4)),
         netPayable: record.netSalary, basePay: record.baseSalary, allowances: record.bonuses});
+      if(advancePosition) {
+        const root=doc(connection,'advance_requests',record.advanceId!);
+        tx.set(doc(root,'recoveries',id),{tenantId:input.tenantId,branchId:record.branchId,staffId:record.staffId,payrollId:id,
+          deltaUGX:record.advanceDeduction,actorUid:input.actorUid,createdAt:serverTimestamp()});
+        tx.update(doc(root,'state','current'),{outstandingUGX:advancePosition.outstandingUGX-record.advanceDeduction,
+          recoveredUGX:advancePosition.recoveredUGX+record.advanceDeduction,lastAction:id,updatedAt:serverTimestamp()});
+      }
     }
   });
 }

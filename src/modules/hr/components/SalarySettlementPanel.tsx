@@ -3,10 +3,13 @@ import {collection,doc,onSnapshot,query,where} from 'firebase/firestore';
 import {db} from '../../../firebase';
 import {settleSalary,registerSalaryFundingAccount,validateSalarySettlement} from '../../../services/financeV2Disbursement';
 import {requestAccountOpening,approveAccountOpening,postAccountOpening} from '../../../services/financeV2Opening';
+import {settleWelfare} from '../../../services/hrWelfareSettlement';
 import {toast} from 'sonner';
 import {getDateKeyForTimezone} from '../../../services/consumptionService';
 
-export function SalarySettlementPanel({payroll,profile,onClose}:{payroll:any;profile:any;onClose:()=>void}) {
+export function SalarySettlementPanel({payroll,profile,onClose,welfareKind}:{payroll:any;profile:any;onClose:()=>void;welfareKind?:'ADVANCE'|'BENEFIT'}) {
+ const purpose=welfareKind==='ADVANCE'?'Salary advance':welfareKind==='BENEFIT'?'Welfare benefit':'Salary';
+ const sourceCollection=welfareKind==='ADVANCE'?'advance_requests':welfareKind==='BENEFIT'?'welfare_records':'payroll';
  const [position,setPosition]=useState<any>(null),[accounts,setAccounts]=useState<any[]>([]),[history,setHistory]=useState<any[]>([]);
  const [accountId,setAccountId]=useState(''),[amount,setAmount]=useState(''),[fee,setFee]=useState('0');
  const [reference,setReference]=useState(''),[recipient,setRecipient]=useState('');
@@ -19,11 +22,11 @@ export function SalarySettlementPanel({payroll,profile,onClose}:{payroll:any;pro
  const branchIds=[...new Set<string>([...(profile.assigned_branches||[]),profile.branch_id,profile.default_branch_id].filter(Boolean))].slice(0,30);
  const [newBranch,setNewBranch]=useState(branchIds[0]||''),[openingRef,setOpeningRef]=useState('');
  useEffect(()=>{
-   const stopPosition=onSnapshot(doc(db,'payroll',payroll.id,'state','current'),s=>setPosition(s.exists()?s.data():null),()=>setError('Salary position access denied.'));
-   const stopHistory=onSnapshot(query(collection(db,'payroll',payroll.id,'settlements'),where('tenantId','==',profile.tenantId),where('branchId','==',payroll.branch_id)),s=>setHistory(s.docs.map(d=>({id:d.id,...d.data()}))),()=>setError('Payment history access denied.'));
+   const stopPosition=onSnapshot(doc(db,sourceCollection,payroll.id,'state','current'),s=>setPosition(welfareKind==='ADVANCE'?(s.exists()?{...s.data(),receivableUGX:s.data().outstandingUGX,outstandingUGX:0,paidUGX:s.data().principalUGX}:{outstandingUGX:payroll.amount_requested,paidUGX:0}):s.exists()?{...s.data(),paidUGX:s.data().paidUGX??s.data().settledUGX}:null),()=>setError('Obligation position access denied.'));
+   const stopHistory=onSnapshot(query(collection(db,sourceCollection,payroll.id,'settlements'),where('tenantId','==',profile.tenantId),where('branchId','==',payroll.branch_id)),s=>setHistory(s.docs.map(d=>({id:d.id,...d.data()}))),()=>setError('Payment history access denied.'));
    const stopAccounts=branchIds.length ? onSnapshot(query(collection(db,'finance_payment_accounts'),where('tenantId','==',profile.tenantId),where('controlVersion','==',2),where('branchId','in',branchIds)),s=>setAccounts(s.docs.map(d=>({id:d.id,...d.data()}))),()=>setError('Funding account access requires Finance authority and branch assignment.')) : ()=>{};
    return ()=>{stopPosition();stopHistory();stopAccounts();};
- },[payroll.id,profile.tenantId,branchIds.join(',')]);
+ },[payroll.id,profile.tenantId,branchIds.join(','),sourceCollection]);
  useEffect(()=>{setOpening(null);setPendingOpening(null);if(!accountId)return;const root=doc(db,'finance_payment_accounts',`${profile.tenantId}_${accountId}`);const approval=onSnapshot(doc(root,'opening','approval'),s=>setOpening(s.exists()?s.data():null),()=>setError('Opening approval access denied.'));const request=onSnapshot(doc(root,'opening','request'),s=>setPendingOpening(s.exists()?s.data():null),()=>setError('Opening request access denied.'));return ()=>{approval();request();};},[accountId,profile.tenantId]);
  const openingAction=async(action:'request'|'approve'|'post')=>{setPosting(true);try{const scope={tenantId:profile.tenantId,accountId,actorUid:profile.uid};if(action==='request')await requestAccountOpening({...scope,amountUGX:Number(openingAmount),externalReference:openingReference.trim().toUpperCase(),evidence:openingEvidence.trim()});else if(action==='approve')await approveAccountOpening({...scope,reason:openingReason});else await postAccountOpening(scope);toast.success('Opening action recorded.');}catch(e){setError(e instanceof Error?e.message:'Opening action denied.');}finally{setPosting(false);}};
  const account=accounts.find(a=>a.accountId===accountId);
@@ -39,7 +42,7 @@ export function SalarySettlementPanel({payroll,profile,onClose}:{payroll:any;pro
  };
  const confirm=async()=>{
    setPosting(true);
-   try{await settleSalary(input);toast.success('Salary settlement and funding movement posted.');setRequestId(crypto.randomUUID());setAmount('');setReference('');setPreview(false);}
+   try{if(welfareKind){const {payrollId,...payment}=input;await settleWelfare({...payment,obligationId:payrollId,kind:welfareKind});}else await settleSalary(input);toast.success('Settlement and funding movement posted.');setRequestId(crypto.randomUUID());setAmount('');setReference('');setPreview(false);}
    catch(e){setError(e instanceof Error?e.message:'Payment outcome unconfirmed. Retry with this same payment reference.');}
    finally{setPosting(false);}
  };
@@ -50,22 +53,23 @@ export function SalarySettlementPanel({payroll,profile,onClose}:{payroll:any;pro
  };
  const field='border rounded-lg p-2 w-full text-sm bg-white';
  return <div className="fixed inset-0 z-50 bg-slate-900/50 overflow-y-auto p-3 sm:p-8"><section className="max-w-2xl mx-auto bg-white p-5 rounded-2xl space-y-4">
-   <div className="flex justify-between"><h3 className="font-bold">Settle salary: {payroll.staff_name} | {payroll.period}</h3><button disabled={posting} onClick={onClose}>Close</button></div>
+   <div className="flex justify-between"><h3 className="font-bold">Settle {purpose.toLowerCase()}: {payroll.staff_name} | {payroll.period}</h3><button disabled={posting} onClick={onClose}>Close</button></div>
    <p>Outstanding: UGX {position?.outstandingUGX?.toLocaleString()??'Unverified'} | Paid: UGX {position?.paidUGX?.toLocaleString()??'Unverified'} {position?.voided?'| Accrual reversed':''}</p>
+   {welfareKind==='ADVANCE'&&<p>Advance receivable: UGX {position?.receivableUGX?.toLocaleString()??'Not yet disbursed'}. Only the complete approved principal may be disbursed once.</p>}
    <p className="text-xs text-slate-600">Record a verified payment reference and recipient. Salary accrual is separate from payment. Funding must be registered, active and independently initialized.</p>
    {error&&<p role="alert" className="text-rose-700">{error}</p>}
    {!preview?<div className="grid sm:grid-cols-2 gap-3">
     <label>Funding account<select aria-label="Funding account" className={field} value={accountId} onChange={e=>setAccountId(e.target.value)}><option value="">Select funding account</option>{accounts.filter(a=>a.active&&a.initialized&&a.salaryEligible).map(a=><option key={a.id} value={a.accountId}>{a.name||a.accountId} ({a.kind}): UGX {a.balanceUGX.toLocaleString()}</option>)}</select></label>
-    <label>Salary payment (UGX)<input className={field} type="number" min="1" step="1" value={amount} onChange={e=>setAmount(e.target.value)}/></label>
+    <label>{purpose} payment (UGX)<input className={field} type="number" min="1" step="1" value={amount} onChange={e=>setAmount(e.target.value)}/></label>
     <label>External charge (UGX)<input className={field} type="number" min="0" step="1" value={fee} onChange={e=>setFee(e.target.value)}/></label>
     <label>Payment date<input className={field} type="date" value={date} onChange={e=>setDate(e.target.value)}/></label>
     <label>Payment reference<input className={field} maxLength={150} value={reference} onChange={e=>setReference(e.target.value)}/></label>
     <label>Verified recipient details<input className={field} maxLength={150} value={recipient} onChange={e=>setRecipient(e.target.value)}/></label>
     <button className="bg-slate-900 text-white p-3 rounded-lg" onClick={prepare}>Preview settlement</button>
    </div>:<div className="bg-slate-50 p-4 rounded-lg space-y-2">
-    <p>Salary payable reduced by UGX {principal.toLocaleString()}.</p><p>Separate charge expense: UGX {charge.toLocaleString()}.</p>
+    <p>{welfareKind==='ADVANCE'?'Advance receivable created':'Payable reduced'} by UGX {principal.toLocaleString()}.</p><p>Separate charge expense: UGX {charge.toLocaleString()}.</p>
     <p>Account debit: UGX {total.toLocaleString()}. Account balance after: UGX {(account?.balanceUGX-total).toLocaleString()}.</p>
-    <p>Remaining salary payable: UGX {(position.outstandingUGX-principal).toLocaleString()}.</p><p>{date} | {reference} | {recipient}</p>
+    <p>Remaining {welfareKind?'obligation':'salary payable'}: UGX {(position.outstandingUGX-principal).toLocaleString()}.</p><p>{date} | {reference} | {recipient}</p>
     <button className="bg-indigo-700 text-white p-3 rounded-lg mr-3" disabled={posting} onClick={confirm}>{posting?'Posting…':'Confirm verified payment'}</button><button disabled={posting} onClick={()=>setPreview(false)}>Edit</button>
    </div>}
    {account&&account.balanceUGX===0&&account.lastPostingId===null&&<details><summary>Verified opening balance for {account.name||account.accountId}</summary><p className="text-xs">Use only for a new, unused account after reconciling external evidence and confirming this balance is not recorded in another PHARMHELM account. Finance requests, a different owner approves, then Finance posts an opening movement. This creates no revenue or expense.</p><div className="grid sm:grid-cols-2 gap-3 mt-3">
