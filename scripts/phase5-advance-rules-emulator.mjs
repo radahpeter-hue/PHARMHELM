@@ -1,3 +1,4 @@
+import {requestAccountOpening,approveAccountOpening,postAccountOpening} from '../src/services/financeV2Opening.ts';
 import { settleSalary, registerSalaryFundingAccount } from '../src/services/financeV2Disbursement.ts';
 import assert from 'node:assert/strict';
 import { requestPayrollVoid, voidUnpaidPayroll } from '../src/services/hrPayrollCorrection.ts';
@@ -33,7 +34,7 @@ const outsider = env.authenticatedContext('outsider', { tenantId: 'tenant-b', ro
 const advance = doc(employee, 'advance_requests', 'advance-test');
 try {
   await env.withSecurityRulesDisabled(async admin => {
-    for (const [uid, role] of [['hr','HR Head'], ['finance','Finance Head'], ['employee','Employee'], ['outsider','Finance Head']]) {
+    for (const [uid, role] of [['ceo','CEO'],['hr','HR Head'], ['finance','Finance Head'], ['employee','Employee'], ['outsider','Finance Head']]) {
       await setDoc(doc(admin.firestore(),'staff',uid), {tenantId:uid === 'outsider' ? 'tenant-b':'tenant-a',role,branch_id:'b1',assigned_branches:['b1']});
     }
   });
@@ -230,6 +231,32 @@ try {
   const newAccount={tenantId:'tenant-a',accountId:'new_zero',name:'Registered salary bank',kind:'BANK',branchId:'b1',openingBalanceUGX:0,reconciliationReference:'Verified zero account',actorUid:'finance'};
   await assertSucceeds(registerSalaryFundingAccount(newAccount,finance));
   await assert.rejects(registerSalaryFundingAccount({...newAccount,accountId:'forged_opening',openingBalanceUGX:100000},finance),/zero-opening/);
+  const openingScope={tenantId:'tenant-a',accountId:'new_zero',actorUid:'finance'};
+  const openingRequest={...openingScope,amountUGX:200000,externalReference:'OPENING-001',evidence:'Controlled emulator bank reconciliation, no existing duplicate balance.'};
+  await assert.rejects(postAccountOpening(openingScope,finance),/Independent/);
+  const rawOpening=(omit='')=>{const eventId='opening_tenant-a_OPENING-001';const b=writeBatch(finance);b.set(doc(finance,'finance_v2_events',eventId),{...openingScope,eventId,sourceType:'ACCOUNT_OPENING',branchId:'b1',amountUGX:200000,chargeUGX:0,externalReference:'OPENING-001',beforeUGX:0,afterUGX:200000,expenseUGX:0,revenueUGX:0,currency:'UGX',createdAt:serverTimestamp()});b.update(doc(finance,'finance_payment_accounts','tenant-a_new_zero'),{balanceUGX:200000,lastPostingId:eventId,updatedAt:serverTimestamp()});if(omit!=='movement')b.set(doc(finance,'finance_v2_account_movements',eventId+'_principal'),{...openingScope,eventId,purpose:'PRINCIPAL',deltaUGX:200000,beforeUGX:0,afterUGX:200000,createdAt:serverTimestamp()});return b.commit();};
+  await assertFails(rawOpening()); // No approval, despite a fully paired malicious browser batch.
+  await assertSucceeds(requestAccountOpening(openingRequest,finance));
+  const openingRequestDoc=(await getDoc(doc(finance,'finance_payment_accounts','tenant-a_new_zero','opening','request'))).data();
+  await assertFails(setDoc(doc(finance,'finance_payment_accounts','tenant-a_new_zero','opening','approval'),{tenantId:'tenant-a',accountId:'new_zero',branchId:'b1',request:openingRequestDoc,approvedBy:'finance',reason:'Forged own approval',approvedAt:serverTimestamp()}));
+  await assert.rejects(approveAccountOpening({...openingScope,reason:'Finance cannot approve own opening'},finance),/Independent/);
+  await assertFails(approveAccountOpening({...openingScope,actorUid:'outsider',reason:'Cross tenant denied'},outsider));
+  await assertSucceeds(approveAccountOpening({...openingScope,actorUid:'ceo',reason:'Verified test statement and unique account'},ceo));
+  await assert.rejects(postAccountOpening({...openingScope,actorUid:'ceo'},ceo),/Independent/);
+  await assertFails(rawOpening('movement'));
+  const openingPosted=await assertSucceeds(postAccountOpening(openingScope,finance));
+  assert.equal((await postAccountOpening(openingScope,finance)).replay,true);
+  assert.equal((await getDoc(doc(finance,'finance_payment_accounts','tenant-a_new_zero'))).data().balanceUGX,200000);
+  const openingEvent=(await getDoc(doc(finance,'finance_v2_events',openingPosted.eventId))).data();
+  assert.equal(openingEvent.expenseUGX,0);assert.equal(openingEvent.revenueUGX,0);
+  assert.equal((await getDoc(doc(finance,'finance_v2_account_movements',openingPosted.eventId+'_principal'))).data().deltaUGX,200000);
+  await assertFails(updateDoc(doc(ceo,'finance_payment_accounts','tenant-a_new_zero','opening','approval'),{reason:'rewrite approval'}));
+  await assert.rejects(requestAccountOpening({...openingRequest,amountUGX:300000},finance),/unused/);
+  await assertSucceeds(registerSalaryFundingAccount({...newAccount,accountId:'duplicate_opening'},finance));
+  await requestAccountOpening({...openingRequest,accountId:'duplicate_opening'},finance);
+  await approveAccountOpening({...openingScope,accountId:'duplicate_opening',actorUid:'ceo',reason:'Duplicate reference attempt'},ceo);
+  await assert.rejects(postAccountOpening({...openingScope,accountId:'duplicate_opening'},finance),/already used/);
+  console.log('Independent opening authorization, immutable balance migration and duplicate reference denials: PASS');
   const competingRecords=['2027-01','2027-02'].map(period=>({...snapshot,period,reviewed:true}));
   await attestPayroll({tenantId:'tenant-a',actorUid:'hr',records:competingRecords},hr);
   await finalizePayrollDraft({tenantId:'tenant-a',actorUid:'finance',records:competingRecords},finance);

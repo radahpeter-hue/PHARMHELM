@@ -2,6 +2,7 @@ import React,{useEffect,useState} from 'react';
 import {collection,doc,onSnapshot,query,where} from 'firebase/firestore';
 import {db} from '../../../firebase';
 import {settleSalary,registerSalaryFundingAccount,validateSalarySettlement} from '../../../services/financeV2Disbursement';
+import {requestAccountOpening,approveAccountOpening,postAccountOpening} from '../../../services/financeV2Opening';
 import {toast} from 'sonner';
 import {getDateKeyForTimezone} from '../../../services/consumptionService';
 
@@ -11,6 +12,8 @@ export function SalarySettlementPanel({payroll,profile,onClose}:{payroll:any;pro
  const [reference,setReference]=useState(''),[recipient,setRecipient]=useState('');
  const [date,setDate]=useState(getDateKeyForTimezone(new Date()));
  const [requestId,setRequestId]=useState(crypto.randomUUID()),[preview,setPreview]=useState(false),[posting,setPosting]=useState(false);
+ const [pendingOpening,setPendingOpening]=useState<any>(null);
+ const [opening,setOpening]=useState<any>(null),[openingAmount,setOpeningAmount]=useState(''),[openingEvidence,setOpeningEvidence]=useState(''),[openingReference,setOpeningReference]=useState(''),[openingReason,setOpeningReason]=useState('');
  const [error,setError]=useState(''),[register,setRegister]=useState(false);
  const [newId,setNewId]=useState(''),[newName,setNewName]=useState(''),[newKind,setNewKind]=useState('BANK');
  const branchIds=[...new Set<string>([...(profile.assigned_branches||[]),profile.branch_id,profile.default_branch_id].filter(Boolean))].slice(0,30);
@@ -21,6 +24,8 @@ export function SalarySettlementPanel({payroll,profile,onClose}:{payroll:any;pro
    const stopAccounts=branchIds.length ? onSnapshot(query(collection(db,'finance_payment_accounts'),where('tenantId','==',profile.tenantId),where('controlVersion','==',2),where('branchId','in',branchIds)),s=>setAccounts(s.docs.map(d=>({id:d.id,...d.data()}))),()=>setError('Funding account access requires Finance authority and branch assignment.')) : ()=>{};
    return ()=>{stopPosition();stopHistory();stopAccounts();};
  },[payroll.id,profile.tenantId,branchIds.join(',')]);
+ useEffect(()=>{setOpening(null);setPendingOpening(null);if(!accountId)return;const root=doc(db,'finance_payment_accounts',`${profile.tenantId}_${accountId}`);const approval=onSnapshot(doc(root,'opening','approval'),s=>setOpening(s.exists()?s.data():null),()=>setError('Opening approval access denied.'));const request=onSnapshot(doc(root,'opening','request'),s=>setPendingOpening(s.exists()?s.data():null),()=>setError('Opening request access denied.'));return ()=>{approval();request();};},[accountId,profile.tenantId]);
+ const openingAction=async(action:'request'|'approve'|'post')=>{setPosting(true);try{const scope={tenantId:profile.tenantId,accountId,actorUid:profile.uid};if(action==='request')await requestAccountOpening({...scope,amountUGX:Number(openingAmount),externalReference:openingReference.trim().toUpperCase(),evidence:openingEvidence.trim()});else if(action==='approve')await approveAccountOpening({...scope,reason:openingReason});else await postAccountOpening(scope);toast.success('Opening action recorded.');}catch(e){setError(e instanceof Error?e.message:'Opening action denied.');}finally{setPosting(false);}};
  const account=accounts.find(a=>a.accountId===accountId);
  const principal=Number(amount),charge=Number(fee),total=principal+charge;
  const input={tenantId:profile.tenantId,payrollId:payroll.id,requestId,accountId,actorUid:profile.uid,
@@ -63,6 +68,17 @@ export function SalarySettlementPanel({payroll,profile,onClose}:{payroll:any;pro
     <p>Remaining salary payable: UGX {(position.outstandingUGX-principal).toLocaleString()}.</p><p>{date} | {reference} | {recipient}</p>
     <button className="bg-indigo-700 text-white p-3 rounded-lg mr-3" disabled={posting} onClick={confirm}>{posting?'Posting…':'Confirm verified payment'}</button><button disabled={posting} onClick={()=>setPreview(false)}>Edit</button>
    </div>}
+   {account&&account.balanceUGX===0&&account.lastPostingId===null&&<details><summary>Verified opening balance for {account.name||account.accountId}</summary><p className="text-xs">Use only for a new, unused account after reconciling external evidence and confirming this balance is not recorded in another PHARMHELM account. Finance requests, a different owner approves, then Finance posts an opening movement. This creates no revenue or expense.</p><div className="grid sm:grid-cols-2 gap-3 mt-3">
+    <label>Verified opening UGX<input className={field} type="number" min="1" step="1" value={openingAmount} onChange={e=>setOpeningAmount(e.target.value)}/></label>
+    <label>Unique opening reference<input className={field} value={openingReference} onChange={e=>setOpeningReference(e.target.value)}/></label>
+    <label>Reconciliation evidence<textarea className={field} value={openingEvidence} onChange={e=>setOpeningEvidence(e.target.value)}/></label>
+    <button disabled={posting} onClick={()=>openingAction('request')}>Request verified opening</button>
+    {pendingOpening&&<p>Requested by {pendingOpening.actorUid}: UGX {pendingOpening.amountUGX.toLocaleString()} | {pendingOpening.externalReference} | {pendingOpening.evidence}</p>}
+    <label>Owner review reason<input className={field} value={openingReason} onChange={e=>setOpeningReason(e.target.value)}/></label>
+    <button disabled={posting||!pendingOpening||!!opening} onClick={()=>openingAction('approve')}>Owner attest opening</button>
+    {opening&&<p>Approved by {opening.approvedBy}: UGX {opening.request.amountUGX.toLocaleString()} | {opening.request.externalReference} | {opening.request.evidence}</p>}
+    <button disabled={posting||!opening} onClick={()=>openingAction('post')}>Post approved opening</button>
+   </div></details>}
    <details open={register} onToggle={e=>setRegister(e.currentTarget.open)}><summary className="cursor-pointer text-sm font-bold">Register a zero-opening funding account</summary><div className="grid sm:grid-cols-2 gap-3 mt-3">
     <label>Account ID<input className={field} value={newId} onChange={e=>setNewId(e.target.value)}/></label><label>Account name<input className={field} value={newName} onChange={e=>setNewName(e.target.value)}/></label>
     <label>Type<select aria-label="Type" className={field} value={newKind} onChange={e=>setNewKind(e.target.value)}>{['BANK','BRANCH_CASH_SALES','PETTY_CASH','MTN_MOBILE_MONEY','AIRTEL_MONEY'].map(kind=><option key={kind}>{kind}</option>)}</select></label>

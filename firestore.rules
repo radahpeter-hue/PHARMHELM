@@ -617,6 +617,42 @@ service cloud.firestore {
         && d.reconciliationReference is string && d.reconciliationReference.size() >= 5
         && d.createdAt == request.time && d.updatedAt == request.time;
     }
+    match /finance_payment_accounts/{accountId}/opening/{stage} {
+      allow read: if isFinance() && (resource == null || (getUserData().tenantId == resource.data.tenantId && isAssignedToBranch(resource.data.branchId)));
+      allow create: if stage == 'request' ? openingRequest(accountId,request.resource.data) : (stage == 'approval' && openingApproval(accountId,request.resource.data));
+      allow update, delete: if false;
+    }
+    function openingRequest(id,d) {
+      let a = get(/databases/$(database)/documents/finance_payment_accounts/$(id)).data;
+      return isFinance() && getUserData().tenantId == d.tenantId && isAssignedToBranch(d.branchId)
+        && d.actorUid == request.auth.uid && d.createdAt == request.time && a.tenantId == d.tenantId && a.accountId == d.accountId && a.branchId == d.branchId
+        && a.controlVersion == 2 && a.balanceUGX == 0 && a.lastPostingId == null && a.active == true
+        && d.amountUGX is int && d.amountUGX > 0 && d.amountUGX <= 9007199254740991
+        && d.externalReference.matches('^[A-Z0-9_.-]{3,100}$') && d.evidence is string && d.evidence.size() >= 10 && d.evidence.size() <= 1000;
+    }
+    function openingApproval(id,d) {
+      return isCEO() && getUserData().tenantId == d.tenantId && isAssignedToBranch(d.branchId)
+        && d.request == get(/databases/$(database)/documents/finance_payment_accounts/$(id)/opening/request).data
+        && d.request.actorUid != request.auth.uid && d.approvedBy == request.auth.uid && d.approvedAt == request.time
+        && d.request.tenantId == d.tenantId && d.request.accountId == d.accountId && d.request.branchId == d.branchId
+        && d.reason is string && d.reason.size() >= 5 && d.reason.size() <= 1000;
+    }
+    function accountOpening(id,d) {
+      let path = /databases/$(database)/documents/finance_payment_accounts/$(d.tenantId + '_' + d.accountId);
+      let a = get(path).data;
+      let approval = get(/databases/$(database)/documents/finance_payment_accounts/$(d.tenantId + '_' + d.accountId)/opening/approval).data;
+      return isFinance() && getUserData().tenantId == d.tenantId && isAssignedToBranch(d.branchId)
+        && get(/databases/$(database)/documents/system_settings/$(d.tenantId)).data.phase5SalarySettlementEnabled == true
+        && d.sourceType == 'ACCOUNT_OPENING' && d.eventId == id && id == 'opening_' + d.tenantId + '_' + d.externalReference
+        && d.actorUid == request.auth.uid && d.actorUid != approval.approvedBy && d.createdAt == request.time
+        && approval.request.tenantId == d.tenantId && approval.request.accountId == d.accountId && approval.request.amountUGX == d.amountUGX
+        && approval.request.externalReference == d.externalReference && approval.branchId == d.branchId
+        && a.controlVersion == 2 && a.active == true && a.initialized == true && a.currency == 'UGX' && a.branchId == d.branchId
+        && a.balanceUGX == 0 && a.lastPostingId == null && d.beforeUGX == 0 && d.afterUGX == d.amountUGX
+        && d.chargeUGX == 0 && d.expenseUGX == 0 && d.revenueUGX == 0 && d.currency == 'UGX'
+        && getAfter(path).data.balanceUGX == d.afterUGX && getAfter(path).data.lastPostingId == id
+        && getAfter(/databases/$(database)/documents/finance_v2_account_movements/$(id + '_principal')).data.eventId == id;
+    }
     function salaryStateChange(id, before, after) {
       let event = getAfter(/databases/$(database)/documents/finance_v2_events/$(after.lastAction)).data;
       return isFinance() && payrollScope(before) && before.voided == false
@@ -658,7 +694,7 @@ service cloud.firestore {
     match /finance_v2_events/{id} {
       allow get: if isFinance() && (resource == null || (getUserData().tenantId == resource.data.tenantId && isAssignedToBranch(resource.data.branchId)));
       allow list: if isFinance() && getUserData().tenantId == resource.data.tenantId && isAssignedToBranch(resource.data.branchId);
-      allow create: if salaryDisbursement(id, request.resource.data);
+      allow create: if request.resource.data.sourceType == 'ACCOUNT_OPENING' ? accountOpening(id,request.resource.data) : salaryDisbursement(id, request.resource.data);
       allow update, delete: if false;
     }
     match /finance_v2_account_movements/{id} {
@@ -668,8 +704,8 @@ service cloud.firestore {
           && !exists(/databases/$(database)/documents/finance_v2_events/$(d.eventId))
           && d.tenantId == event.tenantId && d.accountId == event.accountId && d.actorUid == request.auth.uid
           && d.createdAt == request.time && d.afterUGX == d.beforeUGX + d.deltaUGX
-          && ((id == d.eventId + '_principal' && d.purpose == 'PRINCIPAL' && d.deltaUGX == -event.amountUGX
-            && d.beforeUGX == event.beforeUGX && d.afterUGX == event.beforeUGX - event.amountUGX)
+          && ((id == d.eventId + '_principal' && d.purpose == 'PRINCIPAL' && d.deltaUGX == (event.sourceType == 'ACCOUNT_OPENING' ? event.amountUGX : -event.amountUGX)
+            && d.beforeUGX == event.beforeUGX && d.afterUGX == event.beforeUGX + d.deltaUGX)
             || (id == d.eventId + '_charge' && event.chargeUGX > 0 && d.purpose == 'CHARGE' && d.deltaUGX == -event.chargeUGX
               && d.beforeUGX == event.beforeUGX - event.amountUGX && d.afterUGX == event.afterUGX));
       }
