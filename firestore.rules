@@ -975,7 +975,22 @@ service cloud.firestore {
     match /payroll/{payrollId} {
       allow read: if isTenantMember(resource.data.tenantId)
         && (isHR() || isFinance() || isCEO() || isOwner(resource.data.staffId));
-      allow create, update, delete: if false; // Payroll posting requires a certified atomic writer.
+      allow create: if isFinance() && getUserData().tenantId == request.resource.data.tenantId
+        && payrollId == request.resource.data.payrollId
+        && payrollId == request.resource.data.tenantId + '_' + request.resource.data.staffId + '_' + request.resource.data.period
+        && request.resource.data.finalizedBy == request.auth.uid
+        && request.resource.data.status == 'approved_unpaid'
+        && request.resource.data.baseSalary is int && request.resource.data.baseSalary >= 0
+        && request.resource.data.bonuses is int && request.resource.data.bonuses >= 0
+        && request.resource.data.deductions is int && request.resource.data.deductions >= 0
+        && request.resource.data.netSalary is int && request.resource.data.netSalary >= 0
+        && request.resource.data.baseSalary + request.resource.data.bonuses - request.resource.data.deductions == request.resource.data.netSalary
+        && request.resource.data.net_salary == request.resource.data.netSalary
+        && request.resource.data.base_salary == request.resource.data.baseSalary
+        && getAfter(/databases/$(database)/documents/payslips/$(payrollId)).data.payrollId == payrollId
+        && getAfter(/databases/$(database)/documents/payslips/$(payrollId)).data.netPayable == request.resource.data.netSalary
+        && getAfter(/databases/$(database)/documents/payslips/$(payrollId)).data.finalizedBy == request.auth.uid;
+      allow update, delete: if false;
     }
 
     // Append-once daily attendance: only separate authorized reviewer may change status.
@@ -1049,7 +1064,17 @@ service cloud.firestore {
 
     match /payslips/{payslipId} {
       allow read: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isFinance());
-      allow create, update, delete: if false; // Only certified atomic payroll posting may create payslips.
+      allow create: if isFinance() && getUserData().tenantId == request.resource.data.tenantId
+        && payslipId == request.resource.data.payrollId
+        && payslipId == request.resource.data.tenantId + '_' + request.resource.data.staffId + '_' + request.resource.data.period
+        && request.resource.data.finalizedBy == request.auth.uid
+        && request.resource.data.status == 'approved_unpaid'
+        && request.resource.data.netPayable is int && request.resource.data.netPayable >= 0
+        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.payrollId == payslipId
+        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.netSalary == request.resource.data.netPayable
+        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.staffId == request.resource.data.staffId
+        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.finalizedBy == request.auth.uid;
+      allow update, delete: if false;
     }
 
     match /cme_records/{recordId} {
