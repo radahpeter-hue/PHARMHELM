@@ -353,10 +353,36 @@ export const PayrollManager: React.FC = () => {
     toast.success(`Payslip evaluated for ${reviewingRecord.staffName}`);
   };
 
-  // Posting stays disabled until a deterministic, authenticated, atomic writer
-  // and enforceable Firestore rules have passed emulator tests and release review.
   const handleFinalizeAndCommit = async () => {
-    toast.error('Payroll posting is unavailable until the Spark-native atomic writer and approval policy are certified.');
+    if (!profile?.tenantId || !profile?.uid || isGenerating) return;
+    if (!draftPayroll.length || draftPayroll.some(item => !item.reviewed) || fromDate.slice(0,7) !== toDate.slice(0,7)) {
+      toast.error('Review all payroll drafts and select one calendar month.');
+      return;
+    }
+    setIsGenerating(true);
+    try {
+      await finalizePayrollDraft({
+        tenantId: profile.tenantId,
+        actorUid: profile.uid,
+        records: draftPayroll.map(item => ({
+          staffId: item.staffId, staffName: item.staffName,
+          branchId: canonicalStaff.find(staff => staff.id === item.staffId)?.branch_id || 'HQ',
+          period: toDate.slice(0,7),
+          baseSalary: item.baseSalary, bonuses: item.bonuses, deductions: item.deductions,
+          netSalary: item.netSalary, paye: item.paye,
+          nssfEmployee: item.nssfEmployee, nssfEmployer: item.nssfEmployer,
+          advanceDeduction: item.advanceDeduction, fineDeduction: item.fineDeduction,
+          unpaidLeaveDeduction: item.unpaidLeaveDeduction || 0, reviewed: item.reviewed
+        }))
+      });
+      toast.success('Payroll finalized as unpaid; no cash balance changed.');
+      setDraftPayroll([]);
+      setIsDraftMode(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Payroll finalization denied.');
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   // Export payroll report to CSV
