@@ -36,9 +36,10 @@ export async function finalizePayrollDraft(
     const id = `${input.tenantId}_${record.staffId}_${record.period}`;
     return { record, id, payroll: doc(connection,'payroll',id), payslip: doc(connection,'payslips',id) };
   });
-  await runTransaction(connection, async tx => {
-    // Reads before writes; one transaction must include every employee and paired payslip.
-    for (const row of rows) {
+  // One atomic employee accrual per transaction keeps Security Rules document-access
+  // budgets bounded for large payroll runs. A failed employee never leaves a partial payslip.
+  for (const row of rows) await runTransaction(connection, async tx => {
+    {
       const [payroll,payslip,approval] = await Promise.all([tx.get(row.payroll),tx.get(row.payslip),tx.get(doc(connection,'payroll_approvals',row.id))]);
       const expected = payrollSnapshot(row.record);
       if (!approval.exists() || approval.data().status !== 'approved' || approval.data().approvedBy === input.actorUid
@@ -47,7 +48,8 @@ export async function finalizePayrollDraft(
       approvals.set(row.id, approval.data());
       if (payroll.exists() || payslip.exists()) throw new Error('Payroll already finalized or requires reconciliation');
     }
-    for (const {record,id,payroll,payslip} of rows) {
+    {
+      const {record,id,payroll,payslip} = row;
       const common = {
         tenantId: input.tenantId, staffId: record.staffId, period: record.period,
         payrollId: id, finalizedBy: input.actorUid, finalizedAt: serverTimestamp(),
@@ -64,6 +66,8 @@ export async function finalizePayrollDraft(
         netSalaryPayableUGX: record.netSalary, accountingReference: id,
         status: 'approved_unpaid'
       };
+      tx.set(doc(payroll,'state','current'), {tenantId:input.tenantId,snapshot:common.snapshot,
+        outstandingUGX:record.netSalary,paidUGX:0,voided:false,lastAction:'recognition',updatedAt:serverTimestamp()});
       tx.set(payroll, {...common, staff_name: record.staffName, branch_id: record.branchId,
         month: record.period, base_salary: record.baseSalary, net_salary: record.netSalary,
         nssf_employee: record.nssfEmployee, nssf_employer: record.nssfEmployer,

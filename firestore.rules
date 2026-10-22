@@ -1066,7 +1066,54 @@ service cloud.firestore {
         && request.resource.data.netSalary >= 0 && request.resource.data.baseSalary >= 0
         && request.resource.data.bonuses >= 0 && request.resource.data.deductions >= 0
         && request.resource.data.baseSalary + request.resource.data.bonuses == request.resource.data.netSalary + request.resource.data.deductions
-        && getAfter(/databases/$(database)/documents/payslips/$(payrollId)).data.payrollId == payrollId;
+        && getAfter(/databases/$(database)/documents/payslips/$(payrollId)).data.payrollId == payrollId
+        && getAfter(/databases/$(database)/documents/payroll/$(payrollId)/state/current).data.outstandingUGX == request.resource.data.netSalary;
+      allow update, delete: if false;
+    }
+
+    match /payroll/{id}/state/{stateId} {
+      function originalPayroll() { return getAfter(/databases/$(database)/documents/payroll/$(id)).data; }
+      allow read: if isAuthenticated() && (resource == null || (payrollScope(resource.data) && (isHR() || isFinance())));
+      allow create: if isFinance() && stateId == 'current' && payrollScope(request.resource.data)
+        && !exists(/databases/$(database)/documents/payroll/$(id))
+        && request.resource.data.keys().hasOnly(['tenantId','snapshot','outstandingUGX','paidUGX','voided','lastAction','updatedAt'])
+        && request.resource.data.tenantId == originalPayroll().tenantId && request.resource.data.snapshot == originalPayroll().snapshot
+        && request.resource.data.outstandingUGX == originalPayroll().netSalaryPayableUGX
+        && request.resource.data.paidUGX == 0 && request.resource.data.voided == false
+        && request.resource.data.lastAction == 'recognition' && request.resource.data.updatedAt == request.time;
+      allow update: if isFinance() && payrollScope(resource.data) && stateId == 'current'
+        && resource.data.paidUGX == 0 && resource.data.voided == false
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['outstandingUGX','voided','lastAction','updatedAt'])
+        && request.resource.data.outstandingUGX == 0 && request.resource.data.voided == true
+        && request.resource.data.lastAction == 'void' && request.resource.data.updatedAt == request.time
+        && !exists(/databases/$(database)/documents/payroll/$(id)/corrections/void)
+        && getAfter(/databases/$(database)/documents/payroll/$(id)/corrections/void).data.postedBy == request.auth.uid;
+      allow delete: if false;
+    }
+    match /payroll/{id}/corrections/{action} {
+      function validVoid(data) {
+        let payroll = get(/databases/$(database)/documents/payroll/$(id)).data;
+        let before = get(/databases/$(database)/documents/payroll/$(id)/state/current).data;
+        let after = getAfter(/databases/$(database)/documents/payroll/$(id)/state/current).data;
+        let approval = get(/databases/$(database)/documents/payroll/$(id)/corrections/void_request).data;
+        return isFinance() && approval.approvedBy != request.auth.uid
+          && data.postedBy == request.auth.uid && data.postedAt == request.time
+          && data.reason == approval.reason && data.snapshot == payroll.snapshot && data.tenantId == payroll.tenantId
+          && data.reversesPayrollId == id && before.paidUGX == 0 && before.voided == false && after.voided == true
+          && data.salaryExpenseUGX == -payroll.salaryExpenseUGX && data.employerNssfExpenseUGX == -payroll.employerNssfExpenseUGX
+          && data.payePayableUGX == -payroll.payePayableUGX && data.nssfPayableUGX == -payroll.nssfPayableUGX
+          && data.otherDeductionsPayableUGX == -payroll.otherDeductionsPayableUGX && data.netSalaryPayableUGX == -payroll.netSalaryPayableUGX;
+      }
+      allow get: if isAuthenticated() && (resource == null || (payrollScope(resource.data) && (isHR() || isFinance())));
+      allow list: if payrollScope(resource.data) && (isHR() || isFinance());
+      allow create: if payrollScope(request.resource.data) && (
+        (action == 'void_request' && isHR() && request.resource.data.approvedBy == request.auth.uid
+          && request.resource.data.approvedAt == request.time && request.resource.data.reason.size() >= 5
+          && request.resource.data.tenantId == get(/databases/$(database)/documents/payroll/$(id)).data.tenantId
+          && request.resource.data.snapshot == get(/databases/$(database)/documents/payroll/$(id)).data.snapshot
+          && get(/databases/$(database)/documents/payroll/$(id)/state/current).data.paidUGX == 0
+          && get(/databases/$(database)/documents/payroll/$(id)/state/current).data.voided == false)
+        || (action == 'void' && validVoid(request.resource.data)));
       allow update, delete: if false;
     }
 

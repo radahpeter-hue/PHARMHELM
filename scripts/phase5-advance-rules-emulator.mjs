@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { requestPayrollVoid, voidUnpaidPayroll } from '../src/services/hrPayrollCorrection.ts';
 import { attestPayroll } from '../src/services/hrPayrollApproval.ts';
 import { finalizePayrollDraft } from '../src/services/hrPayrollFinalization.ts';
 import { readFileSync } from 'node:fs';
@@ -96,6 +97,7 @@ try {
     const batch = writeBatch(connection);
     batch.set(doc(connection,'payroll',id),payroll);
     batch.set(doc(connection,'payslips',id),payslip);
+    batch.set(doc(connection,'payroll',id,'state','current'),{tenantId:'tenant-a',snapshot,paidUGX:0,outstandingUGX:400000,voided:false,lastAction:'recognition',updatedAt:serverTimestamp()});
     return batch.commit();
   };
   await assertFails(pair(finance)); // Finance cannot invent an HR signature.
@@ -134,6 +136,7 @@ try {
   const batch = writeBatch(finance);
   batch.set(doc(finance,'payroll',id),payrollInput);
   batch.set(doc(finance,'payslips',id),payslipInput);
+  batch.set(doc(finance,'payroll',id,'state','current'),{tenantId:'tenant-a',snapshot,paidUGX:0,outstandingUGX:400000,voided:false,lastAction:'recognition',updatedAt:serverTimestamp()});
   await assertSucceeds(batch.commit());
   await assertFails(approve(hr, {...approval,revision:2}));
   await assertFails(setDoc(doc(finance,'payroll',id),payrollInput));
@@ -149,6 +152,16 @@ try {
   if (posted.netSalaryPayableUGX !== 400000 || posted.salaryExpenseUGX + posted.employerNssfExpenseUGX !==
       posted.netSalaryPayableUGX + posted.payePayableUGX + posted.nssfPayableUGX + posted.otherDeductionsPayableUGX)
     throw new Error('Salary accrual does not reconcile');
+  const voidInput = {payrollId:'tenant-a_employee_2026-11',actorUid:'hr',reason:'Incorrect employee remuneration'};
+  await assertFails(requestPayrollVoid({...voidInput,actorUid:'finance'},finance));
+  await assertSucceeds(requestPayrollVoid(voidInput,hr));
+  await assert.rejects(voidUnpaidPayroll({...voidInput,actorUid:'hr'},hr));
+  await assertSucceeds(voidUnpaidPayroll({...voidInput,actorUid:'finance'},finance));
+  await assert.rejects(voidUnpaidPayroll({...voidInput,actorUid:'finance'},finance));
+  const reversed = (await getDoc(doc(finance,'payroll',voidInput.payrollId,'corrections','void'))).data();
+  assert.equal(reversed.netSalaryPayableUGX + posted.netSalaryPayableUGX, 0);
+  assert.equal(reversed.salaryExpenseUGX + posted.salaryExpenseUGX, 0);
+  await assertFails(updateDoc(doc(finance,'payroll',voidInput.payrollId,'corrections','void'),{reason:'erase evidence'}));
   console.log('Atomic payroll + payslip creates allowed together, single writes and mutation denied');
   console.log('Phase 5 HR privacy, approvals and forbidden payroll writes: PASS');
 } finally {
