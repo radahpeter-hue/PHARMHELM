@@ -108,7 +108,7 @@ service cloud.firestore {
     }
 
     function isPeopleSupervisor() {
-      return isAuthenticated() && (isBranchManager() || isDepartmentHead() || isAdmin());
+      return (isBranchManager() || isDepartmentHead() || isAdmin());
     }
 
     function isAssignedToBranch(branchId) {
@@ -724,7 +724,7 @@ service cloud.firestore {
     }
 
     match /trips/{tripId} {
-      allow read: if isAuthenticated() && (isLogisticsHead() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
+      allow read: if (isLogisticsHead() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
       allow create: if isLogisticsHead() && isTenantMember(request.resource.data.tenantId);
       allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
@@ -738,21 +738,21 @@ service cloud.firestore {
     }
 
     match /fuel_logs/{logId} {
-      allow read: if isAuthenticated() && (isLogisticsHead() || isFinance() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
+      allow read: if (isLogisticsHead() || isFinance() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
       allow create: if isTenantMember(request.resource.data.tenantId) && (isLogisticsHead() || isOwner(request.resource.data.personnelId));
       allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
     }
 
     match /maintenance_logs/{logId} {
-      allow read: if isAuthenticated() && (isLogisticsHead() || isFinance() || isTenantMember(resource.data.tenantId));
+      allow read: if (isLogisticsHead() || isFinance() || isTenantMember(resource.data.tenantId));
       allow create: if isLogisticsHead() && isTenantMember(request.resource.data.tenantId);
       allow update: if isLogisticsHead() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if isLogisticsHead() && isTenantMember(resource.data.tenantId);
     }
 
     match /traffic_fine_logs/{logId} {
-      allow read: if isAuthenticated() && (isLogisticsHead() || isHR() || isFinance() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
+      allow read: if (isLogisticsHead() || isHR() || isFinance() || isOwner(resource.data.personnelId) || isTenantMember(resource.data.tenantId));
       allow create: if (isLogisticsHead() || isHR()) && isTenantMember(request.resource.data.tenantId);
       allow update: if (isLogisticsHead() || isHR()) && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
       allow delete: if (isLogisticsHead() || isHR()) && isTenantMember(resource.data.tenantId);
@@ -832,7 +832,7 @@ service cloud.firestore {
     }
 
     match /attendance_records/{recordId} {
-      allow read: if isAuthenticated() && (isHR() || isBranchManager() || isOwner(resource.data.staffId) || isTenantMember(resource.data.tenantId));
+      allow read: if (isHR() || isBranchManager() || isOwner(resource.data.staffId) || isTenantMember(resource.data.tenantId));
       allow write: if isHR() || isBranchManager();
     }
 
@@ -965,9 +965,9 @@ service cloud.firestore {
     }
 
     match /leave_requests/{requestId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
+      allow read: if (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
       allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && (isHR() || (isOwner(resource.data.staffId) && resource.data.status == 'pending'));
+      allow update: if (isHR() || (isOwner(resource.data.staffId) && resource.data.status == 'pending'));
       allow delete: if isHR();
     }
 
@@ -1070,12 +1070,12 @@ service cloud.firestore {
     }
 
     match /cme_records/{recordId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
+      allow read: if (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
       allow write: if isHR();
     }
 
     match /appraisal_scores/{scoreId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
+      allow read: if (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
       allow write: if isHR();
     }
 
@@ -1498,7 +1498,7 @@ service cloud.firestore {
 
     match /controlled_drug_register/{entryId} {
       allow read: if isTenantMember(resource.data.tenantId) && (isQA() || isBranchManager());
-      allow create: if isAuthenticated() && (isQA() || isBranchManager() || isAdmin());
+      allow create: if (isQA() || isBranchManager() || isAdmin());
       allow update, delete: if isAdmin(); // Highly sensitive
     }
 
@@ -1548,7 +1548,7 @@ service cloud.firestore {
     }
 
     match /cme_attendance/{attendanceId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isQA() || isHR() || isTenantMember(resource.data.tenantId));
+      allow read: if (isOwner(resource.data.staffId) || isQA() || isHR() || isTenantMember(resource.data.tenantId));
       allow write: if isQA() || isHR();
     }
 
