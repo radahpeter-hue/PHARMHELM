@@ -9,10 +9,11 @@ function run(mode:string) {
  const name=project+'/releases/pharmhelm_size_probe_123_1';
  const ruleset=project+'/rulesets/test-candidate';
  const calls=[];
+ globalThis.setTimeout=(callback)=>{queueMicrotask(callback);return 0;};
  globalThis.fetch=async (url,options)=>{
    calls.push({url,method:options.method||'GET'});
    let status=200,body={};
-   if(url.endsWith('/rulesets'))body={name:ruleset};
+   if(url.endsWith('/rulesets')){body={name:ruleset};if(${JSON.stringify(mode)}==='service-error'){status=503;body={error:{message:'fixture unavailable'}};}}
    else if(url.endsWith('/releases')) {status=${JSON.stringify(mode)}==='size-error'?400:503;body={error:{message:'fixture'}};}
    else if(url.endsWith('/pharmhelm_size_probe_123_1')) {
      if(options.method==='DELETE')body={};
@@ -38,4 +39,13 @@ test('size limit rejection remains a hard failure',()=>{
 });
 test('ambiguous probe can never certify a different ruleset',()=>{
  const result=run('conflict');assert.notEqual(result.status,0);assert.match(result.stderr,/Conflicting size probe/);
+});
+
+test('persistent rules API failure runs an inactive minimal control and never certifies the candidate',()=>{
+ const result=run('service-error');
+ assert.notEqual(result.status,0);
+ assert.match(result.stdout,/MINIMAL_INACTIVE_RULESET_CONTROL/);
+ assert.match(result.stdout,/"status":503/);
+ assert.match(result.stderr,/Inactive ruleset validation failed \(503\)/);
+ assert.doesNotMatch(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);
 });

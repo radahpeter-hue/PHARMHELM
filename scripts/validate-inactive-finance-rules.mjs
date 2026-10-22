@@ -11,7 +11,18 @@ for(let attempt=1;attempt<=4;attempt++) {
  const response=await fetch(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({source:{files:[{name:'firestore.rules',content:rules}]}}),signal:AbortSignal.timeout(60000)});
  result=await response.json();
  if(response.ok)break;
- if(![429,500,502,503,504].includes(response.status)||attempt===4)throw new Error(`Inactive ruleset validation failed (${response.status}): ${result.error?.message||'Unknown compiler error'}`);
+ if(![429,500,502,503,504].includes(response.status)||attempt===4) {
+  if(response.status===503) {
+   const control=await fetch(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({source:{files:[{name:'firestore.rules',content:"rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read, write: if false; } } }"}]}}),signal:AbortSignal.timeout(60000)});
+   const payload=await control.json();
+   console.log(JSON.stringify({mode:'MINIMAL_INACTIVE_RULESET_CONTROL',status:control.status,productionReleaseModified:false}));
+   if(control.ok && payload.name?.startsWith(`projects/${project}/rulesets/`)) {
+    const cleanup=await fetch(`https://firebaserules.googleapis.com/v1/${payload.name}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
+    if(!cleanup.ok)throw new Error(`Minimal inactive control cleanup failed (${cleanup.status})`);
+   }
+  }
+  throw new Error(`Inactive ruleset validation failed (${response.status}): ${result.error?.message||'Unknown compiler error'}`);
+ }
  console.log(`Rules API transient HTTP ${response.status}; retry ${attempt}/4 without activating any release.`);
  await new Promise(resolve=>setTimeout(resolve,attempt*5000));
 }
