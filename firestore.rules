@@ -838,15 +838,15 @@ service cloud.firestore {
 
     match /disciplinary_incidents/{incidentId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (
-        isHR() || isAdmin() || isOwner(resource.data.staffId) || resource.data.reportedByUserId == request.auth.uid
+        isHR() || isOwner(resource.data.staffId) || resource.data.reportedByUserId == request.auth.uid
       );
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (
-        isHR() || isAdmin() ||
+        isHR() ||
         ((isPeopleSupervisor() || isQA())
           && request.resource.data.reportedByUserId == request.auth.uid
           && request.resource.data.status == 'open')
       );
-      allow update: if isHR() || isAdmin();
+      allow update: if isHR();
       allow delete: if isAdmin();
     }
 
@@ -947,7 +947,7 @@ service cloud.firestore {
         && (!('employee_id' in resource.data) || request.resource.data.employee_id == resource.data.employee_id)
         && (!('staff_code' in resource.data) || request.resource.data.staff_code == resource.data.staff_code)
         && (
-        isAdmin() || isHR() ||
+        isHR() ||
         (isITPersonnel() &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
             'tenantId', 'role', 'secondaryRoles', 'roleRealmId',
@@ -968,7 +968,7 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
       allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
       allow update: if isAuthenticated() && (isHR() || (isOwner(resource.data.staffId) && resource.data.status == 'pending'));
-      allow delete: if isAdmin() || isHR();
+      allow delete: if isHR();
     }
 
     // Submitted attendance is distinct from a manager-approved payroll timesheet.
@@ -1001,7 +1001,7 @@ service cloud.firestore {
     }
 
     match /advance_requests/{requestId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isHR() || isFinance() || isAdmin());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isHR() || isFinance());
       allow create: if isAuthenticated()
         && isOwner(request.resource.data.staffId)
         && request.resource.data.staff_id == request.resource.data.staffId
@@ -1048,18 +1048,18 @@ service cloud.firestore {
     }
 
     match /payslips/{payslipId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isFinance() || isAdmin());
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isFinance());
       allow create, update, delete: if false; // Only certified atomic payroll posting may create payslips.
     }
 
     match /cme_records/{recordId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isAdmin() || isTenantMember(resource.data.tenantId));
-      allow write: if isHR() || isAdmin();
+      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
+      allow write: if isHR();
     }
 
     match /appraisal_scores/{scoreId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isAdmin() || isTenantMember(resource.data.tenantId));
-      allow write: if isHR() || isAdmin();
+      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
+      allow write: if isHR();
     }
 
     match /system_settings/{settingsId} {
@@ -1388,13 +1388,13 @@ service cloud.firestore {
     match /financial_posting_audit/{auditId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isFinance() || isProcurement() || isAdmin());
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (isFinance() || isProcurement() || isAdmin());
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (isFinance() || isAdmin());
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (isFinance());
       allow delete: if false;
     }
 
     match /financial_metrics/{metricId} {
-      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isFinance() || isAdmin());
-      allow write: if isFinance() || isAdmin();
+      allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isFinance());
+      allow write: if isFinance();
     }
 
     match /management_expenses/{expenseId} {
@@ -1527,33 +1527,33 @@ service cloud.firestore {
 
     match /cme_sessions/{sessionId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isQA() || isHR() || isAdmin();
+      allow write: if isQA() || isHR();
     }
 
     match /cme_attendance/{attendanceId} {
       allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isQA() || isHR() || isTenantMember(resource.data.tenantId));
-      allow write: if isQA() || isHR() || isAdmin();
+      allow write: if isQA() || isHR();
     }
 
     match /appraisal_cycles/{cycleId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId);
-      allow write: if isQA() || isHR() || isAdmin();
+      allow write: if isQA() || isHR();
     }
 
     match /appraisals/{appraisalId} {
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (
-        isOwner(resource.data.staffId) || isQA() || isHR() || isAdmin() ||
+        isOwner(resource.data.staffId) || isQA() || isHR() ||
         (isPeopleSupervisor() && isAssignedToBranch(resource.data.branchId))
       );
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && (
-        isQA() || isHR() || isAdmin() ||
+        isQA() || isHR() ||
         (isPeopleSupervisor()
           && isAssignedToBranch(request.resource.data.branchId)
           && request.resource.data.staffId != request.auth.uid
           && request.resource.data.appraisedByUserId == request.auth.uid)
       );
       allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && (
-        isQA() || isHR() || isAdmin() ||
+        isQA() || isHR() ||
         (isPeopleSupervisor()
           && resource.data.appraisedByUserId == request.auth.uid
           && request.resource.data.appraisedByUserId == resource.data.appraisedByUserId
@@ -1565,7 +1565,7 @@ service cloud.firestore {
           && request.resource.data.staffId != request.auth.uid
           && request.resource.data.lastUpdatedByUserId == request.auth.uid)
       );
-      allow delete: if isQA() || isHR() || isAdmin();
+      allow delete: if isQA() || isHR();
     }
 
     match /operational_inventory_masters/{masterItemId} {
