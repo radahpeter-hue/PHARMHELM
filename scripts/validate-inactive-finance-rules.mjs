@@ -3,8 +3,7 @@
  */
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-const {GoogleAuth}=await import('google-auth-library');
-const token=process.env.GOOGLE_OAUTH_ACCESS_TOKEN || await new GoogleAuth({scopes:['https://www.googleapis.com/auth/cloud-platform']}).getAccessToken();
+const token=process.env.GOOGLE_OAUTH_ACCESS_TOKEN || await new (await import('google-auth-library')).GoogleAuth({scopes:['https://www.googleapis.com/auth/cloud-platform']}).getAccessToken();
 if(!token)throw new Error('Scoped CI authentication is required.');
 const project='gen-lang-client-0911422817',rules=readFileSync(process.argv[2]||'firestore.rules','utf8');
 let result;
@@ -19,9 +18,26 @@ for(let attempt=1;attempt<=4;attempt++) {
 if(!result.name?.startsWith(`projects/${project}/rulesets/`))throw new Error('Unexpected inactive ruleset response.');
 const probeName=`projects/${project}/releases/pharmhelm_size_probe_${process.env.GITHUB_RUN_ID||Date.now()}_${process.env.GITHUB_RUN_ATTEMPT||1}`;
 if(!/^projects\/gen-lang-client-0911422817\/releases\/pharmhelm_size_probe_[0-9]+_[0-9]+$/.test(probeName))throw new Error('Unsafe validation release name.');
-const response=await fetch(`https://firebaserules.googleapis.com/v1/projects/${project}/releases`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({name:probeName,rulesetName:result.name}),signal:AbortSignal.timeout(60000)});
-const release=await response.json();
-if(!response.ok)throw new Error(`Compiled executable activation-size validation failed (${response.status}): ${release.error?.message||'Unknown activation error'}`);
+let release;
+for (let attempt=1;attempt<=4;attempt++) {
+ const response=await fetch(`https://firebaserules.googleapis.com/v1/projects/${project}/releases`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({name:probeName,rulesetName:result.name}),signal:AbortSignal.timeout(60000)});
+ release=await response.json();
+ if(response.ok)break;
+ if (![409,429,500,502,503,504].includes(response.status))
+   throw new Error(`Compiled executable activation-size validation failed (${response.status}): ${release.error?.message||'Unknown activation error'}`);
+ // An unavailable response can follow a committed creation. Recover only this
+ // exact unbound probe and exact candidate ruleset; never infer successful compilation.
+ const recovery=await fetch(`https://firebaserules.googleapis.com/v1/${probeName}`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
+ if(recovery.ok) {
+   release=await recovery.json();
+   if(release.name!==probeName || release.rulesetName!==result.name)throw new Error('Conflicting size probe release');
+   break;
+ }
+ if(attempt===4 || ![404,429,500,502,503,504].includes(recovery.status))
+   throw new Error(`Compiled executable activation-size validation unavailable (${response.status}); probe recovery HTTP ${recovery.status}`);
+ console.log(`Unbound release probe transient HTTP ${response.status}; retry ${attempt}/4. No production release modified.`);
+ await new Promise(resolve=>setTimeout(resolve,attempt*5000));
+}
 try{
  if(release.name!==probeName||release.rulesetName!==result.name)throw new Error('Unexpected size-validation release.');
  console.log(JSON.stringify({mode:'UNBOUND_RELEASE_SIZE_VALIDATION',ruleset:result.name,sourceSHA256:createHash('sha256').update(rules).digest('hex'),sourceBytes:Buffer.byteLength(rules),productionReleaseModified:false}));
