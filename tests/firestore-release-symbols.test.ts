@@ -31,3 +31,21 @@ test('tenant factoring preserves exact scope and quoted expressions', async () =
  assert.match(factored,/function sharedExistingTenant\(\) \{ return isTenantMember\(resource.data.tenantId\); \}/);
  assert.match(factored,/function sharedRequestedTenant\(\) \{ return isTenantMember\(request.resource.data.tenantId\); \}/);
 });
+test('shared document reads preserve get versus getAfter, document IDs and literal text', async()=>{
+ const {shareDocumentReads}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`service cloud.firestore { match /databases/{database}/documents {
+ function before(id) { return get(/databases/$(database)/documents/staff/$(id)).data; }
+ function one(data) { return getAfter(/databases/$(database)/documents/staff/$(data.staffId)).data; }
+ function two(data) { return getAfter(/databases/$(database)/documents/staff/$(data.otherId)).data; }
+ function three(data) { return getAfter(/databases/$(database)/documents/staff/$(data.tenantId + '_' + data.staffId)).data; }
+ function nested(id) { return getAfter(/databases/$(database)/documents/staff/$(id)/state/current).data; }
+ function quoted() { return 'getAfter(/databases/$(database)/documents/staff/$(id)).data'; }
+ }}`;
+ const result=shareDocumentReads(source);
+ assert.match(result,/function sharedDocumentRead0\(sharedDocumentId\) \{ return getAfter\(\/databases\/\$\(database\)\/documents\/staff\/\$\(sharedDocumentId\)\).data; \}/);
+ assert.match(result,/return sharedDocumentRead0\(data.staffId\)/);
+ assert.match(result,/return sharedDocumentRead0\(data.tenantId \+ '_' \+ data.staffId\)/);
+ assert.match(result,/return get\(\/databases/);
+ assert.match(result,/\/state\/current/);
+ assert.match(result,/'getAfter\(\/databases/);
+});

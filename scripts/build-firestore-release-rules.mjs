@@ -22,8 +22,39 @@ export function shareTenantPredicates(source) {
  for(const {start,end,name} of replacements.reverse()) tokens.splice(start,end-start+1,name+'()');
  return tokens.join('').replace(/(match \/databases\/\{database\}\/documents\s*\{)/, '$1\nfunction sharedExistingTenant() { return isTenantMember(resource.data.tenantId); }\nfunction sharedRequestedTenant() { return isTenantMember(request.resource.data.tenantId); }\n');
 }
+// Share repeated fixed-collection point reads. Only the exact get/getAfter path
+// plus .data is replaced, with the original document-ID expression as argument.
+// Nested subcollection paths and quoted text are deliberately left untouched.
+export function shareDocumentReads(source) {
+ const root=/(match \/databases\/\{database\}\/documents\s*\{)/;
+ if(!root.test(source))return source;
+ const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
+ const t=tokens.map((token,index)=>({token,index})).filter(({token})=>!/^\s+$/.test(token)&&!token.startsWith('//')&&!token.startsWith('/*'));
+ const candidates=[],counts=new Map();
+ for(let i=0;i<t.length;i++) {
+  const method=t[i].token,collection=t[i+12]?.token;
+  if(!['get','getAfter'].includes(method)||!/^[A-Za-z_]\w*$/.test(collection||''))continue;
+  const prefix=[method,'(','/','databases','/','$','(','database',')','/','documents','/',collection,'/','$','('];
+  if(!prefix.every((value,n)=>t[i+n]?.token===value))continue;
+  let end=i+16,depth=1;
+  while(end<t.length&&depth>0){if(t[end].token==='(')depth++;if(t[end].token===')')depth--;if(depth>0)end++;}
+  if(depth||t[end+1]?.token!==')'||t[end+2]?.token!=='.'||t[end+3]?.token!=='data')continue;
+  const key=method+'/'+collection;
+  const arg=tokens.slice(t[i+16].index,t[end].index).join('');
+  candidates.push({start:t[i].index,end:t[end+3].index,arg,key,method,collection});
+  counts.set(key,(counts.get(key)||0)+1);i=end+3;
+ }
+ const helpers=new Map(),declarations=[];let serial=0;
+ for(const item of candidates)if(counts.get(item.key)>=3&&!helpers.has(item.key)){
+  let name;do{name='sharedDocumentRead'+serial++;}while(new RegExp('\\b'+name+'\\b').test(source));
+  helpers.set(item.key,name);
+  declarations.push(`function ${name}(sharedDocumentId) { return ${item.method}(/databases/$(database)/documents/${item.collection}/$(sharedDocumentId)).data; }`);
+ }
+ for(const item of candidates.reverse())if(helpers.has(item.key))tokens.splice(item.start,item.end-item.start+1,helpers.get(item.key)+'('+item.arg+')');
+ return tokens.join('').replace(root,'$1\n'+declarations.join('\n')+'\n');
+}
 export function compactRuleSymbols(source){
- source=shareTenantPredicates(source);
+ source=shareDocumentReads(shareTenantPredicates(source));
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(stripped.match(/\b[A-Za-z_]\w*\b/g)||[]),functions=new Map(),variables=new Map();
