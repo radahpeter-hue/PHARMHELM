@@ -74,6 +74,10 @@ try {
   const common = {tenantId:'tenant-a',staffId:'employee',period:'2026-10',payrollId:id,finalizedBy:'finance',status:'approved_unpaid'};
   const payrollInput = {...common,baseSalary:500000,bonuses:0,deductions:100000,netSalary:400000};
   const payslipInput = {...common,netPayable:400000};
+  const forgedBatch = writeBatch(finance);
+  forgedBatch.set(doc(finance,'payroll',id),payrollInput);
+  forgedBatch.set(doc(finance,'payslips',id),{...payslipInput,staffId:'other-employee'});
+  await assertFails(forgedBatch.commit());
   await assertFails(setDoc(doc(finance,'payroll',id),payrollInput));
   await assertFails(setDoc(doc(finance,'payslips',id),payslipInput));
   const batch = writeBatch(finance);
