@@ -132,36 +132,12 @@ export const AttendanceTracker: React.FC = () => {
     }
   };
 
-  const handleStartEditRow = (record: AttendanceRecord) => {
-    setEditingRowId(record.id);
-    setEditingFields({
-      status: record.status,
-      checkIn: record.check_in_time || '08:00',
-      checkOut: record.check_out_time || '17:00'
-    });
+  const handleStartEditRow = (_record: AttendanceRecord) => {
+    toast.error('Submitted attendance is immutable. Reject and record a separately audited correction.');
   };
 
-  const handleSaveRow = async (recordId: string) => {
-    if (!editingFields) return;
-    const record = attendance.find(item => item.id === recordId);
-    if (!record || record.approval_status === 'Approved') {
-      toast.error('Approved timesheets are immutable. Use an audited correction workflow.');
-      return;
-    }
-    try {
-      const hours = editingFields.status === 'present' ? calculateHours(editingFields.checkIn, editingFields.checkOut) : 0;
-      await firestoreService.updateDocument('attendance', recordId, {
-        status: editingFields.status,
-        check_in_time: editingFields.status === 'present' ? editingFields.checkIn : null,
-        check_out_time: editingFields.status === 'present' ? editingFields.checkOut : null,
-        hours_worked: hours
-      });
-      toast.success('Attendance record updated');
-      setEditingRowId(null);
-      setEditingFields(null);
-    } catch (error) {
-      toast.error('Failed to update attendance record');
-    }
+  const handleSaveRow = async (_recordId: string) => {
+    toast.error('Direct attendance editing is disabled to preserve payroll audit history.');
   };
 
   const handleAttendanceReview = async (record: AttendanceRecord, decision: 'Approved' | 'Rejected') => {
@@ -570,7 +546,7 @@ export const AttendanceTracker: React.FC = () => {
                               <button 
                                 onClick={() => handleStartEditRow(record)}
                                 className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-                                title="Edit Record"
+                                title="Direct editing disabled: use audited correction"
                               >
                                 <Edit2 size={16} />
                               </button>
