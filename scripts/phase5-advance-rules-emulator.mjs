@@ -148,7 +148,14 @@ try {
   const serviceRecord = {...snapshot, period:'2026-11', reviewed:true};
   await assertSucceeds(attestPayroll({tenantId:'tenant-a',actorUid:'hr',records:[serviceRecord]},hr));
   await assertSucceeds(finalizePayrollDraft({tenantId:'tenant-a',actorUid:'finance',records:[serviceRecord]},finance));
-  await assert.rejects(finalizePayrollDraft({tenantId:'tenant-a',actorUid:'finance',records:[serviceRecord]},finance), /already finalized/);
+  await assertSucceeds(finalizePayrollDraft({tenantId:'tenant-a',actorUid:'finance',records:[serviceRecord]},finance)); // Exact service retry is a no-op; direct duplicate creates above remain denied.
+  const resumable=['2027-03','2027-04'].map(period=>({...snapshot,period,reviewed:true}));
+  await attestPayroll({tenantId:'tenant-a',actorUid:'hr',records:[resumable[0]]},hr);
+  await assert.rejects(finalizePayrollDraft({tenantId:'tenant-a',actorUid:'finance',records:resumable},finance),/HR approval/);
+  const firstFinalizedAt=(await getDoc(doc(finance,'payroll','tenant-a_employee_2027-03'))).data().finalizedAt.toMillis();
+  await attestPayroll({tenantId:'tenant-a',actorUid:'hr',records:[resumable[1]]},hr);
+  await assertSucceeds(finalizePayrollDraft({tenantId:'tenant-a',actorUid:'finance',records:resumable},finance));
+  assert.equal((await getDoc(doc(finance,'payroll','tenant-a_employee_2027-03'))).data().finalizedAt.toMillis(),firstFinalizedAt);
   const posted = (await getDoc(doc(finance,'payroll','tenant-a_employee_2026-11'))).data();
   if (posted.netSalaryPayableUGX !== 400000 || posted.salaryExpenseUGX + posted.employerNssfExpenseUGX !==
       posted.netSalaryPayableUGX + posted.payePayableUGX + posted.nssfPayableUGX + posted.otherDeductionsPayableUGX)

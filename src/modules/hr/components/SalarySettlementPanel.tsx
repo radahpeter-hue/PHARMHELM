@@ -50,7 +50,7 @@ export function SalarySettlementPanel({payroll,profile,onClose}:{payroll:any;pro
    <p className="text-xs text-slate-600">Record a verified payment reference and recipient. Salary accrual is separate from payment. Funding must be registered, active and independently initialized.</p>
    {error&&<p role="alert" className="text-rose-700">{error}</p>}
    {!preview?<div className="grid sm:grid-cols-2 gap-3">
-    <label>Funding account<select className={field} value={accountId} onChange={e=>setAccountId(e.target.value)}><option value="">Select funding account</option>{accounts.filter(a=>a.active&&a.initialized&&a.salaryEligible).map(a=><option key={a.id} value={a.accountId}>{a.name||a.accountId} ({a.kind}): UGX {a.balanceUGX.toLocaleString()}</option>)}</select></label>
+    <label>Funding account<select aria-label="Funding account" className={field} value={accountId} onChange={e=>setAccountId(e.target.value)}><option value="">Select funding account</option>{accounts.filter(a=>a.active&&a.initialized&&a.salaryEligible).map(a=><option key={a.id} value={a.accountId}>{a.name||a.accountId} ({a.kind}): UGX {a.balanceUGX.toLocaleString()}</option>)}</select></label>
     <label>Salary payment (UGX)<input className={field} type="number" min="1" step="1" value={amount} onChange={e=>setAmount(e.target.value)}/></label>
     <label>External charge (UGX)<input className={field} type="number" min="0" step="1" value={fee} onChange={e=>setFee(e.target.value)}/></label>
     <label>Payment date<input className={field} type="date" value={date} onChange={e=>setDate(e.target.value)}/></label>
@@ -65,8 +65,8 @@ export function SalarySettlementPanel({payroll,profile,onClose}:{payroll:any;pro
    </div>}
    <details open={register} onToggle={e=>setRegister(e.currentTarget.open)}><summary className="cursor-pointer text-sm font-bold">Register a zero-opening funding account</summary><div className="grid sm:grid-cols-2 gap-3 mt-3">
     <label>Account ID<input className={field} value={newId} onChange={e=>setNewId(e.target.value)}/></label><label>Account name<input className={field} value={newName} onChange={e=>setNewName(e.target.value)}/></label>
-    <label>Type<select className={field} value={newKind} onChange={e=>setNewKind(e.target.value)}>{['BANK','BRANCH_CASH_SALES','PETTY_CASH','MTN_MOBILE_MONEY','AIRTEL_MONEY'].map(kind=><option key={kind}>{kind}</option>)}</select></label>
-    <label>Owning branch<select className={field} value={newBranch} onChange={e=>setNewBranch(e.target.value)}>{branchIds.map(id=><option key={id}>{id}</option>)}</select></label>
+    <label>Type<select aria-label="Type" className={field} value={newKind} onChange={e=>setNewKind(e.target.value)}>{['BANK','BRANCH_CASH_SALES','PETTY_CASH','MTN_MOBILE_MONEY','AIRTEL_MONEY'].map(kind=><option key={kind}>{kind}</option>)}</select></label>
+    <label>Owning branch<select aria-label="Owning branch" className={field} value={newBranch} onChange={e=>setNewBranch(e.target.value)}>{branchIds.map(id=><option key={id}>{id}</option>)}</select></label>
     <label>Reconciliation reference<input className={field} value={openingRef} onChange={e=>setOpeningRef(e.target.value)}/></label><p className="text-xs">Opening balance: UGX 0. Existing account balances cannot be replaced through registration.</p>
     <button disabled={posting} className="border rounded-lg p-2" onClick={createAccount}>Register account</button>
    </div></details>

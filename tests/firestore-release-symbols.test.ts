@@ -62,3 +62,21 @@ test('map field sharing retains exact lookup names and does not rewrite methods 
  assert.match(result,/data.affectedKeys\(\).hasOnly\(\['tenantId'\]\)/);
  assert.match(result,/'data.tenantId'/);
 });
+test('write-map caching leaves missing-resource reads and deletes unchanged',async()=>{
+ const {cacheWriteResourceMaps}=await import('../scripts/build-firestore-release-rules.mjs');
+ const checks=Array.from({length:8},()=>"request.resource.data.amount == resource.data.amount").join(' && ');
+ const source=`service cloud.firestore { match /databases/{database}/documents { match /entries/{id} {
+ allow get: if resource == null || resource.data.tenantId == request.auth.token.tenantId;
+ allow update: if ${checks};
+ allow create, update: if ${checks};
+ allow delete: if resource.data.tenantId == request.auth.token.tenantId;
+ }}}`;
+ const result=cacheWriteResourceMaps(source);
+ assert.match(result,/let cachedWriteExpression0_before = resource.data/);
+ assert.match(result,/let cachedWriteExpression0_after = request.resource.data/);
+ assert.match(result,/cachedWriteExpression0_after.amount == cachedWriteExpression0_before.amount/);
+ assert.match(result,/allow update: if cachedWriteExpression0\(\)/);
+ assert.match(result,/allow get: if resource == null \|\| resource.data.tenantId/);
+ assert.match(result,/allow delete: if resource.data.tenantId/);
+ assert.doesNotMatch(result,/let cachedWriteExpression1_before/);
+});

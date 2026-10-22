@@ -82,8 +82,43 @@ export function shareFieldReads(source) {
  for(const m of matches.reverse())if(names.has(m.field))tokens.splice(m.start,m.end-m.start+1,names.get(m.field)+'('+m.arg+')');
  return tokens.join('').replace(root,'$1\n'+decl.join('\n')+'\n');
 }
+// Create/update requests always have a new data map; updates also have an old
+// data map. Cache those immutable maps only in these method-specific allow
+// expressions. Reads, deletes and mixed write methods retain their evaluation sites.
+export function cacheWriteResourceMaps(source) {
+ const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
+ const t=tokens.map((token,index)=>({token,index})).filter(({token})=>!/^\s+$/.test(token)&&!token.startsWith('//')&&!token.startsWith('/*'));
+ const changes=[];let serial=0;
+ for(let i=0;i<t.length;i++) {
+  if(t[i].token!=='allow')continue;
+  let colon=i+1;while(colon<t.length&&t[colon].token!==':'&&t[colon].token!==';')colon++;
+  if(t[colon]?.token!==':'||t[colon+1]?.token!=='if')continue;
+  const methods=t.slice(i+1,colon).map(v=>v.token).filter(v=>v!==',');
+  if(!methods.length||!methods.every(v=>['create','update'].includes(v)))continue;
+  let end=colon+2;while(end<t.length&&t[end].token!==';')end++;
+  const lookups=[];
+  for(let at=colon+2;at<end;at++){
+   if(t[at-1]?.token==='.')continue;
+   for(const [parts,kind] of [[['request','.','resource','.','data'],'after'],[['resource','.','data'],'before']]) {
+    if(kind==='before'&&!methods.every(v=>v==='update'))continue;
+    if(parts.every((value,n)=>t[at+n]?.token===value)) {lookups.push({start:t[at].index,end:t[at+parts.length-1].index,kind});at+=parts.length-1;break;}
+   }
+  }
+  const selected=lookups.filter(m=>lookups.filter(n=>n.kind===m.kind).length>=3);
+  if(selected.length<8){i=end;continue;}
+  let name;do{name='cachedWriteExpression'+serial++;}while(new RegExp('\\b'+name+'\\b').test(source));
+  const base=t[colon+2].index,expr=tokens.slice(base,t[end].index);
+  for(const m of selected.reverse())expr.splice(m.start-base,m.end-m.start+1,name+'_'+m.kind);
+  const kinds=[...new Set(selected.map(m=>m.kind))];
+  const declarations=kinds.map(kind=>`let ${name}_${kind} = ${kind==='after'?'request.resource.data':'resource.data'};`).join(' ');
+  const header=tokens.slice(t[i].index,t[colon+2].index).join('');
+  changes.push({start:t[i].index,end:t[end].index,text:`function ${name}() { ${declarations} return ${expr.join('')}; } ${header}${name}();`});i=end;
+ }
+ for(const c of changes.reverse())tokens.splice(c.start,c.end-c.start+1,c.text);
+ return tokens.join('');
+}
 export function compactRuleSymbols(source){
- source=shareFieldReads(shareDocumentReads(shareTenantPredicates(source)));
+ source=cacheWriteResourceMaps(shareFieldReads(shareDocumentReads(shareTenantPredicates(source))));
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(stripped.match(/\b[A-Za-z_]\w*\b/g)||[]),functions=new Map(),variables=new Map();

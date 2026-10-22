@@ -687,7 +687,7 @@ service cloud.firestore {
       allow update, delete: if false;
     }
     match /finance_payment_accounts/{accountDocumentId}/payment_references/{reference} {
-      allow get: if isFinance() && (resource == null || getUserData().tenantId == resource.data.tenantId);
+      allow get: if isFinance() && (resource == null || (getUserData().tenantId == resource.data.tenantId && isAssignedToBranch(get(/databases/$(database)/documents/finance_payment_accounts/$(accountDocumentId)).data.branchId)));
       allow create: if isFinance() && getUserData().tenantId == request.resource.data.tenantId
         && !exists(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId))
         && getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId)).data.externalReference == reference

@@ -40,13 +40,20 @@ export async function finalizePayrollDraft(
   // budgets bounded for large payroll runs. A failed employee never leaves a partial payslip.
   for (const row of rows) await runTransaction(connection, async tx => {
     {
-      const [payroll,payslip,approval] = await Promise.all([tx.get(row.payroll),tx.get(row.payslip),tx.get(doc(connection,'payroll_approvals',row.id))]);
+      const [payroll,payslip,approval,position] = await Promise.all([tx.get(row.payroll),tx.get(row.payslip),tx.get(doc(connection,'payroll_approvals',row.id)),tx.get(doc(row.payroll,'state','current'))]);
       const expected = payrollSnapshot(row.record);
       if (!approval.exists() || approval.data().status !== 'approved' || approval.data().approvedBy === input.actorUid
           || Object.entries(expected).some(([key,value]) => approval.data().snapshot[key] !== value))
         throw new Error('Matching independent HR approval is required.');
       approvals.set(row.id, approval.data());
-      if (payroll.exists() || payslip.exists()) throw new Error('Payroll already finalized or requires reconciliation');
+      if (payroll.exists() || payslip.exists() || position.exists()) {
+        if (payroll.exists() && payslip.exists() && position.exists() && !position.data().voided
+            && payroll.data().tenantId === input.tenantId && payroll.data().finalizedBy === input.actorUid
+            && payroll.data().approvalRevision === approval.data().revision
+            && Object.entries(expected).every(([key,value]) => payroll.data().snapshot?.[key] === value && payslip.data().snapshot?.[key] === value))
+          return; // Exact retry resumes a large run without recognizing any obligation twice.
+        throw new Error('Payroll already finalized, reversed or requires reconciliation');
+      }
     }
     {
       const {record,id,payroll,payslip} = row;
