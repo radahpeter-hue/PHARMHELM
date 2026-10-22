@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
 import { deduplicateStaff } from '../../utils/deduplicateStaff';
 import { validatePayrollDraft } from '../../services/hrPayrollPolicy';
+import { finalizePayrollDraft } from '../../services/hrPayrollFinalization';
 import { calculateUgandaResidentPaye, calculateUgandaNssf } from '../../services/ugandaPayrollTaxPolicy';
 
 interface DraftPayrollRecord {
