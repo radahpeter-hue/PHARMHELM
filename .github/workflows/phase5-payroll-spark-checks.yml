@@ -29,3 +29,16 @@ jobs:
         run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
       - name: Authenticated payroll and advance rule denials
         run: npx firebase emulators:exec --only firestore --project phase5-advance-rules "node --import tsx scripts/phase5-advance-rules-emulator.mjs"
+      - name: Install isolated salary UI browser
+        run: |
+          npm install --prefix /tmp/phase5-browser --no-save --ignore-scripts playwright
+          /tmp/phase5-browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Salary payment preview and retry at phone widths
+        env:
+          PLAYWRIGHT_MODULE: /tmp/phase5-browser/node_modules/playwright
+        run: node scripts/phase5-salary-ui-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase5-salary-mobile-proof
+          path: /tmp/phase5-salary-ui-*/*.png

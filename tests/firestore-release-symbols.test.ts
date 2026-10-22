@@ -49,3 +49,16 @@ test('shared document reads preserve get versus getAfter, document IDs and liter
  assert.match(result,/\/state\/current/);
  assert.match(result,/'getAfter\(\/databases/);
 });
+test('map field sharing retains exact lookup names and does not rewrite methods or literals',async()=>{
+ const {shareFieldReads}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`service cloud.firestore { match /databases/{database}/documents {
+ function allowed(data) { return ${Array.from({length:20},()=>"data.tenantId == request.resource.data.tenantId && data.quantityDispatched == 1 && data.affectedKeys().hasOnly(['tenantId'])").join(' && ')}; }
+ function quoted() { return 'data.tenantId'; }
+ }}`;
+ const result=shareFieldReads(source);
+ assert.match(result,/function sharedField_tenantId\(sharedRecord\) \{ return sharedRecord.tenantId; \}/);
+ assert.match(result,/sharedField_tenantId\(request.resource.data\)/);
+ assert.match(result,/sharedField_quantityDispatched\(data\)/);
+ assert.match(result,/data.affectedKeys\(\).hasOnly\(\['tenantId'\]\)/);
+ assert.match(result,/'data.tenantId'/);
+});

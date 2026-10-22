@@ -1,5 +1,5 @@
-/** Deterministic alpha-renaming of internal rule symbols only.
- * Document paths, field names, string literals, roles and policy expressions stay intact.
+/** Deterministic equivalent factoring and alpha-renaming of internal symbols.
+ * Document paths, map field names, string literals and role policies stay intact.
  * CI checks the authored source first, then tests and deploys this same generated output.
  */
 import {readFileSync,writeFileSync} from 'node:fs';
@@ -53,8 +53,37 @@ export function shareDocumentReads(source) {
  for(const item of candidates.reverse())if(helpers.has(item.key))tokens.splice(item.start,item.end-item.start+1,helpers.get(item.key)+'('+item.arg+')');
  return tokens.join('').replace(root,'$1\n'+declarations.join('\n')+'\n');
 }
+// Field access factoring preserves map lookup semantics, including missing-field
+// errors. Only plain identifier/member chains are touched; call expressions and
+// quoted strings remain unchanged.
+export function shareFieldReads(source) {
+ const root=/(match \/databases\/\{database\}\/documents\s*\{)/;
+ if(!root.test(source))return source;
+ const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
+ const t=tokens.map((token,index)=>({token,index})).filter(({token})=>!/^\s+$/.test(token)&&!token.startsWith('//')&&!token.startsWith('/*'));
+ const fields=new Set([...source.matchAll(/\.([A-Za-z_]\w*)/g)].map(m=>m[1]).filter(name=>name.length>=6&&!['resource','data','auth','token'].includes(name)));
+ const matches=[],counts=new Map();
+ for(let i=0;i<t.length;i++) {
+  if(!/^[A-Za-z_]\w*$/.test(t[i].token)||t[i-1]?.token==='.')continue;
+  let end=i;
+  while(t[end+1]?.token==='.'&&/^[A-Za-z_]\w*$/.test(t[end+2]?.token||'')) {
+   end+=2;
+   if(fields.has(t[end].token) && t[end+1]?.token!=='(') {
+    const field=t[end].token,arg=tokens.slice(t[i].index,t[end-1].index).join('');
+    matches.push({start:t[i].index,end:t[end].index,arg,field});counts.set(field,(counts.get(field)||0)+1);i=end;break;
+   }
+  }
+ }
+ const names=new Map(),decl=[];
+ for(const field of fields)if((counts.get(field)||0)*(field.length-3)>field.length+50){
+  let name='sharedField_'+field;while(new RegExp('\\b'+name+'\\b').test(source))name+='x';
+  names.set(field,name);decl.push(`function ${name}(sharedRecord) { return sharedRecord.${field}; }`);
+ }
+ for(const m of matches.reverse())if(names.has(m.field))tokens.splice(m.start,m.end-m.start+1,names.get(m.field)+'('+m.arg+')');
+ return tokens.join('').replace(root,'$1\n'+decl.join('\n')+'\n');
+}
 export function compactRuleSymbols(source){
- source=shareDocumentReads(shareTenantPredicates(source));
+ source=shareFieldReads(shareDocumentReads(shareTenantPredicates(source)));
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(stripped.match(/\b[A-Za-z_]\w*\b/g)||[]),functions=new Map(),variables=new Map();
