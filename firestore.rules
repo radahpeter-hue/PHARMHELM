@@ -9,6 +9,9 @@ service cloud.firestore {
     function isAuthenticated() {
       return request.auth != null;
     }
+    function canGetOptionalTenantRecord() {
+      return isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+    }
 
     // Check membership in primary or secondary roles
     function hasRole(roleName) {
@@ -652,7 +655,7 @@ service cloud.firestore {
       }
       // Existing POS welfare allocations are non-cash accounting records. They
       // never credit a registered bank account or bypass its funding guard.
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if canGetOptionalTenantRecord();
       allow list: if isTenantMember(resource.data.tenantId);
       allow create, update: if canonicalNonCashWelfareTransfer(request.resource.data);
       allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
@@ -923,7 +926,7 @@ service cloud.firestore {
 
       // Checkout and quotation validation point-read missing branch IDs before
       // reporting an invalid branch. Never expose existing cross-tenant records.
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if canGetOptionalTenantRecord();
       allow list: if isTenantMember(resource.data.tenantId);
       allow create: if isCEO() && isTenantMember(request.resource.data.tenantId) && hasValidBranchShape();
       allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
@@ -1175,7 +1178,7 @@ service cloud.firestore {
       function linkedMasterPath() {
         return /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.masterItemId);
       }
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if canGetOptionalTenantRecord();
       allow list: if isTenantMember(resource.data.tenantId)
         && (isInventoryOperator() || isProcurement() || isITPersonnel() || isAdmin());
       allow create: if isAuthenticated()
@@ -1281,7 +1284,7 @@ service cloud.firestore {
             && !('operationalType' in data)
             && !hasOperationalSourceOrder(data));
       }
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if canGetOptionalTenantRecord();
       allow list: if isTenantMember(resource.data.tenantId);
       allow create: if isAuthenticated()
         && isTenantMember(request.resource.data.tenantId)
@@ -1304,7 +1307,7 @@ service cloud.firestore {
         && isAdmin() && isTenantMember(resource.data.tenantId);
     }
     match /invoices/{invoiceId} {
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if canGetOptionalTenantRecord();
       allow list: if isTenantMember(resource.data.tenantId) && (canViewFinance() || isProcurement());
       allow create: if isTenantMember(request.resource.data.tenantId) && (isFinance() || isProcurement());
       allow update: if isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
@@ -1314,7 +1317,7 @@ service cloud.firestore {
       allow delete: if false;
     }
     match /procurement_invoices/{invoiceId} {
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if canGetOptionalTenantRecord();
       allow list: if isTenantMember(resource.data.tenantId) && (canViewFinance() || isProcurement());
       allow create: if isTenantMember(request.resource.data.tenantId) && (isFinance() || isProcurement());
       allow update: if isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
@@ -1324,10 +1327,10 @@ service cloud.firestore {
       allow delete: if false;
     }
     match /creditLedger/{entryId} {
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if canGetOptionalTenantRecord();
     }
     match /petty_cash_ledger/{entryId} {
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if canGetOptionalTenantRecord();
       allow list: if (canViewFinance() || canPostManagementCash()) && isTenantMember(resource.data.tenantId);
       allow create: if validManagementMovement(entryId, request.resource.data, 'petty_cash');
       allow update, delete: if false;
@@ -2430,7 +2433,7 @@ service cloud.firestore {
           && data.inventoryCapabilities.hasOnly(['DRUGS','COSMETICS','CONSUMABLES','DEVICES','NON_SELLABLE_OPERATIONAL'])
           && data.updatedBy == request.auth.uid && data.updatedAt == request.time;
       }
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if canGetOptionalTenantRecord();
       allow list: if isTenantMember(resource.data.tenantId);
       allow create: if isTenantMember(request.resource.data.tenantId)
         && canMaintainSupplier() && validSupplier()
@@ -2629,7 +2632,7 @@ service cloud.firestore {
             || data.inventoryClass == 'SELLABLE'
             || (data.inventoryClass == 'OPERATIONAL' && isOperationalInventoryEnabled(data.tenantId)));
       }
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if canGetOptionalTenantRecord();
       allow list: if isTenantMember(resource.data.tenantId);
       allow create: if (isStockOperator() || (
           isProcurement()
@@ -2757,7 +2760,7 @@ service cloud.firestore {
           && outbox.paymentId == sale.canonicalPaymentId;
       }
 
-      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if canGetOptionalTenantRecord();
       allow list: if isTenantMember(resource.data.tenantId);
       allow create: if isPOSOperator()
         && isTenantMember(request.resource.data.tenantId)
@@ -3109,38 +3112,38 @@ service cloud.firestore {
     }
 
     match /inventoryMovementEvents/{eventId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow read: if canGetOptionalTenantRecord();
       allow create: if isTenantMember(request.resource.data.tenantId);
       allow update, delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /branchConsumptionDaily/{summaryId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow read: if canGetOptionalTenantRecord();
       allow write: if isTenantMember(request.resource.data.tenantId);
     }
 
     match /replenishmentEngineSettings/{settingsId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow read: if canGetOptionalTenantRecord();
       allow write: if isTenantMember(request.resource.data.tenantId);
     }
 
     match /branchReplenishmentSnapshots/{snapId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow read: if canGetOptionalTenantRecord();
       allow write: if isTenantMember(request.resource.data.tenantId);
     }
 
     match /inventoryTransferReservations/{resId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow read: if canGetOptionalTenantRecord();
       allow write: if isTenantMember(request.resource.data.tenantId);
     }
 
     match /autoGenerateOrderRuns/{runId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow read: if canGetOptionalTenantRecord();
       allow write: if isTenantMember(request.resource.data.tenantId);
     }
 
     match /autoGenerateOrderLines/{lineId} {
-      allow read: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow read: if canGetOptionalTenantRecord();
       allow write: if isTenantMember(request.resource.data.tenantId);
     }
 
