@@ -976,20 +976,16 @@ service cloud.firestore {
       allow read: if isTenantMember(resource.data.tenantId)
         && (isHR() || isFinance() || isCEO() || isOwner(resource.data.staffId));
       allow create: if isFinance() && getUserData().tenantId == request.resource.data.tenantId
-        && payrollId == request.resource.data.payrollId
         && payrollId == request.resource.data.tenantId + '_' + request.resource.data.staffId + '_' + request.resource.data.period
-        && request.resource.data.finalizedBy == request.auth.uid
+        && request.resource.data.payrollId == payrollId
         && request.resource.data.status == 'approved_unpaid'
-        && request.resource.data.baseSalary is int && request.resource.data.baseSalary >= 0
-        && request.resource.data.bonuses is int && request.resource.data.bonuses >= 0
-        && request.resource.data.deductions is int && request.resource.data.deductions >= 0
-        && request.resource.data.netSalary is int && request.resource.data.netSalary >= 0
-        && request.resource.data.baseSalary + request.resource.data.bonuses - request.resource.data.deductions == request.resource.data.netSalary
-        && request.resource.data.net_salary == request.resource.data.netSalary
-        && request.resource.data.base_salary == request.resource.data.baseSalary
-        && getAfter(/databases/$(database)/documents/payslips/$(payrollId)).data.payrollId == payrollId
-        && getAfter(/databases/$(database)/documents/payslips/$(payrollId)).data.netPayable == request.resource.data.netSalary
-        && getAfter(/databases/$(database)/documents/payslips/$(payrollId)).data.finalizedBy == request.auth.uid;
+        && request.resource.data.finalizedBy == request.auth.uid
+        && request.resource.data.baseSalary is int && request.resource.data.bonuses is int
+        && request.resource.data.deductions is int && request.resource.data.netSalary is int
+        && request.resource.data.netSalary >= 0 && request.resource.data.baseSalary >= 0
+        && request.resource.data.bonuses >= 0 && request.resource.data.deductions >= 0
+        && request.resource.data.baseSalary + request.resource.data.bonuses == request.resource.data.netSalary + request.resource.data.deductions
+        && getAfter(/databases/$(database)/documents/payslips/$(payrollId)).data.payrollId == payrollId;
       allow update, delete: if false;
     }
 
@@ -1066,14 +1062,10 @@ service cloud.firestore {
       allow read: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isFinance());
       allow create: if isFinance() && getUserData().tenantId == request.resource.data.tenantId
         && payslipId == request.resource.data.payrollId
-        && payslipId == request.resource.data.tenantId + '_' + request.resource.data.staffId + '_' + request.resource.data.period
-        && request.resource.data.finalizedBy == request.auth.uid
         && request.resource.data.status == 'approved_unpaid'
+        && request.resource.data.finalizedBy == request.auth.uid
         && request.resource.data.netPayable is int && request.resource.data.netPayable >= 0
-        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.payrollId == payslipId
-        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.netSalary == request.resource.data.netPayable
-        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.staffId == request.resource.data.staffId
-        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.finalizedBy == request.auth.uid;
+        && getAfter(/databases/$(database)/documents/payroll/$(payslipId)).data.netSalary == request.resource.data.netPayable;
       allow update, delete: if false;
     }
 
