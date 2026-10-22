@@ -978,40 +978,25 @@ service cloud.firestore {
       allow create, update, delete: if false; // Payroll posting requires a certified atomic writer.
     }
 
+    // Append-once daily attendance: only separate authorized reviewer may change status.
     match /attendance/{attendanceId} {
-      function submitterAllowed(branchId) {
-        return isHR() || isAssignedBranchManager(branchId);
-      }
-      function reviewerAllowed(branchId) {
-        return hasAnyRole(['HR Head','HR Support Personnel','HR Manager','admin','Admin'])
-          || isAssignedBranchManager(branchId);
-      }
       allow read: if isTenantMember(resource.data.tenantId)
         && (isHR() || isAssignedToBranch(resource.data.branch_id));
       allow create: if isTenantMember(request.resource.data.tenantId)
         && attendanceId == request.resource.data.tenantId + '_' + request.resource.data.staffId + '_' + request.resource.data.date
-        && submitterAllowed(request.resource.data.branch_id)
+        && (isHR() || isAssignedBranchManager(request.resource.data.branch_id))
         && request.resource.data.loggedByUid == request.auth.uid
         && request.resource.data.approval_status == 'Submitted'
-        && request.resource.data.status in ['present', 'absent', 'on-leave']
+        && request.resource.data.status in ['present','absent','on-leave']
         && request.resource.data.hours_worked is number
         && request.resource.data.hours_worked >= 0 && request.resource.data.hours_worked <= 24;
       allow update: if isTenantMember(resource.data.tenantId)
-        && resource.data.get('approval_status','Submitted') == 'Submitted'
-        && (
-          (submitterAllowed(resource.data.branch_id)
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'status', 'check_in_time', 'check_out_time', 'hours_worked', 'updatedAt'
-            ]))
-          ||
-          (reviewerAllowed(resource.data.branch_id)
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'approval_status', 'approvedByUid', 'updatedAt'
-            ])
-            && request.resource.data.approval_status in ['Approved', 'Rejected']
-            && request.resource.data.approvedByUid == request.auth.uid
-            && request.auth.uid != resource.data.get('loggedByUid',''))
-        );
+        && resource.data.approval_status == 'Submitted'
+        && (isHR() || isAssignedBranchManager(resource.data.branch_id))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['approval_status','approvedByUid','updatedAt'])
+        && request.resource.data.approval_status in ['Approved','Rejected']
+        && request.resource.data.approvedByUid == request.auth.uid
+        && request.auth.uid != resource.data.loggedByUid;
       allow delete: if false;
     }
 
