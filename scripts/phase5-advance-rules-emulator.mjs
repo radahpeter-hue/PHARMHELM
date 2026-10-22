@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 
 const projectId = 'phase5-advance-rules';
 const env = await initializeTestEnvironment({
@@ -69,6 +69,22 @@ try {
   await assertFails(getDoc(doc(employee, 'payslips', 'other-payslip')));
   await assertFails(getDoc(doc(outsider, 'payroll', 'other-payroll')));
   await assertSucceeds(getDoc(doc(hr, 'payroll', 'other-payroll')));
+  const finance = env.authenticatedContext('finance', {tenantId:'tenant-a',role:'Finance Head'}).firestore();
+  const id = 'tenant-a_employee_2026-10';
+  const common = {tenantId:'tenant-a',staffId:'employee',period:'2026-10',payrollId:id,finalizedBy:'finance',status:'approved_unpaid'};
+  const payrollInput = {...common,baseSalary:500000,bonuses:0,deductions:100000,netSalary:400000};
+  const payslipInput = {...common,netPayable:400000};
+  await assertFails(setDoc(doc(finance,'payroll',id),payrollInput));
+  await assertFails(setDoc(doc(finance,'payslips',id),payslipInput));
+  const batch = writeBatch(finance);
+  batch.set(doc(finance,'payroll',id),payrollInput);
+  batch.set(doc(finance,'payslips',id),payslipInput);
+  await assertSucceeds(batch.commit());
+  await assertFails(setDoc(doc(finance,'payroll',id),payrollInput));
+  await assertFails(updateDoc(doc(finance,'payroll',id),{netSalary:1}));
+  await assertFails(updateDoc(doc(finance,'payslips',id),{netPayable:1}));
+  await assertFails(setDoc(doc(outsider,'payroll','tenant-b_employee_2026-10'),{...payrollInput,tenantId:'tenant-b',payrollId:'tenant-b_employee_2026-10'}));
+  console.log('Atomic payroll + payslip creates allowed together, single writes and mutation denied');
   console.log('Phase 5 HR privacy, approvals and forbidden payroll writes: PASS');
 } finally {
   await env.cleanup();
