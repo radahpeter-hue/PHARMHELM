@@ -15,6 +15,7 @@ import { validatePayrollDraft } from '../../services/hrPayrollPolicy';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { approvedPayableHours } from '../../services/hrPayrollAttendancePolicy';
+import { SalarySettlementPanel } from './components/SalarySettlementPanel';
 import { requestPayrollVoid, voidUnpaidPayroll } from '../../services/hrPayrollCorrection';
 import { attestPayroll } from '../../services/hrPayrollApproval';
 import { finalizePayrollDraft } from '../../services/hrPayrollFinalization';
@@ -62,6 +63,7 @@ export const PayrollManager: React.FC = () => {
   const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [settlingPayroll,setSettlingPayroll] = useState<any>(null);
 
   // Date range selectors for payment period
   const getFirstDayOfMonth = () => {
@@ -751,6 +753,7 @@ export const PayrollManager: React.FC = () => {
         </div>
       </div>
 
+      {settlingPayroll && <SalarySettlementPanel payroll={settlingPayroll} profile={profile} onClose={()=>setSettlingPayroll(null)}/>}
       {/* Main Draft Ledger Operations Area */}
       {isDraftMode ? (
         <div className="space-y-4">
@@ -963,6 +966,7 @@ export const PayrollManager: React.FC = () => {
                           </td>
                           <td className="px-6 py-4 text-right">
                             <div className="flex gap-2 justify-end">
+                              <button onClick={() => setSettlingPayroll(pay)} className="text-xs text-indigo-700">Settle salary</button>
                               <button onClick={() => handlePayrollVoid(pay.id,true)} className="text-xs text-amber-700">HR: request reversal</button>
                               <button onClick={() => handlePayrollVoid(pay.id,false)} className="text-xs text-rose-700">Finance: reverse unpaid accrual</button>
                             </div>

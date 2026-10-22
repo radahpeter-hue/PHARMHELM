@@ -114,6 +114,15 @@
         { "fieldPath": "transferId", "order": "ASCENDING" },
         { "fieldPath": "destinationBranchId", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "finance_payment_accounts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tenantId", "order": "ASCENDING" },
+        { "fieldPath": "controlVersion", "order": "ASCENDING" },
+        { "fieldPath": "branchId", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

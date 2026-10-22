@@ -509,7 +509,7 @@ service cloud.firestore {
 
     function isProtectedFinanceCollection(collectionName) {
       return collectionName in [
-        'finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
+        'finance_v2_transfers','finance_v2_events','finance_v2_account_movements','finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
         'credit_receivables', 'supplier_payables', 'banking_records',
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
         'petty_cash_ledger', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
@@ -590,10 +590,116 @@ service cloud.firestore {
         && after.diff(before).affectedKeys().hasOnly(['payment_status','lastPaymentId','updatedAt'])
         && after.payment_status == (payment.remainingUGX == 0 ? 'paid' : 'partial');
     }
+    // Spark-native V2 disbursements share the existing register and immutable V2 journal.
+    // Transfers remain denied until their separate certification; this is liability settlement.
+    function v2AccountChange(accountId, before, after) {
+      let eventPath = /databases/$(database)/documents/finance_v2_events/$(after.lastPostingId);
+      let event = getAfter(eventPath).data;
+      return isFinance() && getUserData().tenantId == before.tenantId && isAssignedToBranch(before.branchId)
+        && before.controlVersion == 2 && before.active == true && before.initialized == true && before.currency == 'UGX'
+        && after.diff(before).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
+        && !exists(eventPath) && event.accountId == before.accountId && event.tenantId == before.tenantId
+        && accountId == before.tenantId + '_' + before.accountId && event.actorUid == request.auth.uid
+        && event.beforeUGX == before.balanceUGX && event.afterUGX == after.balanceUGX
+        && before.balanceUGX is int && before.balanceUGX <= 9007199254740991
+        && after.balanceUGX is int && after.balanceUGX >= 0 && after.balanceUGX <= 9007199254740991 && after.updatedAt == request.time;
+    }
+    function v2AccountRegistration(accountId, d) {
+      return isFinance() && getUserData().tenantId == d.tenantId && isAssignedToBranch(d.branchId)
+        && get(/databases/$(database)/documents/system_settings/$(d.tenantId)).data.phase5SalarySettlementEnabled == true
+        && accountId == d.tenantId + '_' + d.accountId && d.accountId.matches('^[A-Za-z0-9_-]{1,150}$')
+        && !(d.accountId in ['management_bank','management_petty_cash'])
+        && d.kind in ['BANK','BRANCH_CASH_SALES','PETTY_CASH','MTN_MOBILE_MONEY','AIRTEL_MONEY']
+        && d.controlVersion == 2 && d.currency == 'UGX' && d.initialized == true && d.active == true
+        && d.balanceUGX is int && d.openingBalanceUGX is int && d.balanceUGX == 0 && d.openingBalanceUGX == 0 && d.lastPostingId == null
+        && d.salaryEligible is bool && d.salaryBranchIds is list && d.salaryBranchIds.size() <= 30
+        && d.registeredBy == request.auth.uid && d.name is string && d.name.size() > 0 && d.name.size() <= 150
+        && d.reconciliationReference is string && d.reconciliationReference.size() >= 5
+        && d.createdAt == request.time && d.updatedAt == request.time;
+    }
+    function salaryStateChange(id, before, after) {
+      let event = getAfter(/databases/$(database)/documents/finance_v2_events/$(after.lastAction)).data;
+      return isFinance() && payrollScope(before) && before.voided == false
+        && after.diff(before).affectedKeys().hasOnly(['outstandingUGX','paidUGX','lastAction','updatedAt'])
+        && event.sourceType == 'SALARY_SETTLEMENT' && event.payrollId == id && event.actorUid == request.auth.uid
+        && !exists(/databases/$(database)/documents/finance_v2_events/$(after.lastAction))
+        && getAfter(/databases/$(database)/documents/payroll/$(id)/settlements/$(event.requestId)).data == event
+        && event.amountUGX > 0 && event.amountUGX <= before.outstandingUGX
+        && after.outstandingUGX == before.outstandingUGX - event.amountUGX
+        && after.paidUGX == before.paidUGX + event.amountUGX && after.updatedAt == request.time;
+    }
+    function salaryDisbursement(id, d) {
+      let p = get(/databases/$(database)/documents/payroll/$(d.payrollId)).data;
+      let before = get(/databases/$(database)/documents/payroll/$(d.payrollId)/state/current).data;
+      let after = getAfter(/databases/$(database)/documents/payroll/$(d.payrollId)/state/current).data;
+      let account = get(/databases/$(database)/documents/finance_payment_accounts/$(d.tenantId + '_' + d.accountId)).data;
+      let accountAfter = getAfter(/databases/$(database)/documents/finance_payment_accounts/$(d.tenantId + '_' + d.accountId)).data;
+      return isFinance() && getUserData().tenantId == d.tenantId && isAssignedToBranch(d.branchId) && isAssignedToBranch(account.branchId)
+        && get(/databases/$(database)/documents/system_settings/$(d.tenantId)).data.phase5SalarySettlementEnabled == true
+        && d.sourceType == 'SALARY_SETTLEMENT' && d.sourceId == d.payrollId && id == 'salary_' + d.payrollId + '_' + d.requestId
+        && d.eventId == id && d.actorUid == request.auth.uid && d.createdAt == request.time
+        && d.currency == 'UGX' && d.amountUGX is int && d.amountUGX > 0 && d.chargeUGX is int && d.chargeUGX >= 0
+        && d.amountUGX + d.chargeUGX <= 9007199254740991 && d.expenseUGX == d.chargeUGX
+        && d.externalReference.matches('^[A-Z0-9_.-]{3,100}$')
+        && d.recipientReference is string && d.recipientReference.size() >= 3 && d.recipientReference.size() <= 150
+        && d.paymentDate.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
+        && p.tenantId == d.tenantId && p.branch_id == d.branchId && p.status == 'approved_unpaid'
+        && before.voided == false && d.amountUGX <= before.outstandingUGX && after.lastAction == id
+        && after.outstandingUGX == before.outstandingUGX - d.amountUGX && after.paidUGX == before.paidUGX + d.amountUGX
+        && account.controlVersion == 2 && account.tenantId == d.tenantId && account.initialized == true && account.active == true
+        && account.salaryEligible == true && account.currency == 'UGX'
+        && (account.branchId == d.branchId || (account.branchId == 'HQ' && account.salaryBranchIds.hasAny([d.branchId])))
+        && account.kind in ['BANK','BRANCH_CASH_SALES','PETTY_CASH','MTN_MOBILE_MONEY','AIRTEL_MONEY']
+        && d.beforeUGX == account.balanceUGX && d.afterUGX == d.beforeUGX - d.amountUGX - d.chargeUGX && d.afterUGX >= 0
+        && accountAfter.balanceUGX == d.afterUGX && accountAfter.lastPostingId == id
+        && getAfter(/databases/$(database)/documents/finance_v2_account_movements/$(id + '_principal')).data.eventId == id
+        && (d.chargeUGX == 0 || getAfter(/databases/$(database)/documents/finance_v2_account_movements/$(id + '_charge')).data.eventId == id);
+    }
+    match /finance_v2_events/{id} {
+      allow get: if isFinance() && (resource == null || (getUserData().tenantId == resource.data.tenantId && isAssignedToBranch(resource.data.branchId)));
+      allow list: if isFinance() && getUserData().tenantId == resource.data.tenantId && isAssignedToBranch(resource.data.branchId);
+      allow create: if salaryDisbursement(id, request.resource.data);
+      allow update, delete: if false;
+    }
+    match /finance_v2_account_movements/{id} {
+      function validDisbursementMovement(d) {
+        let event = getAfter(/databases/$(database)/documents/finance_v2_events/$(d.eventId)).data;
+        return isFinance() && getUserData().tenantId == d.tenantId && isAssignedToBranch(event.branchId)
+          && !exists(/databases/$(database)/documents/finance_v2_events/$(d.eventId))
+          && d.tenantId == event.tenantId && d.accountId == event.accountId && d.actorUid == request.auth.uid
+          && d.createdAt == request.time && d.afterUGX == d.beforeUGX + d.deltaUGX
+          && ((id == d.eventId + '_principal' && d.purpose == 'PRINCIPAL' && d.deltaUGX == -event.amountUGX
+            && d.beforeUGX == event.beforeUGX && d.afterUGX == event.beforeUGX - event.amountUGX)
+            || (id == d.eventId + '_charge' && event.chargeUGX > 0 && d.purpose == 'CHARGE' && d.deltaUGX == -event.chargeUGX
+              && d.beforeUGX == event.beforeUGX - event.amountUGX && d.afterUGX == event.afterUGX));
+      }
+      allow read: if isFinance() && getUserData().tenantId == resource.data.tenantId
+        && isAssignedToBranch(get(/databases/$(database)/documents/finance_v2_events/$(resource.data.eventId)).data.branchId);
+      allow create: if validDisbursementMovement(request.resource.data);
+      allow update, delete: if false;
+    }
+    match /payroll/{id}/settlements/{requestId} {
+      allow read: if isFinance() && (resource == null || (getUserData().tenantId == resource.data.tenantId && isAssignedToBranch(resource.data.branchId)));
+      allow create: if isFinance() && requestId == request.resource.data.requestId && request.resource.data.payrollId == id
+        && !exists(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId))
+        && getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId)).data == request.resource.data
+        && getAfter(/databases/$(database)/documents/finance_payment_accounts/$(request.resource.data.tenantId + '_' + request.resource.data.accountId)/payment_references/$(request.resource.data.externalReference)).data.eventId == request.resource.data.eventId;
+      allow update, delete: if false;
+    }
+    match /finance_payment_accounts/{accountDocumentId}/payment_references/{reference} {
+      allow get: if isFinance() && (resource == null || getUserData().tenantId == resource.data.tenantId);
+      allow create: if isFinance() && getUserData().tenantId == request.resource.data.tenantId
+        && !exists(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId))
+        && getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId)).data.externalReference == reference
+        && getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId)).data.accountId == request.resource.data.accountId
+        && accountDocumentId == request.resource.data.tenantId + '_' + request.resource.data.accountId
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
     match /finance_payment_accounts/{accountId} {
-      allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
-      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
+      allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || (isTenantMember(resource.data.tenantId) && (resource.data.get('controlVersion',0) != 2 || (isFinance() && getUserData().tenantId == resource.data.tenantId && isAssignedToBranch(resource.data.branchId)))));
+      allow list: if canViewFinance() && isTenantMember(resource.data.tenantId) && (resource.data.get('controlVersion',0) != 2 || (isFinance() && getUserData().tenantId == resource.data.tenantId && isAssignedToBranch(resource.data.branchId)));
+      allow create: if request.resource.data.get('controlVersion',0) == 2 ? v2AccountRegistration(accountId, request.resource.data) : (isFinance() && isTenantMember(request.resource.data.tenantId)
         && get(/databases/$(database)/documents/system_settings/$(request.resource.data.tenantId)).data.managementCashAccountControlV1 == true
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
         && request.resource.data.accountId in ['management_petty_cash','management_bank']
@@ -604,8 +710,8 @@ service cloud.firestore {
         && request.resource.data.balanceUGX == request.resource.data.openingBalanceUGX
         && request.resource.data.registeredBy == request.auth.uid
         && request.resource.data.name is string && request.resource.data.name.size() > 0
-        && request.resource.data.reconciliationReference is string && request.resource.data.reconciliationReference.size() >= 5;
-      allow update: if validManagementAccountUpdate(accountId, resource.data, request.resource.data);
+        && request.resource.data.reconciliationReference is string && request.resource.data.reconciliationReference.size() >= 5);
+      allow update: if resource.data.get('controlVersion',0) == 2 ? v2AccountChange(accountId, resource.data, request.resource.data) : validManagementAccountUpdate(accountId, resource.data, request.resource.data);
       allow delete: if false;
     }
     match /cash_grn_payments/{paymentId} {
@@ -1081,13 +1187,13 @@ service cloud.firestore {
         && request.resource.data.outstandingUGX == originalPayroll().netSalaryPayableUGX
         && request.resource.data.paidUGX == 0 && request.resource.data.voided == false
         && request.resource.data.lastAction == 'recognition' && request.resource.data.updatedAt == request.time;
-      allow update: if isFinance() && payrollScope(resource.data) && stateId == 'current'
+      allow update: if request.resource.data.lastAction != 'void' ? (stateId == 'current' && salaryStateChange(id,resource.data,request.resource.data)) : (isFinance() && payrollScope(resource.data) && stateId == 'current'
         && resource.data.paidUGX == 0 && resource.data.voided == false
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['outstandingUGX','voided','lastAction','updatedAt'])
         && request.resource.data.outstandingUGX == 0 && request.resource.data.voided == true
         && request.resource.data.lastAction == 'void' && request.resource.data.updatedAt == request.time
         && !exists(/databases/$(database)/documents/payroll/$(id)/corrections/void)
-        && getAfter(/databases/$(database)/documents/payroll/$(id)/corrections/void).data.postedBy == request.auth.uid;
+        && getAfter(/databases/$(database)/documents/payroll/$(id)/corrections/void).data.postedBy == request.auth.uid);
       allow delete: if false;
     }
     match /payroll/{id}/corrections/{action} {

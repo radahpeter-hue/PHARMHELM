@@ -1,3 +1,4 @@
+import { settleSalary, registerSalaryFundingAccount } from '../src/services/financeV2Disbursement.ts';
 import assert from 'node:assert/strict';
 import { requestPayrollVoid, voidUnpaidPayroll } from '../src/services/hrPayrollCorrection.ts';
 import { attestPayroll } from '../src/services/hrPayrollApproval.ts';
@@ -9,7 +10,7 @@ import { doc, getDoc, setDoc, updateDoc, writeBatch, serverTimestamp } from 'fir
 const projectId = 'phase5-advance-rules';
 const env = await initializeTestEnvironment({
   projectId,
-  firestore: { rules: readFileSync('firestore.rules', 'utf8') }
+  firestore: { rules: readFileSync(process.env.PHARMHELM_TEST_RULES || 'firestore.rules', 'utf8') }
 });
 const request = {
   tenantId: 'tenant-a',
@@ -152,6 +153,93 @@ try {
   if (posted.netSalaryPayableUGX !== 400000 || posted.salaryExpenseUGX + posted.employerNssfExpenseUGX !==
       posted.netSalaryPayableUGX + posted.payePayableUGX + posted.nssfPayableUGX + posted.otherDeductionsPayableUGX)
     throw new Error('Salary accrual does not reconcile');
+  const salaryRecord = {...snapshot,period:'2026-12',reviewed:true};
+  await attestPayroll({tenantId:'tenant-a',actorUid:'hr',records:[salaryRecord]},hr);
+  await finalizePayrollDraft({tenantId:'tenant-a',actorUid:'finance',records:[salaryRecord]},finance);
+  const salaryId='tenant-a_employee_2026-12';
+  const settlement={tenantId:'tenant-a',payrollId:salaryId,requestId:'first',accountId:'salary_bank',actorUid:'finance',
+    amountUGX:100000,chargeUGX:1000,externalReference:'BANK-REF-001',recipientReference:'Test Employee verified bank',paymentDate:'2026-12-01'};
+  await env.withSecurityRulesDisabled(async admin=>{
+    await setDoc(doc(admin.firestore(),'finance_payment_accounts','tenant-a_salary_bank'),{
+      tenantId:'tenant-a',accountId:'salary_bank',kind:'BANK',branchId:'b1',currency:'UGX',controlVersion:2,
+      initialized:true,active:true,salaryEligible:true,salaryBranchIds:['b1'],balanceUGX:500000,lastPostingId:null
+    });
+  });
+  await assertFails(settleSalary(settlement,finance)); // Release activation is independently required.
+  await env.withSecurityRulesDisabled(async admin=>{
+    await setDoc(doc(admin.firestore(),'system_settings','tenant-a'),{tenantId:'tenant-a',phase5SalarySettlementEnabled:true});
+    await setDoc(doc(admin.firestore(),'staff','wrong-branch'),{tenantId:'tenant-a',role:'Finance Head',branch_id:'b2',assigned_branches:['b2']});
+  });
+  const wrongBranch=env.authenticatedContext('wrong-branch',{tenantId:'tenant-a',role:'Finance Head'}).firestore();
+  await assertFails(settleSalary({...settlement,actorUid:'wrong-branch'},wrongBranch));
+  await assertFails(settleSalary({...settlement,tenantId:'tenant-b',actorUid:'outsider'},outsider));
+  await assertFails(settleSalary({...settlement,actorUid:'employee'},employee));
+  async function rawSalary(requestId, amountUGX=1000, omit='') {
+    const account=(await getDoc(doc(finance,'finance_payment_accounts','tenant-a_salary_bank'))).data();
+    const state=(await getDoc(doc(finance,'payroll',salaryId,'state','current'))).data();
+    const eventId=`salary_${salaryId}_${requestId}`;
+    const event={...settlement,requestId,externalReference:('RAW-'+requestId).toUpperCase(),amountUGX,chargeUGX:0,eventId,sourceType:'SALARY_SETTLEMENT',sourceId:salaryId,
+      branchId:'b1',beforeUGX:account.balanceUGX,afterUGX:account.balanceUGX-amountUGX,currency:'UGX',expenseUGX:0,createdAt:serverTimestamp()};
+    const batch=writeBatch(finance);
+    batch.set(doc(finance,'finance_v2_events',eventId),event);
+    batch.set(doc(finance,'finance_payment_accounts','tenant-a_salary_bank','payment_references',event.externalReference),{tenantId:'tenant-a',accountId:'salary_bank',eventId,createdAt:serverTimestamp()});
+    if(omit!=='settlement')batch.set(doc(finance,'payroll',salaryId,'settlements',requestId),event);
+    batch.update(doc(finance,'finance_payment_accounts','tenant-a_salary_bank'),{balanceUGX:event.afterUGX,lastPostingId:eventId,updatedAt:serverTimestamp()});
+    if(omit!=='state')batch.update(doc(finance,'payroll',salaryId,'state','current'),{outstandingUGX:state.outstandingUGX-amountUGX,paidUGX:state.paidUGX+amountUGX,lastAction:eventId,updatedAt:serverTimestamp()});
+    if(omit!=='principal')batch.set(doc(finance,'finance_v2_account_movements',eventId+'_principal'),{tenantId:'tenant-a',eventId,accountId:'salary_bank',actorUid:'finance',purpose:'PRINCIPAL',deltaUGX:-amountUGX,beforeUGX:event.beforeUGX,afterUGX:event.afterUGX,createdAt:serverTimestamp()});
+    return batch.commit();
+  }
+  for(const omitted of ['state','settlement','principal'])await assertFails(rawSalary('orphan_'+omitted,1000,omitted));
+  await assertFails(rawSalary('fraction',1.5));
+  await assertFails(rawSalary('overpay',400001));
+  await env.withSecurityRulesDisabled(async admin=>{await updateDoc(doc(admin.firestore(),'finance_payment_accounts','tenant-a_salary_bank'),{balanceUGX:99});});
+  await assertFails(rawSalary('overdraft',1000));
+  await env.withSecurityRulesDisabled(async admin=>{await updateDoc(doc(admin.firestore(),'finance_payment_accounts','tenant-a_salary_bank'),{balanceUGX:500000});});
+  for(const [field,value] of [['active',false],['initialized',false],['salaryEligible',false],['kind','UNSUPPORTED']]) {
+    await env.withSecurityRulesDisabled(async admin=>{await updateDoc(doc(admin.firestore(),'finance_payment_accounts','tenant-a_salary_bank'),{[field]:value});});
+    await assertFails(rawSalary('invalid_'+field));
+    await env.withSecurityRulesDisabled(async admin=>{await updateDoc(doc(admin.firestore(),'finance_payment_accounts','tenant-a_salary_bank'),{[field]:field==='kind'?'BANK':true});});
+  }
+  const partial=await assertSucceeds(settleSalary(settlement,finance));
+  assert.equal(partial.replay,false);
+  assert.equal((await getDoc(doc(finance,'payroll',salaryId,'state','current'))).data().outstandingUGX,300000);
+  assert.equal((await getDoc(doc(finance,'finance_payment_accounts','tenant-a_salary_bank'))).data().balanceUGX,399000);
+  assert.equal((await getDoc(doc(finance,'finance_v2_events',partial.eventId))).data().expenseUGX,1000);
+  assert.equal((await settleSalary(settlement,finance)).replay,true);
+  await assert.rejects(settleSalary({...settlement,amountUGX:99999},finance),/conflicts/);
+  await assert.rejects(settleSalary({...settlement,requestId:'changed_id_duplicate'},finance),/reference is already/);
+  await assert.rejects(settleSalary({...settlement,requestId:'overpay',externalReference:'OVERPAY-REF',amountUGX:300001},finance),/outstanding/);
+  await assertFails(updateDoc(doc(finance,'finance_v2_events',partial.eventId),{amountUGX:1}));
+  await assertFails(updateDoc(doc(finance,'finance_v2_account_movements',partial.eventId+'_principal'),{deltaUGX:0}));
+  await assertFails(updateDoc(doc(finance,'finance_payment_accounts','tenant-a_salary_bank'),{balanceUGX:1}));
+  await assertFails(updateDoc(doc(finance,'payroll',salaryId,'state','current'),{outstandingUGX:0}));
+  const races=await Promise.allSettled(['racer-a','racer-b'].map(requestId=>settleSalary({...settlement,requestId,externalReference:requestId.toUpperCase(),amountUGX:200000,chargeUGX:0},finance)));
+  assert.equal(races.filter(result=>result.status==='fulfilled').length,1,'Concurrent salary payments must not overpay');
+  const full=await settleSalary({...settlement,requestId:'last',externalReference:'LAST-REF',amountUGX:100000,chargeUGX:0},finance);
+  assert.equal(full.replay,false);
+  assert.equal((await getDoc(doc(finance,'payroll',salaryId,'state','current'))).data().outstandingUGX,0);
+  assert.equal((await getDoc(doc(finance,'finance_payment_accounts','tenant-a_salary_bank'))).data().balanceUGX,99000);
+  await assert.rejects(settleSalary({...settlement,requestId:'extra',externalReference:'EXTRA-REF',amountUGX:1,chargeUGX:0},finance),/outstanding/);
+  const newAccount={tenantId:'tenant-a',accountId:'new_zero',name:'Registered salary bank',kind:'BANK',branchId:'b1',openingBalanceUGX:0,reconciliationReference:'Verified zero account',actorUid:'finance'};
+  await assertSucceeds(registerSalaryFundingAccount(newAccount,finance));
+  await assert.rejects(registerSalaryFundingAccount({...newAccount,accountId:'forged_opening',openingBalanceUGX:100000},finance),/zero-opening/);
+  const competingRecords=['2027-01','2027-02'].map(period=>({...snapshot,period,reviewed:true}));
+  await attestPayroll({tenantId:'tenant-a',actorUid:'hr',records:competingRecords},hr);
+  await finalizePayrollDraft({tenantId:'tenant-a',actorUid:'finance',records:competingRecords},finance);
+  const concurrent=await Promise.allSettled(competingRecords.map(record=>settleSalary({...settlement,payrollId:`tenant-a_employee_${record.period}`,requestId:'shared_funding',externalReference:'SHARED-'+record.period,amountUGX:70000,chargeUGX:0},finance)));
+  assert.equal(concurrent.filter(r=>r.status==='fulfilled').length,1,'Competing payrolls cannot overdraw one funding account');
+  assert.equal((await getDoc(doc(finance,'finance_payment_accounts','tenant-a_salary_bank'))).data().balanceUGX,29000);
+  for(const kind of ['BANK','BRANCH_CASH_SALES','PETTY_CASH','MTN_MOBILE_MONEY','AIRTEL_MONEY']) {
+    const accountId='kind_'+kind;
+    await env.withSecurityRulesDisabled(async admin=>{await setDoc(doc(admin.firestore(),'finance_payment_accounts','tenant-a_'+accountId),{
+      tenantId:'tenant-a',accountId,kind,branchId:'b1',currency:'UGX',controlVersion:2,initialized:true,active:true,
+      salaryEligible:true,salaryBranchIds:['b1'],balanceUGX:10000,lastPostingId:null
+    });});
+    await assertSucceeds(settleSalary({...settlement,payrollId:id,accountId,requestId:kind,amountUGX:1000,chargeUGX:100},finance));
+    assert.equal((await getDoc(doc(finance,'finance_payment_accounts','tenant-a_'+accountId))).data().balanceUGX,8900);
+  }
+  await assertFails(requestPayrollVoid({payrollId:salaryId,actorUid:'hr',reason:'Cannot void a paid payroll'},hr));
+  console.log('Salary partial/full settlement, replay, concurrency, immutable journal and branch/tenant/role denials: PASS');
   const voidInput = {payrollId:'tenant-a_employee_2026-11',actorUid:'hr',reason:'Incorrect employee remuneration'};
   await assertFails(requestPayrollVoid({...voidInput,actorUid:'finance'},finance));
   await assertSucceeds(requestPayrollVoid(voidInput,hr));

@@ -11,7 +11,7 @@ const {settleCashGrnDraft}=await import('../node_modules/.cache/finance-emulator
 const {postManagementCashEntry,createManagementFinanceWriteGroup,postManagementReceivablePayment}=await import('../node_modules/.cache/finance-emulator/managementCashPosting.js');
 const {registerManagementPaymentAccount}=await import('../node_modules/.cache/finance-emulator/managementPaymentAccountService.js');
 const tenantId='finance-test',financeUid='finance-secondary';
-const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-settlement-rules',firestore:{rules:readFileSync('firestore.rules','utf8')}});
+const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-settlement-rules',firestore:{rules:readFileSync(process.env.PHARMHELM_TEST_RULES || 'firestore.rules','utf8')}});
 const actor=uid=>env.authenticatedContext(uid).firestore();
 const finance=actor(financeUid);
 const accountId=kind=>`${tenantId}_management_${kind==='bank'?'bank':'petty_cash'}`;
