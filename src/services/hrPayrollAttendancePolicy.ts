@@ -7,6 +7,8 @@ export function approvedPayableHours(staffId: string, from: string, to: string, 
     if (row.staffId !== staffId || row.date < from || row.date > to || row.approval_status !== 'Approved') continue;
     const paidLeave = row.status === 'on-leave' && leaves.some(leave =>
       (leave.staffId === staffId || leave.staff_id === staffId) && leave.status === 'Approved'
+      && leave.hr_approval_status === 'Approved' && leave.ceo_approval_status === 'Approved'
+      && !!leave.hr_reviewed_by && !!leave.ceo_reviewed_by && leave.hr_reviewed_by !== leave.ceo_reviewed_by
       && leave.leave_type !== 'Unpaid' && (leave.startDate || leave.start_date) <= row.date
       && (leave.endDate || leave.end_date) >= row.date);
     if (row.status !== 'present' && !paidLeave) continue;

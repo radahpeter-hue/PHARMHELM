@@ -9,6 +9,7 @@ export interface FinalPayrollInput {
   paye: number; nssfEmployee: number; nssfEmployer: number;
   advanceDeduction: number; fineDeduction: number; unpaidLeaveDeduction: number;
   advanceId?: string;
+  dueDate?: string;
   reviewed: boolean;
 }
 /** Finalization records a payable, NOT an account movement or evidence of salary payment. */
@@ -79,6 +80,7 @@ export async function finalizePayrollDraft(
         payePayableUGX: record.paye, nssfPayableUGX: record.nssfEmployee + record.nssfEmployer,
         otherDeductionsPayableUGX: record.deductions - record.paye - record.nssfEmployee - record.unpaidLeaveDeduction - record.advanceDeduction,
         advanceId: record.advanceId || '', advanceRecoveryUGX: record.advanceDeduction,
+        dueDate:record.dueDate || null,
         netSalaryPayableUGX: record.netSalary, accountingReference: id,
         status: 'approved_unpaid'
       };

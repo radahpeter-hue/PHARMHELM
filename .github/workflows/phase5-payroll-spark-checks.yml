@@ -28,7 +28,9 @@ jobs:
       - name: Install Firebase emulator tools
         run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
       - name: Authenticated payroll and advance rule denials
-        run: npx firebase emulators:exec --only firestore --project phase5-advance-rules "node --import tsx scripts/phase5-advance-rules-emulator.mjs"
+        env:
+          PHASE5_TEST_COMMIT: '${{ github.event.pull_request.head.sha || github.sha }}'
+        run: npx firebase emulators:exec --only firestore --project phase5-advance-rules "node --import tsx scripts/phase5-advance-rules-emulator.mjs && node --import tsx scripts/phase5-financial-reconciliation-emulator.mjs"
       - name: Install isolated salary UI browser
         run: |
           npm install --prefix /tmp/phase5-browser --no-save --ignore-scripts playwright
@@ -42,3 +44,8 @@ jobs:
         with:
           name: phase5-salary-mobile-proof
           path: /tmp/phase5-salary-ui-*/*.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase5-martin-financial-evidence
+          path: /tmp/phase5-martin-financial-acceptance.json

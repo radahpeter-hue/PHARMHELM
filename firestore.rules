@@ -510,7 +510,7 @@ service cloud.firestore {
     function isProtectedFinanceCollection(collectionName) {
       return collectionName in [
         'finance_v2_transfers','finance_v2_events','finance_v2_account_movements','finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
-        'credit_receivables', 'supplier_payables', 'banking_records', 'welfare_records', 'staff',
+        'credit_receivables', 'supplier_payables', 'banking_records', 'welfare_records', 'staff', 'leave_requests',
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
         'petty_cash_ledger', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
         'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
@@ -664,6 +664,15 @@ service cloud.firestore {
         && after.outstandingUGX == before.outstandingUGX - event.amountUGX
         && after.paidUGX == before.paidUGX + event.amountUGX && after.updatedAt == request.time;
     }
+    function validFinancialDate(value) {
+      let parts=value.split('-');
+      let year=int(parts[0]);
+      let month=int(parts[1]);
+      let day=int(parts[2]);
+      let leap=year % 400 == 0 || (year % 4 == 0 && year % 100 != 0);
+      return value.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
+        && day <= (month == 2 ? (leap ? 29 : 28) : (month in [4,6,9,11] ? 30 : 31));
+    }
     function disbursementFunding(id, d) {
       let account = get(/databases/$(database)/documents/finance_payment_accounts/$(d.tenantId + '_' + d.accountId)).data;
       let accountAfter = getAfter(/databases/$(database)/documents/finance_payment_accounts/$(d.tenantId + '_' + d.accountId)).data;
@@ -674,7 +683,7 @@ service cloud.firestore {
         && d.amountUGX + d.chargeUGX <= 9007199254740991 && d.expenseUGX == d.chargeUGX
         && d.externalReference.matches('^[A-Z0-9_.-]{3,100}$')
         && d.recipientReference is string && d.recipientReference.size() >= 3 && d.recipientReference.size() <= 150
-        && d.paymentDate.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
+        && validFinancialDate(d.paymentDate)
         && account.controlVersion == 2 && account.tenantId == d.tenantId && account.initialized == true && account.active == true
         && account.salaryEligible == true && account.currency == 'UGX'
         && (account.branchId == d.branchId || (account.branchId == 'HQ' && account.salaryBranchIds.hasAny([d.branchId])))
@@ -747,6 +756,11 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId)).data == request.resource.data
         && getAfter(/databases/$(database)/documents/finance_payment_accounts/$(request.resource.data.tenantId + '_' + request.resource.data.accountId)/payment_references/$(request.resource.data.externalReference)).data.eventId == request.resource.data.eventId;
     }
+    function welfareHistoryScope(welfareCollection,sourceId) {
+      let r=get(/databases/$(database)/documents/$(welfareCollection)/$(sourceId)).data;
+      return welfareScope({'tenantId':r.tenantId,'staffId':r.staffId,'branchId':welfareCollection == 'advance_requests'
+        ? get(/databases/$(database)/documents/staff/$(r.staffId)).data.branch_id : r.branchId});
+    }
     function welfareStateCreate(welfareCollection,sourceId,stateId,d) {
       let event = getAfter(/databases/$(database)/documents/finance_v2_events/$(d.lastAction)).data;
       return stateId == 'current' && isFinance()
@@ -759,12 +773,12 @@ service cloud.firestore {
         && !exists(/databases/$(database)/documents/finance_v2_events/$(d.lastAction));
     }
     match /advance_requests/{sourceId}/settlements/{requestId} {
-      allow read: if welfareScope(get(/databases/$(database)/documents/advance_requests/$(sourceId)/state/current).data);
+      allow read: if welfareHistoryScope('advance_requests',sourceId);
       allow create: if welfareSettlementCreate('advance_requests',sourceId,requestId);
       allow update, delete: if false;
     }
     match /welfare_records/{sourceId}/settlements/{requestId} {
-      allow read: if welfareScope(get(/databases/$(database)/documents/welfare_records/$(sourceId)/state/current).data);
+      allow read: if welfareHistoryScope('welfare_records',sourceId);
       allow create: if welfareSettlementCreate('welfare_records',sourceId,requestId);
       allow update, delete: if false;
     }
@@ -1210,10 +1224,36 @@ service cloud.firestore {
     }
 
     match /leave_requests/{requestId} {
-      allow read: if (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
-      allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
-      allow update: if (isHR() || (isOwner(resource.data.staffId) && resource.data.status == 'pending'));
-      allow delete: if isHR();
+      allow get: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || ((isHR() || isFinance()) && isAssignedToBranch(get(/databases/$(database)/documents/staff/$(resource.data.staffId)).data.branch_id)));
+      allow list: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || ((isHR() || isFinance()) && isAssignedToBranch(resource.data.branchId)));
+      allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.staffId == request.resource.data.staff_id && request.resource.data.branchId == get(/databases/$(database)/documents/staff/$(request.resource.data.staffId)).data.branch_id
+        && request.resource.data.status == 'Pending' && request.resource.data.hr_approval_status == 'Pending' && request.resource.data.ceo_approval_status == 'Pending'
+        && validFinancialDate(request.resource.data.start_date) && validFinancialDate(request.resource.data.end_date) && request.resource.data.start_date <= request.resource.data.end_date
+        && request.resource.data.startDate == request.resource.data.start_date && request.resource.data.endDate == request.resource.data.end_date
+        && request.resource.data.leave_type in ['Annual','Sick','Study','Maternity','Paternity','Compassionate','Unpaid'];
+      allow update: if validHrRequestReview();
+      allow delete: if false;
+    }
+    function validHrRequestReview() {
+      return isTenantMember(resource.data.tenantId)
+        && isAssignedToBranch(get(/databases/$(database)/documents/staff/$(resource.data.staffId)).data.branch_id)
+        && request.auth.uid != resource.data.staffId
+        && request.resource.data.tenantId == resource.data.tenantId && resource.data.status == 'Pending'
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hr_approval_status','hr_notes','hr_reviewed_by','hr_reviewed_at','ceo_approval_status','ceo_notes','ceo_reviewed_by','ceo_reviewed_at','status','updatedAt'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['hr_approval_status','hr_notes','hr_reviewed_by','hr_reviewed_at'])
+          || (isHR() && request.resource.data.hr_reviewed_by == request.auth.uid && request.resource.data.hr_approval_status in ['Approved','Rejected']
+            && resource.data.hr_approval_status == 'Pending' && request.resource.data.hr_reviewed_at == request.time
+            && resource.data.get('ceo_reviewed_by','') != request.auth.uid))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['ceo_approval_status','ceo_notes','ceo_reviewed_by','ceo_reviewed_at'])
+          || (isCEO() && request.resource.data.ceo_reviewed_by == request.auth.uid && request.resource.data.ceo_approval_status in ['Approved','Rejected']
+            && resource.data.ceo_approval_status == 'Pending' && request.resource.data.ceo_reviewed_at == request.time
+            && resource.data.get('hr_reviewed_by','') != request.auth.uid))
+        && request.resource.data.get('hr_reviewed_by','') != request.resource.data.get('ceo_reviewed_by','')
+        && request.resource.data.hr_approval_status in ['Pending','Approved','Rejected'] && request.resource.data.ceo_approval_status in ['Pending','Approved','Rejected']
+        && request.resource.data.status == (request.resource.data.hr_approval_status == 'Rejected' || request.resource.data.ceo_approval_status == 'Rejected' ? 'Rejected'
+          : (request.resource.data.hr_approval_status == 'Approved' && request.resource.data.ceo_approval_status == 'Approved' ? 'Approved' : 'Pending'));
     }
 
     // Salary accrual uses an exact HR-approved snapshot, never a browser review flag.
@@ -1263,7 +1303,8 @@ service cloud.firestore {
     function validPayrollSnapshot(data) {
       let d = data.snapshot;
       let employee = get(/databases/$(database)/documents/staff/$(d.staffId)).data;
-      return d.keys().hasOnly(['staffId','staffName','branchId','period','baseSalary','bonuses','deductions','netSalary','paye','nssfEmployee','nssfEmployer','advanceDeduction','advanceId','fineDeduction','unpaidLeaveDeduction','otherDeductions'])
+      return d.keys().hasOnly(['staffId','staffName','branchId','period','baseSalary','bonuses','deductions','netSalary','paye','nssfEmployee','nssfEmployer','advanceDeduction','advanceId','fineDeduction','unpaidLeaveDeduction','otherDeductions','dueDate'])
+        && (!('dueDate' in d) || validFinancialDate(d.dueDate))
         && d.period.matches('^[0-9]{4}-(0[1-9]|1[0-2])$')
         && employee.tenantId == data.tenantId && employee.branch_id == d.branchId
         && d.staffName is string && d.staffName.size() > 0
@@ -1317,6 +1358,7 @@ service cloud.firestore {
         && data.finalizedAt == request.time
         && data.staffId == d.staffId && data.staff_name == d.staffName && data.branch_id == d.branchId
         && data.period == d.period && data.month == d.period
+        && data.get('dueDate',null) == d.get('dueDate',null)
         && data.baseSalary == d.baseSalary && data.base_salary == d.baseSalary
         && data.bonuses == d.bonuses && data.deductions == d.deductions && data.netSalary == d.netSalary && data.net_salary == d.netSalary
         && data.paye == d.paye && data.nssfEmployee == d.nssfEmployee && data.nssfEmployer == d.nssfEmployer
@@ -1336,7 +1378,7 @@ service cloud.firestore {
     match /payroll/{payrollId} {
       allow get: if (isHR() || isFinance()) && resource == null;
       allow read: if isTenantMember(resource.data.tenantId)
-        && (isHR() || isFinance() || isCEO() || isOwner(resource.data.staffId));
+        && (isOwner(resource.data.staffId) || ((isHR() || isFinance() || isCEO()) && isAssignedToBranch(resource.data.branch_id)));
       allow create: if isFinance() && getUserData().tenantId == request.resource.data.tenantId
         && payrollId == request.resource.data.tenantId + '_' + request.resource.data.staffId + '_' + request.resource.data.period
         && request.resource.data.payrollId == payrollId
@@ -1444,32 +1486,7 @@ service cloud.firestore {
         && request.resource.data.repayment_period_months <= 120;
       // Approvals modify only decision fields, never funds or request identity.
       // The final status must follow the two independently recorded decisions.
-      allow update: if isTenantMember(resource.data.tenantId)
-        && isAssignedToBranch(get(/databases/$(database)/documents/staff/$(resource.data.staffId)).data.branch_id)
-        && request.resource.data.tenantId == resource.data.tenantId
-        && resource.data.status == 'Pending'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'hr_approval_status', 'hr_notes', 'hr_reviewed_by', 'ceo_approval_status', 'ceo_notes', 'ceo_reviewed_by', 'status', 'updatedAt'
-        ])
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['hr_approval_status', 'hr_notes', 'hr_reviewed_by'])
-          || (isHR()
-            && request.resource.data.hr_reviewed_by == request.auth.uid
-            && request.resource.data.hr_approval_status in ['Approved','Rejected']
-            && (!('ceo_reviewed_by' in resource.data) || resource.data.ceo_reviewed_by != request.auth.uid)))
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['ceo_approval_status', 'ceo_notes', 'ceo_reviewed_by'])
-          || (isCEO()
-            && request.resource.data.ceo_reviewed_by == request.auth.uid
-            && request.resource.data.ceo_approval_status in ['Approved','Rejected']
-            && (!('hr_reviewed_by' in resource.data) || resource.data.hr_reviewed_by != request.auth.uid)))
-        && (!('hr_reviewed_by' in request.resource.data) || !('ceo_reviewed_by' in request.resource.data)
-          || request.resource.data.hr_reviewed_by != request.resource.data.ceo_reviewed_by)
-        && request.resource.data.hr_approval_status in ['Pending','Approved','Rejected']
-        && request.resource.data.ceo_approval_status in ['Pending','Approved','Rejected']
-        && request.resource.data.status == (
-          request.resource.data.hr_approval_status == 'Rejected' || request.resource.data.ceo_approval_status == 'Rejected'
-          ? 'Rejected' : (
-            request.resource.data.hr_approval_status == 'Approved' && request.resource.data.ceo_approval_status == 'Approved'
-            ? 'Approved' : 'Pending'));
+      allow update: if validHrRequestReview();
 
       allow delete: if false;
     }
@@ -1482,7 +1499,7 @@ service cloud.firestore {
           && data.allowances == payroll.bonuses && data.year == int(payroll.period.split('-')[0]);
       }
       allow get: if (isHR() || isFinance()) && resource == null;
-      allow read: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isFinance());
+      allow read: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || (isFinance() && isAssignedToBranch(resource.data.branch_id)));
       allow create: if isFinance() && getUserData().tenantId == request.resource.data.tenantId
         && payslipId == request.resource.data.payrollId && pairedPayslip(request.resource.data);
       allow update, delete: if false;

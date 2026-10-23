@@ -46,11 +46,11 @@ try {
   await assertFails(setDoc(doc(employee, 'advance_requests', 'negative'), { ...request, amount: -5, amountRequested: -5, amount_requested: -5 }));
   await assertFails(setDoc(doc(outsider, 'advance_requests', 'other-tenant'), { ...request, staffId: 'outsider', staff_id: 'outsider' }));
   await assertFails(updateDoc(doc(outsider, 'advance_requests', 'advance-test'), { status: 'Rejected' }));
-  await assertSucceeds(updateDoc(doc(hr, 'advance_requests', 'advance-test'), { hr_approval_status: 'Approved', hr_notes: 'Reviewed', hr_reviewed_by: 'hr' }));
+  await assertSucceeds(updateDoc(doc(hr, 'advance_requests', 'advance-test'), { hr_approval_status: 'Approved', hr_notes: 'Reviewed', hr_reviewed_by: 'hr',hr_reviewed_at:serverTimestamp(),updatedAt:serverTimestamp() }));
   await assertFails(updateDoc(doc(hr, 'advance_requests', 'advance-test'), { status: 'Approved', amount_requested: 200000 }));
   await assertFails(updateDoc(doc(hr, 'advance_requests', 'advance-test'), { status: 'Disbursed' }));
   await assertFails(updateDoc(doc(hr, 'advance_requests', 'advance-test'), { ceo_approval_status: 'Approved', ceo_reviewed_by: 'hr', status: 'Approved' }));
-  await assertSucceeds(updateDoc(doc(ceo, 'advance_requests', 'advance-test'), { ceo_approval_status: 'Approved', ceo_notes: 'Approved', ceo_reviewed_by: 'ceo', status: 'Approved' }));
+  await assertSucceeds(updateDoc(doc(ceo, 'advance_requests', 'advance-test'), { ceo_approval_status: 'Approved', ceo_notes: 'Approved', ceo_reviewed_by: 'ceo',ceo_reviewed_at:serverTimestamp(),updatedAt:serverTimestamp(), status: 'Approved' }));
   await assertFails(updateDoc(doc(ceo, 'advance_requests', 'advance-test'), { amount_requested: 200000 }));
   await assertFails(setDoc(doc(hr, 'payroll', 'fake-paid'), { tenantId: 'tenant-a', staffId: 'employee', status: 'paid', net_salary: 100000 }));
   await assertFails(setDoc(doc(hr, 'payslips', 'fake-paid'), { tenantId: 'tenant-a', staffId: 'employee', netPayable: 100000 }));
@@ -72,10 +72,10 @@ try {
   console.log('Attendance approval and immutable-history denials validated; checking privacy.');
   await env.withSecurityRulesDisabled(async admin => {
     await setDoc(doc(admin.firestore(), 'payroll', 'other-payroll'), {
-      tenantId: 'tenant-a', staffId: 'other-employee', net_salary: 500000, status: 'approved_unpaid'
+      tenantId: 'tenant-a', staffId: 'other-employee', branch_id:'b1',net_salary: 500000, status: 'approved_unpaid'
     });
     await setDoc(doc(admin.firestore(), 'payslips', 'other-payslip'), {
-      tenantId: 'tenant-a', staffId: 'other-employee', netPayable: 500000
+      tenantId: 'tenant-a', staffId: 'other-employee', branch_id:'b1',netPayable: 500000
     });
   });
   await assertFails(getDoc(doc(employee, 'payroll', 'other-payroll')));
@@ -184,11 +184,11 @@ try {
   await assertFails(settleSalary({...settlement,actorUid:'wrong-branch'},wrongBranch));
   await assertFails(settleSalary({...settlement,tenantId:'tenant-b',actorUid:'outsider'},outsider));
   await assertFails(settleSalary({...settlement,actorUid:'employee'},employee));
-  async function rawSalary(requestId, amountUGX=1000, omit='') {
+  async function rawSalary(requestId, amountUGX=1000, omit='',paymentDate=settlement.paymentDate) {
     const account=(await getDoc(doc(finance,'finance_payment_accounts','tenant-a_salary_bank'))).data();
     const state=(await getDoc(doc(finance,'payroll',salaryId,'state','current'))).data();
     const eventId=`salary_${salaryId}_${requestId}`;
-    const event={...settlement,requestId,externalReference:('RAW-'+requestId).toUpperCase(),amountUGX,chargeUGX:0,eventId,sourceType:'SALARY_SETTLEMENT',sourceId:salaryId,
+    const event={...settlement,requestId,paymentDate,externalReference:('RAW-'+requestId).toUpperCase(),amountUGX,chargeUGX:0,eventId,sourceType:'SALARY_SETTLEMENT',sourceId:salaryId,
       branchId:'b1',beforeUGX:account.balanceUGX,afterUGX:account.balanceUGX-amountUGX,currency:'UGX',expenseUGX:0,createdAt:serverTimestamp()};
     const batch=writeBatch(finance);
     batch.set(doc(finance,'finance_v2_events',eventId),event);
@@ -201,6 +201,7 @@ try {
   }
   for(const omitted of ['state','settlement','principal'])await assertFails(rawSalary('orphan_'+omitted,1000,omitted));
   await assertFails(rawSalary('fraction',1.5));
+  await assertFails(rawSalary('invalid_calendar',1000,'','2026-02-31'));
   await assertFails(rawSalary('overpay',400001));
   await env.withSecurityRulesDisabled(async admin=>{await updateDoc(doc(admin.firestore(),'finance_payment_accounts','tenant-a_salary_bank'),{balanceUGX:99});});
   await assertFails(rawSalary('overdraft',1000));
@@ -289,8 +290,8 @@ try {
   console.log('Atomic payroll + payslip creates allowed together, single writes and mutation denied');
   const welfarePayment={tenantId:'tenant-a',obligationId:'advance-test',kind:'ADVANCE',actorUid:'finance',accountId:'new_zero',requestId:'advance-first',amountUGX:100000,chargeUGX:1000,externalReference:'ADVANCE-001',recipientReference:'Verified employee bank account',paymentDate:'2026-10-22'};
   await setDoc(doc(employee,'advance_requests','unpaid-advance'),request);
-  await updateDoc(doc(hr,'advance_requests','unpaid-advance'),{hr_approval_status:'Approved',hr_reviewed_by:'hr',hr_notes:'Reviewed'});
-  await updateDoc(doc(ceo,'advance_requests','unpaid-advance'),{ceo_approval_status:'Approved',ceo_reviewed_by:'ceo',ceo_notes:'Approved',status:'Approved'});
+  await updateDoc(doc(hr,'advance_requests','unpaid-advance'),{hr_approval_status:'Approved',hr_reviewed_by:'hr',hr_notes:'Reviewed',hr_reviewed_at:serverTimestamp(),updatedAt:serverTimestamp()});
+  await updateDoc(doc(ceo,'advance_requests','unpaid-advance'),{ceo_approval_status:'Approved',ceo_reviewed_by:'ceo',ceo_notes:'Approved',status:'Approved',ceo_reviewed_at:serverTimestamp(),updatedAt:serverTimestamp()});
   await assertFails(attestPayroll({tenantId:'tenant-a',actorUid:'hr',records:[{...snapshot,period:'2028-01',advanceId:'unpaid-advance',advanceDeduction:10000,deductions:110000,netSalary:390000,reviewed:true}]},hr));
   const fundedBefore=(await getDoc(doc(finance,'finance_payment_accounts','tenant-a_new_zero'))).data().balanceUGX;
   await assertFails(settleWelfare({...welfarePayment,actorUid:'wrong-branch'},wrongBranch));

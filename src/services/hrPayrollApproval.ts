@@ -11,6 +11,7 @@ export function payrollSnapshot(record: FinalPayrollInput) {
     nssfEmployer: record.nssfEmployer, advanceDeduction: record.advanceDeduction,
     fineDeduction: record.fineDeduction, unpaidLeaveDeduction: record.unpaidLeaveDeduction,
     ...(record.advanceDeduction > 0 ? {advanceId: record.advanceId} : {}),
+    ...(record.dueDate ? {dueDate:record.dueDate} : {}),
     otherDeductions: record.deductions - record.paye - record.nssfEmployee - record.advanceDeduction
       - record.fineDeduction - record.unpaidLeaveDeduction
   };
@@ -20,6 +21,7 @@ export function payrollSnapshot(record: FinalPayrollInput) {
     throw new Error('Invalid payroll component');
   if (value.advanceDeduction > 0 && !/^[A-Za-z0-9_-]{1,150}$/.test(value.advanceId || ''))
     throw new Error('Advance recovery requires a certified disbursement and receivable posting reference.');
+  if(record.dueDate && (!/^\d{4}-\d{2}-\d{2}$/.test(record.dueDate)||Number.isNaN(Date.parse(record.dueDate))||new Date(record.dueDate).toISOString().slice(0,10)!==record.dueDate))throw new Error('Valid HR-approved payment due date required.');
   return value;
 }
 

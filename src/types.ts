@@ -1405,6 +1405,7 @@ export interface LeaveRequest {
   id: string;
   tenantId: string;
   staffId: string;
+  branchId?: string;
   staff_id?: string;
   staff_name?: string;
   startDate: string;

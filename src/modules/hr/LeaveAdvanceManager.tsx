@@ -20,7 +20,7 @@ import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import {WelfareFinancePanel} from './components/WelfareFinancePanel';
-import {collection,onSnapshot,query,where} from 'firebase/firestore';
+import {collection,onSnapshot,query,where,serverTimestamp} from 'firebase/firestore';
 import {db} from '../../firebase';
 
 function cn(...inputs: ClassValue[]) {
@@ -50,8 +50,8 @@ export const LeaveAdvanceManager: React.FC = () => {
 
   useEffect(() => {
     if (profile?.tenantId) {
-      const unsubLeave = firestoreService.subscribeToCollection<LeaveRequest>('leave_requests', profile.tenantId, setLeaveRequests);
       const ids=[...new Set([...(profile.assigned_branches||[]),profile.branch_id,profile.default_branch_id].filter(Boolean))].slice(0,30);
+      const unsubLeave = ids.length ? onSnapshot(query(collection(db,'leave_requests'),where('tenantId','==',profile.tenantId),where('branchId','in',ids)),s=>setLeaveRequests(s.docs.map(d=>({id:d.id,...d.data()} as LeaveRequest))),()=>toast.error('Leave register access denied. Legacy decisions need HR reconciliation.')) : ()=>{};
       const unsubAdvance = ids.length ? onSnapshot(query(collection(db,'advance_requests'),where('tenantId','==',profile.tenantId),where('branchId','in',ids)),s=>setAdvanceRequests(s.docs.map(d=>({id:d.id,...d.data()} as AdvanceRequest))),()=>toast.error('Advance register access denied. Legacy requests can be reviewed by request ID.')) : ()=>{};
       const unsubStaff = firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setStaff);
 
@@ -389,6 +389,7 @@ const ReviewLeaveModal: React.FC<{
   isHR: boolean, 
   isCEO: boolean 
 }> = ({ request, onClose, isHR, isCEO }) => {
+  const {profile}=useAuth();
   const [notes, setNotes] = useState('');
   const [reviewCapacity, setReviewCapacity] = useState<'HR' | 'CEO'>(() => {
     if (isHR && isCEO) {
@@ -401,9 +402,13 @@ const ReviewLeaveModal: React.FC<{
     const update: any = {};
     if (reviewCapacity === 'HR') {
       update.hr_approval_status = action;
+      update.hr_reviewed_by=profile?.uid||'';
+      update.hr_reviewed_at=serverTimestamp();
       update.hr_notes = notes;
     } else {
       update.ceo_approval_status = action;
+      update.ceo_reviewed_by=profile?.uid||'';
+      update.ceo_reviewed_at=serverTimestamp();
       update.ceo_notes = notes;
     }
 
@@ -423,24 +428,6 @@ const ReviewLeaveModal: React.FC<{
     try {
       await firestoreService.updateDocument('leave_requests', request.id, update);
       toast.success(`Request ${action.toLowerCase()} as ${reviewCapacity}`);
-      onClose();
-    } catch (error) {
-      toast.error('Failed to update request');
-    }
-  };
-
-  const handleApproveBoth = async () => {
-    const update: any = {
-      hr_approval_status: 'Approved',
-      hr_notes: notes || 'Approved as HR',
-      ceo_approval_status: 'Approved',
-      ceo_notes: notes || 'Approved as CEO / MD',
-      status: 'Approved'
-    };
-
-    try {
-      await firestoreService.updateDocument('leave_requests', request.id, update);
-      toast.success('Approved both levels successfully');
       onClose();
     } catch (error) {
       toast.error('Failed to update request');
@@ -567,14 +554,7 @@ const ReviewLeaveModal: React.FC<{
                     </button>
                   </div>
 
-                  {isHR && isCEO && (
-                    <button 
-                      onClick={handleApproveBoth}
-                      className="w-full py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 border border-indigo-550"
-                    >
-                      <CheckCircle2 size={18} /> Approve Both (HR & CEO)
-                    </button>
-                  )}
+                  <p className="text-xs text-slate-600">HR and owner decisions require different reviewers.</p>
                 </div>
               </div>
             )}
@@ -607,10 +587,12 @@ const ReviewAdvanceModal: React.FC<{
     if (reviewCapacity === 'HR') {
       update.hr_approval_status = action;
       update.hr_reviewed_by = profile?.uid || '';
+      update.hr_reviewed_at=serverTimestamp();
       update.hr_notes = notes;
     } else {
       update.ceo_approval_status = action;
       update.ceo_reviewed_by = profile?.uid || '';
+      update.ceo_reviewed_at=serverTimestamp();
       update.ceo_notes = notes;
     }
 

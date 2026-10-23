@@ -101,9 +101,36 @@ Candidate checks:
 
 ## Remaining acceptance and release constraints
 
-- Milestone 5.4 reconciliation/report integration and 5.5 financial acceptance are pending.
-- No authenticated production financial UI acceptance is claimed. Current financial emulator
-  fixtures are synthetic tenant-a/b1; Martin Pharma identity staging is separate evidence.
+- Milestone 5.4 is implemented and under final-commit verification. Its read-only services
+  `hrFinanceReportLoader` and `hrFinanceReconciliation` join canonical payroll, welfare,
+  advance, account, event and movement evidence. They reject unauthorized scope and flag
+  missing movements, orphan events, duplicate evidence, overpayment, outstanding drift,
+  excessive recoveries, missing audit identity/time, unverified historical payroll and
+  incomplete reversals. Concurrent changes during loading require a refresh.
+- Finance and HR expose the same report panel. Payroll filters support period and employee;
+  queries enforce branch scope. CSV exports include payroll, advances, welfare, accounts and
+  movements with journal sources, payment references, operators and timestamps.
+- Reports distinguish current verified positions from historical point-in-time statements.
+  Overdue status uses an exact HR-approved salary due date. Missing historical due dates
+  remain explicitly unverified. Unpaid accrual reversals are excluded from accrued totals.
+- An old statutory export subtracted NSSF before PAYE and labelled payable salary as paid.
+  It now uses the approved gross assessment and excludes reversed accruals. It refuses a
+  statutory export containing unverified historical payroll.
+- Paid leave was another authorization dependency: employees could previously forge an
+  approved leave request through generic rules. Dedicated tenant/branch rules now require
+  independent HR/owner reviewers; approved decisions are immutable. Each review retains
+  its own authenticated identity and server timestamp. The application no longer offers
+  one-person approval of both stages. Unsupported historical leave signatures contribute
+  no paid leave hours until controlled reconciliation.
+- Milestone 5.5 has a controlled authenticated-emulator acceptance implementation in
+  `scripts/phase5-financial-reconciliation-emulator.mjs`. All 20 required scenarios passed
+  locally, using synthetic Martin Pharma / Masaka employees, actual application transaction
+  services and enforceable rules. The CI artifact `phase5-martin-financial-evidence` records
+  preconditions, role, entity, action, expected and actual results, pass/fail, tested commit
+  and outstanding issues for every scenario. Final-commit CI evidence is still required.
+- No authenticated production financial UI acceptance is claimed. Hosting preview checks
+  and isolated component browser tests are separate from authenticated emulator posting.
+  No live Martin Pharma account, payroll liability or identity record was altered.
 - Paid financial records cannot be mutated or deleted to correct a mistake. A paid correction
   requires a separately verified refund/adjustment and owner authorization; no live refund
   or adjustment has been executed.
@@ -113,3 +140,74 @@ Candidate checks:
   rules fingerprint, index deployment, feature activation and opening-balance reconciliation.
 - Do not prepare a definitive Phase 6 handoff until Phase 5 is accepted and the authoritative
   roadmap has been inspected.
+
+## Controlled Masaka reconciliation identity
+
+The controlled fixture starts with a separately approved UGX 2,000,000 account opening.
+Two resident primary employees each have UGX 500,000 approved gross remuneration.
+URA's published July 2026 example confirms PAYE UGX 38,250 on that gross; an incorrect
+UGX 27,000 expectation in the new acceptance fixture was corrected, without changing
+the existing tax policy.
+
+| Reconciled position | UGX |
+| --- | ---: |
+| Salary expense | 1,000,000 |
+| Employer NSSF expense and payable | 100,000 |
+| Employee PAYE payable | 76,500 |
+| Employee NSSF payable | 50,000 |
+| Verified advance payroll recovery | 20,000 |
+| Recognized net salary payable | 853,500 |
+| Verified salary payments | 486,750 |
+| Outstanding salary payable | 366,750 |
+| Advance disbursed | 100,000 |
+| Outstanding advance receivable | 80,000 |
+| Welfare expense and verified principal payment | 10,000 |
+| Remaining welfare payable | 0 |
+| Separate external charge expenses | 1,100 |
+| Verified bank closing balance | 1,402,150 |
+
+Salary expense plus employer cost reconciles to net salary, statutory obligations and
+the advance asset offset. Bank closing equals 2,000,000 minus 100,000 advance principal,
+486,750 salary payments, 10,000 welfare principal and 1,100 charges. The approved but
+undisbursed employee A advance creates neither a receivable nor a recovery.
+
+## Independently verified external compiler blocker
+
+https://github.com/radahpeter-hue/PHARMHELM/actions/runs/39930742795
+tested candidate `22d7d0d91c595e2986577e4cb2d7e9910a50b74b`.
+The candidate returned HTTP 503. A minimal inactive deny-all control returned HTTP 200;
+the exact independently certified `8e7f7ead` release source also returned HTTP 503
+(140,968 bytes; SHA-256 `aeb0cb77c9ebcbbe81366f5bd54d565530a33a1f93bb0f8d17cbe17934444f12`).
+This verifies the hosted compiler cannot currently certify even that previously accepted
+control. It does not certify a new candidate or establish its executable size. No check
+was skipped or converted into a pass; no production release was modified.
+
+POS CI also detected DOMPurify advisories in the old lockfile on 23 October 2026.
+The sole dependency change is DOMPurify 3.4.16 to 3.4.17, as prescribed by upstream
+https://github.com/cure53/DOMPurify/releases/tag/3.4.17 . The local production audit then
+reported zero vulnerabilities. Final-commit POS CI must still pass.
+
+## Owner-controlled release procedure, not executed
+
+1. Require every critical final-commit workflow to pass, including the actual executable
+   size gate. The certified baseline is diagnostic evidence only and never substitutes
+   for candidate certification. Resolve every reconciliation exception before activation.
+2. Review the draft PR's exact branch SHA and test evidence. Complete an authenticated
+   emulator UI walkthrough on phone and desktop with separate HR, owner and Finance
+   identities. Confirm leave review, HR payroll signature, Finance finalization, funding
+   opening review, partial/full payment preview and report exports. Production preview
+   alone cannot exercise new financial rules that have not been deployed.
+3. Obtain separate owner authorization before merging, deploying rules/indexes or
+   production Hosting, activating flags, migrating existing balances or posting live data.
+4. After authorization, use the same deterministic rule transformation and compiled rules
+   fingerprint that passed CI. Deploy required indexes and wait until ready; deploy the
+   reviewed rules to the configured named database. Do not deploy authored/unverified
+   alternate rule content. Retain the previous production ruleset and release evidence.
+5. Reconcile account ownership, eligibility and unique opening evidence. Existing V1
+   Management Cash/Bank balances must not be copied into V2 and counted twice. Registered
+   zero accounts remain zero until the independent opening procedure is completed.
+6. Enable `phase5SalarySettlementEnabled` only for the separately authorized tenant after
+   these checks. Verify roles and assigned branches again. Disable the flag to stop new
+   settlements if acceptance fails; preserve immutable financial history and investigate.
+7. Reconcile the first approved controlled posting before expanding activation. Retain the
+   operator identities, references, journal links, account balances and payable balances.
