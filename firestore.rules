@@ -506,6 +506,7 @@ service cloud.firestore {
 
     function isProtectedFinanceCollection(collectionName) {
       return collectionName in [
+        'finance_v2_transfers', 'finance_v2_account_movements', 'finance_v2_events',
         'finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
         'credit_receivables', 'supplier_payables', 'banking_records',
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
@@ -587,6 +588,22 @@ service cloud.firestore {
         && after.diff(before).affectedKeys().hasOnly(['payment_status','lastPaymentId','updatedAt'])
         && after.payment_status == (payment.remainingUGX == 0 ? 'paid' : 'partial');
     }
+    // V2 financial postings are deliberately closed until atomic cross-document
+    // rules, authenticated emulator tests and opening balances are certified.
+    // Explicit protection also prevents permissive fallback matching.
+    match /finance_v2_transfers/{transferId} {
+      allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId);
+      allow create, update, delete: if false;
+    }
+    match /finance_v2_account_movements/{movementId} {
+      allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId);
+      allow create, update, delete: if false;
+    }
+    match /finance_v2_events/{eventId} {
+      allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId);
+      allow create, update, delete: if false;
+    }
+
     match /finance_payment_accounts/{accountId} {
       allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
@@ -602,6 +619,24 @@ service cloud.firestore {
         && request.resource.data.registeredBy == request.auth.uid
         && request.resource.data.name is string && request.resource.data.name.size() > 0
         && request.resource.data.reconciliationReference is string && request.resource.data.reconciliationReference.size() >= 5;
+      // V2 zero-opening registration. The tenant feature gate remains disabled.
+      allow create: if isFinance()
+        && request.resource.data.tenantId == getUserData().tenantId
+        && get(/databases/$(database)/documents/system_settings/$(request.resource.data.tenantId)).data.get('financeV2AccountRegistrationEnabled', false) == true
+        && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
+        && !(request.resource.data.accountId in ['management_bank','management_petty_cash'])
+        && request.resource.data.kind in ['BRANCH_CASH_SALES','BANK','MTN_MOBILE_MONEY','AIRTEL_MONEY','PETTY_CASH']
+        && request.resource.data.controlVersion == 2 && request.resource.data.currency == 'UGX'
+        && request.resource.data.initialized == true && request.resource.data.active == true
+        && request.resource.data.registeredBy == request.auth.uid
+        && request.resource.data.openingBalanceUGX == 0 && request.resource.data.balanceUGX == 0
+        && request.resource.data.lastPostingId == null
+        && request.resource.data.reconciliationReference is string
+        && request.resource.data.reconciliationReference.size() >= 5
+        && (!('branchId' in request.resource.data)
+          ? request.resource.data.kind != 'BRANCH_CASH_SALES'
+          : (get(/databases/$(database)/documents/branches/$(request.resource.data.branchId)).data.tenantId == request.resource.data.tenantId
+            && isAssignedToBranch(request.resource.data.branchId)));
       allow update: if validManagementAccountUpdate(accountId, resource.data, request.resource.data);
       allow delete: if false;
     }
