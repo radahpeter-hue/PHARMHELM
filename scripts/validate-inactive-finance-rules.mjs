@@ -20,6 +20,16 @@ for(let attempt=1;attempt<=4;attempt++) {
     const cleanup=await fetch(`https://firebaserules.googleapis.com/v1/${payload.name}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
     if(!cleanup.ok)throw new Error(`Minimal inactive control cleanup failed (${cleanup.status})`);
    }
+   if(process.env.PHARMHELM_COMPILER_BASELINE_RULES) {
+    const baseline=readFileSync(process.env.PHARMHELM_COMPILER_BASELINE_RULES,'utf8');
+    const check=await fetch(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({source:{files:[{name:'firestore.rules',content:baseline}]}}),signal:AbortSignal.timeout(60000)});
+    const body=await check.json();
+    console.log(JSON.stringify({mode:'CERTIFIED_INACTIVE_RULESET_CONTROL',status:check.status,sourceSHA256:createHash('sha256').update(baseline).digest('hex'),sourceBytes:Buffer.byteLength(baseline),productionReleaseModified:false,candidateCertified:false}));
+    if(check.ok && body.name?.startsWith(`projects/${project}/rulesets/`)) {
+     const cleanup=await fetch(`https://firebaserules.googleapis.com/v1/${body.name}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
+     if(!cleanup.ok)throw new Error(`Certified inactive control cleanup failed (${cleanup.status})`);
+    }
+   }
   }
   throw new Error(`Inactive ruleset validation failed (${response.status}): ${result.error?.message||'Unknown compiler error'}`);
  }

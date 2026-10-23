@@ -739,33 +739,45 @@ service cloud.firestore {
         && after.settledUGX == before.settledUGX + d.amountUGX && after.lastAction == id
         && getAfter(/databases/$(database)/documents/welfare_records/$(d.obligationId)/settlements/$(d.requestId)).data == d;
     }
-    match /{welfareCollection}/{sourceId}/settlements/{requestId} {
-      allow read: if welfareCollection in ['advance_requests','welfare_records'] && welfareScope(get(/databases/$(database)/documents/$(welfareCollection)/$(sourceId)/state/current).data);
-      allow create: if welfareCollection in ['advance_requests','welfare_records'] && isFinance()
+    function welfareSettlementCreate(welfareCollection,sourceId,requestId) {
+      return isFinance()
         && request.resource.data.kind == (welfareCollection == 'advance_requests' ? 'ADVANCE' : 'BENEFIT')
         && request.resource.data.obligationId == sourceId && request.resource.data.requestId == requestId
         && !exists(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId))
         && getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId)).data == request.resource.data
         && getAfter(/databases/$(database)/documents/finance_payment_accounts/$(request.resource.data.tenantId + '_' + request.resource.data.accountId)/payment_references/$(request.resource.data.externalReference)).data.eventId == request.resource.data.eventId;
+    }
+    function welfareStateCreate(welfareCollection,sourceId,stateId,d) {
+      let event = getAfter(/databases/$(database)/documents/finance_v2_events/$(d.lastAction)).data;
+      return stateId == 'current' && isFinance()
+        && getUserData().tenantId == d.tenantId && isAssignedToBranch(d.branchId)
+        && d.updatedAt == request.time && d.tenantId == event.tenantId && d.branchId == event.branchId
+        && (welfareCollection == 'advance_requests'
+          ? event.sourceType == 'ADVANCE_DISBURSEMENT' && event.obligationId == sourceId
+          : event.sourceType == 'WELFARE_RECOGNITION' && event.sourceId == sourceId
+            && d.staffId == get(/databases/$(database)/documents/welfare_records/$(sourceId)).data.staffId)
+        && !exists(/databases/$(database)/documents/finance_v2_events/$(d.lastAction));
+    }
+    match /advance_requests/{sourceId}/settlements/{requestId} {
+      allow read: if welfareScope(get(/databases/$(database)/documents/advance_requests/$(sourceId)/state/current).data);
+      allow create: if welfareSettlementCreate('advance_requests',sourceId,requestId);
       allow update, delete: if false;
     }
-    match /{welfareCollection}/{sourceId}/state/{stateId} {
-      allow read: if welfareCollection in ['advance_requests','welfare_records'] && (resource == null ? (isHR() || isFinance()) : welfareScope(resource.data));
-      allow create: if welfareCollection in ['advance_requests','welfare_records'] && stateId == 'current' && isFinance()
-        && getUserData().tenantId == request.resource.data.tenantId && isAssignedToBranch(request.resource.data.branchId)
-        && request.resource.data.updatedAt == request.time
-        && request.resource.data.tenantId == getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction)).data.tenantId
-        && request.resource.data.branchId == getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction)).data.branchId
-        && (welfareCollection == 'advance_requests'
-          ? getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction)).data.sourceType == 'ADVANCE_DISBURSEMENT'
-            && getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction)).data.obligationId == sourceId
-          : getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction)).data.sourceType == 'WELFARE_RECOGNITION'
-            && getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction)).data.sourceId == sourceId
-            && request.resource.data.staffId == get(/databases/$(database)/documents/welfare_records/$(sourceId)).data.staffId)
-        && !exists(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.lastAction));
-      allow update: if welfareCollection in ['advance_requests','welfare_records'] && stateId == 'current' && isFinance() && welfareScope(resource.data)
-        && (welfareCollection == 'advance_requests' ? advanceRecoveryState(sourceId,resource.data,request.resource.data)
-          : benefitState(sourceId,resource.data,request.resource.data));
+    match /welfare_records/{sourceId}/settlements/{requestId} {
+      allow read: if welfareScope(get(/databases/$(database)/documents/welfare_records/$(sourceId)/state/current).data);
+      allow create: if welfareSettlementCreate('welfare_records',sourceId,requestId);
+      allow update, delete: if false;
+    }
+    match /advance_requests/{sourceId}/state/{stateId} {
+      allow read: if resource == null ? (isHR() || isFinance()) : welfareScope(resource.data);
+      allow create: if welfareStateCreate('advance_requests',sourceId,stateId,request.resource.data);
+      allow update: if stateId == 'current' && isFinance() && welfareScope(resource.data) && advanceRecoveryState(sourceId,resource.data,request.resource.data);
+      allow delete: if false;
+    }
+    match /welfare_records/{sourceId}/state/{stateId} {
+      allow read: if resource == null ? (isHR() || isFinance()) : welfareScope(resource.data);
+      allow create: if welfareStateCreate('welfare_records',sourceId,stateId,request.resource.data);
+      allow update: if stateId == 'current' && isFinance() && welfareScope(resource.data) && benefitState(sourceId,resource.data,request.resource.data);
       allow delete: if false;
     }
     function benefitState(id,before,after) {

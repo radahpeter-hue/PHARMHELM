@@ -5,6 +5,7 @@ function run(mode:string) {
  return spawnSync(process.execPath,['--input-type=module','-e',`
  process.env.GOOGLE_OAUTH_ACCESS_TOKEN='unit-test-sentinel';
  process.env.GITHUB_RUN_ID='123'; process.env.GITHUB_RUN_ATTEMPT='1';
+ if(${JSON.stringify(mode)}==='baseline-error')process.env.PHARMHELM_COMPILER_BASELINE_RULES='firestore.rules';
  const project='projects/gen-lang-client-0911422817';
  const name=project+'/releases/pharmhelm_size_probe_123_1';
  const ruleset=project+'/rulesets/test-candidate';
@@ -13,7 +14,11 @@ function run(mode:string) {
  globalThis.fetch=async (url,options)=>{
    calls.push({url,method:options.method||'GET'});
    let status=200,body={};
-   if(url.endsWith('/rulesets')){body={name:ruleset};if(${JSON.stringify(mode)}==='service-error'){status=503;body={error:{message:'fixture unavailable'}};}}
+   if(url.endsWith('/rulesets')){body={name:ruleset};if(['service-error','baseline-error'].includes(${JSON.stringify(mode)})){
+     status=${JSON.stringify(mode)}==='baseline-error'&&calls.filter(c=>c.url.endsWith('/rulesets')&&c.method==='POST').length>4?200:503;
+     body=status===200?{name:ruleset}:{error:{message:'fixture unavailable'}};
+   }}
+   else if(url.endsWith('/rulesets/test-candidate')&&options.method==='DELETE')body={};
    else if(url.endsWith('/releases')) {status=${JSON.stringify(mode)}==='size-error'?400:503;body={error:{message:'fixture'}};}
    else if(url.endsWith('/pharmhelm_size_probe_123_1')) {
      if(options.method==='DELETE')body={};
@@ -47,5 +52,12 @@ test('persistent rules API failure runs an inactive minimal control and never ce
  assert.match(result.stdout,/MINIMAL_INACTIVE_RULESET_CONTROL/);
  assert.match(result.stdout,/"status":503/);
  assert.match(result.stderr,/Inactive ruleset validation failed \(503\)/);
+ assert.doesNotMatch(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);
+});
+test('a successful certified baseline control cannot certify the failing new candidate',()=>{
+ const result=run('baseline-error');assert.notEqual(result.status,0);
+ assert.match(result.stdout,/CERTIFIED_INACTIVE_RULESET_CONTROL/);
+ assert.match(result.stdout,/"status":200/);
+ assert.match(result.stdout,/"candidateCertified":false/);
  assert.doesNotMatch(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);
 });
