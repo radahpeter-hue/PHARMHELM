@@ -112,7 +112,7 @@ export function cacheWriteResourceMaps(source) {
    }
   }
   const selected=lookups.filter(m=>lookups.filter(n=>n.kind===m.kind).length>=3);
-  if(selected.length<8){i=end;continue;}
+  if(selected.length<3){i=end;continue;}
   let name;do{name='cachedWriteExpression'+serial++;}while(new RegExp('\\b'+name+'\\b').test(source));
   const base=t[colon+2].index,expr=tokens.slice(base,t[end].index);
   for(const m of selected.reverse())expr.splice(m.start-base,m.end-m.start+1,name+'_'+m.kind);
@@ -124,8 +124,39 @@ export function cacheWriteResourceMaps(source) {
  for(const c of changes.reverse())tokens.splice(c.start,c.end-c.start+1,c.text);
  return tokens.join('');
 }
+// Equal-field comparisons always evaluate both map operands. Sharing the exact
+// comparison reduces repeated executable nodes without eager reads across a
+// short-circuit boundary. Restrict operands to plain member chains, and require
+// complete expression boundaries so arithmetic/index/call suffixes stay untouched.
+export function shareFieldComparisons(source) {
+ const root=/(match \/databases\/\{database\}\/documents\s*\{)/;
+ if(!root.test(source))return source;
+ const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
+ const t=tokens.map((token,index)=>({token,index})).filter(({token})=>!/^\s+$/.test(token)&&!token.startsWith('//')&&!token.startsWith('/*'));
+ const identifier=value=>/^[A-Za-z_]\w*$/.test(value||'');
+ const chain=start=>{let end=start;if(!identifier(t[start]?.token))return null;while(t[end+1]?.token==='.'&&identifier(t[end+2]?.token))end+=2;return end>start?{start,end,field:t[end].token}:null;};
+ const matches=[],counts=new Map();
+ for(let i=0;i<t.length;i++) {
+  const previous=t[i-1]?.token;
+  if(!['return','(','?',':'].includes(previous)&&!(previous==='&'&&t[i-2]?.token==='&')&&!(previous==='|'&&t[i-2]?.token==='|'))continue;
+  const left=chain(i);if(!left||t[left.end+1]?.token!=='='||t[left.end+2]?.token!=='=')continue;
+  const right=chain(left.end+3);if(!right||right.field!==left.field)continue;
+  const next=t[right.end+1]?.token;
+  if(![')', ';', '?', ':', ','].includes(next)&&!(next==='&'&&t[right.end+2]?.token==='&')&&!(next==='|'&&t[right.end+2]?.token==='|'))continue;
+  const argument=c=>tokens.slice(t[c.start].index,t[c.end-1].index).join('');
+  matches.push({start:t[i].index,end:t[right.end].index,field:left.field,args:[argument(left),argument(right)]});
+  counts.set(left.field,(counts.get(left.field)||0)+1);i=right.end;
+ }
+ const names=new Map(),decl=[];
+ for(const [field,count] of counts)if(count>=4) {
+  let name='sharedEqualField_'+field;while(new RegExp('\\b'+name+'\\b').test(source))name+='x';
+  names.set(field,name);decl.push(`function ${name}(sharedLeft,sharedRight) { return sharedLeft.${field} == sharedRight.${field}; }`);
+ }
+ for(const m of matches.reverse())if(names.has(m.field))tokens.splice(m.start,m.end-m.start+1,names.get(m.field)+'('+m.args.join(',')+')');
+ return tokens.join('').replace(root,'$1\n'+decl.join('\n')+'\n');
+}
 export function compactRuleSymbols(source){
- source=shareFieldReads(cacheWriteResourceMaps(shareDocumentReads(shareTenantPredicates(source))));
+ source=shareFieldReads(shareFieldComparisons(cacheWriteResourceMaps(shareDocumentReads(shareTenantPredicates(source)))));
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(stripped.match(/\b[A-Za-z_]\w*\b/g)||[]),functions=new Map(),variables=new Map();

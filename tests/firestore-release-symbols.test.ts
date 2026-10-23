@@ -79,6 +79,19 @@ test('release pipeline shares repeated field lookups without changing literal fi
  assert.match(result,/\.get\('optional', false\)/);
  assert.match(result,/'tenant'/);
 });
+test('equal-field sharing preserves operand boundaries, lazy guards and literal text',async()=>{
+ const {shareFieldComparisons}=await import('../scripts/build-firestore-release-rules.mjs');
+ const checks=Array.from({length:5},()=>"left.tenantId == right.tenantId && left.branchId == right.branchId").join(' && ');
+ const source=`service cloud.firestore { match /databases/{database}/documents { function valid(left,right) { return left != null && (${checks}) && left.tenantId == right.tenantId + 'suffix' && 'prefix' + left.tenantId == right.tenantId && left.tenantId == right.tenantId[0] && !left.tenantId == right.tenantId; } function quoted(){ return 'left.tenantId == right.tenantId'; } } }`;
+ const result=shareFieldComparisons(source);
+ assert.match(result,/left != null && \(sharedEqualField_tenantId\(left,right\)/);
+ assert.match(result,/function sharedEqualField_branchId\(sharedLeft,sharedRight\) \{ return sharedLeft.branchId == sharedRight.branchId; \}/);
+ assert.match(result,/left.tenantId == right.tenantId \+ 'suffix'/);
+ assert.match(result,/'prefix' \+ left.tenantId == right.tenantId/);
+ assert.match(result,/left.tenantId == right.tenantId\[0\]/);
+ assert.match(result,/!left.tenantId == right.tenantId/);
+ assert.match(result,/'left.tenantId == right.tenantId'/);
+});
 test('write-map caching leaves missing-resource reads and deletes unchanged',async()=>{
  const {cacheWriteResourceMaps}=await import('../scripts/build-firestore-release-rules.mjs');
  const checks=Array.from({length:8},()=>"request.resource.data.amount == resource.data.amount").join(' && ');
@@ -96,4 +109,13 @@ test('write-map caching leaves missing-resource reads and deletes unchanged',asy
  assert.match(result,/allow get: if resource == null \|\| resource.data.tenantId/);
  assert.match(result,/allow delete: if resource.data.tenantId/);
  assert.doesNotMatch(result,/let cachedWriteExpression1_before/);
+});
+test('three repeated write-map reads are cached without moving reads into mixed write/delete rules',async()=>{
+ const {cacheWriteResourceMaps}=await import('../scripts/build-firestore-release-rules.mjs');
+ const checks='request.resource.data.amount is int && request.resource.data.amount >= 0 && request.resource.data.amount <= 100';
+ const result=cacheWriteResourceMaps(`match /entries/{id} { allow create: if ${checks}; allow write: if ${checks}; allow create, delete: if ${checks}; }`);
+ assert.match(result,/let cachedWriteExpression0_after = request.resource.data/);
+ assert.match(result,/allow create: if cachedWriteExpression0\(\)/);
+ assert.match(result,/allow write: if request.resource.data.amount/);
+ assert.match(result,/allow create, delete: if request.resource.data.amount/);
 });
