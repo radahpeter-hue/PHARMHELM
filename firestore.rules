@@ -44,12 +44,14 @@ service cloud.firestore {
     // inventory feature gate. Missing or malformed settings fail closed.
     function isOperationalInventoryEnabled(tenantId) {
       let settingsPath = /databases/$(database)/documents/system_settings/$(tenantId);
-      return exists(settingsPath)
-        && get(settingsPath).data.tenantId == tenantId
-        && ('featureToggles' in get(settingsPath).data)
-        && get(settingsPath).data.featureToggles is map
-        && ('enableOperationalInventory' in get(settingsPath).data.featureToggles)
-        && get(settingsPath).data.featureToggles.enableOperationalInventory == true;
+      let configured = exists(settingsPath);
+      let settings = configured ? get(settingsPath).data : {};
+      return configured
+        && settings.tenantId == tenantId
+        && ('featureToggles' in settings)
+        && settings.featureToggles is map
+        && ('enableOperationalInventory' in settings.featureToggles)
+        && settings.featureToggles.enableOperationalInventory == true;
     }
 
     function isOperationalInventoryClass(data) {
@@ -115,10 +117,11 @@ service cloud.firestore {
     }
 
     function isAssignedToBranch(branchId) {
+      let user = isAuthenticated() ? getUserData() : {};
       return isAuthenticated() && (
-        (("assigned_branches" in getUserData()) && getUserData().assigned_branches.hasAny([branchId])) ||
-        (("branch_id" in getUserData()) && getUserData().branch_id == branchId) ||
-        (("default_branch_id" in getUserData()) && getUserData().default_branch_id == branchId) ||
+        (("assigned_branches" in user) && user.assigned_branches.hasAny([branchId])) ||
+        (("branch_id" in user) && user.branch_id == branchId) ||
+        (("default_branch_id" in user) && user.default_branch_id == branchId) ||
         isAdmin()
       );
     }

@@ -155,8 +155,39 @@ export function shareFieldComparisons(source) {
  for(const m of matches.reverse())if(names.has(m.field))tokens.splice(m.start,m.end-m.start+1,names.get(m.field)+'('+m.args.join(',')+')');
  return tokens.join('').replace(root,'$1\n'+decl.join('\n')+'\n');
 }
+// Share complete, pure lookups at their original evaluation sites. Point reads
+// receive the exact original path value; get/getAfter remain separate methods.
+// No read is hoisted out of a conditional and missing-field errors stay errors.
+export function shareRuleAtoms(source) {
+ const root=/(match \/databases\/\{database\}\/documents\s*\{)/;
+ if(!root.test(source))return source;
+ const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
+ const t=tokens.map((token,index)=>({token,index})).filter(({token})=>!/^\s+$/.test(token)&&!token.startsWith('//')&&!token.startsWith('/*'));
+ const matches=[],definitions=new Map();
+ const fixed=[['request','.','auth','.','uid'],['request','.','time'],['getUserData','(',')','.','tenantId']];
+ const helper=(key,body,args='')=>{if(!definitions.has(key)){let name='sharedRuleAtom'+definitions.size;while(new RegExp('\\b'+name+'\\b').test(source))name+='x';definitions.set(key,{name,body,args});}return definitions.get(key).name;};
+ for(let i=0;i<t.length;i++) {
+  if(t[i-1]?.token==='.')continue;
+  let found=false;
+  for(const parts of fixed)if(parts.every((value,n)=>t[i+n]?.token===value)) {
+   const end=i+parts.length-1;
+   matches.push({start:t[i].index,end:t[end].index,text:helper(parts.join(''),parts.join(''))+'()'});i=end;found=true;break;
+  }
+  if(found)continue;
+  const method=t[i].token;
+  if(!['get','getAfter'].includes(method)||t[i+1]?.token!=='(')continue;
+  let end=i+2,depth=1;
+  for(;end<t.length;end++){if(t[end].token==='(')depth++;if(t[end].token===')')depth--;if(depth===0)break;}
+  if(t[end+1]?.token!=='.'||t[end+2]?.token!=='data')continue;
+  const arg=tokens.slice(t[i+2].index,t[end].index).join('');
+  matches.push({start:t[i].index,end:t[end+2].index,text:helper(method,method+'(sharedPointPath).data','sharedPointPath')+'('+arg+')'});i=end+2;
+ }
+ for(const m of matches.reverse())tokens.splice(m.start,m.end-m.start+1,m.text);
+ const decl=[...definitions.values()].map(d=>`function ${d.name}(${d.args}) { return ${d.body}; }`).join('\n');
+ return tokens.join('').replace(root,'$1\n'+decl+'\n');
+}
 export function compactRuleSymbols(source){
- source=shareFieldReads(shareFieldComparisons(cacheWriteResourceMaps(shareDocumentReads(shareTenantPredicates(source)))));
+ source=shareFieldReads(shareRuleAtoms(shareFieldComparisons(cacheWriteResourceMaps(shareDocumentReads(shareTenantPredicates(source))))));
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(stripped.match(/\b[A-Za-z_]\w*\b/g)||[]),functions=new Map(),variables=new Map();

@@ -119,3 +119,20 @@ test('three repeated write-map reads are cached without moving reads into mixed 
  assert.match(result,/allow write: if request.resource.data.amount/);
  assert.match(result,/allow create, delete: if request.resource.data.amount/);
 });
+test('shared pure atoms preserve conditional reads, exact path values and point-read methods',async()=>{
+ const {shareRuleAtoms}=await import('../scripts/build-firestore-release-rules.mjs');
+ const result=shareRuleAtoms(`match /databases/{database}/documents {
+ function valid(path) { return request.auth != null && request.auth.uid == 'actor' && request.time == request.time && getUserData().tenantId == 'tenant' && exists(path) && get(path).data.tenantId == getAfter(makePath(path)).data.tenantId; }
+ function quoted() { return 'get(path).data request.auth.uid'; }
+ function mapGet(data) { return data.get('field', {}).get('other', false); }
+ }`);
+ assert.match(result,/request.auth != null && sharedRuleAtom0\(\) == 'actor'/);
+ assert.match(result,/return request.auth.uid;/);
+ assert.match(result,/return request.time;/);
+ assert.match(result,/return getUserData\(\).tenantId;/);
+ assert.match(result,/return get\(sharedPointPath\).data;/);
+ assert.match(result,/return getAfter\(sharedPointPath\).data;/);
+ assert.match(result,/exists\(path\) && sharedRuleAtom3\(path\).tenantId == sharedRuleAtom4\(makePath\(path\)\).tenantId/);
+ assert.match(result,/'get\(path\).data request.auth.uid'/);
+ assert.match(result,/data.get\('field', \{\}\).get\('other', false\)/);
+});

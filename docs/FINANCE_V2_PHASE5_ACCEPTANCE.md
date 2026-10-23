@@ -190,6 +190,13 @@ Hosting previews passed:
 https://github.com/radahpeter-hue/PHARMHELM/actions/runs/39935704510 .
 These results do not certify subsequent rule optimizations.
 
+Equivalent field/comparison/write-map factoring in `95e1da4` reduced the actual
+compiled executable to **265,002 bytes**, confirmed by the second attempt of
+https://github.com/radahpeter-hue/PHARMHELM/actions/runs/39937530827 . This still
+fails the limit. The next optimization shares complete immutable point-read maps
+and exact authenticated-request atoms at their original evaluation sites; it must
+be independently retested and certified, not presumed to fit from source size.
+
 Earlier service diagnostic, retained as historical evidence:
 
 https://github.com/radahpeter-hue/PHARMHELM/actions/runs/39930742795
