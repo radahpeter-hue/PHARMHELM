@@ -21,7 +21,7 @@ import {HrFinanceReportPanel} from './components/HrFinanceReportPanel';
 import { requestPayrollVoid, voidUnpaidPayroll } from '../../services/hrPayrollCorrection';
 import { attestPayroll } from '../../services/hrPayrollApproval';
 import { finalizePayrollDraft } from '../../services/hrPayrollFinalization';
-import { calculateUgandaResidentPaye, calculateUgandaNssf } from '../../services/ugandaPayrollTaxPolicy';
+import {reviewedPayrollTaxes} from '../../services/hrPayrollTaxReview';
 
 interface DraftPayrollRecord {
   staffId: string;
@@ -44,6 +44,7 @@ interface DraftPayrollRecord {
   paye: number;
   netSalary: number;
   reviewed: boolean;
+  taxReviewNote?: string;
   profileBaseSalary?: number;
   expectedHoursInMonth?: number;
   hourlyRate?: number;
@@ -104,6 +105,9 @@ export const PayrollManager: React.FC = () => {
   const [editFineDeduction, setEditFineDeduction] = useState(0);
   const [editPAYE, setEditPAYE] = useState(0);
   const [editNSSFEmployee, setEditNSSFEmployee] = useState(0);
+  const [editNSSFEmployer,setEditNSSFEmployer]=useState(0);
+  const [editTaxTreatment,setEditTaxTreatment]=useState('');
+  const [editTaxReason,setEditTaxReason]=useState('');
   const [editCustomDeduction, setEditCustomDeduction] = useState(0);
 
   useEffect(() => {
@@ -229,23 +233,9 @@ export const PayrollManager: React.FC = () => {
         fineDeduction += fine.fine_amount_ugx;
       });
 
-      // 6. Tax Engine: PAYE and NSSF (Conditional based on process_tax_deductibles toggle)
-      const taxEnabled = systemSettings ? systemSettings.process_tax_deductibles !== false : true;
-      const empType = (member as any).employmentType || 'Full-Time';
-      const isRegularStaff = empType === 'Full-Time' || empType === 'Part-Time';
-      
-      const hasNssf = taxEnabled && isRegularStaff && member.nssfEligible !== false;
-      const nssf = calculateUgandaNssf(Math.round(basePay), hasNssf);
-      const nssfEmployee = nssf.employee;
-      const nssfEmployer = nssf.employer;
-
-      // Resident monthly PAYE uses dated URA tax bands on gross earnings.
-      // PAYE is calculated before employee NSSF deductions.
-      // Consultant withholding and secondary employment require separate
-      // documented tax treatment, not hardcoded contractor assumptions.
-      const paye = taxEnabled && isRegularStaff
-        ? calculateUgandaResidentPaye(Math.round(basePay), toDate)
-        : 0;
+      // Unassessed drafts carry no assumed statutory exemption or liability.
+      // Every record must receive explicit tax treatment in review before HR attestation.
+      const nssfEmployee=0,nssfEmployer=0,paye=0;
 
       const totalDeductions = Math.round(advanceDeduction + fineDeduction + nssfEmployee + paye + unpaidLeaveDeduction);
 
@@ -305,6 +295,9 @@ export const PayrollManager: React.FC = () => {
     setEditFineDeduction(record.fineDeduction);
     setEditPAYE(record.paye);
     setEditNSSFEmployee(record.nssfEmployee);
+    setEditNSSFEmployer(record.nssfEmployer);
+    setEditTaxTreatment('');
+    setEditTaxReason('');
     setEditCustomDeduction(record.deductions - (record.advanceDeduction + record.fineDeduction + record.nssfEmployee + record.paye));
   };
 
@@ -316,17 +309,13 @@ export const PayrollManager: React.FC = () => {
       return;
     }
     const currentStaffMember = canonicalStaff.find(member => member.id === reviewingRecord.staffId);
-    const employmentType = (currentStaffMember as any)?.employmentType || 'Full-Time';
-    const regularEmployee = employmentType === 'Full-Time' || employmentType === 'Part-Time';
-    const taxEnabled = systemSettings ? systemSettings.process_tax_deductibles !== false : true;
     const gross = reviewingRecord.baseSalary + editBonus;
     if (!Number.isSafeInteger(gross)) { toast.error('Unsafe payroll gross amount.'); return; }
-    const nssfCalculation = calculateUgandaNssf(gross,
-      taxEnabled && regularEmployee && currentStaffMember?.nssfEligible !== false);
-    const approvedNssfEmployee = regularEmployee ? nssfCalculation.employee : editNSSFEmployee;
-    const approvedPaye = taxEnabled && regularEmployee
-      ? calculateUgandaResidentPaye(gross, toDate)
-      : editPAYE;
+    let assessment:ReturnType<typeof reviewedPayrollTaxes>;
+    try{assessment=reviewedPayrollTaxes({treatment:editTaxTreatment,grossUGX:gross,periodEnd:toDate,
+      nssfEligible:currentStaffMember?.nssfEligible!==false,reason:editTaxReason,paye:editPAYE,employee:editNSSFEmployee,employer:editNSSFEmployer});}
+    catch(error){toast.error(error instanceof Error?error.message:'Statutory review required.');return;}
+    const approvedNssfEmployee=assessment.employee,approvedPaye=assessment.paye;
     const customDeductionsSum = editAdvanceDeduction + editFineDeduction + approvedNssfEmployee + approvedPaye + editCustomDeduction;
     const computedNet = gross - customDeductionsSum;
     const error = validatePayrollDraft({ baseSalary: reviewingRecord.baseSalary, bonuses: editBonus, deductions: customDeductionsSum, netSalary: computedNet });
@@ -344,7 +333,8 @@ export const PayrollManager: React.FC = () => {
           fineDeduction: editFineDeduction,
           paye: approvedPaye,
           nssfEmployee: approvedNssfEmployee,
-          nssfEmployer: regularEmployee ? nssfCalculation.employer : item.nssfEmployer,
+          nssfEmployer:assessment.employer,
+          taxReviewNote:assessment.note,
           deductions: customDeductionsSum,
           netSalary: computedNet,
           reviewed: true
@@ -402,6 +392,7 @@ export const PayrollManager: React.FC = () => {
           advanceDeduction: item.advanceDeduction, fineDeduction: item.fineDeduction,
           advanceId: item.advanceId,
           dueDate:item.dueDate,
+          taxReviewNote:item.taxReviewNote,
           unpaidLeaveDeduction: item.unpaidLeaveDeduction || 0, reviewed: item.reviewed
         }))
       });
@@ -685,8 +676,8 @@ export const PayrollManager: React.FC = () => {
               <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">Audit Alert: System Tax Processing Engine</h4>
               <p className="text-[11px] text-slate-500 font-medium">
                 {(systemSettings?.process_tax_deductibles !== false) 
-                  ? "ACTIVE — Automatic progressive PAYE & NSSF calculations are enforced on salary baselines." 
-                  : "INACTIVE (OFF-SYSTEM OPERATIONAL ROUTINE) — Salary baseline will generate basic Gross remuneration payouts."}
+                  ? "Resident-primary PAYE and eligible NSSF are available only after explicit review. Employment type does not establish tax residence. Unreviewed drafts are not statutory assessments."
+                  : "Automatic tax processing is disabled. Document the applicable Finance/HR statutory assessment; this setting is not a tax exemption."}
               </p>
             </div>
           </div>
@@ -1210,10 +1201,20 @@ export const PayrollManager: React.FC = () => {
                 </div>
 
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 pt-3 pb-1">Recoveries & Tax Deductions (Deductions)</p>
+                <div className="text-xs space-y-2 border border-amber-200 rounded-xl p-3 bg-amber-50">
+                  <p>Verify tax residence, primary/secondary employment and NSSF eligibility. Consultants, nonresidents and secondary employment require a documented Finance/HR assessment; resident bands do not apply automatically.</p>
+                  <label className="block">Tax treatment<select className="block w-full border rounded p-2" value={editTaxTreatment} onChange={e=>setEditTaxTreatment(e.target.value)}>
+                    <option value="">Select after verification</option>
+                    {systemSettings?.process_tax_deductibles!==false&&<option value="resident_primary">Verified resident primary employee — dated PAYE and eligible NSSF</option>}
+                    <option value="documented_manual">Documented Finance/HR assessment — enter statutory amounts</option>
+                  </select></label>
+                  <label className="block">Assessment reason / evidence reference<input className="block w-full border rounded p-2" maxLength={400} value={editTaxReason} onChange={e=>setEditTaxReason(e.target.value)}/></label>
+                  <p>Resident-primary amounts are recalculated on saving the reviewed gross. Manual amounts below are retained only for documented assessment. The reason is stored in the immutable HR approval revision.</p>
+                </div>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-[10px] font-black text-zinc-500 uppercase ml-1">Progressive PAYE (Uganda Tax)</label>
+                    <label className="text-[10px] font-black text-zinc-500 uppercase ml-1">Reviewed employee tax (UGX)</label>
                     <input 
                       type="number"
                       className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-rose-600 text-xs outline-none focus:ring-2 focus:ring-indigo-500/20"
@@ -1222,8 +1223,10 @@ export const PayrollManager: React.FC = () => {
                     />
                   </div>
 
+                  <label className="space-y-1 text-xs">Reviewed employer NSSF (UGX)<input type="number" className="w-full px-4 py-2 border rounded-xl" value={editNSSFEmployer} onChange={e=>setEditNSSFEmployer(Number(e.target.value))}/></label>
+
                   <div className="space-y-1">
-                    <label className="text-[10px] font-black text-zinc-500 uppercase ml-1">NSSF Employee contrib. (5%)</label>
+                    <label className="text-[10px] font-black text-zinc-500 uppercase ml-1">Reviewed employee NSSF (UGX)</label>
                     <input 
                       type="number"
                       className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-rose-600 text-xs outline-none focus:ring-2 focus:ring-indigo-500/20"
@@ -1271,7 +1274,7 @@ export const PayrollManager: React.FC = () => {
               {/* Summary net payable card */}
               <div className="p-5 rounded-2xl bg-slate-900 text-white flex justify-between items-center">
                 <div>
-                  <span className="text-[9px] font-black tracking-widest text-slate-400 uppercase">Computed Net Salary payout</span>
+                  <span className="text-[9px] font-black tracking-widest text-slate-400 uppercase">Draft net salary payable</span>
                   <p className="text-xs text-slate-300 mt-1">Based on adjusted bonuses and exemptions</p>
                 </div>
                 <div className="text-right">

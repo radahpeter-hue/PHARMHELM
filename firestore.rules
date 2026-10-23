@@ -1260,6 +1260,9 @@ service cloud.firestore {
     }
 
     // Salary accrual uses an exact HR-approved snapshot, never a browser review flag.
+    function payrollTaxAttested(reason) {
+      return reason is string && reason.matches('^(Resident primary employment verified\\.|Documented manual statutory assessment\\.).{10,}$');
+    }
     function payrollScope(data) {
       return isAuthenticated() && getUserData().tenantId == data.tenantId
         && isAssignedToBranch(data.snapshot.branchId);
@@ -1337,6 +1340,7 @@ service cloud.firestore {
         && request.resource.data.approvedBy == request.auth.uid && request.resource.data.approvedAt == request.time
         && request.resource.data.reason is string && request.resource.data.reason.size() >= 3
         && request.resource.data.status in ['approved','rejected','superseded']
+        && (request.resource.data.status != 'approved' || payrollTaxAttested(request.resource.data.reason))
         && request.resource.data.revision == (resource == null ? 1 : resource.data.revision + 1)
         && (resource == null || request.resource.data.tenantId == resource.data.tenantId)
         && !exists(/databases/$(database)/documents/payroll_approvals/$(id)/revisions/$(string(request.resource.data.revision)))
@@ -1354,6 +1358,7 @@ service cloud.firestore {
       let approval = get(/databases/$(database)/documents/payroll_approvals/$(id)).data;
       let d = data.snapshot;
       return payrollScope(data) && approval.status == 'approved'
+        && payrollTaxAttested(approval.reason)
         && approval.tenantId == data.tenantId && approval.snapshot == d
         && approval.approvedBy != request.auth.uid && data.hrApprovedBy == approval.approvedBy
         && data.approvalRevision == approval.revision
@@ -1388,11 +1393,9 @@ service cloud.firestore {
         && approvedPayroll(payrollId, request.resource.data)
         && request.resource.data.status == 'approved_unpaid'
         && request.resource.data.finalizedBy == request.auth.uid
-        && request.resource.data.baseSalary is int && request.resource.data.bonuses is int
-        && request.resource.data.deductions is int && request.resource.data.netSalary is int
-        && request.resource.data.netSalary >= 0 && request.resource.data.baseSalary >= 0
-        && request.resource.data.bonuses >= 0 && request.resource.data.deductions >= 0
-        && request.resource.data.baseSalary + request.resource.data.bonuses == request.resource.data.netSalary + request.resource.data.deductions
+        // approvedPayroll binds each amount exactly to the immutable HR snapshot;
+        // validPayrollSnapshot already enforced integer bounds and its full equation.
+        // Repeating those same checks here exhausted the transaction evaluation budget.
         && getAfter(/databases/$(database)/documents/payslips/$(payrollId)).data.payrollId == payrollId
         && getAfter(/databases/$(database)/documents/payroll/$(payrollId)/state/current).data.outstandingUGX == request.resource.data.netSalary;
       allow update, delete: if false;

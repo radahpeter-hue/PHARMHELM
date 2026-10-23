@@ -2,6 +2,7 @@ import { doc, runTransaction, serverTimestamp, type Firestore } from 'firebase/f
 import { db } from '../firebase';
 import { validatePayrollDraft } from './hrPayrollPolicy';
 import { payrollSnapshot } from './hrPayrollApproval';
+import {validPayrollTaxAttestationReason} from './hrPayrollTaxReview';
 
 export interface FinalPayrollInput {
   staffId: string; staffName: string; branchId: string; period: string;
@@ -10,6 +11,7 @@ export interface FinalPayrollInput {
   advanceDeduction: number; fineDeduction: number; unpaidLeaveDeduction: number;
   advanceId?: string;
   dueDate?: string;
+  taxReviewNote?: string;
   reviewed: boolean;
 }
 /** Finalization records a payable, NOT an account movement or evidence of salary payment. */
@@ -45,7 +47,7 @@ export async function finalizePayrollDraft(
     {
       const [payroll,payslip,approval,position] = await Promise.all([tx.get(row.payroll),tx.get(row.payslip),tx.get(doc(connection,'payroll_approvals',row.id)),tx.get(doc(row.payroll,'state','current'))]);
       const expected = payrollSnapshot(row.record);
-      if (!approval.exists() || approval.data().status !== 'approved' || approval.data().approvedBy === input.actorUid
+      if (!approval.exists() || approval.data().status !== 'approved' || !validPayrollTaxAttestationReason(approval.data().reason) || approval.data().approvedBy === input.actorUid
           || Object.entries(expected).some(([key,value]) => approval.data().snapshot[key] !== value))
         throw new Error('Matching independent HR approval is required.');
       approvals.set(row.id, approval.data());

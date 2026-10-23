@@ -3,7 +3,10 @@ import {requestWelfareBenefit,approveWelfareBenefit,recognizeWelfareBenefit,sett
 import { settleSalary, registerSalaryFundingAccount } from '../src/services/financeV2Disbursement.ts';
 import assert from 'node:assert/strict';
 import { requestPayrollVoid, voidUnpaidPayroll } from '../src/services/hrPayrollCorrection.ts';
-import { attestPayroll } from '../src/services/hrPayrollApproval.ts';
+import { attestPayroll as postAttestation } from '../src/services/hrPayrollApproval.ts';
+// Synthetic authorization fixtures use an explicit manual assessment, never a
+// claim that their arbitrary component amounts are production statutory rates.
+const attestPayroll=(input,connection)=>postAttestation({...input,reason:input.reason||'Documented manual statutory assessment. Synthetic authorization fixture reviewed by HR.'},connection);
 import { finalizePayrollDraft } from '../src/services/hrPayrollFinalization.ts';
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
@@ -105,15 +108,18 @@ try {
     return batch.commit();
   };
   await assertFails(pair(finance)); // Finance cannot invent an HR signature.
-  const approval = {tenantId:'tenant-a',snapshot,revision:1,status:'approved',approvedBy:'hr',approvedAt:serverTimestamp(),reason:'Validated remuneration'};
+  const approval = {tenantId:'tenant-a',snapshot,revision:1,status:'approved',approvedBy:'hr',approvedAt:serverTimestamp(),reason:'Documented manual statutory assessment. Synthetic authorization fixture reviewed by HR.'};
   const approve = (connection, value = approval) => {
     const batch = writeBatch(connection);
     batch.set(doc(connection,'payroll_approvals',id),value);
     batch.set(doc(connection,'payroll_approvals',id,'revisions',String(value.revision)),value);
     return batch.commit();
   };
+  await env.withSecurityRulesDisabled(async context=>setDoc(doc(context.firestore(),'payroll_approvals',id),{...approval,revision:0,reason:'Historical generic review without statutory treatment'}));
+  await assertFails(pair(finance,{...payrollInput,approvalRevision:0},{...payslipInput,approvalRevision:0}));
   await assertFails(approve(finance, {...approval,approvedBy:'finance'}));
   await assertFails(approve(outsider, {...approval,approvedBy:'outsider'}));
+  await assertFails(approve(hr,{...approval,reason:'Generic reviewed flag is not statutory attestation'}));
   await assertFails(approve(hr, {...approval,snapshot:{...snapshot,advanceDeduction:1}}));
   await assertSucceeds(approve(hr));
   const rejection = {...approval, revision:2, status:'rejected'};
@@ -149,6 +155,7 @@ try {
   await assertFails(setDoc(doc(outsider,'payroll','tenant-b_employee_2026-10'),{...payrollInput,tenantId:'tenant-b',payrollId:'tenant-b_employee_2026-10'}));
   // Exercise actual production services, including missing-record reads and transactions.
   const serviceRecord = {...snapshot, period:'2026-11', reviewed:true};
+  await assert.rejects(postAttestation({tenantId:'tenant-a',actorUid:'hr',records:[serviceRecord]},hr),/statutory treatment/);
   await assertSucceeds(attestPayroll({tenantId:'tenant-a',actorUid:'hr',records:[serviceRecord]},hr));
   await assertSucceeds(finalizePayrollDraft({tenantId:'tenant-a',actorUid:'finance',records:[serviceRecord]},finance));
   await assertSucceeds(finalizePayrollDraft({tenantId:'tenant-a',actorUid:'finance',records:[serviceRecord]},finance)); // Exact service retry is a no-op; direct duplicate creates above remain denied.

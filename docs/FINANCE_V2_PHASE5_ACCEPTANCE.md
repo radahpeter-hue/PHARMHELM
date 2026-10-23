@@ -35,6 +35,12 @@ Statutory source verification, 22 October 2026:
 - Existing dated resident-employee tax policy was retained. Consultant, nonresident and
   secondary-employment assessments require explicit Finance/HR review, not automatic
   application of resident employee bands.
+  The payroll review screen now requires explicit treatment and an evidence reason;
+  full-time/part-time status does not establish residence or primary employment.
+  Resident-primary calculations use the unchanged dated policy. Documented manual
+  assessments retain reviewed employee tax and employee/employer NSSF values instead
+  of overwriting them with resident amounts. The independent immutable HR approval
+  revision stores the assessment reason against its exact signed salary snapshot.
 
 ## Milestone 5.2: account-funded salary settlement
 
