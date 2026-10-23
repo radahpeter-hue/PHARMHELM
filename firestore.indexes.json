@@ -116,6 +116,14 @@
       ]
     },
     {
+      "collectionGroup": "advance_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tenantId", "order": "ASCENDING" },
+        { "fieldPath": "branchId", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "finance_payment_accounts",
       "queryScope": "COLLECTION",
       "fields": [

@@ -22,9 +22,8 @@ export function shareTenantPredicates(source) {
  for(const {start,end,name} of replacements.reverse()) tokens.splice(start,end-start+1,name+'()');
  return tokens.join('').replace(/(match \/databases\/\{database\}\/documents\s*\{)/, '$1\nfunction sharedExistingTenant() { return isTenantMember(resource.data.tenantId); }\nfunction sharedRequestedTenant() { return isTenantMember(request.resource.data.tenantId); }\n');
 }
-// Share repeated fixed-collection point reads. Only the exact get/getAfter path
-// plus .data is replaced, with the original document-ID expression as argument.
-// Nested subcollection paths and quoted text are deliberately left untouched.
+// Share repeated point-read path shapes, including nested state/audit documents.
+// Methods, literal path segments and original interpolated expressions are retained.
 export function shareDocumentReads(source) {
  const root=/(match \/databases\/\{database\}\/documents\s*\{)/;
  if(!root.test(source))return source;
@@ -32,25 +31,33 @@ export function shareDocumentReads(source) {
  const t=tokens.map((token,index)=>({token,index})).filter(({token})=>!/^\s+$/.test(token)&&!token.startsWith('//')&&!token.startsWith('/*'));
  const candidates=[],counts=new Map();
  for(let i=0;i<t.length;i++) {
-  const method=t[i].token,collection=t[i+12]?.token;
-  if(!['get','getAfter'].includes(method)||!/^[A-Za-z_]\w*$/.test(collection||''))continue;
-  const prefix=[method,'(','/','databases','/','$','(','database',')','/','documents','/',collection,'/','$','('];
+  const method=t[i].token;
+  if(!['get','getAfter','exists','existsAfter'].includes(method))continue;
+  const prefix=[method,'(','/','databases','/','$','(','database',')','/','documents','/'];
   if(!prefix.every((value,n)=>t[i+n]?.token===value))continue;
-  let end=i+16,depth=1;
-  while(end<t.length&&depth>0){if(t[end].token==='(')depth++;if(t[end].token===')')depth--;if(depth>0)end++;}
-  if(depth||t[end+1]?.token!==')'||t[end+2]?.token!=='.'||t[end+3]?.token!=='data')continue;
-  const key=method+'/'+collection;
-  const arg=tokens.slice(t[i+16].index,t[end].index).join('');
-  candidates.push({start:t[i].index,end:t[end+3].index,arg,key,method,collection});
-  counts.set(key,(counts.get(key)||0)+1);i=end+3;
+  let end=i+12,shape='',args=[],valid=true;
+  while(end<t.length&&t[end].token!==')') {
+   if(t[end].token==='$'&&t[end+1]?.token==='(') {
+    const start=end+2;let depth=1;end=start;
+    while(end<t.length&&depth>0){if(t[end].token==='(')depth++;if(t[end].token===')')depth--;if(depth>0)end++;}
+    if(depth){valid=false;break;}
+    shape+='$('+`sharedDocumentId${args.length}`+')';args.push(tokens.slice(t[start].index,t[end].index).join(''));end++;
+   }else if(t[end].token==='/'||/^[A-Za-z_]\w*$/.test(t[end].token)){shape+=t[end++].token;}
+   else {valid=false;break;}
+  }
+  const data=['get','getAfter'].includes(method);
+  if(!valid||!args.length||t[end]?.token!==')'||(data&&(t[end+1]?.token!=='.'||t[end+2]?.token!=='data')))continue;
+  const key=method+'/'+shape;
+  candidates.push({start:t[i].index,end:t[end+(data?2:0)].index,args,key,method,shape,data});
+  counts.set(key,(counts.get(key)||0)+1);i=end+(data?2:0);
  }
  const helpers=new Map(),declarations=[];let serial=0;
  for(const item of candidates)if(counts.get(item.key)>=3&&!helpers.has(item.key)){
   let name;do{name='sharedDocumentRead'+serial++;}while(new RegExp('\\b'+name+'\\b').test(source));
   helpers.set(item.key,name);
-  declarations.push(`function ${name}(sharedDocumentId) { return ${item.method}(/databases/$(database)/documents/${item.collection}/$(sharedDocumentId)).data; }`);
+  declarations.push(`function ${name}(${item.args.map((_,i)=>'sharedDocumentId'+i).join(',')}) { return ${item.method}(/databases/$(database)/documents/${item.shape})${item.data?'.data':''}; }`);
  }
- for(const item of candidates.reverse())if(helpers.has(item.key))tokens.splice(item.start,item.end-item.start+1,helpers.get(item.key)+'('+item.arg+')');
+ for(const item of candidates.reverse())if(helpers.has(item.key))tokens.splice(item.start,item.end-item.start+1,helpers.get(item.key)+'('+item.args.join(',')+')');
  return tokens.join('').replace(root,'$1\n'+declarations.join('\n')+'\n');
 }
 // Field access factoring preserves map lookup semantics, including missing-field

@@ -42,7 +42,7 @@ test('shared document reads preserve get versus getAfter, document IDs and liter
  function quoted() { return 'getAfter(/databases/$(database)/documents/staff/$(id)).data'; }
  }}`;
  const result=shareDocumentReads(source);
- assert.match(result,/function sharedDocumentRead0\(sharedDocumentId\) \{ return getAfter\(\/databases\/\$\(database\)\/documents\/staff\/\$\(sharedDocumentId\)\).data; \}/);
+ assert.match(result,/function sharedDocumentRead0\(sharedDocumentId0\) \{ return getAfter\(\/databases\/\$\(database\)\/documents\/staff\/\$\(sharedDocumentId0\)\).data; \}/);
  assert.match(result,/return sharedDocumentRead0\(data.staffId\)/);
  assert.match(result,/return sharedDocumentRead0\(data.tenantId \+ '_' \+ data.staffId\)/);
  assert.match(result,/return get\(\/databases/);
@@ -61,6 +61,15 @@ test('map field sharing retains exact lookup names and does not rewrite methods 
  assert.match(result,/sharedField_quantityDispatched\(data\)/);
  assert.match(result,/data.affectedKeys\(\).hasOnly\(\['tenantId'\]\)/);
  assert.match(result,/'data.tenantId'/);
+});
+test('nested point-read factoring preserves existence methods and multiple path interpolations',async()=>{
+ const {shareDocumentReads}=await import('../scripts/build-firestore-release-rules.mjs');
+ const checks=Array.from({length:3},()=>"existsAfter(/databases/$(database)/documents/payroll/$(data.id)/settlements/$(data.requestId)) && get(/databases/$(database)/documents/payroll/$(data.id)/state/current).data.outstandingUGX >= 0").join(' && ');
+ const result=shareDocumentReads(`service cloud.firestore { match /databases/{database}/documents {function valid(data){return ${checks};}}}`);
+ assert.match(result,/return existsAfter\(\/databases\/\$\(database\)\/documents\/payroll\/\$\(sharedDocumentId0\)\/settlements\/\$\(sharedDocumentId1\)\);/);
+ assert.match(result,/sharedDocumentRead0\(data.id,data.requestId\)/);
+ assert.match(result,/get\(\/databases\/\$\(database\)\/documents\/payroll\/\$\(sharedDocumentId0\)\/state\/current\).data/);
+ assert.match(result,/sharedDocumentRead1\(data.id\).outstandingUGX/);
 });
 test('write-map caching leaves missing-resource reads and deletes unchanged',async()=>{
  const {cacheWriteResourceMaps}=await import('../scripts/build-firestore-release-rules.mjs');
