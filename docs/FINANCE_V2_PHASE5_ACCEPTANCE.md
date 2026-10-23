@@ -171,15 +171,34 @@ the advance asset offset. Bank closing equals 2,000,000 minus 100,000 advance pr
 486,750 salary payments, 10,000 welfare principal and 1,100 charges. The approved but
 undisbursed employee A advance creates neither a receivable nor a recovery.
 
-## Independently verified external compiler blocker
+## Compiled rules gate: current failure supersedes earlier service errors
+
+The exact `cd81224f4b165474594f050b2a8fd1e72c774d1d` candidate reached the
+actual executable-size check in
+https://github.com/radahpeter-hue/PHARMHELM/actions/runs/39935704727 .
+It failed with HTTP 400: **278,513 compiled bytes**, against the strict
+256,000-byte limit. This is a development defect requiring equivalent rule
+optimization, not an external-data or service-availability exemption. The
+Management Cash application/emulator/mobile checks passed, but its complete
+workflow also failed the mandatory rules gate. Neither workflow is certified green.
+
+On that same commit, Phase 5 payroll and all 20 controlled financial scenarios passed:
+https://github.com/radahpeter-hue/PHARMHELM/actions/runs/39935704622 .
+POS Foundation (including the unchanged identity audit) passed:
+https://github.com/radahpeter-hue/PHARMHELM/actions/runs/39935704579 .
+Hosting previews passed:
+https://github.com/radahpeter-hue/PHARMHELM/actions/runs/39935704510 .
+These results do not certify subsequent rule optimizations.
+
+Earlier service diagnostic, retained as historical evidence:
 
 https://github.com/radahpeter-hue/PHARMHELM/actions/runs/39930742795
 tested candidate `22d7d0d91c595e2986577e4cb2d7e9910a50b74b`.
 The candidate returned HTTP 503. A minimal inactive deny-all control returned HTTP 200;
 the exact independently certified `8e7f7ead` release source also returned HTTP 503
 (140,968 bytes; SHA-256 `aeb0cb77c9ebcbbe81366f5bd54d565530a33a1f93bb0f8d17cbe17934444f12`).
-This verifies the hosted compiler cannot currently certify even that previously accepted
-control. It does not certify a new candidate or establish its executable size. No check
+That run could not certify even the previously accepted control. It did not certify
+a new candidate or establish its executable size. No check
 was skipped or converted into a pass; no production release was modified.
 
 POS CI also detected DOMPurify advisories in the old lockfile on 23 October 2026.

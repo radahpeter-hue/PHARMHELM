@@ -71,6 +71,14 @@ test('nested point-read factoring preserves existence methods and multiple path 
  assert.match(result,/get\(\/databases\/\$\(database\)\/documents\/payroll\/\$\(sharedDocumentId0\)\/state\/current\).data/);
  assert.match(result,/sharedDocumentRead1\(data.id\).outstandingUGX/);
 });
+test('release pipeline shares repeated field lookups without changing literal field names',()=>{
+ const checks=Array.from({length:30},()=>"data.outstandingUGX >= 0 && data.tenantId == 'tenant' && data.get('optional', false) == false").join(' && ');
+ const result=compactRuleSymbols(`service cloud.firestore { match /databases/{database}/documents { function valid(data) { return ${checks}; } } }`);
+ assert.equal((result.match(/\.outstandingUGX/g)||[]).length,1);
+ assert.equal((result.match(/\.tenantId/g)||[]).length,1);
+ assert.match(result,/\.get\('optional', false\)/);
+ assert.match(result,/'tenant'/);
+});
 test('write-map caching leaves missing-resource reads and deletes unchanged',async()=>{
  const {cacheWriteResourceMaps}=await import('../scripts/build-firestore-release-rules.mjs');
  const checks=Array.from({length:8},()=>"request.resource.data.amount == resource.data.amount").join(' && ');

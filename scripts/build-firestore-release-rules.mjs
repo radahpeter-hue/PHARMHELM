@@ -125,7 +125,7 @@ export function cacheWriteResourceMaps(source) {
  return tokens.join('');
 }
 export function compactRuleSymbols(source){
- source=cacheWriteResourceMaps(shareDocumentReads(shareTenantPredicates(source)));
+ source=shareFieldReads(cacheWriteResourceMaps(shareDocumentReads(shareTenantPredicates(source))));
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(stripped.match(/\b[A-Za-z_]\w*\b/g)||[]),functions=new Map(),variables=new Map();
