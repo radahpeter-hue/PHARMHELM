@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {compactRuleSymbols} from '../scripts/build-firestore-release-rules.mjs';
+test('short symbols avoid existing names and reserved keywords without a mandatory prefix',()=>{
+ const result=compactRuleSymbols(`function a(data) { return data.tenantId == 'a'; } function b(data) { return a(data); }`);
+ const names=[...result.matchAll(/function (\w+)\(/g)].map(m=>m[1]);
+ assert.equal(new Set(names).size,2);
+ for(const name of names){assert.equal(name.length,1);assert.ok(!['a','b'].includes(name));assert.ok(!name.startsWith('_'));}
+ assert.match(result,/\.tenantId == 'a'/);
+});
 test('release compaction renames internal symbols while preserving paths, fields and role literals',()=>{
  const source=`rules_version = '2'; service cloud.firestore { match /databases/{database}/documents {
  // comment must not change quoted text
