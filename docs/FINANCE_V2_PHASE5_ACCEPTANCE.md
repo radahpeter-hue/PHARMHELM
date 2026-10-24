@@ -179,6 +179,19 @@ undisbursed employee A advance creates neither a receivable nor a recovery.
 
 ## Compiled rules gate: current failure supersedes earlier service errors
 
+24 October continuation: `6c1ec6e` removes the mandatory underscore from generated
+internal symbols and chooses the shortest collision-free names. Paths, field names,
+role literals and authorization expressions remain intact. Source size falls from
+141,960 to 134,304 bytes; this is not compiled-size certification. All 744 unit tests,
+20 authenticated financial scenarios and 11 operational/identity emulator suites pass.
+The actual hosted gate remains mandatory:
+https://github.com/radahpeter-hue/PHARMHELM/actions/runs/40076394461 .
+
+The same day's POS audit identified new body-parser and Zod advisories. Only their
+lockfile resolutions change: body-parser 1.20.8 → 1.20.9 and Zod 4.6.5 → 4.6.7.
+Clean installation, production audit (zero vulnerabilities), all 744 tests, typecheck
+and build pass locally after those updates. No audit or identity checks are disabled.
+
 The exact `cd81224f4b165474594f050b2a8fd1e72c774d1d` candidate reached the
 actual executable-size check in
 https://github.com/radahpeter-hue/PHARMHELM/actions/runs/39935704727 .
