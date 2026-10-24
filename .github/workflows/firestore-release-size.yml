@@ -21,11 +21,20 @@ jobs:
           node-version: '22'
       - name: Compile compact equivalent rule symbols
         run: node scripts/build-firestore-release-rules.mjs
+      - name: Read independently certified compiler control
+        uses: actions/checkout@v4
+        with:
+          ref: 8e7f7eadee5d9bbea8d2834625d5f86956076a5a
+          path: .phase5-certified-baseline
+      - name: Build exact certified control rules
+        run: node .phase5-certified-baseline/scripts/build-firestore-release-rules.mjs .phase5-certified-baseline/firestore.rules
       - uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
       - run: npm install --prefix /tmp/rules-size --no-save --ignore-scripts google-auth-library
       - name: Require actual compiled executable to fit the activation limit
+        env:
+          PHARMHELM_COMPILER_BASELINE_RULES: .phase5-certified-baseline/firestore.rules
         run: |
           cp scripts/validate-inactive-finance-rules.mjs /tmp/rules-size/validate.mjs
           node /tmp/rules-size/validate.mjs

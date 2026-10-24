@@ -14,6 +14,8 @@ import { firestoreService } from '../../services/firestore';
 import { LeaveRequest, Staff } from '../../types';
 import { toast } from 'sonner';
 import { format, differenceInDays } from 'date-fns';
+import {collection,onSnapshot,query,where} from 'firebase/firestore';
+import {db} from '../../firebase';
 
 const LeaveTab: React.FC = () => {
   const { profile } = useAuth();
@@ -43,10 +45,8 @@ const LeaveTab: React.FC = () => {
   useEffect(() => {
     if (profile?.uid && profile?.tenantId) {
       // Subscribe to user's own leave requests
-      const unsubscribe = firestoreService.subscribeToCollection<LeaveRequest>(
-        'leave_requests',
-        profile.tenantId,
-        (data) => {
+      const unsubscribe = onSnapshot(query(collection(db,'leave_requests'),where('tenantId','==',profile.tenantId),where('staffId','==',profile.uid)),snapshot=>{
+          const data=snapshot.docs.map(d=>({id:d.id,...d.data()} as LeaveRequest));
           const userRequests = data.filter(r => r.staff_id === profile.uid || r.staffId === profile.uid);
           setRequests(userRequests.sort((a: any, b: any) => {
             const dateA = parseDateSecurely(a.created_at || a.createdAt);
@@ -55,8 +55,7 @@ const LeaveTab: React.FC = () => {
             const timeB = dateB ? dateB.getTime() : 0;
             return timeB - timeA;
           }));
-        }
-      );
+        },()=>toast.error('Leave history access denied.'));
       return () => unsubscribe();
     }
   }, [profile?.uid, profile?.tenantId]);
@@ -86,6 +85,7 @@ const LeaveTab: React.FC = () => {
       const newRequest: Omit<LeaveRequest, 'id'> = {
         tenantId: profile.tenantId,
         staffId: profile.uid,
+        branchId:profile.branch_id,
         staff_id: profile.uid,
         staff_name: profile.full_name || profile.displayName || 'Unknown',
         leave_type: formData.leave_type as any,

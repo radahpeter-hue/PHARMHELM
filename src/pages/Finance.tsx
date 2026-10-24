@@ -58,13 +58,14 @@ import { GlobalExpenseLedger } from './finance/management/GlobalExpenseLedger';
 import { ProfitabilityLedger } from './finance/management/ProfitabilityLedger';
 import { TaxEngine } from './finance/management/TaxEngine';
 import { hasAnyRole } from '../utils/roles';
+import {HrFinanceReportPanel} from '../modules/hr/components/HrFinanceReportPanel';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 const Finance: React.FC = () => {
-  const { profile, hasPermission } = useAuth();
+  const { profile, hasPermission,activeBranchId } = useAuth();
 
   const namedManagementFinance = hasAnyRole(profile, ['owner', 'CEO', 'CEO / MD', 'Finance Head', 'Finance Officer', 'Accountant']);
   const namedBranchFinance = hasAnyRole(profile, ['owner', 'CEO', 'CEO / MD', 'admin', 'Finance Head', 'Branch Manager', 'cashier', 'Cashier', 'Accountant']);
@@ -94,6 +95,7 @@ const Finance: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {profile&&canUseManagementFinance&&<HrFinanceReportPanel profile={profile} activeBranchId={activeBranchId}/>}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-zinc-900">Financial Operations</h1>
