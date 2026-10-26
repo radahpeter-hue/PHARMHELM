@@ -74,3 +74,5 @@ Visual QA of the actual phone-width CI screenshots found inherited white text on
 The bcb093f compiled-size run recovered the exact newly uploaded candidate after an ambiguous 503. The subsequent mandatory unbound-release probe still returned HTTP 503 with GET recovery 404. That is not a successful compiled-size certificate; the verifier remains unchanged and acceptance remains blocked pending a successful exact-head probe.
 
 Removed the now-unreferenced old correction-only receivable creation helper. All new debts, including replacement receipts, use the same canonical recognition validator; the existing protected reversal/update contract remains. This reduces compiler input without removing any active authorization check.
+
+For an evidenced compiler blocker, the size workflow now runs the same unchanged verifier against the exact c542ce8 control after candidate failure, using a separate run-owned unbound probe. A successful diagnostic control cannot override the failed candidate step. This distinguishes candidate-specific activation failure from failure affecting the previously certified executable; no production release binding is modified.

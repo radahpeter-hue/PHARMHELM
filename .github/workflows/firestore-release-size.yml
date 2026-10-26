@@ -18,7 +18,7 @@ jobs:
   activation-size:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -43,6 +43,7 @@ jobs:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
       - run: npm install --prefix /tmp/rules-size --no-save --ignore-scripts google-auth-library
       - name: Require actual compiled executable to fit the activation limit
+        id: candidate_size
         env:
           PHARMHELM_COMPILER_BASELINE_RULES: .phase5-certified-baseline/firestore.rules
           PHARMHELM_COMPILER_AUTHORED_RULES: /tmp/phase5-authored.rules
@@ -51,3 +52,10 @@ jobs:
           cp scripts/validate-inactive-finance-rules.mjs /tmp/rules-size/validate.mjs
           cp scripts/firebase-rules-diagnostics.mjs /tmp/rules-size/firebase-rules-diagnostics.mjs
           node /tmp/rules-size/validate.mjs
+      # Diagnostic only: the failed candidate step continues to fail this job.
+      # Use a distinct owned operation so no candidate probe is reused.
+      - name: Diagnose the exact signed-off Phase 5 activation control
+        if: failure() && steps.candidate_size.outcome == 'failure'
+        env:
+          GITHUB_RUN_ID: '${{ github.run_id }}00'
+        run: node /tmp/rules-size/validate.mjs .phase5-certified-baseline/firestore.rules
