@@ -38,7 +38,7 @@ export function ReceivablesRegister({ branchOnly = false }: { branchOnly?: boole
     'Outstanding UGX': r.outstanding_ugx, Status: r.status, 'Due date': r.due_date || 'Unverified',
     Verification: r.verified ? 'Verified recognition' : 'Reconciliation required', Exception: r.exception || ''
   })), 'Receivables', 'CreditReceivables.xlsx');
-  return <section className="space-y-4" aria-label="Receivables register">
+  return <section className="space-y-4 bg-white text-zinc-900 p-3 rounded-2xl" style={{colorScheme: 'light'}} aria-label="Receivables register">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-xl font-bold">Credit Receivables</h3>
       <p className="text-sm text-zinc-600">Customers and institutions. Historical exceptions are excluded from verified totals.</p></div>
       <div className="flex gap-3"><button onClick={() => refresh(n => n + 1)} className="border rounded-xl px-3 py-2">Refresh</button>
@@ -48,7 +48,7 @@ export function ReceivablesRegister({ branchOnly = false }: { branchOnly?: boole
       <div className="p-4 bg-blue-50 rounded-xl">Credit collected <strong className="block">UGX {loading || error ? 'Unverified' : money(collected)}</strong></div>
       <div className="p-4 bg-amber-50 rounded-xl">Reconciliation exceptions <strong className="block">{filtered.filter(r => r.exception).length}</strong></div>
     </div>
-    <div className="flex flex-wrap gap-2 [&_input]:border [&_input]:rounded-lg [&_input]:p-2 [&_select]:border [&_select]:rounded-lg [&_select]:p-2">
+    <div className="flex flex-wrap gap-2 [&_input]:bg-white [&_input]:border [&_input]:rounded-lg [&_input]:p-2 [&_select]:bg-white [&_select]:border [&_select]:rounded-lg [&_select]:p-2">
       <input aria-label="Search receivables" placeholder="Debtor, contact, invoice or branch" value={search} onChange={e => setSearch(e.target.value)} />
       <select aria-label="Debtor type" value={type} onChange={e => setType(e.target.value)}><option value="all">All debtor types</option><option value="client">Customers</option><option value="institution">Institutions</option></select>
       <select aria-label="Receivable branch" value={branch} onChange={e => setBranch(e.target.value)}><option value="all">All authorized branches</option>{[...new Map(rows.map(r => [r.branch_id, r.branch_name])).entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>

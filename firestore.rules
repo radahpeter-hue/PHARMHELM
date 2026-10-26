@@ -359,18 +359,6 @@ service cloud.firestore {
         && isAssignedToBranch(sale.branchId);
     }
 
-    function atomicCreditCreate(receivableId) {
-      let row = request.resource.data;
-      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(row.atomicRevisionRequestId)).data;
-      let payment = getAfter(/databases/$(database)/documents/pos_payments/$(correction.replacementPaymentId)).data;
-      return isFreshAtomicRevision(row.atomicRevisionRequestId)
-        && receivableId == correction.replacementSaleId && row.receipt_id == receivableId
-        && row.tenantId == correction.tenantId && row.branch_id == correction.branchId
-        && row.paymentId == correction.replacementPaymentId && row.source == 'POS' && row.engineVersion == 2
-        && payment.paymentMethod == 'institutional_credit' && row.amount_ugx == payment.amount
-        && row.outstanding_ugx == row.amount_ugx && row.status == 'outstanding';
-    }
-
     function atomicCreditUpdate(receivableId) {
       let row = request.resource.data;
       let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(row.atomicRevisionRequestId)).data;

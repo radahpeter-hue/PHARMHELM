@@ -68,3 +68,9 @@ The follow-up also covers the established `Sale.clientId` alias used by customer
 Compiler-control refinement: the inherited workflow still referenced the earlier 8e7f7ea control, whose historical transformation produces 140,968 bytes. The control is now pinned to the actual Phase 5 signed-off c542ce8 source and transformer, with a mandatory SHA-256 assertion `5162b4f375af5a9cc288a3502659e3e7833bf1fcf7c6bd4e35e20cce2fae40ad` (135,930 bytes), independently reproduced locally. This improves the diagnostic baseline; success of that control still cannot certify the Phase 6 candidate, and the real candidate unbound-release gate is unchanged.
 
 A nineteenth raw authenticated denial also prevents the canonical payment customer alias from contradicting the source sale.
+
+Visual QA of the actual phone-width CI screenshots found inherited white text on pale financial summary cards because the application's body theme is dark. The register now declares its own light surface, dark text and input color scheme. Browser acceptance additionally measures financial-total contrast (minimum 4.5:1), so this regression cannot pass on layout assertions alone.
+
+The bcb093f compiled-size run recovered the exact newly uploaded candidate after an ambiguous 503. The subsequent mandatory unbound-release probe still returned HTTP 503 with GET recovery 404. That is not a successful compiled-size certificate; the verifier remains unchanged and acceptance remains blocked pending a successful exact-head probe.
+
+Removed the now-unreferenced old correction-only receivable creation helper. All new debts, including replacement receipts, use the same canonical recognition validator; the existing protected reversal/update contract remains. This reduces compiler input without removing any active authorization check.

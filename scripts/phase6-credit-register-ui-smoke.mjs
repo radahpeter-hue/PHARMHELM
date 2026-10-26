@@ -26,7 +26,13 @@ try{
  browser=await chromium.launch({headless:true});
  for(const width of [360,390,1280]){
   const page=await browser.newPage({viewport:{width,height:844}});await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.getByText('UGX 7,500',{exact:true}).waitFor();assert.equal(await page.getByText('UGX 1,007,499',{exact:true}).count(),0);
+  await page.getByText('UGX 7,500',{exact:true}).waitFor();
+  const contrast = await page.getByText('UGX 7,500',{exact:true}).evaluate(el=>{
+    const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d');
+    const luminance=color=>{ctx.fillStyle=color;ctx.fillRect(0,0,1,1);const rgb=Array.from(ctx.getImageData(0,0,1,1).data).slice(0,3).map(c=>{c/=255;return c<=0.04045?c/12.92:((c+0.055)/1.055)**2.4;});return .2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2];};
+    const fg=luminance(getComputedStyle(el).color),bg=luminance(getComputedStyle(el.parentElement).backgroundColor);return (Math.max(fg,bg)+.05)/(Math.min(fg,bg)+.05);
+  });assert.ok(contrast>=4.5,`Financial totals require readable contrast (${contrast})`);
+assert.equal(await page.getByText('UGX 1,007,499',{exact:true}).count(),0);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   await page.screenshot({path:path.join(output,`${width}-register.png`),fullPage:true});
   await page.getByLabel('Search receivables').fill('0700000000');assert.equal(await page.getByRole('button',{name:'LEGACY-001',exact:true}).count(),0);
