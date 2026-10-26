@@ -19,7 +19,7 @@ await build({stdin:{contents:`import React from 'react';import{createRoot}from'r
  b.onLoad({filter:/.*/,namespace:'stub'},args=>({contents:args.path==='auth'?auth:args.path==='loader'?loader:'export const exportRecordsToExcel=async rows=>{window.exported=rows};',loader:'js'}));
 }}]});
 const css=(await readdir('dist/assets')).find(n=>n.endsWith('.css'));await copyFile(path.join('dist/assets',css),path.join(output,'style.css'));
-await writeFile(path.join(output,'index.html'),'<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="style.css"></head><body><div id="root"></div><script src="app.js"></script></body></html>');
+await writeFile(path.join(output,'index.html'),'<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="style.css"></head><body><div id="root"></div><script src="app.js"></script></body></html>');
 const server=createServer(async(req,res)=>{const n=req.url.split('?')[0].slice(1)||'index.html';if(!['app.js','style.css','index.html'].includes(n)){res.writeHead(404).end();return;}res.setHeader('Content-Type',n.endsWith('.js')?'text/javascript':n.endsWith('.css')?'text/css':'text/html');res.end(await readFile(path.join(output,n)));});await new Promise(r=>server.listen(0,'127.0.0.1',r));
 let browser;
 try{
@@ -27,12 +27,16 @@ try{
  for(const width of [360,390,1280]){
   const page=await browser.newPage({viewport:{width,height:844}});await page.goto(`http://127.0.0.1:${server.address().port}`);
   await page.getByText('UGX 7,500',{exact:true}).waitFor();
-  const contrast = await page.getByText('UGX 7,500',{exact:true}).evaluate(el=>{
-    const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d');
-    const luminance=color=>{ctx.fillStyle=color;ctx.fillRect(0,0,1,1);const rgb=Array.from(ctx.getImageData(0,0,1,1).data).slice(0,3).map(c=>{c/=255;return c<=0.04045?c/12.92:((c+0.055)/1.055)**2.4;});return .2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2];};
-    const fg=luminance(getComputedStyle(el).color),bg=luminance(getComputedStyle(el.parentElement).backgroundColor);return (Math.max(fg,bg)+.05)/(Math.min(fg,bg)+.05);
-  });assert.ok(contrast>=4.5,`Financial totals require readable contrast (${contrast})`);
-assert.equal(await page.getByText('UGX 1,007,499',{exact:true}).count(),0);
+  for(const target of [page.getByText('UGX 7,500',{exact:true}),page.locator('tbody tr').first().locator('td').nth(1),page.locator('thead th').first()]) {
+    const contrast = await target.evaluate(el=>{
+      const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d');
+      const rgba=color=>{ctx.clearRect(0,0,1,1);ctx.fillStyle=color;ctx.fillRect(0,0,1,1);return Array.from(ctx.getImageData(0,0,1,1).data);};
+      const luminance=rgb=>{const c=rgb.slice(0,3).map(c=>{c/=255;return c<=0.04045?c/12.92:((c+0.055)/1.055)**2.4;});return .2126*c[0]+.7152*c[1]+.0722*c[2];};
+      let bg=[255,255,255,255];for(let node=el;node;node=node.parentElement){const pixel=rgba(getComputedStyle(node).backgroundColor);if(pixel[3]===255){bg=pixel;break;}}
+      const fg=luminance(rgba(getComputedStyle(el).color)),back=luminance(bg);return (Math.max(fg,back)+.05)/(Math.min(fg,back)+.05);
+    });assert.ok(contrast>=4.5,`Financial cards, table values and headings require readable contrast (${contrast})`);
+  }
+  assert.equal(await page.getByText('UGX 1,007,499',{exact:true}).count(),0);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   await page.screenshot({path:path.join(output,`${width}-register.png`),fullPage:true});
   await page.getByLabel('Search receivables').fill('0700000000');assert.equal(await page.getByRole('button',{name:'LEGACY-001',exact:true}).count(),0);

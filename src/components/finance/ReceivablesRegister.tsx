@@ -56,7 +56,7 @@ export function ReceivablesRegister({ branchOnly = false }: { branchOnly?: boole
       <input aria-label="Credit date from" type="date" value={from} onChange={e => setFrom(e.target.value)} /><input aria-label="Credit date to" type="date" value={to} onChange={e => setTo(e.target.value)} />
     </div>
     {loading ? <p role="status">Loading receivables...</p> : error ? <p role="alert" className="text-red-700">{error}</p> : <>
-      <div className="overflow-x-auto border rounded-xl"><table className="w-full text-sm text-left"><thead><tr className="bg-zinc-50">{['Source invoice', 'Debtor / contact', 'Branch', 'Invoice UGX', 'Initial credit UGX', 'Credit collected UGX', 'Outstanding UGX', 'Status / due / age'].map(t => <th key={t} className="p-3 whitespace-nowrap">{t}</th>)}</tr></thead>
+      <div className="overflow-x-auto border rounded-xl"><table className="w-full text-sm text-left text-zinc-900"><thead><tr className="bg-zinc-50">{['Source invoice', 'Debtor / contact', 'Branch', 'Invoice UGX', 'Initial credit UGX', 'Credit collected UGX', 'Outstanding UGX', 'Status / due / age'].map(t => <th key={t} className="p-3 whitespace-nowrap">{t}</th>)}</tr></thead>
         <tbody>{filtered.slice(page * 50, page * 50 + 50).map(r => <tr key={r.id} className="border-t align-top">
           <td className="p-3"><button className="text-emerald-700 underline" onClick={() => setSelected(r)}>{r.invoice_number || r.receipt_id || r.id}</button><small className="block">{financialDate(r.created_at)?.toLocaleDateString('en-GB') || 'Unverified date'}</small></td>
           <td className="p-3">{r.client_name}<small className="block">{r.debtorType || 'Unverified type'}: {r.debtorId || r.client_id || 'Unverified identity'}<br />{r.contact}</small></td>
