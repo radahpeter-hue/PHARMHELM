@@ -9,6 +9,7 @@ import { firestoreService } from '../../services/firestore';
 import { Staff, AttendanceRecord } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
+import { submitAttendanceRecord } from '../../services/attendancePosting';
 
 export const AttendanceTracker: React.FC = () => {
   const { profile } = useAuth();
@@ -110,7 +111,7 @@ export const AttendanceTracker: React.FC = () => {
 
         const hours = item.details.status === 'present' ? calculateHours(item.details.checkIn, item.details.checkOut) : 0;
 
-        await firestoreService.addDocument('attendance', {
+        await submitAttendanceRecord({
           tenantId: profile.tenantId,
           staffId: item.id,
           staff_name: staffMember.full_name,
@@ -119,6 +120,7 @@ export const AttendanceTracker: React.FC = () => {
           check_in_time: item.details.status === 'present' ? item.details.checkIn : null,
           check_out_time: item.details.status === 'present' ? item.details.checkOut : null,
           hours_worked: hours,
+          loggedByUid: profile.uid,
           branch_id: staffMember.branch_id || ''
         });
         count++;
@@ -130,42 +132,29 @@ export const AttendanceTracker: React.FC = () => {
     }
   };
 
-  const handleStartEditRow = (record: AttendanceRecord) => {
-    setEditingRowId(record.id);
-    setEditingFields({
-      status: record.status,
-      checkIn: record.check_in_time || '08:00',
-      checkOut: record.check_out_time || '17:00'
-    });
+  const handleStartEditRow = (_record: AttendanceRecord) => {
+    toast.error('Submitted attendance is immutable. Reject and record a separately audited correction.');
   };
 
-  const handleSaveRow = async (recordId: string) => {
-    if (!editingFields) return;
+  const handleSaveRow = async (_recordId: string) => {
+    toast.error('Direct attendance editing is disabled to preserve payroll audit history.');
+  };
+
+  const handleAttendanceReview = async (record: AttendanceRecord, decision: 'Approved' | 'Rejected') => {
+    if (!profile?.uid || !profile?.tenantId) return;
     try {
-      const hours = editingFields.status === 'present' ? calculateHours(editingFields.checkIn, editingFields.checkOut) : 0;
-      await firestoreService.updateDocument('attendance', recordId, {
-        status: editingFields.status,
-        check_in_time: editingFields.status === 'present' ? editingFields.checkIn : null,
-        check_out_time: editingFields.status === 'present' ? editingFields.checkOut : null,
-        hours_worked: hours
+      await firestoreService.updateDocument('attendance', record.id, {
+        approval_status: decision,
+        approvedByUid: profile.uid
       });
-      toast.success('Attendance record updated');
-      setEditingRowId(null);
-      setEditingFields(null);
-    } catch (error) {
-      toast.error('Failed to update attendance record');
+      toast.success(`Timesheet ${decision.toLowerCase()}.`);
+    } catch {
+      toast.error('Timesheet approval requires authorized HR or Branch Manager access.');
     }
   };
 
-  const handleDeleteRecord = async (recordId: string) => {
-    if (window.confirm('Are you sure you want to remove this attendance record?')) {
-      try {
-        await firestoreService.deleteDocument('attendance', recordId);
-        toast.success('Attendance record removed');
-      } catch (error) {
-        toast.error('Failed to delete attendance record');
-      }
-    }
+  const handleDeleteRecord = async (_recordId: string) => {
+    toast.error('Timesheet deletion is disabled to preserve payroll audit history.');
   };
 
   const handleExportCSV = () => {
@@ -535,9 +524,16 @@ export const AttendanceTracker: React.FC = () => {
                           )}>
                             {hours} hrs
                           </span>
+                          <p className="text-[10px] mt-1 font-semibold text-slate-500">{record.approval_status || 'Unverified legacy entry'}</p>
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
+                            {record.approval_status === 'Submitted' && (
+                              <>
+                                <button type="button" onClick={() => handleAttendanceReview(record, 'Approved')} title="Approve timesheet" className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg"><CheckCircle2 size={16}/></button>
+                                <button type="button" onClick={() => handleAttendanceReview(record, 'Rejected')} title="Reject timesheet" className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg"><XCircle size={16}/></button>
+                              </>
+                            )}
                             {isEditing ? (
                               <button 
                                 onClick={() => handleSaveRow(record.id)}
@@ -550,7 +546,7 @@ export const AttendanceTracker: React.FC = () => {
                               <button 
                                 onClick={() => handleStartEditRow(record)}
                                 className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-                                title="Edit Record"
+                                title="Direct editing disabled: use audited correction"
                               >
                                 <Edit2 size={16} />
                               </button>

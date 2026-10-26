@@ -19,6 +19,9 @@ import { LeaveRequest, AdvanceRequest, Staff } from '../../types';
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import {WelfareFinancePanel} from './components/WelfareFinancePanel';
+import {collection,onSnapshot,query,where,serverTimestamp} from 'firebase/firestore';
+import {db} from '../../firebase';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -47,8 +50,9 @@ export const LeaveAdvanceManager: React.FC = () => {
 
   useEffect(() => {
     if (profile?.tenantId) {
-      const unsubLeave = firestoreService.subscribeToCollection<LeaveRequest>('leave_requests', profile.tenantId, setLeaveRequests);
-      const unsubAdvance = firestoreService.subscribeToCollection<AdvanceRequest>('advance_requests', profile.tenantId, setAdvanceRequests);
+      const ids=[...new Set([...(profile.assigned_branches||[]),profile.branch_id,profile.default_branch_id].filter(Boolean))].slice(0,30);
+      const unsubLeave = ids.length ? onSnapshot(query(collection(db,'leave_requests'),where('tenantId','==',profile.tenantId),where('branchId','in',ids)),s=>setLeaveRequests(s.docs.map(d=>({id:d.id,...d.data()} as LeaveRequest))),()=>toast.error('Leave register access denied. Legacy decisions need HR reconciliation.')) : ()=>{};
+      const unsubAdvance = ids.length ? onSnapshot(query(collection(db,'advance_requests'),where('tenantId','==',profile.tenantId),where('branchId','in',ids)),s=>setAdvanceRequests(s.docs.map(d=>({id:d.id,...d.data()} as AdvanceRequest))),()=>toast.error('Advance register access denied. Legacy requests can be reviewed by request ID.')) : ()=>{};
       const unsubStaff = firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setStaff);
 
       return () => {
@@ -75,6 +79,7 @@ export const LeaveAdvanceManager: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {profile&&<WelfareFinancePanel profile={profile}/>}
       {/* DATE FILTER BAR */}
       <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-xl flex flex-col md:flex-row items-stretch md:items-center justify-between gap-6">
         <div className="space-y-1">
@@ -384,6 +389,7 @@ const ReviewLeaveModal: React.FC<{
   isHR: boolean, 
   isCEO: boolean 
 }> = ({ request, onClose, isHR, isCEO }) => {
+  const {profile}=useAuth();
   const [notes, setNotes] = useState('');
   const [reviewCapacity, setReviewCapacity] = useState<'HR' | 'CEO'>(() => {
     if (isHR && isCEO) {
@@ -396,9 +402,13 @@ const ReviewLeaveModal: React.FC<{
     const update: any = {};
     if (reviewCapacity === 'HR') {
       update.hr_approval_status = action;
+      update.hr_reviewed_by=profile?.uid||'';
+      update.hr_reviewed_at=serverTimestamp();
       update.hr_notes = notes;
     } else {
       update.ceo_approval_status = action;
+      update.ceo_reviewed_by=profile?.uid||'';
+      update.ceo_reviewed_at=serverTimestamp();
       update.ceo_notes = notes;
     }
 
@@ -418,24 +428,6 @@ const ReviewLeaveModal: React.FC<{
     try {
       await firestoreService.updateDocument('leave_requests', request.id, update);
       toast.success(`Request ${action.toLowerCase()} as ${reviewCapacity}`);
-      onClose();
-    } catch (error) {
-      toast.error('Failed to update request');
-    }
-  };
-
-  const handleApproveBoth = async () => {
-    const update: any = {
-      hr_approval_status: 'Approved',
-      hr_notes: notes || 'Approved as HR',
-      ceo_approval_status: 'Approved',
-      ceo_notes: notes || 'Approved as CEO / MD',
-      status: 'Approved'
-    };
-
-    try {
-      await firestoreService.updateDocument('leave_requests', request.id, update);
-      toast.success('Approved both levels successfully');
       onClose();
     } catch (error) {
       toast.error('Failed to update request');
@@ -562,14 +554,7 @@ const ReviewLeaveModal: React.FC<{
                     </button>
                   </div>
 
-                  {isHR && isCEO && (
-                    <button 
-                      onClick={handleApproveBoth}
-                      className="w-full py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 border border-indigo-550"
-                    >
-                      <CheckCircle2 size={18} /> Approve Both (HR & CEO)
-                    </button>
-                  )}
+                  <p className="text-xs text-slate-600">HR and owner decisions require different reviewers.</p>
                 </div>
               </div>
             )}
@@ -588,6 +573,7 @@ const ReviewAdvanceModal: React.FC<{
   isHR: boolean, 
   isCEO: boolean 
 }> = ({ request, onClose, isHR, isCEO }) => {
+  const { profile } = useAuth();
   const [notes, setNotes] = useState('');
   const [reviewCapacity, setReviewCapacity] = useState<'HR' | 'CEO'>(() => {
     if (isHR && isCEO) {
@@ -600,9 +586,13 @@ const ReviewAdvanceModal: React.FC<{
     const update: any = {};
     if (reviewCapacity === 'HR') {
       update.hr_approval_status = action;
+      update.hr_reviewed_by = profile?.uid || '';
+      update.hr_reviewed_at=serverTimestamp();
       update.hr_notes = notes;
     } else {
       update.ceo_approval_status = action;
+      update.ceo_reviewed_by = profile?.uid || '';
+      update.ceo_reviewed_at=serverTimestamp();
       update.ceo_notes = notes;
     }
 
@@ -621,62 +611,15 @@ const ReviewAdvanceModal: React.FC<{
 
     try {
       await firestoreService.updateDocument('advance_requests', request.id, update);
-      if (update.status === 'Approved') {
-        await firestoreService.addDocument('management_expenses', {
-          tenantId: request.tenantId || '',
-          category: 'Salaries - Advance Request',
-          department: 'HR',
-          description: `Salary Advance Request: ${request.staff_name} (ID: ${request.staff_id?.slice(-6)})`,
-          amount_ugx: parseFloat(request.amount_requested as any) || 0,
-          expense_date: new Date().toISOString().split('T')[0],
-          payment_method: 'Petty Cash',
-          status: 'Pending',
-          logged_by: 'HR System - Advance',
-          created_at: new Date().toISOString(),
-          source: 'hr_advance',
-          excludeFromOpexRollup: false
-        });
-        toast.success(`Advance fully approved & sent to Finance Management Expenses!`);
-      } else {
-        toast.success(`Request ${action.toLowerCase()} as ${reviewCapacity}`);
-      }
+      toast.success(update.status === 'Approved'
+        ? 'Advance approved. No payment or expense has been posted.'
+        : `Request ${action.toLowerCase()} as ${reviewCapacity}`);
       onClose();
     } catch (error) {
       toast.error('Failed to update request');
     }
   };
 
-  const handleApproveBoth = async () => {
-    const update: any = {
-      hr_approval_status: 'Approved',
-      hr_notes: notes || 'Approved as HR',
-      ceo_approval_status: 'Approved',
-      ceo_notes: notes || 'Approved as CEO / MD',
-      status: 'Approved'
-    };
-
-    try {
-      await firestoreService.updateDocument('advance_requests', request.id, update);
-      await firestoreService.addDocument('management_expenses', {
-        tenantId: request.tenantId || '',
-        category: 'Salaries - Advance Request',
-        department: 'HR',
-        description: `Salary Advance Request: ${request.staff_name} (ID: ${request.staff_id?.slice(-6)})`,
-        amount_ugx: parseFloat(request.amount_requested as any) || 0,
-        expense_date: new Date().toISOString().split('T')[0],
-        payment_method: 'Petty Cash',
-        status: 'Pending',
-        logged_by: 'HR System - Advance',
-        created_at: new Date().toISOString(),
-        source: 'hr_advance',
-        excludeFromOpexRollup: false
-      });
-      toast.success('Approved both levels successfully & sent to Finance Management Expenses');
-      onClose();
-    } catch (error) {
-      toast.error('Failed to update request');
-    }
-  };
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -788,14 +731,7 @@ const ReviewAdvanceModal: React.FC<{
                     </button>
                   </div>
 
-                  {isHR && isCEO && (
-                    <button 
-                      onClick={handleApproveBoth}
-                      className="w-full py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 border border-indigo-550"
-                    >
-                      <CheckCircle2 size={18} /> Approve Both (HR & CEO)
-                    </button>
-                  )}
+
                 </div>
               </div>
             )}

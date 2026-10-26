@@ -1299,6 +1299,7 @@ export interface AdvanceRequest {
   id: string;
   tenantId: string;
   staffId: string;
+  branchId?: string;
   staff_id?: string;
   staff_name?: string;
   amount: number;
@@ -1404,6 +1405,7 @@ export interface LeaveRequest {
   id: string;
   tenantId: string;
   staffId: string;
+  branchId?: string;
   staff_id?: string;
   staff_name?: string;
   startDate: string;
@@ -1434,6 +1436,9 @@ export interface Payslip {
 
 export interface AttendanceRecord {
   id: string;
+  approval_status?: 'Submitted' | 'Approved' | 'Rejected';
+  loggedByUid?: string;
+  approvedByUid?: string;
   staffId: string;
   tenantId?: string;
   date: string;

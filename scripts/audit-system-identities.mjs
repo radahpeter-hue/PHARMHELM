@@ -4,6 +4,7 @@
  * No individual names, contact details, raw record IDs or patient data are logged.
  * No create/update/delete/batch/transaction operations.
  */
+import { identityAuditFailure } from '../src/services/identityAuditFailure.mjs';
 import { writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 
@@ -140,6 +141,7 @@ export function analyseIdentitySnapshot(records, counters = []) {
   return result;
 }
 
+let readingCollection = 'initialization';
 async function main() {
   if (process.env.FIRESTORE_EMULATOR_HOST) throw new Error('Expected named live Firestore, received an emulator.');
   const { initializeApp, applicationDefault } = await import('firebase-admin/app');
@@ -154,12 +156,15 @@ async function main() {
     if(name==='products')fields.add('sku');
     if(name==='staff')fields.add('employee_id');
     if(name==='branches')fields.add('name');
+    readingCollection = name;
     const snaps=await db.collection(name).select(...fields).get();
     records[name]=snaps.docs.map(d=>({id:d.id,...d.data()}));
   }
+  readingCollection = 'operational_inventory_masters';
   const masters=await db.collection('operational_inventory_masters')
     .select('tenantId','uniqueId','operationalType','type').get();
   records.operational_inventory_masters=masters.docs.map(d=>({id:d.id,...d.data()}));
+  readingCollection = 'identity_sequence_counters';
   const counters=await db.collection('identity_sequence_counters').select('kind','tenantId','lastSequence').get();
   const report=analyseIdentitySnapshot(records,counters.docs.map(d=>({id:d.id,...d.data()})));
   const out=process.argv[2] || '/tmp/pharmhelm-identity-audit-summary.json';
@@ -171,5 +176,10 @@ async function main() {
     martinPharma:report.tenants.find(t=>t.isMartinPharma)||null},null,2));
 }
 if(process.argv[1] && import.meta.url===new URL('file://'+process.argv[1]).href) {
-  main().catch(err=>{console.error('IDENTITY_AUDIT_FAILED:',err.code||err.message);process.exitCode=1;});
+  main().catch(err=>{
+    const failure = identityAuditFailure(err, readingCollection);
+    writeFileSync(process.argv[2] || '/tmp/pharmhelm-identity-audit-summary.json', JSON.stringify(failure,null,2));
+    console.error('IDENTITY_AUDIT_FAILED:', JSON.stringify(failure));
+    process.exitCode=1;
+  });
 }

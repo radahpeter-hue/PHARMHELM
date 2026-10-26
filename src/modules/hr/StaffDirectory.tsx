@@ -16,6 +16,7 @@ import { cn } from '../../utils/cn';
 import { registerAuthUser } from '../../firebase';
 import { deduplicateStaff } from '../../utils/deduplicateStaff';
 import { roleRealmId, SYSTEM_ROLES } from '../../config/rbac';
+import {canApproveAuthority} from '../../services/authorityApprovalPolicy';
 
 export const StaffDirectory: React.FC = () => {
   const { profile } = useAuth();
@@ -391,9 +392,10 @@ const StatCard: React.FC<{ label: string; value: number; icon: any; color: strin
 );
 
 const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff | null; branches: Branch[]; customRoles?: any[] }> = ({ isOpen, onClose, staff, branches, customRoles = [] }) => {
-  const { profile } = useAuth();
+  const { profile,user } = useAuth();
   const { tenant } = useTenant();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const canGrantAuthorities=canApproveAuthority(profile,user);
   
   const systemDefaultRoleNames = SYSTEM_ROLES
     .flatMap(role => [role.name, role.label])
@@ -424,7 +426,7 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
     return {
       full_name: '',
       username: '',
-      role: '',
+      role: 'Employee',
       secondaryRoles: [],
       email: '',
       phone_number: '',
@@ -479,16 +481,19 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
         : null;
 
       if (staff?.id) {
-        await firestoreService.updateDocument('staff', staff.id, {
+        const changes:any={
           ...formData,
           roleRealmId: primaryRoleRealmId,
-        });
+        };
+        if(!canGrantAuthorities){changes.contactEmail=formData.email||'';for(const key of ['role','secondaryRoles','roleRealmId','legacyStaffId','uid','email','authEmail'])delete changes[key];}
+        await firestoreService.updateDocument('staff', staff.id, changes);
         toast.success('Staff member updated');
       } else {
         // Save staff record to Firestore as pending activation
         const createdStaff = await createScopedIdentity('staff', profile.tenantId, {
           ...formData,
           roleRealmId: primaryRoleRealmId,
+          ...(!canGrantAuthorities?{role:'Employee',secondaryRoles:[],roleRealmId:null}:{}),
           username: '',
           loginHandle: '',
           authEmail: '',
@@ -586,8 +591,10 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Primary Role *</label>
-                  <select required className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900" value={formData.role || ''} onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}>
+                  {!canGrantAuthorities&&<p className="text-xs text-amber-800">Owner approval is required for role grants. HR can prepare an employee profile pending that approval.</p>}
+                  <select disabled={!canGrantAuthorities} required className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900" value={formData.role || ''} onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}>
                     <option value="">Select Primary...</option>
+                    <option value="Employee">Employee — pending role grant</option>
                     <optgroup label="System Generated Roles">
                       {SYSTEM_ROLES.map(role => (
                         <option key={role.name} value={role.name}>{role.label}</option>
@@ -619,6 +626,7 @@ const StaffModal: React.FC<{ isOpen: boolean; onClose: () => void; staff: Staff 
                             <input
                               type="checkbox"
                               checked={isChecked}
+                              disabled={!canGrantAuthorities}
                               onChange={() => toggleSecondaryRole(roleName)}
                               className="rounded border-slate-300 text-indigo-650 focus:ring-indigo-500/20"
                             />

@@ -6,6 +6,8 @@ on:
       - 'firestore.rules'
       - 'scripts/build-firestore-release-rules.mjs'
       - 'scripts/validate-inactive-finance-rules.mjs'
+      - 'scripts/firebase-rules-diagnostics.mjs'
+      - 'scripts/build-firestore-compiler-controls.mjs'
       - '.github/workflows/firestore-release-size.yml'
 permissions:
   contents: read
@@ -20,12 +22,27 @@ jobs:
         with:
           node-version: '22'
       - name: Compile compact equivalent rule symbols
-        run: node scripts/build-firestore-release-rules.mjs
+        run: |
+          cp firestore.rules /tmp/phase5-authored.rules
+          node scripts/build-firestore-compiler-controls.mjs firestore.rules /tmp/phase5-compiler-controls
+          node scripts/build-firestore-release-rules.mjs
+      - name: Read independently certified compiler control
+        uses: actions/checkout@v4
+        with:
+          ref: 8e7f7eadee5d9bbea8d2834625d5f86956076a5a
+          path: .phase5-certified-baseline
+      - name: Build exact certified control rules
+        run: node .phase5-certified-baseline/scripts/build-firestore-release-rules.mjs .phase5-certified-baseline/firestore.rules
       - uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
       - run: npm install --prefix /tmp/rules-size --no-save --ignore-scripts google-auth-library
       - name: Require actual compiled executable to fit the activation limit
+        env:
+          PHARMHELM_COMPILER_BASELINE_RULES: .phase5-certified-baseline/firestore.rules
+          PHARMHELM_COMPILER_AUTHORED_RULES: /tmp/phase5-authored.rules
+          PHARMHELM_COMPILER_CONTROLS: /tmp/phase5-compiler-controls
         run: |
           cp scripts/validate-inactive-finance-rules.mjs /tmp/rules-size/validate.mjs
+          cp scripts/firebase-rules-diagnostics.mjs /tmp/rules-size/firebase-rules-diagnostics.mjs
           node /tmp/rules-size/validate.mjs
