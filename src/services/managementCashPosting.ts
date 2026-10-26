@@ -131,13 +131,14 @@ export async function postManagementReceivablePayment(input:{tenantId:string;rec
       return {remainingUGX:Number(transfer.data().remainingReceivableUGX)};
     }
     if(!receivable.exists()||receivable.data().tenantId!==input.tenantId)throw new Error('Post and verify the canonical receivable before banking its payment.');
+    if(receivable.data().controlVersion===2)throw new Error('V2 credit collections require the certified Phase 6 settlement pathway.');
     const outstanding=Number(receivable.data().outstanding_ugx);
     if(!Number.isSafeInteger(outstanding)||outstanding<input.amountUGX)throw new Error('Payment exceeds the current outstanding receivable.');
     const remaining=outstanding-input.amountUGX,now=Timestamp.now();
     const bankMovementId=`transfer_${transferId}`;
     stageManagementCashEntry(tx,bankMovementId,{tenantId:input.tenantId,amount:input.amountUGX,type:'incoming',source:'Credit receivable payment',transferId,reference_number:transferId},connection,MANAGEMENT_BANK_ACCOUNT,input.actorId);
     tx.set(transferRef,{tenantId:input.tenantId,fromPortfolio:'receivables',toPortfolio:'banked',amount:input.amountUGX,bankMovementId,receivableId:input.receivableId,remainingReceivableUGX:remaining,processedBy:input.actorId,processedAt:now});
-    tx.update(receivableRef,{outstanding_ugx:remaining,status:remaining===0?'paid':'outstanding',lastProcessedAt:now});
+    tx.update(receivableRef,{outstanding_ugx:remaining,status:remaining===0?'paid':'outstanding',lastProcessedAt:now,lastReceiptMovementId:bankMovementId});
     return {remainingUGX:remaining};
   }); } catch(error) {
     try {

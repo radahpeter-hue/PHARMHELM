@@ -1,29 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-
-const finance = fs.readFileSync('src/pages/Finance.tsx', 'utf8');
-const ledger = fs.readFileSync('src/pages/finance/management/CreditLedger.tsx', 'utf8');
-
-test('Branch Credit View subscribes to authoritative credit receivables', () => {
-  assert.ok(finance.includes("subscribeToCollection('credit_receivables'"));
-  assert.ok(finance.includes('r.id === credit.id'));
-  assert.ok(finance.includes('r.invoice_number === invNum'));
+import { buildReceivablesRegister } from '../src/services/creditRecognition';
+const record={id:'s',receipt_id:'s',tenantId:'tenant',branch_id:'masaka',paymentId:'p',controlVersion:2,amount_ugx:10000,outstanding_ugx:6000,debtorType:'institution',debtorId:'i'};
+const sale={id:'s',tenantId:'tenant',branchId:'masaka',canonicalPaymentId:'p'};
+test('credit register derives collections from one verified obligation and resolves branch name',()=>{
+ const [r]=buildReceivablesRegister([record],[sale],[],[],[{id:'masaka',name:'Masaka'}]);
+ assert.equal(r.collectedUGX,4000);assert.equal(r.branch_name,'Masaka');
 });
-
-test('Branch Credit View derives paid and partial states from receivable balance', () => {
-  assert.ok(finance.includes("receivableStatus === 'paid' || receivableOutstanding === 0"));
-  assert.ok(finance.includes('receivableOutstanding < receivableOriginal'));
-  assert.ok(finance.includes("? 'Partial'"));
-});
-
-test('Management Credit Ledger resolves branch IDs through tenant branches', () => {
-  assert.ok(ledger.includes("collection(db, 'branches')"));
-  assert.ok(ledger.includes('branch.name || branch.branch_name || branch.branchName'));
-  assert.ok(ledger.includes('branch_name: rec.branch_name || rec.branchName || branchNameById.get(branchId) || branchId'));
-});
-
-test('Management receivable table and export prefer resolved branch name', () => {
-  assert.ok(ledger.includes("'Branch': c.branch_name || c.branch_id || 'HQ'"));
-  assert.ok(ledger.includes("{rec.branch_name || rec.branch_id || 'HQ'}"));
+test('a foreign source or branch mismatch cannot certify a record',()=>{
+ for(const source of [{...sale,tenantId:'foreign'},{...sale,branchId:'other'}]) assert.equal(buildReceivablesRegister([record],[source],[],[],[])[0].verified,false);
 });

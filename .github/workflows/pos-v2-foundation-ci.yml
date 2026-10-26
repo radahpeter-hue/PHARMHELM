@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - feature/finance-v2-phase5-hr-advance-validation-20261021
     paths:
       - 'src/services/pos-v2/**'
       - 'src/components/sales/PosV2ReceiptRevision*.tsx'

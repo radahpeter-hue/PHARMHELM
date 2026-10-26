@@ -79,7 +79,13 @@ export function buildPosCheckoutV2Payment(params: {
 
   const components: PosCheckoutV2PaymentComponent[] = [];
 
-  if (method === 'staff_welfare' && request.secondaryPaymentMethod) {
+  if (UNSETTLED_METHODS.has(method) && request.secondaryPaymentMethod) {
+    const paid = request.secondaryAmount;
+    if (!WELFARE_SECONDARY_METHODS.has(request.secondaryPaymentMethod) || !Number.isSafeInteger(paid) || paid! <= 0 || paid! >= total || !Number.isSafeInteger(total)) {
+      throw new PosCheckoutV2Error('PAYMENT_MISMATCH', 'The immediate credit-sale payment must be positive whole UGX below the invoice amount, using cash, MTN or Airtel.');
+    }
+    components.push(component(method, total - paid!), component(request.secondaryPaymentMethod, paid!));
+  } else if (method === 'staff_welfare' && request.secondaryPaymentMethod) {
     const secondaryMethod = String(request.secondaryPaymentMethod).trim();
     if (!WELFARE_SECONDARY_METHODS.has(secondaryMethod)) {
       throw new PosCheckoutV2Error('PAYMENT_MISMATCH', 'The welfare split contains a secondary payment method that is not offered by the current POS workflow.');

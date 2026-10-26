@@ -3,6 +3,7 @@ on:
   pull_request:
     branches:
       - main
+      - feature/finance-v2-phase5-hr-advance-validation-20261021
     paths:
       - '.github/workflows/masaka-pr63-preview.yml'
       - 'src/components/inventory/**'
@@ -40,6 +41,7 @@ jobs:
       # Hosting preview only. This workflow MUST NOT deploy Firestore rules,
       # write tenant data, or update the Firebase live Hosting channel.
       - name: Publish isolated Hosting preview channel
+        if: ${{ !startsWith(github.head_ref, 'feature/finance-v2-phase6-') }}
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'

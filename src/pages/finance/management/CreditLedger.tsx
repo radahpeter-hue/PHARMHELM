@@ -1,4 +1,4 @@
-import { postManagementReceivablePayment } from '../../../services/managementCashPosting';
+import { ReceivablesRegister } from '../../../components/finance/ReceivablesRegister';
 import { isActiveSale } from '../../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -42,7 +42,7 @@ interface ManagementExpenseDraft {
   excludeFromOpexRollup: true;
 }
 
-export const CreditLedger: React.FC = () => {
+const SupplierCreditLedger: React.FC = () => {
   const { profile } = useAuth();
   const [activeTab, setActiveTab] = useState<'payables' | 'receivables'>('payables');
   const [credits, setCredits] = useState<CreditRecord[]>([]);
@@ -103,102 +103,6 @@ export const CreditLedger: React.FC = () => {
         .sort((a, b) => (financialDate(b.creditAccruedAt)?.getTime() || 0) - (financialDate(a.creditAccruedAt)?.getTime() || 0));
 
       setCredits(data);
-
-      // 2. Fetch Credits Owed to Company (Receivables)
-      const recCol = collection(db, 'credit_receivables');
-      const recQ = query(
-        recCol,
-        where('tenantId', '==', profile.tenantId)
-      );
-      const recSnapshot = await getDocs(recQ);
-
-      // Resolve branch document IDs to human-readable tenant branch names.
-      const branchCol = collection(db, 'branches');
-      const branchQ = query(branchCol, where('tenantId', '==', profile.tenantId));
-      const branchSnapshot = await getDocs(branchQ);
-      const branchNameById = new Map<string, string>();
-      branchSnapshot.docs.forEach(branchDoc => {
-        const branch = branchDoc.data() as any;
-        branchNameById.set(
-          branchDoc.id,
-          branch.name || branch.branch_name || branch.branchName || branchDoc.id
-        );
-      });
-
-      const recData = recSnapshot.docs.map(doc => {
-        const rec = doc.data() as any;
-        const branchId = rec.branch_id || rec.branchId || 'HQ';
-        return {
-          ...rec,
-          id: doc.id,
-          branch_name: rec.branch_name || rec.branchName || branchNameById.get(branchId) || branchId
-        };
-      });
-
-      // 2b. Fetch POS sales labeled as institutional_credit
-      const salesCol = collection(db, 'sales');
-      const salesQ1 = query(
-        salesCol,
-        where('tenantId', '==', profile.tenantId),
-        where('paymentMethod', '==', 'institutional_credit')
-      );
-      const salesSnapshot1 = await getDocs(salesQ1);
-      
-      const salesQ2 = query(
-        salesCol,
-        where('tenantId', '==', profile.tenantId),
-        where('secondaryPaymentMethod', '==', 'institutional_credit')
-      );
-      const salesSnapshot2 = await getDocs(salesQ2);
-
-      const salesMap = new Map<string, any>();
-      salesSnapshot1.docs.forEach(doc => {
-        const d = doc.data();
-        if (!isActiveSale(d)) return;
-        salesMap.set(doc.id, {
-          id: doc.id,
-          ...d,
-          creditAmount: d.totalAmount !== undefined ? d.totalAmount : (d.total || 0)
-        });
-      });
-      salesSnapshot2.docs.forEach(doc => {
-        const d = doc.data();
-        if (!isActiveSale(d)) return;
-        salesMap.set(doc.id, {
-          id: doc.id,
-          ...d,
-          creditAmount: d.secondaryAmount !== undefined ? d.secondaryAmount : (d.totalAmount !== undefined ? d.totalAmount : (d.total || 0))
-        });
-      });
-
-      const allSalesAsReceivables = Array.from(salesMap.values());
-
-      // Merge: For each POS sale, if it doesn't exist in recData, add it dynamically!
-      // If it exists in recData, we use the recData entry as it tracks payment history.
-      const mergedReceivables = [...recData];
-      
-      allSalesAsReceivables.forEach(sale => {
-        const exists = recData.some(r => r.id === sale.id || r.receipt_id === sale.id);
-        if (!exists) {
-          mergedReceivables.push({
-            id: sale.id,
-            tenantId: sale.tenantId,
-            receipt_id: sale.id,
-            client_id: sale.patientId || sale.institutionId || '',
-            client_name: sale.institutionName || sale.patientName || 'Individual client',
-            amount_ugx: sale.creditAmount,
-            outstanding_ugx: sale.creditAmount,
-            status: 'outstanding',
-            branch_id: sale.branchId || 'HQ',
-            branch_name: branchNameById.get(sale.branchId || '') || sale.branchName || sale.branchId || 'HQ',
-            due_date: sale.timestamp || new Date().toISOString(),
-            invoice_number: sale.receiptNumber || 'N/A',
-            created_at: sale.timestamp || new Date().toISOString()
-          });
-        }
-      });
-
-      setReceivables(mergedReceivables);
 
       // 3. Fetch management_expenses as well for history
       const expCol = collection(db, 'management_expenses');
@@ -361,34 +265,7 @@ export const CreditLedger: React.FC = () => {
     }
   };
 
-  // Receivable payment confirmation and bank transfer
-  const handleConfirmReceivablePayment = async (rec: any) => {
-    if (amountToProcess <= 0) {
-      toast.error("Amount must be greater than zero");
-      return;
-    }
-    if (amountToProcess > rec.outstanding_ugx) {
-      toast.error(`Cannot process more than the outstanding balance of UGX ${rec.outstanding_ugx.toLocaleString()}`);
-      return;
-    }
-
-    setIsSubmittingPayment(true);
-    try {
-      const intentKey=`pharmhelm_receivable_${profile?.tenantId}_${rec.id}_${rec.outstanding_ugx}_${amountToProcess}`;
-      let requestId=sessionStorage.getItem(intentKey);
-      if(!requestId){requestId=crypto.randomUUID();sessionStorage.setItem(intentKey,requestId);}
-      const result=await postManagementReceivablePayment({tenantId:profile?.tenantId||'',receivableId:rec.id,amountUGX:amountToProcess,requestId,actorId:profile?.uid||''});
-
-      toast.success(`Payment of UGX ${amountToProcess.toLocaleString()} processed. Remaining: UGX ${result.remainingUGX.toLocaleString()}. Amount banked successfully!`);
-      setProcessingId(null);
-      fetchCredits(); // Refresh list
-    } catch (e: any) {
-      console.error("Error submitting receivable payment:", e);
-      toast.error("Failed to process payment. Try again.");
-    } finally {
-      setIsSubmittingPayment(false);
-    }
-  };
+  const handleConfirmReceivablePayment = async (_rec: any) => { throw new Error('Use the certified Receivables Register.'); };
 
   // Excel report generation
   const handleExport = async () => {
@@ -476,30 +353,6 @@ export const CreditLedger: React.FC = () => {
         >
           <Download size={16} />
           Download Report
-        </button>
-      </div>
-
-      {/* Dual Tabs for Payables vs Receivables */}
-      <div className="flex border-b border-zinc-200">
-        <button
-          onClick={() => setActiveTab('payables')}
-          className={`px-6 py-3 text-sm font-black border-b-2 transition-all ${
-            activeTab === 'payables'
-              ? 'border-[#1A5E38] text-[#1A5E38]'
-              : 'border-transparent text-zinc-500 hover:text-zinc-800'
-          }`}
-        >
-          Payables (Owed to Suppliers)
-        </button>
-        <button
-          onClick={() => setActiveTab('receivables')}
-          className={`px-6 py-3 text-sm font-black border-b-2 transition-all ${
-            activeTab === 'receivables'
-              ? 'border-[#1A5E38] text-[#1A5E38]'
-              : 'border-transparent text-zinc-500 hover:text-zinc-800'
-          }`}
-        >
-          Receivables (Owed to Company)
         </button>
       </div>
 
@@ -936,4 +789,12 @@ export const CreditLedger: React.FC = () => {
       )}
     </div>
   );
+};
+
+export const CreditLedger: React.FC = () => {
+  const [tab, setTab] = useState('receivables');
+  return <div className="space-y-5"><div className="flex gap-3">
+    <button className="border rounded-xl p-3" onClick={() => setTab('receivables')}>Receivables (customers and institutions)</button>
+    <button className="border rounded-xl p-3" onClick={() => setTab('payables')}>Payables (suppliers)</button>
+  </div>{tab === 'receivables' ? <ReceivablesRegister /> : <SupplierCreditLedger />}</div>;
 };

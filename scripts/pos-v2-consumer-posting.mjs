@@ -257,6 +257,13 @@ async function postInstitutionalCredit(sale, payment) {
     const snap = await tx.get(ref);
     if (snap.exists) {
       const existing = snap.data();
+      if (existing.controlVersion === 2) {
+        if (existing.receipt_id !== sale.id || existing.paymentId !== payment.paymentId
+          || existing.tenantId !== sale.tenantId || existing.branch_id !== sale.branchId || existing.amount_ugx !== amount) {
+          throw new Error('Canonical credit recognition conflicts with downstream payment.');
+        }
+        return; // Checkout already recognized it. Never reset collections or due dates.
+      }
       if (existing.tenantId !== sale.tenantId || String(existing.receipt_id || sale.id) !== sale.id) {
         throw new Error('Institutional credit receivable ID collision. Manual review required.');
       }
@@ -282,7 +289,7 @@ async function postInstitutionalCredit(sale, payment) {
       outstanding_ugx: amount,
       status: 'outstanding',
       branch_id: sale.branchId || 'HQ',
-      due_date: created,
+      due_date: null, // Historical worker records require reconciliation; no invented terms.
       invoice_number: sale.receiptNumber || 'N/A',
       created_at: created,
       paymentId: payment.paymentId,

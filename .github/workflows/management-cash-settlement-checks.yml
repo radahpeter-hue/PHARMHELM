@@ -1,7 +1,7 @@
 name: Management Cash settlement acceptance
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'feature/finance-v2-phase5-hr-advance-validation-20261021']
     paths:
       - 'src/services/managementCashPosting.ts'
       - 'src/services/managementPaymentAccountService.ts'

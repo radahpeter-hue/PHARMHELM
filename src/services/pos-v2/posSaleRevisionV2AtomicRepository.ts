@@ -189,6 +189,11 @@ export async function commitPosV2ReceiptCorrection(input: SubmitPosV2RevisionInp
         revisionReason: submission.reason, revisionRequestedBy: uid, revisionRequestedByName: input.actor.name,
         revisionCompletedAt: serverTimestamp(), revisionRequestId: submission.requestId,
         originalSellerId: original.servedBy || original.cashierId, revisionLifecycle: 'COMPLETED' });
+      if (checkout.payment.outstandingAmount > 0 && ['institutional_credit', 'credit', 'insurance'].includes(checkout.payment.paymentMethod)) {
+        const creditRef = doc(db, 'credit_receivables', prepared.saleId);
+        await stage.get(creditRef);
+        stage.update(creditRef, { created_at: original.timestamp });
+      }
       const corrected = { ...(await stage.get(prepared.saleRef)).data(), id: prepared.saleId } as Sale;
       assertRevisionCommercialEvidence({ request: submission, replacementSale: corrected, payment: checkout.payment });
       const posters = createPosV2ConsumerPosters({ db: executorDb, FieldValue: { serverTimestamp }, workerId: uid,

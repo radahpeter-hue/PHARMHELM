@@ -1826,16 +1826,108 @@ service cloud.firestore {
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
+    function isCreditMethod(method) {
+      return method in ['institutional_credit','credit','insurance'];
+    }
+    function validCreditComponents(payment) {
+      let c = payment.components;
+      let credit = {'method':payment.paymentMethod,'amount':payment.outstandingAmount,'settledAmount':0,'outstandingAmount':payment.outstandingAmount,'status':'unpaid'};
+      return payment.amount is int && payment.amount > 0 && payment.amount <= 9007199254740991
+        && payment.outstandingAmount is int && payment.outstandingAmount > 0
+        && payment.settledAmount is int && payment.settledAmount >= 0
+        && payment.settledAmount + payment.outstandingAmount == payment.amount
+        && (payment.settledAmount == 0 ? payment.status == 'unpaid' && c == [credit]
+          : (payment.status == 'partially_settled' && c.size() == 2
+            && c[1].method in ['cash','mtn_momo','airtel_money']
+            && c == [credit,{'method':c[1].method,'amount':payment.settledAmount,'settledAmount':payment.settledAmount,'outstandingAmount':0,'status':'settled'}]));
+    }
+    function creditSaleMatchesPayment(sale, payment) {
+      return sale.paymentMethod == payment.paymentMethod
+        && sale.get('institutionId',null) == payment.get('institutionId',null)
+        && sale.get('patientId',null) == payment.get('patientId',null)
+        && (payment.components.size() == 1 ? sale.get('secondaryPaymentMethod',null) == null
+          : (sale.secondaryPaymentMethod == payment.components[1].method && sale.secondaryAmount == payment.components[1].amount));
+    }
+    function creditPaymentRecognized(id, payment) {
+      return !isCreditMethod(payment.paymentMethod) || (validCreditComponents(payment)
+        && getAfter(/databases/$(database)/documents/credit_receivables/$(payment.saleId)).data.paymentId == id
+        && getAfter(/databases/$(database)/documents/credit_receivables/$(payment.saleId)).data.controlVersion == 2);
+    }
+    function creditMaster(row) {
+      return row.debtorType == 'institution'
+        ? get(/databases/$(database)/documents/institutions/$(row.debtorId)).data
+        : get(/databases/$(database)/documents/clients/$(row.debtorId)).data;
+    }
+    function validCreditDebtor(row, sale) {
+      let master = creditMaster(row);
+      let institution = sale.get('institutionId', null);
+      let client = sale.get('patientId', sale.get('clientId', null));
+      return row.debtorType in ['client','institution'] && row.debtorId is string
+        && row.debtorId == (institution != null ? institution : client)
+        && row.debtorType == (institution != null ? 'institution' : 'client')
+        && row.institution_id == institution && row.client_id == client
+        && master.tenantId == row.tenantId
+        && master.get('care_status',master.get('status','active')) in ['active','Active']
+        && master.get('active',true) == true && master.get('isActive',true) == true
+        && master.get('billingEligible',true) == true && master.get('billing_eligible',true) == true
+        && master.get('creditEligible',true) == true && master.get('credit_eligible',true) == true
+        && master.get('branch_id',row.branch_id) == row.branch_id && master.get('branchId',row.branch_id) == row.branch_id
+        && (row.debtorType == 'institution' ? master.get('role','billable') in ['billable','both'] : master.get('billing_type','self-pay') != 'institutional-pay')
+        && row.client_name == (row.debtorType == 'institution'
+          ? master.get('supplier_name',master.get('institution_name',master.get('name','')))
+          : master.get('full_name',master.get('fullName',master.get('name',''))))
+        && row.client_name != '' && row.credit_terms == master.get('payment_terms',null)
+        && (institution == null || client == null || validCreditClient(client, institution, row.tenantId));
+    }
+    function validCreditClient(clientId, institutionId, tenantId) {
+      let client = get(/databases/$(database)/documents/clients/$(clientId)).data;
+      return client.tenantId == tenantId && (client.get('billing_type','self-pay') != 'institutional-pay' || client.institution_to_bill_id == institutionId);
+    }
+    function validCreditRecognition(id, row) {
+      let sale = getAfter(/databases/$(database)/documents/sales/$(id)).data;
+      let payment = getAfter(/databases/$(database)/documents/pos_payments/$(row.paymentId)).data;
+      return isAuthenticated() && row.tenantId == getUserData().tenantId && isAssignedToBranch(row.branch_id)
+        && !exists(/databases/$(database)/documents/sales/$(id))
+        && row.keys().hasOnly(['tenantId','branch_id','receipt_id','paymentId','invoice_number','debtorType','debtorId','client_id','institution_id','client_name','invoice_amount_ugx','amount_ugx','outstanding_ugx','status','credit_terms','due_date','created_at','recognizedBy','source','engineVersion','controlVersion','currency','createdAt','updatedAt','atomicRevisionRequestId'])
+        && row.controlVersion == 2 && row.engineVersion == 2 && row.source == 'POS' && row.currency == 'UGX'
+        && row.receipt_id == id && row.recognizedBy == request.auth.uid
+        && row.createdAt == request.time && row.updatedAt == request.time && row.due_date == null
+        && sale.engineVersion == 2 && sale.status == 'completed' && sale.inventoryPosted == true
+        && sale.tenantId == row.tenantId && sale.branchId == row.branch_id && sale.canonicalPaymentId == row.paymentId
+        && row.invoice_number == sale.receiptNumber && row.created_at == sale.timestamp
+        && sale.totalAmount == row.invoice_amount_ugx && payment.amount == row.invoice_amount_ugx
+        && payment.saleId == id && payment.tenantId == row.tenantId && payment.branchId == row.branch_id
+        && payment.paymentId == row.paymentId && isCreditMethod(payment.paymentMethod)
+        && !exists(/databases/$(database)/documents/pos_payments/$(row.paymentId))
+        && row.amount_ugx == payment.outstandingAmount && row.outstanding_ugx == row.amount_ugx && row.status == 'outstanding'
+        && validCreditDebtor(row, sale);
+    }
+    function canReadCredit(row) {
+      return isAuthenticated() && row.tenantId == getUserData().tenantId
+        && isAssignedToBranch(row.get('branch_id',row.get('branchId','HQ')))
+        && (hasAnyRole(['owner','Owner','CEO','ceo','CEO / MD','ceo / md','Finance Head','Finance Officer','Accountant','Pharmacist','pharmacist','Dispenser','dispenser','Branch Manager','branch manager','Cashier','cashier','IT Head','IT Support Staff','IT Support Personnel','IT Staff'])
+          || hasCustomModuleView('clients') || hasCustomModuleView('finance') || hasCustomModuleFunctional('sales'));
+    }
+    // Preserve the independently tested legacy bank pathway, but require its
+    // fresh immutable bank movement. V2 receivables await milestone 6.2.
+    function validLegacyCreditReceipt(id, before, after) {
+      let movement = getAfter(/databases/$(database)/documents/banking_records/$(after.lastReceiptMovementId)).data;
+      let transfer = getAfter(/databases/$(database)/documents/cashTransfers/$(movement.transferId)).data;
+      return before.get('controlVersion',0) != 2 && isFinance() && isTenantMember(before.tenantId)
+        && after.diff(before).affectedKeys().hasOnly(['outstanding_ugx','status','lastProcessedAt','lastReceiptMovementId'])
+        && !exists(/databases/$(database)/documents/banking_records/$(after.lastReceiptMovementId))
+        && before.outstanding_ugx is int && after.outstanding_ugx is int && after.outstanding_ugx >= 0
+        && movement.type == 'incoming' && movement.amount == before.outstanding_ugx - after.outstanding_ugx
+        && movement.tenantId == before.tenantId && movement.postedBy == request.auth.uid
+        && transfer.receivableId == id && transfer.amount == movement.amount
+        && after.status == (after.outstanding_ugx == 0 ? 'paid' : 'outstanding');
+    }
     match /credit_receivables/{receivableId} {
-      allow get: if isAuthenticated() && ((resource == null && isPOSOperator()) || canReadPosFinancial());
-      allow create: if atomicCreditCreate(receivableId);
-      allow update: if atomicCreditUpdate(receivableId);
-      allow read: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isFinance() && isTenantMember(resource.data.tenantId)
-        && isTenantMember(request.resource.data.tenantId)
-        && request.resource.data.tenantId == resource.data.tenantId;
-      allow delete: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow get: if isAuthenticated() && ((resource == null && isPOSOperator()) || canReadCredit(resource.data));
+      allow list: if canReadCredit(resource.data);
+      allow create: if validCreditRecognition(receivableId,request.resource.data);
+      allow update: if atomicCreditUpdate(receivableId) || validLegacyCreditReceipt(receivableId,resource.data,request.resource.data);
+      allow delete: if false;
     }
 
     match /supplier_payables/{payableId} {
@@ -3287,7 +3379,8 @@ service cloud.firestore {
           && sale.receiptNumber == payment.receiptNumber
           && sale.checkoutAttemptId == payment.checkoutAttemptId
           && sale.totalAmount == payment.amount
-          && sale.canonicalPaymentId == paymentId;
+          && sale.canonicalPaymentId == paymentId
+          && (!isCreditMethod(payment.paymentMethod) || creditSaleMatchesPayment(sale,payment));
       }
 
       allow get: if isAuthenticated()
@@ -3298,7 +3391,7 @@ service cloud.firestore {
         && isTenantMember(request.resource.data.tenantId)
         && isAssignedToBranch(request.resource.data.branchId)
         && hasValidPaymentIdentity(paymentId)
-        && hasValidPaymentSettlement()
+        && (isCreditMethod(request.resource.data.paymentMethod) ? creditPaymentRecognized(paymentId,request.resource.data) : hasValidPaymentSettlement())
         && paymentMatchesSale(paymentId)
         && (!request.resource.data.get('isRevisionReplacement', false) ||
           !('executionMode' in getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(request.resource.data.revisionRequestId)).data) || atomicFinancialPostingChain());

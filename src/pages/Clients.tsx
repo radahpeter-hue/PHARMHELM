@@ -1,3 +1,4 @@
+import { ReceivablesRegister } from '../components/finance/ReceivablesRegister';
 import { createScopedIdentity, type ScopedIdentityCollection } from '../services/systemIdentityService';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
@@ -1405,6 +1406,7 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
                 </div>
                 <button 
                   onClick={exportCreditLedger}
+                  hidden={creditSubTab === 'to_branch'}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-widest rounded-xl flex items-center gap-1.5 shadow-sm shadow-emerald-100 transition-all ml-2"
                 >
                   <Download size={14} />
@@ -1420,40 +1422,7 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-500" />
                 </div>
               ) : creditSubTab === 'to_branch' ? (
-                /* TO our branch table */
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-zinc-50 border-b border-zinc-100">
-                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Date</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Debtor (Client / Institution)</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Ref Receipt</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Owed Balance</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Audited Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100">
-                    {branchClientCredits.map(c => (
-                      <tr key={c.id} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="px-6 py-4 text-xs font-medium text-zinc-500">{format(getParsedDate(c.timestamp || c.createdAt), 'MMM dd, yyyy')}</td>
-                        <td className="px-6 py-4 font-bold text-zinc-900">{c.institutionName || c.patientName || 'Walk-in Client'}</td>
-                        <td className="px-6 py-4 text-xs font-mono text-zinc-500">{c.receiptNumber}</td>
-                        <td className="px-6 py-4 text-xs font-black text-right text-amber-600">{(c.total || c.subtotal || 0).toLocaleString()} UGX</td>
-                        <td className="px-6 py-4 text-xs font-bold text-zinc-900">
-                          <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-black uppercase tracking-widest">
-                            {c.status === 'completed' ? 'Outstanding' : 'Paid'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {branchClientCredits.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="px-6 py-12 text-center text-zinc-400 italic">
-                          No client credits found in this date range.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+                <ReceivablesRegister branchOnly />
               ) : (
                 /* BY our branch table */
                 <table className="w-full text-left border-collapse">

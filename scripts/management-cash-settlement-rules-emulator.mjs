@@ -35,7 +35,7 @@ const count=async c=>admin(async db=>(await getDocs(collection(db,c))).size);
 try {
  await admin(async db=>{
   await setDoc(doc(db,'system_settings',tenantId),{tenantId,managementCashAccountControlV1:true,managementCashSettlementV1:true});
-  for(const [uid,role,secondaryRoles,t] of [[financeUid,'IT Head',['Finance Officer'],tenantId],['finance-primary','Finance Head',[],tenantId],['procurement-only','IT Head',['Procurement Personnel'],tenantId],['logistics','Logistics Head',[],tenantId],['hr','HR Head',[],tenantId],['foreign-finance','Finance Head',[],'other']]) await setDoc(doc(db,'staff',uid),{tenantId:t,role,secondaryRoles,active:true,status:'active',assigned_branches:[]});
+  for(const [uid,role,secondaryRoles,t] of [[financeUid,'IT Head',['Finance Officer'],tenantId],['finance-primary','Finance Head',[],tenantId],['procurement-only','IT Head',['Procurement Personnel'],tenantId],['logistics','Logistics Head',[],tenantId],['hr','HR Head',[],tenantId],['foreign-finance','Finance Head',[],'other']]) await setDoc(doc(db,'staff',uid),{tenantId:t,role,secondaryRoles,active:true,status:'active',assigned_branches:['HQ']});
  });
  // First-time reconciliation is separate from settlement and preserves historical entries.
  await admin(db=>setDoc(doc(db,'petty_cash_ledger','historical-opening'),{tenantId,type:'incoming',amount:50000}));
@@ -105,7 +105,7 @@ try {
  assert.equal((await value('finance_payment_accounts',accountId('petty_cash'))).balanceUGX,didTransfer?20000:0);
  console.log('PASS bank transfer and supplier settlement share the same bank balance.');
  await seed('receivable-source','bank',0);
- await admin(db=>setDoc(doc(db,'credit_receivables','receivable'),{tenantId,outstanding_ugx:10000,amount_ugx:10000,status:'outstanding'}));
+ await admin(db=>setDoc(doc(db,'credit_receivables','receivable'),{tenantId,branch_id:'HQ',outstanding_ugx:10000,amount_ugx:10000,status:'outstanding'}));
  const receivableInput={tenantId,receivableId:'receivable',amountUGX:10000,requestId:'receivable-request',actorId:financeUid};
  await Promise.all([postManagementReceivablePayment(receivableInput,finance),postManagementReceivablePayment(receivableInput,finance)]);
  assert.equal((await value('finance_payment_accounts',accountId('bank'))).balanceUGX,10000);

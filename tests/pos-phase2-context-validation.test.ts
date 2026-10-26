@@ -48,18 +48,14 @@ test('institutional credit without an institution is rejected, including the leg
   const expected = {
     valid: false,
     code: 'credit_institution_required',
-    message: 'Select an eligible institution before using Institutional Credit.'
+    message: 'Select a registered client or eligible institution before using Credit.'
   };
   assert.deepEqual(validate({ paymentMethod: 'credit' }), expected);
   assert.deepEqual(validate({ paymentMethod: 'institutional_credit' }), expected);
 });
 
-test('institutional credit requires an eligible institution and does not accept a patient alone', () => {
-  assert.deepEqual(validate({ paymentMethod: 'credit', hasPatient: true }), {
-    valid: false,
-    code: 'credit_institution_required',
-    message: 'Select an eligible institution before using Institutional Credit.'
-  });
+test('credit accepts a registered individual while institutional credit still requires an eligible biller', () => {
+  assert.deepEqual(validate({ paymentMethod: 'credit', hasPatient: true }), { valid: true });
   assert.deepEqual(validate({ paymentMethod: 'credit', hasInstitution: true }), { valid: true });
   assert.deepEqual(validate({ paymentMethod: 'institutional_credit', hasInstitution: true }), { valid: true });
   assert.deepEqual(validate({ paymentMethod: 'institutional_credit', hasInstitution: true, hasEligibleInstitution: false }), {
@@ -97,7 +93,7 @@ test('POS presents a single Credit option while retaining the legacy internal to
   const source = readFileSync('src/pages/Sales.tsx', 'utf8');
   const options = readFileSync('src/utils/posPaymentMethods.ts', 'utf8');
   assert.ok(source.includes('POS_CANONICAL_PAYMENT_METHODS'));
-  assert.ok(options.includes("{ id: 'institutional_credit', label: 'Institutional Credit' }"));
+  assert.ok(options.includes("{ id: 'institutional_credit', label: 'Credit' }"));
   assert.ok(options.includes("credit: 'institutional_credit'"));
   assert.equal(source.includes("label: 'Inst. Credit'"), false);
 });

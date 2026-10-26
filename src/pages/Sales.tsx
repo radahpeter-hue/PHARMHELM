@@ -145,6 +145,7 @@ const Sales: React.FC = () => {
     }
   }, [ledgerEditingSale]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodType>('cash');
+  const [creditPaidNow, setCreditPaidNow] = useState(0);
   const [secondaryPaymentMethod, setSecondaryPaymentMethod] = useState<PaymentMethodType>('cash');
   const [isProcessing, setIsProcessing] = useState(false);
   const checkoutAttemptRef = React.useRef<(PosCheckoutAttemptSelection & {
@@ -189,7 +190,7 @@ const Sales: React.FC = () => {
         clearPendingPosCheckoutV2Attempt(window.localStorage, profile.uid);
         checkoutAttemptRef.current = null;
         if (recovered) {
-          setCart([]);
+          setCart([]); setCreditPaidNow(0);
           setRecoveredV2Receipt(recovered.receiptNumber);
           toast.success(`Recovered completed V2 sale ${recovered.receiptNumber}. No replacement sale is required.`);
         }
@@ -637,6 +638,7 @@ const Sales: React.FC = () => {
   const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
   const discountAmount = Math.round(subtotal * (discountPercentage / 100));
   const totalAmount = subtotal - discountAmount;
+  const isCreditSplit = ['institutional_credit', 'credit', 'insurance'].includes(paymentMethod) && creditPaidNow > 0;
   const isWelfareSplit = paymentMethod === 'staff_welfare' && totalAmount > welfareBalance;
 
   useEffect(() => {
@@ -848,11 +850,11 @@ const Sales: React.FC = () => {
           total: finalTotal,
           totalAmount: finalTotal,
           paymentMethod,
-          secondaryPaymentMethod: isWelfareSplit ? secondaryPaymentMethod : undefined,
+          secondaryPaymentMethod: isWelfareSplit || isCreditSplit ? secondaryPaymentMethod : undefined,
           welfareAmount: paymentMethod === 'staff_welfare' ? (isWelfareSplit ? welfareBalance : totalAmount) : undefined,
           welfareBeneficiaryIsStaff: paymentMethod === 'staff_welfare' ? Boolean(selectedPatient?.isStaff) : undefined,
           welfarePostingStatus: paymentMethod === 'staff_welfare' ? 'pending' : 'not_applicable',
-          secondaryAmount: isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
+          secondaryAmount: isCreditSplit ? creditPaidNow : isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
           context,
           patientId: selectedPatient?.id || null,
           patientName: selectedPatient?.full_name || null,
@@ -901,8 +903,8 @@ const Sales: React.FC = () => {
           items: itemsWithVat,
           discountPercentage,
           paymentMethod,
-          secondaryPaymentMethod: isWelfareSplit ? secondaryPaymentMethod : undefined,
-          secondaryAmount: isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
+          secondaryPaymentMethod: isWelfareSplit || isCreditSplit ? secondaryPaymentMethod : undefined,
+          secondaryAmount: isCreditSplit ? creditPaidNow : isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
           welfareAmount: paymentMethod === 'staff_welfare' ? (isWelfareSplit ? welfareBalance : totalAmount) : undefined,
           welfareBeneficiaryIsStaff: paymentMethod === 'staff_welfare' ? Boolean(selectedPatient?.isStaff) : undefined,
           context,
@@ -942,11 +944,11 @@ const Sales: React.FC = () => {
           total: finalTotal,
           totalAmount: finalTotal,
           paymentMethod,
-          secondaryPaymentMethod: isWelfareSplit ? secondaryPaymentMethod : undefined,
+          secondaryPaymentMethod: isWelfareSplit || isCreditSplit ? secondaryPaymentMethod : undefined,
           welfareAmount: paymentMethod === 'staff_welfare' ? (isWelfareSplit ? welfareBalance : totalAmount) : undefined,
           welfareBeneficiaryIsStaff: paymentMethod === 'staff_welfare' ? Boolean(selectedPatient?.isStaff) : undefined,
           welfarePostingStatus: paymentMethod === 'staff_welfare' ? 'pending' : 'not_applicable',
-          secondaryAmount: isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
+          secondaryAmount: isCreditSplit ? creditPaidNow : isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
           sourceQuotationId: resumedQuotationId || undefined,
           quotationConversionStatus: resumedQuotationId ? 'converted' : 'not_applicable',
           quotationConvertedAt: resumedQuotationId ? new Date().toISOString() : undefined,
@@ -1170,7 +1172,7 @@ const Sales: React.FC = () => {
       }
 
       toast.success(`${editingSaleId ? 'Sale updated' : 'Sale completed'}! Receipt: ${receiptNumber}`);
-      setCart([]);
+      setCart([]); setCreditPaidNow(0);
       setDiscountPercentage(0);
       setSelectedPatient(null);
       setSelectedInstitution(null);
@@ -1586,7 +1588,7 @@ const Sales: React.FC = () => {
                           toast.error('This V2 attempt must be retried or recovered before the basket can be cleared.');
                           return;
                         }
-                        setCart([]);
+                        setCart([]); setCreditPaidNow(0);
                         checkoutAttemptRef.current = null;
                         if (editingSaleId) {
                           setEditingSaleId(null);
@@ -2396,7 +2398,7 @@ const Sales: React.FC = () => {
                   })).map(method => (
                     <button
                       key={method.id}
-                      onClick={() => setPaymentMethod(method.id as PaymentMethodType)}
+                      onClick={() => { setPaymentMethod(method.id as PaymentMethodType); setCreditPaidNow(0); }}
                       disabled={method.disabled}
                       className={cn(
                         "flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all text-center",
@@ -2419,6 +2421,16 @@ const Sales: React.FC = () => {
                     </button>
                   ))}
                 </div>
+
+                {['institutional_credit', 'credit', 'insurance'].includes(paymentMethod) && (
+                  <div className="border rounded-2xl p-4 space-y-2">
+                    <label className="text-sm font-bold">Paid now (UGX, zero for full credit)
+                      <input aria-label="Credit sale paid now" type="number" min="0" step="1" max={Math.max(0,totalAmount-1)} value={creditPaidNow} onChange={e => setCreditPaidNow(Number(e.target.value))} className="block border rounded p-2 w-full" />
+                    </label>
+                    {isCreditSplit && <select aria-label="Credit immediate payment method" value={secondaryPaymentMethod} onChange={e => setSecondaryPaymentMethod(e.target.value as PaymentMethodType)} className="border rounded p-2 w-full"><option value="cash">Cash</option><option value="mtn_momo">MTN MoMo</option><option value="airtel_money">Airtel Money</option></select>}
+                    <p>Credit remaining: UGX {Math.max(0,totalAmount-creditPaidNow).toLocaleString()}</p>
+                  </div>
+                )}
 
                 {isWelfareSplit && (
                   <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 space-y-3">
@@ -3081,7 +3093,7 @@ const Sales: React.FC = () => {
           }, 0)}
           grandTotal={totalAmount}
           onSuccess={() => {
-            setCart([]);
+            setCart([]); setCreditPaidNow(0);
             if (profile?.uid) clearPendingPosCheckoutV2Attempt(window.localStorage, profile.uid);
             checkoutAttemptRef.current = null;
             setSelectedPatient(null);
