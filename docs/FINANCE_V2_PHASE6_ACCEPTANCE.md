@@ -43,7 +43,7 @@ Differences retained for later milestones: original specifications include insur
 
 ## Milestone 6.1 verification and status
 
-Local checks: 767 unit tests pass; TypeScript and production build pass. Seventeen authenticated recognition scenarios pass against the release-transformed application rules, with production checkout code bundled against an isolated Firestore connection. The full existing Spark POS correction suite and Management Cash/Bank settlement suite pass. Neither service calls nor rules are mocked in financial acceptance.
+Local checks: 768 unit tests pass; TypeScript and production build pass. Nineteen authenticated recognition scenarios pass against the release-transformed application rules, with production checkout code bundled against an isolated Firestore connection. The full existing Spark POS correction suite and Management Cash/Bank settlement suite pass. Neither service calls nor rules are mocked in financial acceptance.
 
 Recognition scenarios cover institutional and individual credit, partial arithmetic, retry/concurrent identity, unchanged bank/no movement, stock deduction, forged debtor/negative/fractional/unsafe amounts/wrong invoice/wrong tenant/forged due date, missing source/payment/receivable, cross-tenant master and biller mismatch, owner/Finance mutation/deletion denial, branch/tenant read isolation, and payment-component forgery. Evidence is `/tmp/phase6-recognition-acceptance.json`, uploaded by CI as `phase6-recognition-evidence`; CI inserts the exact head commit in every scenario.
 
@@ -62,3 +62,9 @@ Acceptance remains **pending exact-commit CI**, including Phase 6 Credit Spark v
 - Hosting build/check passed, run 40304704305, with publication skipped.
 - The actual compiled-size gate (run 40304704450) failed on repeated Rules API HTTP 503 responses. Its certified control also returned 503; minimal and source-size-matched deny-all diagnostic controls compiled. These are diagnostics, not candidate size certification. The existing exact-source recovery and actual unbound-release verifier are unchanged and mandatory.
 - Follow-up UI corrections remove the obsolete CRM sales-derived export path entirely, show loading/failed totals as unverified, and expose source invoice items in history. Required CI filters now rerun on changes to this acceptance record and the shared register. Final acceptance is recorded against the exact tested head in PR #91, after all mandatory checks succeed.
+
+The follow-up also covers the established `Sale.clientId` alias used by customerId-only checkout requests. Its customer-alias authenticated scenario confirms this alias resolves to the same CRM client without changing the source, payment or inventory contract. Initial checkout payment and later credit collection are explicitly labelled separately in the register.
+
+Compiler-control refinement: the inherited workflow still referenced the earlier 8e7f7ea control, whose historical transformation produces 140,968 bytes. The control is now pinned to the actual Phase 5 signed-off c542ce8 source and transformer, with a mandatory SHA-256 assertion `5162b4f375af5a9cc288a3502659e3e7833bf1fcf7c6bd4e35e20cce2fae40ad` (135,930 bytes), independently reproduced locally. This improves the diagnostic baseline; success of that control still cannot certify the Phase 6 candidate, and the real candidate unbound-release gate is unchanged.
+
+A nineteenth raw authenticated denial also prevents the canonical payment customer alias from contradicting the source sale.

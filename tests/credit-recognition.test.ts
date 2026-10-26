@@ -32,3 +32,7 @@ test('duplicates and legacy rows are excluded from verified balances',()=>{
 test('missing recognition is an exception rather than synthetic outstanding money',()=>{
  const rows=buildReceivablesRegister([{id:'old',receipt_id:'unknown',amount_ugx:5000,due_date:'2026-01-01'}],[{...sale,paymentMethod:'institutional_credit'}],[],[],[]);assert.equal(rows.length,2);assert.equal(rows[1].outstanding_ugx,undefined);assert.equal(rows[0].due_date,null);
 });
+
+test('the established sale clientId alias retains canonical customer identity',()=>{
+ const r=buildCreditRecognition({...sale,institutionId:undefined,clientId:'client'},payment(),{tenantId:'martin',full_name:'Peter',care_status:'active'});assert.equal(r.debtorId,'client');assert.equal(r.client_id,'client');
+});

@@ -1845,6 +1845,7 @@ service cloud.firestore {
       return sale.paymentMethod == payment.paymentMethod
         && sale.get('institutionId',null) == payment.get('institutionId',null)
         && sale.get('patientId',null) == payment.get('patientId',null)
+        && sale.get('clientId',null) == payment.get('customerId',null)
         && (payment.components.size() == 1 ? sale.get('secondaryPaymentMethod',null) == null
           : (sale.secondaryPaymentMethod == payment.components[1].method && sale.secondaryAmount == payment.components[1].amount));
     }

@@ -32,10 +32,12 @@ jobs:
       - name: Read independently certified compiler control
         uses: actions/checkout@v4
         with:
-          ref: 8e7f7eadee5d9bbea8d2834625d5f86956076a5a
+          ref: c542ce834a60b0a21a9ea278b9dd90ab60fd8a17
           path: .phase5-certified-baseline
       - name: Build exact certified control rules
-        run: node .phase5-certified-baseline/scripts/build-firestore-release-rules.mjs .phase5-certified-baseline/firestore.rules
+        run: |
+          node .phase5-certified-baseline/scripts/build-firestore-release-rules.mjs .phase5-certified-baseline/firestore.rules
+          echo '5162b4f375af5a9cc288a3502659e3e7833bf1fcf7c6bd4e35e20cce2fae40ad  .phase5-certified-baseline/firestore.rules' | sha256sum --check
       - uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'

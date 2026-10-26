@@ -54,6 +54,10 @@ try{
   const result=await checkout(request('individual',{context:'walk-in',institutionId:undefined,institutionName:undefined,patientId:'peter'}));
   const r=await read('credit_receivables',result.saleId);assert.equal(r.debtorId,'peter');assert.equal(r.debtorType,'client');assert.equal(r.client_name,'Synthetic Peter');
  });
+ await scenario('6.1-02b','customerId-only checkout retains canonical CRM client identity',async()=>{
+  const result=await checkout(request('customer-only',{context:'walk-in',institutionId:undefined,institutionName:undefined,customerId:'peter'}));
+  const r=await read('credit_receivables',result.saleId);assert.equal(r.debtorId,'peter');assert.equal(r.client_id,'peter');
+ });
  await scenario('6.1-03','part-paid invoice debt equals only unpaid component',async()=>{
   const result=await checkout(request('partial',{secondaryPaymentMethod:'cash',secondaryAmount:2500}));const r=await read('credit_receivables',result.saleId);
   assert.equal(r.amount_ugx,7500);assert.equal(r.invoice_amount_ugx,10000);assert.equal(result.payment.settledAmount,2500);assert.equal(result.payment.outstandingAmount,7500);assert.equal(await count('sales'),1);assert.equal(await count('finance_v2_account_movements'),0);
@@ -83,6 +87,9 @@ try{
   for(const uid of ['foreign','other-branch']){await assertFails(getDoc(doc(actor(uid),'credit_receivables',id)));await assertFails(getDocs(query(collection(actor(uid),'credit_receivables'),where('tenantId','==',tenantId))));}
   assert.equal((await getDoc(doc(actor('finance'),'credit_receivables',id))).data().outstanding_ugx,10000);
   assert.equal((await getDocs(query(collection(actor('finance'),'credit_receivables'),where('tenantId','==',tenantId),where('branch_id','==',branchId)))).size,1);
+ });
+ await scenario('6.1-payment-identity','canonical payment customer alias cannot contradict the source sale',async()=>{
+  await assert.rejects(checkout(request('bad-customer'),(ref,data)=>({ref,data:ref.path.startsWith('pos_payments/')?{...data,customerId:'peter'}:data})));assert.equal(await count('sales'),0);
  });
  await scenario('6.1-partial-tamper','payment component forgery denied independently by rules',async()=>{
   await assert.rejects(checkout(request('bad-components',{secondaryPaymentMethod:'cash',secondaryAmount:2500}),(ref,data)=>({ref,data:ref.path.startsWith('pos_payments/')?{...data,components:[{...data.components[0],amount:10000},data.components[1]]}:data})));assert.equal(await count('sales'),0);

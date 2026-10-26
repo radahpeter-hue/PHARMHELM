@@ -7,7 +7,7 @@ export function safeUGX(value: unknown): value is number {
 }
 export function creditDebtorReference(request: Row): { type: CreditDebtorType; id: string; collection: string } {
   const institution = request.institutionId;
-  const client = request.patientId || request.customerId;
+  const client = request.patientId || request.customerId || request.clientId;
   const id = institution || client;
   if (typeof id !== 'string' || !id.trim() || id.includes('/')) throw new Error('Select a registered client or billable institution for credit.');
   return { type: institution ? 'institution' : 'client', id, collection: institution ? 'institutions' : 'clients' };
@@ -54,7 +54,7 @@ export function buildCreditRecognition(sale: Row, payment: Row, master: Row) {
   return {
     tenantId: sale.tenantId, branch_id: sale.branchId, receipt_id: sale.id,
     paymentId: payment.paymentId, invoice_number: sale.receiptNumber,
-    debtorType: reference.type, debtorId: reference.id, client_id: sale.patientId || sale.customerId || null,
+    debtorType: reference.type, debtorId: reference.id, client_id: sale.patientId || sale.customerId || sale.clientId || null,
     institution_id: sale.institutionId || null, client_name: debtorName(reference.type, master),
     invoice_amount_ugx: payment.amount, amount_ugx: amount, outstanding_ugx: amount,
     status: 'outstanding', credit_terms: terms, due_date: null,
