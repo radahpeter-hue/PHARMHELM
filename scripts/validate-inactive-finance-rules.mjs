@@ -73,6 +73,24 @@ for (let attempt=1;attempt<=4;attempt++) {
    if(release.name!==probeName || release.rulesetName!==result.name)throw new Error('Conflicting size probe release');
    break;
  }
+ // Firebase can complete an unbound release after its response and initial
+ // recovery reads timed out. Retain this exact owned candidate for a bounded
+ // final grace period; a different release/ruleset can never certify it.
+ if(attempt===4 && [500,502,503,504].includes(response.status) && recovery.status===404) {
+   let recovered=false;
+   for(let poll=1;poll<=12;poll++) {
+     await new Promise(resolve=>setTimeout(resolve,5000));
+     const late=await fetch(`https://firebaserules.googleapis.com/v1/${probeName}`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
+     if(late.ok) {
+       release=await late.json();
+       if(release.name!==probeName || release.rulesetName!==result.name)throw new Error('Conflicting late size probe release');
+       console.log(JSON.stringify({mode:'RECOVERED_EXACT_LATE_UNBOUND_RELEASE',poll,productionReleaseModified:false}));
+       recovered=true;break;
+     }
+     if(![404,429,500,502,503,504].includes(late.status))throw new Error(`Late unbound probe recovery failed (${late.status})`);
+   }
+   if(recovered)break;
+ }
  if(attempt===4 || ![404,429,500,502,503,504].includes(recovery.status))
    throw new Error(`Compiled executable activation-size validation unavailable (${response.status}); probe recovery HTTP ${recovery.status}`);
  console.log(`Unbound release probe transient HTTP ${response.status}; retry ${attempt}/4. No production release modified.`);
