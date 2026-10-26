@@ -3,18 +3,25 @@
  */
 import {readFileSync,readdirSync} from 'node:fs';
 import {join} from 'node:path';
-import {createHash} from 'node:crypto';
-import {createRulesDiagnosticFetch,readRulesetInventory,runInactiveCompilerControl} from './firebase-rules-diagnostics.mjs';
+import {createHash,randomUUID} from 'node:crypto';
+import {createRulesDiagnosticFetch,readRulesetInventory,runInactiveCompilerControl,recoverOwnedCandidate} from './firebase-rules-diagnostics.mjs';
 const fetch=createRulesDiagnosticFetch();
 const token=process.env.GOOGLE_OAUTH_ACCESS_TOKEN || await new (await import('google-auth-library')).GoogleAuth({scopes:['https://www.googleapis.com/auth/cloud-platform']}).getAccessToken();
 if(!token)throw new Error('Scoped CI authentication is required.');
 const project='gen-lang-client-0911422817',rules=readFileSync(process.argv[2]||'firestore.rules','utf8');
-console.log(JSON.stringify({mode:'CANDIDATE_FINGERPRINT',sourceSHA256:createHash('sha256').update(rules).digest('hex'),sourceBytes:Buffer.byteLength(rules),commit:process.env.GITHUB_SHA||null}));
+const operation=`${process.env.GITHUB_RUN_ID||Date.now()}_${process.env.GITHUB_RUN_ATTEMPT||1}`;
+if(!/^[0-9]+_[0-9]+$/.test(operation))throw new Error('Invalid validation operation identity.');
+const fileName=`phase5_candidate_${operation}_${randomUUID().replaceAll('-','')}.rules`,startedAt=Date.now();
+console.log(JSON.stringify({mode:'CANDIDATE_FINGERPRINT',fileName,sourceSHA256:createHash('sha256').update(rules).digest('hex'),sourceBytes:Buffer.byteLength(rules),commit:process.env.GITHUB_SHA||null}));
 let result;
 for(let attempt=1;attempt<=4;attempt++) {
- const response=await fetch(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({source:{files:[{name:'firestore.rules',content:rules}]}}),signal:AbortSignal.timeout(60000)});
+ const response=await fetch(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({source:{files:[{name:fileName,content:rules}]}}),signal:AbortSignal.timeout(60000)});
  result=await response.json();
  if(response.ok)break;
+ if([500,502,503,504].includes(response.status)) {
+  const recovered=await recoverOwnedCandidate({project,token,rules,fileName,startedAt,fetchImpl:fetch});
+  if(recovered){result=recovered;break;}
+ }
  if(![429,500,502,503,504].includes(response.status)||attempt===4) {
   if(response.status===503) {
    try{await readRulesetInventory({project,token,fetchImpl:fetch});}catch(error){console.log(JSON.stringify({mode:'READ_ONLY_RULESET_INVENTORY',complete:false,error:String(error)}));}

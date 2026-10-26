@@ -10,18 +10,19 @@ function run(mode:string) {
  const name=project+'/releases/pharmhelm_size_probe_123_1';
  const ruleset=project+'/rulesets/test-candidate';
  const calls=[];
- let probeDeleted=false;
+ let probeDeleted=false,createdSource;
  globalThis.setTimeout=(callback)=>{queueMicrotask(callback);return 0;};
  globalThis.fetch=async (url,options)=>{
    url=String(url);
    calls.push({url,method:options.method||'GET'});
    let status=200,body={};
-   if(url.includes('/rulesets?'))body={rulesets:[]};
-   else if(url.endsWith('/rulesets')){body={name:ruleset};if(['service-error','baseline-error'].includes(${JSON.stringify(mode)})){
+   if(url.includes('/rulesets?'))body={rulesets:${JSON.stringify(mode)}==='create-ambiguous'?[{name:ruleset,createTime:new Date().toISOString()}]:[]};
+   else if(url.endsWith('/rulesets')){createdSource=JSON.parse(options.body).source;body={name:ruleset};if(['service-error','baseline-error','create-ambiguous'].includes(${JSON.stringify(mode)})){
      status=${JSON.stringify(mode)}==='baseline-error'&&calls.filter(c=>c.url.endsWith('/rulesets')&&c.method==='POST').length>4?200:503;
      body=status===200?{name:ruleset}:{error:{message:'fixture unavailable'}};
    }}
    else if(url.endsWith('/rulesets/test-candidate')&&options.method==='DELETE')body={};
+   else if(url.endsWith('/rulesets/test-candidate'))body={name:ruleset,source:createdSource};
    else if(url.endsWith('/releases')) {status=${JSON.stringify(mode)}==='size-error'?400:503;body={error:{message:'fixture'}};}
    else if(url.endsWith('/pharmhelm_size_probe_123_1')) {
      if(options.method==='DELETE'){body={};probeDeleted=true;}
@@ -46,6 +47,12 @@ test('size probe recovers an exact completed unbound release after HTTP 503 and 
 });
 test('size limit rejection remains a hard failure',()=>{
  const result=run('size-error');assert.notEqual(result.status,0);assert.match(result.stderr,/validation failed \(400\)/);
+});
+test('ambiguous creation is recovered by exact run-owned source before the real release size check',()=>{
+ const result=run('create-ambiguous');assert.equal(result.status,0,result.stderr);
+ assert.match(result.stdout,/RECOVERED_EXACT_RUN_OWNED_CANDIDATE/);
+ assert.match(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);
+ assert.match(result.stdout,/OWNED_CANDIDATE_CLEANUP/);
 });
 test('ambiguous probe can never certify a different ruleset',()=>{
  const result=run('conflict');assert.notEqual(result.status,0);assert.match(result.stderr,/Conflicting size probe/);

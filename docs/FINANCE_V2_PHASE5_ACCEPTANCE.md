@@ -179,6 +179,32 @@ undisbursed employee A advance creates neither a receivable nor a recovery.
 
 ## Compiled rules gate: current failure supersedes earlier service errors
 
+26 October compilation evidence: Management Cash on e83d086 passed the strict
+unbound-release executable-size check:
+https://github.com/radahpeter-hue/PHARMHELM/actions/runs/40277249669 .
+The repaired source fingerprint was
+`5162b4f375af5a9cc288a3502659e3e7833bf1fcf7c6bd4e35e20cce2fae40ad`
+(135,930 source bytes). The server did not report an exact compiled-byte count;
+successful creation of the unbound release verifies it met the enforced limit.
+An initial release POST returned 503, followed by 404 on immediate recovery;
+the retry returned 409 and the exact release then existed with the correct
+ruleset. Thus a 503 can precede successful server completion. Treating every
+such creation as definitively failed was insufficient verification logic.
+
+The validator now uploads candidate source under a per-run random file identity.
+After an ambiguous creation, it may recover only a recent resource containing
+that exact identity and exact source bytes, then still requires the actual strict
+release check. Wrong-operation, changed-source and stale-resource recovery tests
+deny certification. Successful resources are cleaned only after the exact probe
+is absent. This recovery must pass current-commit CI before sign-off.
+
+Read-only inventory found 751 rulesets (later 758/765), below the documented
+2,500 limit. Equal-byte deny-all source compiled in 185 ms; authored and multiple
+compaction stages failed near five seconds. Fully denied permission-graph source
+compiled, while removing only the generic fallback did not resolve the failure.
+These diagnostics support workload-sensitive/ambiguous backend completion,
+not a proven global outage, payload-size rejection or inventory-limit exhaustion.
+
 26 October authority audit: authenticated tests reproduced eleven escalation,
 fallback and unverified-email attacks against 745493b. The repaired rules deny
 eighteen expanded attacks, including legacy beneficiary impersonation and IT
