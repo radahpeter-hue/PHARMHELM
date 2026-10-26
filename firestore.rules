@@ -36,7 +36,7 @@ service cloud.firestore {
     function isTenantMember(tenantId) {
       return isAuthenticated() && (
         getUserData().get('tenantId', request.auth.token.get('tenantId', '')) == tenantId
-        || request.auth.token.get('email', '') in ['peterssentongo61@gmail.com', 'peter.sentongo@pharmhelm', 'peter.sentongo@pharmhelm.com']
+        || isVerifiedBootstrapAdmin()
       );
     }
 
@@ -71,9 +71,19 @@ service cloud.firestore {
     function isAdmin() {
       let roles = ['owner', 'Owner', 'CEO', 'ceo', 'CEO / MD', 'ceo / md'];
       return isAuthenticated() && (
-        request.auth.token.get('email', '') in ['peterssentongo61@gmail.com', 'peter.sentongo@pharmhelm', 'peter.sentongo@pharmhelm.com']
+        isVerifiedBootstrapAdmin()
         || hasAnyRole(roles)
       );
+    }
+
+    function isVerifiedBootstrapAdmin() {
+      return isAuthenticated() && request.auth.token.get('email_verified', false) == true
+        && request.auth.token.get('email', '') in ['peterssentongo61@gmail.com', 'peter.sentongo@pharmhelm', 'peter.sentongo@pharmhelm.com'];
+    }
+    function isPlatformAdmin() {
+      let path = /databases/$(database)/documents/platform_users/$(request.auth.uid);
+      return isVerifiedBootstrapAdmin() || (isAuthenticated() && exists(path)
+        && get(path).data.get('active',false) == true && get(path).data.role == 'super_operator');
     }
 
     function isCEO() {
@@ -1123,7 +1133,7 @@ service cloud.firestore {
         return counterId == 'platform_tenants'
           && request.resource.data.scope == 'platform'
           && request.resource.data.kind == 'tenants'
-          && isAdmin();
+          && isPlatformAdmin();
       }
       function branchCounter() {
         return request.resource.data.kind == 'branches'
@@ -1144,7 +1154,7 @@ service cloud.firestore {
               : isAuthenticated());
       }
       allow get: if isAuthenticated() && (resource == null
-        || (resource.data.get('scope', '') == 'platform' && isAdmin())
+        || (resource.data.get('scope', '') == 'platform' && isPlatformAdmin())
         || (resource.data.get('tenantId', '') is string
           && isTenantMember(resource.data.tenantId)));
       allow list: if false;
@@ -1159,11 +1169,11 @@ service cloud.firestore {
 
     match /tenants/{tenantId} {
       allow read: if true; // Allow public read for tenant detection
-      allow create: if isAdmin();
-      allow update: if isAdmin()
+      allow create: if isPlatformAdmin();
+      allow update: if isPlatformAdmin()
         && (!('tenant_code' in resource.data)
           || request.resource.data.tenant_code == resource.data.tenant_code);
-      allow delete: if isAdmin();
+      allow delete: if isPlatformAdmin();
 
       match /usernameRegistry/{handle} {
         allow read, write: if isAuthenticated() && (isAdmin() || isIT()) && isTenantMember(tenantId);
@@ -1196,20 +1206,26 @@ service cloud.firestore {
     match /staff/{staffId} {
       allow read: if isAuthenticated() && (
         request.auth.uid == staffId ||
-        resource.data.email == request.auth.token.email ||
-        resource.data.authEmail == request.auth.token.email ||
+        (request.auth.token.get('email_verified',false) == true &&
+          (resource.data.get('email','') == request.auth.token.get('email','') || resource.data.get('authEmail','') == request.auth.token.get('email',''))) ||
         isTenantMember(resource.data.tenantId)
       );
-      allow create: if isAuthenticated() && (isAdmin() || isIT() || isHR()) && isTenantMember(request.resource.data.tenantId);
-      // HR assigns organisational roles and branch placement. IT may perform account
-      // activation/support updates but cannot silently change the HR-assigned role realm.
+      allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId)
+        && (isAdmin() || ((isIT() || isHR())
+          && request.resource.data.get('role','Employee') in ['Employee','employee','Staff','staff']
+          && request.resource.data.get('secondaryRoles',[]) == []
+          && request.resource.data.get('roleRealmId','') in ['',null]
+          && request.resource.data.get('legacyStaffId',staffId) == staffId));
+      // HR manages ordinary profiles and branch placement. Owner approval is
+      // required for role grants and authority-bearing identity links.
       allow update: if atomicWelfareBalance(staffId);
       allow update: if isAuthenticated()
         && isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
+        && (isAdmin() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role','secondaryRoles','roleRealmId','legacyStaffId','uid','email','authEmail']))
         && (!('employee_id' in resource.data) || request.resource.data.employee_id == resource.data.employee_id)
         && (!('staff_code' in resource.data) || request.resource.data.staff_code == resource.data.staff_code)
         && (
-        isHR() ||
+        isAdmin() || isHR() ||
         (isITPersonnel() &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
             'tenantId', 'role', 'secondaryRoles', 'roleRealmId',
@@ -1223,7 +1239,7 @@ service cloud.firestore {
             'legacyStaffId', 'roleRealmId'
           ]))
       );
-      allow delete: if (isAdmin() || isIT()) && isTenantMember(resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /leave_requests/{requestId} {
@@ -1522,27 +1538,35 @@ service cloud.firestore {
     }
 
     match /system_settings/{settingsId} {
+      function activationKeys() { return ['phase5SalarySettlementEnabled','managementCashAccountControlV1','managementCashSettlementV1']; }
       allow read: if isTenantMember(resource.data.tenantId);
-      allow write: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
+      allow create: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId)
+        && (isAdmin() || !request.resource.data.keys().hasAny(activationKeys()));
+      allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && (isAdmin() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(activationKeys()));
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /master_registries/{registryId} {
       allow read: if isTenantMember(resource.data.tenantId);
-      allow write: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
+      allow create: if isSettingsAdmin() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId;
+      allow delete: if isSettingsAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /role_realms_of_operation/{realmId} {
       allow read: if isTenantMember(resource.data.tenantId);
-      allow create: if isITPersonnel() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isITPersonnel() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isITPersonnel() && isTenantMember(resource.data.tenantId);
+      allow create: if isAdmin() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAdmin() && isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId;
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /hr_roles/{roleId} {
       allow read: if isTenantMember(resource.data.tenantId);
-      allow create: if isITPersonnel() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isITPersonnel() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
-      allow delete: if isITPersonnel() && isTenantMember(resource.data.tenantId);
+      allow create: if isAdmin() && isTenantMember(request.resource.data.tenantId);
+      allow update: if isAdmin() && isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId;
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
     match /global_audit_logs/{logId} {
@@ -1551,24 +1575,28 @@ service cloud.firestore {
       allow update, delete: if false; // Immutable
     }
     match /platform_users/{userId} {
-      allow read, write: if isAdmin();
+      allow get: if (isAuthenticated() && userId == request.auth.uid) || isPlatformAdmin();
+      allow list, create, update, delete: if isPlatformAdmin();
     }
 
     match /platform_revenue/{revenueId} {
-      allow read, write: if isAdmin();
+      allow read, write: if isPlatformAdmin();
     }
 
     match /platform_audit_logs/{logId} {
-      allow read, write: if isAdmin();
+      allow read, create: if isPlatformAdmin();
+      allow update, delete: if false;
     }
 
     match /predictive_settings/{settingId} {
-      allow read, write: if isAdmin();
+      allow read, write: if isPlatformAdmin();
     }
     match /pending_activations/{activationId} {
       allow read: if isAuthenticated() && (isAdmin() || isIT() || isHR()) && isTenantMember(resource.data.tenantId);
       allow create: if isAuthenticated() && (isAdmin() || isIT() || isHR()) && isTenantMember(request.resource.data.tenantId);
-      allow update, delete: if isAuthenticated() && (isAdmin() || isIT()) && isTenantMember(resource.data.tenantId);
+      allow update: if isAuthenticated() && (isAdmin() || isIT()) && isTenantMember(resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId;
+      allow delete: if isAuthenticated() && (isAdmin() || isIT()) && isTenantMember(resource.data.tenantId);
     }
 
     match /finance_ledger/{entryId} {
@@ -3666,6 +3694,12 @@ service cloud.firestore {
     // Share exclusions and dispatch by method instead of compiling five copies.
     match /{collectionName}/{docId} {
       function dedicatedCollection() {
+        return authorityCollection() || ordinaryDedicatedCollection();
+      }
+      function authorityCollection() {
+        return collectionName in ['tenants','system_settings','master_registries','platform_users','platform_revenue','platform_audit_logs','global_audit_logs','predictive_settings','pending_activations'];
+      }
+      function ordinaryDedicatedCollection() {
         return collectionName in ['payroll_approvals','identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox','payroll','payslips','advance_requests','attendance'];
       }
       function dedicatedWriteCollection() {

@@ -179,6 +179,27 @@ undisbursed employee A advance creates neither a receivable nor a recovery.
 
 ## Compiled rules gate: current failure supersedes earlier service errors
 
+26 October authority audit: authenticated tests reproduced eleven escalation,
+fallback and unverified-email attacks against 745493b. The repaired rules deny
+eighteen expanded attacks, including legacy beneficiary impersonation and IT
+self-granted Finance permissions, while preserving positive HR/IT/owner paths.
+Role and identity authority changes now require owner approval; HR may prepare
+ordinary Employee profiles and contact/payroll details. IT may edit ordinary
+settings; financial activation flags and permission grants require the owner.
+Staff/role screens reflect this policy. See PHASE5_AUTHORITY_AUDIT.json for the
+scoped assessment; it is not a whole-application security certification.
+Tenant owners cannot create platform administrators, change unrelated tenants or
+read other platform accounts. Platform administration requires verified bootstrap
+identity or an active UID-linked super_operator record granted through that path.
+Before activating these rules, the platform owner must review existing platform
+accounts and ensure legitimate operators have the correct Auth UID links. No
+production account migration or identity rewrite has been performed here.
+
+Hosted compiler diagnostics now capture full API errors, available request IDs,
+timings, source fingerprint and read-only ruleset inventory. The verifier removes
+only its newly created inactive candidate after confirming its own probe absent;
+historical rulesets and production releases are never swept or modified.
+
 24 October continuation: `6c1ec6e` removes the mandatory underscore from generated
 internal symbols and chooses the shortest collision-free names. Paths, field names,
 role literals and authorization expressions remain intact. Source size falls from

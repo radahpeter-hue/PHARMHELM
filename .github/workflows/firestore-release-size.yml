@@ -37,4 +37,5 @@ jobs:
           PHARMHELM_COMPILER_BASELINE_RULES: .phase5-certified-baseline/firestore.rules
         run: |
           cp scripts/validate-inactive-finance-rules.mjs /tmp/rules-size/validate.mjs
+          cp scripts/firebase-rules-diagnostics.mjs /tmp/rules-size/firebase-rules-diagnostics.mjs
           node /tmp/rules-size/validate.mjs

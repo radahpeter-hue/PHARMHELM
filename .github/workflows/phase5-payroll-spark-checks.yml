@@ -30,7 +30,7 @@ jobs:
       - name: Authenticated payroll and advance rule denials
         env:
           PHASE5_TEST_COMMIT: '${{ github.event.pull_request.head.sha || github.sha }}'
-        run: npx firebase emulators:exec --only firestore --project phase5-advance-rules "node --import tsx scripts/phase5-advance-rules-emulator.mjs && node --import tsx scripts/phase5-financial-reconciliation-emulator.mjs"
+        run: npx firebase emulators:exec --only firestore --project phase5-advance-rules "node scripts/phase5-authority-audit-emulator.mjs && node --import tsx scripts/phase5-advance-rules-emulator.mjs && node --import tsx scripts/phase5-financial-reconciliation-emulator.mjs"
       - name: Install isolated salary UI browser
         run: |
           npm install --prefix /tmp/phase5-browser --no-save --ignore-scripts playwright

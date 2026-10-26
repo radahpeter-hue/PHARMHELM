@@ -10,21 +10,25 @@ function run(mode:string) {
  const name=project+'/releases/pharmhelm_size_probe_123_1';
  const ruleset=project+'/rulesets/test-candidate';
  const calls=[];
+ let probeDeleted=false;
  globalThis.setTimeout=(callback)=>{queueMicrotask(callback);return 0;};
  globalThis.fetch=async (url,options)=>{
+   url=String(url);
    calls.push({url,method:options.method||'GET'});
    let status=200,body={};
-   if(url.endsWith('/rulesets')){body={name:ruleset};if(['service-error','baseline-error'].includes(${JSON.stringify(mode)})){
+   if(url.includes('/rulesets?'))body={rulesets:[]};
+   else if(url.endsWith('/rulesets')){body={name:ruleset};if(['service-error','baseline-error'].includes(${JSON.stringify(mode)})){
      status=${JSON.stringify(mode)}==='baseline-error'&&calls.filter(c=>c.url.endsWith('/rulesets')&&c.method==='POST').length>4?200:503;
      body=status===200?{name:ruleset}:{error:{message:'fixture unavailable'}};
    }}
    else if(url.endsWith('/rulesets/test-candidate')&&options.method==='DELETE')body={};
    else if(url.endsWith('/releases')) {status=${JSON.stringify(mode)}==='size-error'?400:503;body={error:{message:'fixture'}};}
    else if(url.endsWith('/pharmhelm_size_probe_123_1')) {
-     if(options.method==='DELETE')body={};
+     if(options.method==='DELETE'){body={};probeDeleted=true;}
+     else if(probeDeleted||${JSON.stringify(mode)}==='size-error'){status=404;body={error:{message:'not found'}};}
      else body={name,rulesetName:${JSON.stringify(mode)}==='conflict'?ruleset+'-other':ruleset};
    } else throw new Error('Unexpected network request');
-   return {ok:status===200,status,json:async()=>body};
+   return new Response(JSON.stringify(body),{status});
  };
  await import('./scripts/validate-inactive-finance-rules.mjs');
  console.log(JSON.stringify(calls));
@@ -37,13 +41,15 @@ test('size probe recovers an exact completed unbound release after HTTP 503 and 
  assert.match(result.stdout,/"productionReleaseModified":false/);
  const calls=JSON.parse(result.stdout.trim().split('\n').at(-1)!);
  assert.equal(calls.at(-1).method,'DELETE');
- assert.equal(calls.length,4);
+ assert.equal(calls.length,6);
+ assert.ok(calls.at(-1).url.endsWith('/rulesets/test-candidate'));
 });
 test('size limit rejection remains a hard failure',()=>{
  const result=run('size-error');assert.notEqual(result.status,0);assert.match(result.stderr,/validation failed \(400\)/);
 });
 test('ambiguous probe can never certify a different ruleset',()=>{
  const result=run('conflict');assert.notEqual(result.status,0);assert.match(result.stderr,/Conflicting size probe/);
+ assert.match(result.stdout,/OWNED_CANDIDATE_CLEANUP_DEFERRED/);
 });
 
 test('persistent rules API failure runs an inactive minimal control and never certifies the candidate',()=>{

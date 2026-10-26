@@ -1,0 +1,12 @@
+{
+  "score": 4,
+  "summary": "Scoped audit of shared authority and fallback paths using firebase/agent-skills/firebase-security-rules-auditor. Eleven exploit attempts were reproduced against 745493b; the expanded eighteen denial probes pass after repair, together with positive owner, HR, IT and platform controls. This score covers these repaired paths only, not the entire application or production deployment. Hosted compiler certification is still mandatory.",
+  "findings": [{"check":"Storage Abuse","severity":"minor","issue":"Some HR free-text fields, including payroll approval reasons and welfare request reasons, have minimum lengths without explicit maximum lengths. Broader fallback collection payload schemas also need a separate resource-abuse review.","recommendation":"Bound free-text fields and define collection-specific schemas; do not infer full application-wide resource-exhaustion protection from the repaired authority tests."}],
+  "resolved": [
+    {"check":"Authority Source / Update Bypass","priorSeverity":"critical","issue":"HR could promote itself or create a Finance identity; IT could create an owner identity or grant custom Finance permissions.","repair":"Owner-approved role/realm/identity grants; HR prepares ordinary profiles; IT retains ordinary settings and support edits."},
+    {"check":"Overlapping Rules / Tenant Isolation","priorSeverity":"critical","issue":"Generic fallback bypassed settings and platform controls, allowed audit mutation and foreign settings tenant reassignment; tenant owner authority was also conflated with platform authority.","repair":"Explicit authority-collection exclusions, immutable tenant links, owner-only financial activation flags, independent trusted platform membership and append-only audit histories."},
+    {"check":"Admin Bootstrapping","priorSeverity":"major","issue":"Allowlisted email bypasses did not require verified email.","repair":"Verified bootstrap helper shared by tenant/admin checks; alternate staff-email reads also require verified email."}
+  ],
+  "evidence": "scripts/phase5-authority-audit-emulator.mjs; wired into Phase 5 CI and local financial emulator runner",
+  "limitations": ["No production rules activated or live identity data changed.","Full application-wide security audit is not claimed.","Current compiled executable must independently pass the strict size gate."]
+}

@@ -19,7 +19,7 @@ try{
  let ready=false;
  for(let n=0;n<150;n++){if(launchError)throw launchError;if(emulator.exitCode!==null)throw new Error('Emulator exited during startup.');if(await connected()){ready=true;break;}await new Promise(r=>setTimeout(r,100));}
  if(!ready)throw new Error('Emulator did not start.');
- for(const script of ['scripts/phase5-advance-rules-emulator.mjs','scripts/management-cash-settlement-rules-emulator.mjs','scripts/phase5-financial-reconciliation-emulator.mjs']) {
+ for(const script of ['scripts/phase5-authority-audit-emulator.mjs','scripts/phase5-advance-rules-emulator.mjs','scripts/management-cash-settlement-rules-emulator.mjs','scripts/phase5-financial-reconciliation-emulator.mjs']) {
   const code=await new Promise((resolve,reject)=>{const child=spawn(process.execPath,['--import','tsx',script],{stdio:'inherit',env:{...process.env,FIRESTORE_EMULATOR_HOST:`127.0.0.1:${port}`}});const timer=setTimeout(()=>{child.kill('SIGTERM');reject(new Error(`${script} timed out.`));},180000);child.on('error',e=>{clearTimeout(timer);reject(e);});child.on('exit',code=>{clearTimeout(timer);resolve(code);});});
   if(code!==0)throw new Error(`${script} failed (${code}).`);
  }
