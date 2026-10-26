@@ -13,6 +13,7 @@ test('inventory counts all pages using read-only requests and reports incomplete
  const calls:any[]=[];const logs:string[]=[];
  await readRulesetInventory({project:'p',token:'PRIVATE',log:(s:string)=>logs.push(s),fetchImpl:async(url:URL,options:any)=>{calls.push({url:String(url),method:options.method});return new Response(JSON.stringify(calls.length===1?{rulesets:[{},{}],nextPageToken:'page2'}:{rulesets:[{}]}),{status:200});}});
  assert.equal(JSON.parse(logs[0]).count,3);assert.equal(JSON.parse(logs[0]).complete,true);assert.equal(calls.length,2);assert.ok(calls.every(c=>c.method===undefined));
+ assert.ok(calls.every(c=>new URL(c.url).searchParams.get('pageSize')==='100'));
  const denied:string[]=[];await readRulesetInventory({project:'p',token:'PRIVATE',log:(s:string)=>denied.push(s),fetchImpl:async()=>new Response('{}',{status:403})});
  assert.equal(JSON.parse(denied[0]).complete,false);assert.equal(JSON.parse(denied[0]).status,403);
 });

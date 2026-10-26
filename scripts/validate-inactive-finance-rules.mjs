@@ -1,9 +1,10 @@
 /** Check activation-only limits using a temporary release with no backend binding.
  * Never targets cloud.firestore, firebase.storage or production document data.
  */
-import {readFileSync} from 'node:fs';
+import {readFileSync,readdirSync} from 'node:fs';
+import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-import {createRulesDiagnosticFetch,readRulesetInventory} from './firebase-rules-diagnostics.mjs';
+import {createRulesDiagnosticFetch,readRulesetInventory,runInactiveCompilerControl} from './firebase-rules-diagnostics.mjs';
 const fetch=createRulesDiagnosticFetch();
 const token=process.env.GOOGLE_OAUTH_ACCESS_TOKEN || await new (await import('google-auth-library')).GoogleAuth({scopes:['https://www.googleapis.com/auth/cloud-platform']}).getAccessToken();
 if(!token)throw new Error('Scoped CI authentication is required.');
@@ -24,6 +25,11 @@ for(let attempt=1;attempt<=4;attempt++) {
     const cleanup=await fetch(`https://firebaserules.googleapis.com/v1/${payload.name}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
     if(!cleanup.ok)throw new Error(`Minimal inactive control cleanup failed (${cleanup.status})`);
    }
+   const minimal="rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read, write: if false; } } }";
+   const padded=minimal+'/*'+'x'.repeat(Math.max(0,Buffer.byteLength(rules)-Buffer.byteLength(minimal)-4))+'*/';
+   await runInactiveCompilerControl({project,token,rules:padded,mode:'SIZE_MATCHED_DENY_ALL_CONTROL',fetchImpl:fetch});
+   if(process.env.PHARMHELM_COMPILER_AUTHORED_RULES)await runInactiveCompilerControl({project,token,rules:readFileSync(process.env.PHARMHELM_COMPILER_AUTHORED_RULES,'utf8'),mode:'UNTRANSFORMED_AUTHORED_CONTROL',fetchImpl:fetch});
+   if(process.env.PHARMHELM_COMPILER_CONTROLS)for(const name of readdirSync(process.env.PHARMHELM_COMPILER_CONTROLS).filter(n=>n.endsWith('.rules')).sort())await runInactiveCompilerControl({project,token,rules:readFileSync(join(process.env.PHARMHELM_COMPILER_CONTROLS,name),'utf8'),mode:'COMPACTION_STAGE_'+name,fetchImpl:fetch});
    if(process.env.PHARMHELM_COMPILER_BASELINE_RULES) {
     const baseline=readFileSync(process.env.PHARMHELM_COMPILER_BASELINE_RULES,'utf8');
     const check=await fetch(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({source:{files:[{name:'firestore.rules',content:baseline}]}}),signal:AbortSignal.timeout(60000)});

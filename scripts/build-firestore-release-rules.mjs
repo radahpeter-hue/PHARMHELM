@@ -158,7 +158,7 @@ export function shareFieldComparisons(source) {
 // Share complete, pure lookups at their original evaluation sites. Point reads
 // receive the exact original path value; get/getAfter remain separate methods.
 // No read is hoisted out of a conditional and missing-field errors stay errors.
-export function shareRuleAtoms(source) {
+export function shareRuleAtoms(source,{pointReads=true}={}) {
  const root=/(match \/databases\/\{database\}\/documents\s*\{)/;
  if(!root.test(source))return source;
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
@@ -174,6 +174,7 @@ export function shareRuleAtoms(source) {
    matches.push({start:t[i].index,end:t[end].index,text:helper(parts.join(''),parts.join(''))+'()'});i=end;found=true;break;
   }
   if(found)continue;
+  if(!pointReads)continue;
   const method=t[i].token;
   if(!['get','getAfter'].includes(method)||t[i+1]?.token!=='(')continue;
   let end=i+2,depth=1;
@@ -187,7 +188,9 @@ export function shareRuleAtoms(source) {
  return tokens.join('').replace(root,'$1\n'+decl+'\n');
 }
 export function compactRuleSymbols(source){
- source=shareFieldReads(shareRuleAtoms(shareFieldComparisons(cacheWriteResourceMaps(shareDocumentReads(shareTenantPredicates(source))))));
+ return renameRuleSymbols(shareFieldReads(shareRuleAtoms(shareFieldComparisons(cacheWriteResourceMaps(shareDocumentReads(shareTenantPredicates(source)))))));
+}
+export function renameRuleSymbols(source){
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(stripped.match(/\b[A-Za-z_]\w*\b/g)||[]),functions=new Map(),variables=new Map();

@@ -15,10 +15,21 @@ export async function readRulesetInventory({project,token,fetchImpl=globalThis.f
  let count=0,pageToken='',pages=0;
  do{
   const url=new URL(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`);
-  url.searchParams.set('pageSize','1000');if(pageToken)url.searchParams.set('pageToken',pageToken);
+  url.searchParams.set('pageSize','100');if(pageToken)url.searchParams.set('pageToken',pageToken);
   const response=await fetchImpl(url,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
   if(!response.ok){log(JSON.stringify({mode:'READ_ONLY_RULESET_INVENTORY',status:response.status,complete:false,count}));return;}
   const result=await response.json();count+=(result.rulesets||[]).length;pageToken=result.nextPageToken||'';pages++;
- }while(pageToken&&pages<20);
+ }while(pageToken&&pages<30);
  log(JSON.stringify({mode:'READ_ONLY_RULESET_INVENTORY',status:200,count,complete:!pageToken,pages,productionReleaseModified:false}));
+}
+export async function runInactiveCompilerControl({project,token,rules,mode,fetchImpl=globalThis.fetch,log=console.log}) {
+ const response=await fetchImpl(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({source:{files:[{name:'firestore.rules',content:rules}]}}),signal:AbortSignal.timeout(60000)});
+ const payload=await response.json();
+ log(JSON.stringify({mode,status:response.status,sourceBytes:Buffer.byteLength(rules),productionReleaseModified:false,candidateCertified:false}));
+ if(response.ok){
+  if(!payload.name?.startsWith(`projects/${project}/rulesets/`))throw new Error('Unexpected inactive control identity.');
+  const cleanup=await fetchImpl(`https://firebaserules.googleapis.com/v1/${payload.name}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
+  if(!cleanup.ok)throw new Error(`Inactive diagnostic control cleanup failed (${cleanup.status}).`);
+ }
+ return response.status;
 }
