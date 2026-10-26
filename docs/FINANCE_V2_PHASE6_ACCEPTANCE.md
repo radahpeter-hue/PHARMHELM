@@ -54,3 +54,11 @@ Acceptance remains **pending exact-commit CI**, including Phase 6 Credit Spark v
 ## Sequential gate
 
 6.1 is not accepted until its exact-commit checks pass and the acceptance result is recorded. 6.2 collections, 6.3 credit control/statements/reconciliation and 6.4 full security/integration acceptance have not started. Phase 6 is not signed off. Production deployment and authenticated live Martin Pharma workspace acceptance remain separate.
+
+### First CI candidate: 9fa46c056a220f53bf81cbc6c6b87ea81558d49a
+
+- Phase 6 authenticated recognition, Management Cash and full POS correction tests passed in run 40304704420. The job then failed installing Playwright 1.51.1 on the newly updated Ubuntu 26.04 runner. The UI job is now pinned to Ubuntu 22.04; this does not skip browser verification.
+- Phase 5 Payroll Spark validation passed, run 40304704396, including its authority/financial tests and 20 controlled scenarios.
+- Hosting build/check passed, run 40304704305, with publication skipped.
+- The actual compiled-size gate (run 40304704450) failed on repeated Rules API HTTP 503 responses. Its certified control also returned 503; minimal and source-size-matched deny-all diagnostic controls compiled. These are diagnostics, not candidate size certification. The existing exact-source recovery and actual unbound-release verifier are unchanged and mandatory.
+- Follow-up UI corrections remove the obsolete CRM sales-derived export path entirely, show loading/failed totals as unverified, and expose source invoice items in history. Required CI filters now rerun on changes to this acceptance record and the shared register. Final acceptance is recorded against the exact tested head in PR #91, after all mandatory checks succeed.

@@ -3,6 +3,9 @@ on:
   pull_request:
     branches: [main, 'feature/finance-v2-phase5-hr-advance-validation-20261021']
     paths:
+      - 'docs/FINANCE_V2_PHASE6_ACCEPTANCE.md'
+      - 'src/components/finance/ReceivablesRegister.tsx'
+      - 'scripts/phase6-*.mjs'
       - 'src/services/managementCashPosting.ts'
       - 'src/services/managementPaymentAccountService.ts'
       - 'src/services/cashGrnSettlementService.ts'

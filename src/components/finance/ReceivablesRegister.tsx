@@ -44,8 +44,8 @@ export function ReceivablesRegister({ branchOnly = false }: { branchOnly?: boole
       <div className="flex gap-3"><button onClick={() => refresh(n => n + 1)} className="border rounded-xl px-3 py-2">Refresh</button>
       <button disabled={loading || !!error} onClick={exportRows} className="border rounded-xl px-3 py-2">Export</button></div></div>
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-      <div className="p-4 bg-emerald-50 rounded-xl">Outstanding <strong className="block">UGX {money(total)}</strong></div>
-      <div className="p-4 bg-blue-50 rounded-xl">Collected <strong className="block">UGX {money(collected)}</strong></div>
+      <div className="p-4 bg-emerald-50 rounded-xl">Outstanding <strong className="block">UGX {loading || error ? 'Unverified' : money(total)}</strong></div>
+      <div className="p-4 bg-blue-50 rounded-xl">Collected <strong className="block">UGX {loading || error ? 'Unverified' : money(collected)}</strong></div>
       <div className="p-4 bg-amber-50 rounded-xl">Reconciliation exceptions <strong className="block">{filtered.filter(r => r.exception).length}</strong></div>
     </div>
     <div className="flex flex-wrap gap-2 [&_input]:border [&_input]:rounded-lg [&_input]:p-2 [&_select]:border [&_select]:rounded-lg [&_select]:p-2">
@@ -70,6 +70,7 @@ export function ReceivablesRegister({ branchOnly = false }: { branchOnly?: boole
       <h4 className="font-bold">{selected.invoice_number || selected.id}</h4><p>Source sale: {selected.receipt_id}<br />Canonical payment: {selected.paymentId || 'Unverified'}<br />Recognized by: {selected.recognizedBy || 'Unverified'}</p>
       <p>Recognition: UGX {money(selected.amount_ugx)} on {selected.created_at || 'Unverified date'}. Approved terms: {selected.credit_terms || 'Unverified'}.</p>
       <p>Later collections: UGX {money(selected.collectedUGX)}. Outstanding: UGX {money(selected.outstanding_ugx)}.</p>
+      {selected.sourceSale?.items?.length > 0 && <div><h5 className="font-bold">Source invoice items</h5><ul className="list-disc pl-5">{selected.sourceSale.items.map((item: any, i: number) => <li key={i}>{item.productName || item.name || item.productId}: {item.quantity} × UGX {money(item.unitPrice)}</li>)}</ul></div>}
       {selected.status === 'reversed' && <p>Receipt correction: {selected.reversalId}. Reason: {selected.reversalReason}</p>}
       {selected.exception && <p className="text-amber-800">{selected.exception}</p>}
     </div></div>}

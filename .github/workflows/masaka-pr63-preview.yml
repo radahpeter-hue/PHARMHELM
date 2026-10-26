@@ -5,6 +5,9 @@ on:
       - main
       - feature/finance-v2-phase5-hr-advance-validation-20261021
     paths:
+      - 'docs/FINANCE_V2_PHASE6_ACCEPTANCE.md'
+      - 'src/components/finance/ReceivablesRegister.tsx'
+      - 'scripts/phase6-*.mjs'
       - '.github/workflows/masaka-pr63-preview.yml'
       - 'src/components/inventory/**'
       - 'src/pages/StockInOut.tsx'

@@ -1079,23 +1079,6 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
     return new Date(field);
   };
 
-  // 1. Credit Ledger Calculations (Branch specific & Date filtered)
-  const branchClientCredits = useMemo(() => {
-    return sales.filter(s => {
-      // Branch check
-      if (activeBranchId && s.branchId !== activeBranchId) return false;
-      // Date check
-      const saleDate = getParsedDate(s.timestamp || s.createdAt);
-      const start = new Date(fromDate);
-      start.setHours(0,0,0,0);
-      const end = new Date(toDate);
-      end.setHours(23,59,59,999);
-      if (saleDate < start || saleDate > end) return false;
-      // Credit check
-      return s.paymentMethod === 'institutional_credit' || s.paymentMethod === 'credit';
-    });
-  }, [sales, activeBranchId, fromDate, toDate]);
-
   const branchSupplierCredits = useMemo(() => {
     return supplierCredits.filter(c => {
       // Branch check
@@ -1270,17 +1253,8 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
 
   // Specific Exports
   const exportCreditLedger = () => {
-    if (creditSubTab === 'to_branch') {
-      const headers = ['Date', 'Debtor (Customer/Institution)', 'Receipt Reference', 'Credit Amount (UGX)', 'Audited Status'];
-      const rows = branchClientCredits.map(s => [
-        format(getParsedDate(s.timestamp), 'yyyy-MM-dd'),
-        s.institutionName || s.patientName || 'Walk-in Client',
-        s.receiptNumber,
-        s.total,
-        s.status === 'completed' ? 'Outstanding' : 'Paid'
-      ]);
-      downloadReport("Credits_Owed_To_Branch", headers, rows);
-    } else {
+    {
+
       const headers = ['Date', 'Creditor (Supplier)', 'Invoice Reference', 'Original Credit (UGX)', 'Remaining Balance (UGX)', 'Audited Status'];
       const rows = branchSupplierCredits.map(c => [
         format(getParsedDate(c.createdAt || c.creditAccruedAt), 'yyyy-MM-dd'),
@@ -1385,7 +1359,7 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
               </div>
 
               {/* Date Filters */}
-              <div className="flex items-center gap-3">
+              {creditSubTab === 'by_branch' && <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">From</span>
                   <input 
@@ -1406,13 +1380,12 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
                 </div>
                 <button 
                   onClick={exportCreditLedger}
-                  hidden={creditSubTab === 'to_branch'}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-widest rounded-xl flex items-center gap-1.5 shadow-sm shadow-emerald-100 transition-all ml-2"
                 >
                   <Download size={14} />
                   Export
                 </button>
-              </div>
+              </div>}
             </div>
 
             {/* Table Area */}

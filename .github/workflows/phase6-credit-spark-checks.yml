@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   recognition:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
