@@ -6,11 +6,18 @@ on:
       - 'scripts/isolate-firestore-compiler.mjs'
       - 'scripts/run-firestore-compiler-isolation.mjs'
       - '.github/workflows/firestore-compiler-isolation.yml'
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   observe-subsets:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Only the two investigated snapshots run automatically. Routine pushes
+    # must not repeat six compiler inputs alongside mandatory release checks.
+    if: >-
+      github.repository == 'radahpeter-hue/PHARMHELM' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(fromJSON('["da7b8a613201d4034ea479f1c87de0362b678507","9674dfc502cb0448171ffc310ccfe88ce9587f27"]'), github.event.pull_request.head.sha)))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
