@@ -28,7 +28,10 @@ test('CRM, product, HR and alternate registration workflows use the common alloc
 test('protected business IDs cannot be overwritten in normal Firestore updates', () => {
   const rules = source('firestore.rules');
   for (const field of ['staff_code', 'employee_id', 'patient_code', 'prescriber_code', 'institution_code', 'productId', 'sku']) {
-    assert.ok(rules.includes(`request.resource.data.${field} == resource.data.${field}`), field);
+    const expected = ['productId', 'sku'].includes(field)
+      ? `request.resource.data.${field} == resource.data.${field}`
+      : `requestedMap.${field} == existingMap.${field}`;
+    assert.ok(rules.includes(expected), field);
   }
   assert.ok(rules.includes("kind in ['patients', 'prescribers', 'institutions', 'products', 'staff', 'operational_assets', 'operational_consumables']"));
   assert.ok(rules.includes('&& (platformCounter() || branchCounter() || scopedCounter());'), 'Scoped counters must also be incrementable');

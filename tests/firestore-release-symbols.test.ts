@@ -143,17 +143,3 @@ test('shared pure atoms preserve conditional reads, exact path values and point-
  assert.match(result,/'get\(path\).data request.auth.uid'/);
  assert.match(result,/data.get\('field', \{\}\).get\('other', false\)/);
 });
-
-test('global map sharing keeps missing-resource guards lazy and never changes quoted or unrelated properties',async()=>{
- const {shareGlobalResourceMaps}=await import('../scripts/build-firestore-release-rules.mjs');
- const source=`service cloud.firestore { match /databases/{database}/documents {
- match /entries/{id} {allow get: if resource == null || resource.data.tenantId == request.resource.data.tenantId;}
- function quoted(){return 'request.resource.data';}
- function unrelated(value){return value.resource.data;}
- }}`;
- const result=shareGlobalResourceMaps(source);
- assert.match(result,/resource == null \|\| sharedGlobalExistingMap\(\)\.tenantId == sharedGlobalRequestedMap\(\)\.tenantId/);
- assert.match(result,/function sharedGlobalExistingMap\(\) \{ return resource.data; \}/);
- assert.match(result,/function sharedGlobalRequestedMap\(\) \{ return request.resource.data; \}/);
- assert.match(result,/'request.resource.data'/);assert.match(result,/return value.resource.data/);
-});

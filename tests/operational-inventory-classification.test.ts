@@ -97,7 +97,7 @@ test('Operational HQ Store is a separate, settings-gated Procurement tab with it
   assert.match(movementService, /existing\.quantityDelta !== input\.quantityDelta/);
   assert.match(rules, /match \/operational_inventory_movements\/\{movementId\}/);
   assert.match(rules, /allow update, delete: if false/);
-  assert.match(rules, /movementId == 'opm_' \+ request\.resource\.data\.idempotencyKey/);
+  assert.match(rules, /movementId == 'opm_' \+ requestedMap\.idempotencyKey/);
   assert.match(rules, /request\.resource\.data\.actorId == request\.auth\.uid/);
   assert.match(rules, /hasMatchingOperationalMovement\(\)/);
 });

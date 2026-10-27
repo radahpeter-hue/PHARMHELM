@@ -27,7 +27,7 @@ test('identity counters are monotonic and protected from deletion', () => {
   assert.ok(section);
   assert.ok(section.includes('lastSequence == resource.data.lastSequence + 1'));
   assert.ok(section.includes('allow delete: if false'));
-  assert.ok(section.includes("counterId == request.resource.data.tenantId + '_branches'"));
+  assert.ok(section.includes("counterId == requestedMap.tenantId + '_branches'"));
 });
 
 test('tenant and branch codes cannot be changed after creation', () => {
