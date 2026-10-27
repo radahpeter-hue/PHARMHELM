@@ -24,10 +24,10 @@ function run(mode:string) {
    }}
    else if(url.endsWith('/rulesets/test-candidate')&&options.method==='DELETE')body={};
    else if(url.endsWith('/rulesets/test-candidate'))body={name:ruleset,source:${JSON.stringify(mode)}==='shared-candidate'?{files:createdSource.files.map(f=>({...f,fingerprint:'another-operation'}))}:createdSource};
-   else if(url.endsWith('/releases')) {status=${JSON.stringify(mode)}==='size-error'?400:503;body={error:{message:'fixture'}};}
+   else if(url.endsWith('/releases')) {status=${JSON.stringify(mode)}==='size-error'||${JSON.stringify(mode)}==='size-limit-bytes'?400:503;body={error:{message:${JSON.stringify(mode)}==='size-limit-bytes'?'Compiled executable size 262912 bytes exceeds maximum size 256000 bytes':'fixture'}};}
    else if(url.endsWith('/pharmhelm_size_probe_123_1')) {
      if(options.method==='DELETE'){body={};probeDeleted=true;}
-     else if(probeDeleted||${JSON.stringify(mode)}==='size-error'||${JSON.stringify(mode)}==='probe-absent'||(['delayed-release','delayed-conflict'].includes(${JSON.stringify(mode)})&&++probeReads<=4)){status=404;body={error:{message:'not found'}};}
+     else if(probeDeleted||${JSON.stringify(mode)}==='size-error'||${JSON.stringify(mode)}==='size-limit-bytes'||${JSON.stringify(mode)}==='probe-absent'||(['delayed-release','delayed-conflict'].includes(${JSON.stringify(mode)})&&++probeReads<=4)){status=404;body={error:{message:'not found'}};}
      else body={name,rulesetName:['conflict','delayed-conflict'].includes(${JSON.stringify(mode)})?ruleset+'-other':ruleset};
    } else throw new Error('Unexpected network request');
    return new Response(JSON.stringify(body),{status});
@@ -109,4 +109,33 @@ test('a shared exact canonical source is validated through its own probe and nev
  const calls=JSON.parse(result.stdout.trim().split('\n').at(-1)!);
  assert.ok(calls.some((c:any)=>c.method==='DELETE'&&c.url.includes('/releases/')));
  assert.ok(!calls.some((c:any)=>c.method==='DELETE'&&c.url.includes('/rulesets/')));
+});
+
+
+test('executable byte limit 400 emits FAIL_SIZE with exact parsed byte count', () => {
+  const result = run('size-limit-bytes');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /\[FAIL_SIZE\].*validation failed \(400\)/);
+  const verdict = JSON.parse(result.stdout.split('\n').find((line) => line.includes('"VALIDATION_VERDICT"'))!);
+  assert.equal(verdict.status, 'FAIL_SIZE');
+  assert.equal(verdict.executableBytes, 262912);
+  assert.equal(verdict.limitBytes, 256000);
+  assert.equal(verdict.candidateCertified, false);
+});
+
+test('certified Phase 5 control pass under candidate 503 classifies FAIL_CANDIDATE_COMPLEXITY', () => {
+  const result = run('baseline-error');
+  assert.notEqual(result.status, 0);
+  const verdict = JSON.parse(result.stdout.split('\n').find((line) => line.includes('"VALIDATION_VERDICT"'))!);
+  assert.equal(verdict.status, 'FAIL_CANDIDATE_COMPLEXITY');
+  assert.equal(verdict.candidateCertified, false);
+});
+
+test('broad 503 across candidate and minimal control classifies BLOCKED_FIREBASE_SERVICE', () => {
+  const result = run('service-error');
+  assert.notEqual(result.status, 0);
+  const verdict = JSON.parse(result.stdout.split('\n').find((line) => line.includes('"VALIDATION_VERDICT"'))!);
+  assert.equal(verdict.status, 'BLOCKED_FIREBASE_SERVICE');
+  assert.equal(verdict.diagnosticClass, 'BROAD_FIREBASE_SERVICE_OUTAGE');
+  assert.equal(verdict.candidateCertified, false);
 });

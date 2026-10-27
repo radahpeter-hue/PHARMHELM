@@ -21,7 +21,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '22'
 
       - name: Set up Java 21
         uses: actions/setup-java@v4
@@ -30,7 +30,7 @@ jobs:
           java-version: '21'
 
       - name: Install emulator runtime
-        run: npm install --no-save --ignore-scripts firebase-tools@latest @firebase/rules-unit-testing@latest
+        run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0 @firebase/rules-unit-testing@5.0.0
 
       - name: Reproduce Kalebu authority against Firestore rules
         run: npx firebase emulators:exec --only firestore --project pharmhelm-phase3-rules-test "node scripts/phase3-dispenser-rules-emulator.mjs"

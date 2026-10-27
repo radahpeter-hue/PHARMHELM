@@ -127,3 +127,11 @@ test('compiler outage fallback requires HTTP 503 and exact active named-database
   assert.match(ci, /could not be verified as the exact active version[\s\S]*exit 3/);
   assert.match(ci, /Minimal deny-all control[\s\S]*exit 2/);
 });
+
+
+test('POS CI never converts hosted HTTP 503 into warning/pass merely because emulator suites passed', () => {
+  const ci = readFileSync('.github/workflows/pos-v2-foundation-ci.yml', 'utf8');
+  assert.doesNotMatch(ci, /pharmhelm-firestore-emulator-passed/);
+  assert.match(ci, /VALIDATION_STATUS=BLOCKED_FIREBASE_SERVICE/);
+  assert.match(ci, /emulator success cannot substitute for hosted rules certification/);
+});

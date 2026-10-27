@@ -1,7 +1,10 @@
 name: Firestore compiled release size
 on:
   pull_request:
-    branches: [main, 'feature/finance-v2-phase5-hr-advance-validation-20261021']
+    branches:
+      - main
+      - 'feature/finance-v2-phase5-hr-advance-validation-20261021'
+      - 'feature/finance-v2-phase6-credit-20261026'
     paths:
       - 'docs/FINANCE_V2_PHASE6_ACCEPTANCE.md'
       - 'src/components/finance/ReceivablesRegister.tsx'
@@ -11,14 +14,17 @@ on:
       - 'scripts/validate-inactive-finance-rules.mjs'
       - 'scripts/firebase-rules-diagnostics.mjs'
       - 'scripts/build-firestore-compiler-controls.mjs'
+      - 'tests/firestore-size-probe.test.ts'
+      - 'tests/firebase-rules-diagnostics.test.ts'
       - '.github/workflows/firestore-release-size.yml'
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   activation-size:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -48,14 +54,16 @@ jobs:
           PHARMHELM_COMPILER_BASELINE_RULES: .phase5-certified-baseline/firestore.rules
           PHARMHELM_COMPILER_AUTHORED_RULES: /tmp/phase5-authored.rules
           PHARMHELM_COMPILER_CONTROLS: /tmp/phase5-compiler-controls
+          PHARMHELM_ENABLE_RELEASE_CONTROLS: '1'
+          PHARMHELM_VERDICT_OUTPUT_FILE: /tmp/rules-size/verdict.json
         run: |
           cp scripts/validate-inactive-finance-rules.mjs /tmp/rules-size/validate.mjs
           cp scripts/firebase-rules-diagnostics.mjs /tmp/rules-size/firebase-rules-diagnostics.mjs
           node /tmp/rules-size/validate.mjs
-      # Same source and strict verifier, changing only filename metadata. A failed
-      # comparison is diagnostic; it cannot override the mandatory canonical gate.
+      # Same source and strict verifier, changing only filename metadata. Runs only
+      # when canonical validation failed and can never override the mandatory gate.
       - name: Compare run-labelled source filename without production activation
-        if: always() && (steps.candidate_size.outcome == 'success' || steps.candidate_size.outcome == 'failure')
+        if: failure() && steps.candidate_size.outcome == 'failure'
         continue-on-error: true
         env:
           PHARMHELM_COMPILER_FILE_NAME_MODE: unique
@@ -71,4 +79,17 @@ jobs:
       # Use a distinct owned operation so no candidate probe is reused.
       - name: Diagnose the exact signed-off Phase 5 activation control
         if: failure() && steps.candidate_size.outcome == 'failure'
+        continue-on-error: true
         run: GITHUB_RUN_ID="${GITHUB_RUN_ID}00" node /tmp/rules-size/validate.mjs .phase5-certified-baseline/firestore.rules
+      - name: Publish structured Firestore Rules validation verdict
+        if: always()
+        run: |
+          if [ -f /tmp/rules-size/verdict.json ]; then
+            cat /tmp/rules-size/verdict.json
+            {
+              echo "### Authoritative Firestore Rules Release-Size Gate"
+              echo '```json'
+              cat /tmp/rules-size/verdict.json
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
