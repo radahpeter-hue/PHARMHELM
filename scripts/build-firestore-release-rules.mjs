@@ -187,53 +187,8 @@ export function shareRuleAtoms(source,{pointReads=true}={}) {
  const decl=[...definitions.values()].map(d=>`function ${d.name}(${d.args}) { return ${d.body}; }`).join('\n');
  return tokens.join('').replace(root,'$1\n'+decl+'\n');
 }
-
-// Share native maps only in document-match scopes. Global authority helpers and
-// any scope shadowing request/resource retain their original accesses.
-export function shareMatchResourceMaps(source) {
- const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
- const t=tokens.map((token,index)=>({token,index})).filter(({token})=>!/^\s+$/.test(token)&&!token.startsWith('//')&&!token.startsWith('/*'));
- const ranges=[];let root;
- for(let i=0;i<t.length;i++)if(t[i].token==='match'){
-  let open=i+1;
-  for(;open<t.length;open++)if(t[open].token==='{'){
-   if(t[open-1]?.token==='/'){while(open<t.length&&t[open].token!=='}')open++;continue;}
-   break;
-  }
-  let end=open+1,depth=1;for(;end<t.length&&depth;end++){if(t[end].token==='{')depth++;if(t[end].token==='}')depth--;}
-  const header=t.slice(i,open).map(v=>v.token).join('');
-  const r={start:open,end:end-1,shadow:t.slice(i,open).some(v=>v.token==='request'||v.token==='resource')};
-  ranges.push(r);if(!root&&header==='match/databases/{database}/documents')root=r;
- }
- if(!root)return source;
- const excluded=ranges.filter(r=>r.shadow);
- for(let i=0;i<t.length;i++)if(t[i].token==='function'){
-  let open=i+1;while(open<t.length&&t[open].token!=='{')open++;
-  let end=open+1,depth=1;for(;end<t.length&&depth;end++){if(t[end].token==='{')depth++;if(t[end].token==='}')depth--;}
-  const global=ranges.filter(r=>r.start<i&&r.end>i).length<=1;
-  const shadow=t.slice(i+2,open).some(v=>v.token==='request'||v.token==='resource')
-   || t.slice(open+1,end).some((v,n)=>v.token==='let'&&['request','resource'].includes(t[open+2+n]?.token));
-  if(global||shadow)excluded.push({start:open,end:end-1});i=end-1;
- }
- const defs=new Map(),matches=[];
- for(let i=root.start+1;i<root.end;i++){
-  if(t[i-1]?.token==='.'||excluded.some(r=>r.start<i&&r.end>i)||ranges.filter(r=>r.start<i&&r.end>i).length<2)continue;
-  for(const parts of [['request','.','resource','.','data'],['resource','.','data']]){
-   if(!parts.every((part,n)=>t[i+n]?.token===part))continue;
-   const key=parts.join('');let name=defs.get(key);
-   if(!name){name=key.startsWith('request')?'sharedMatchRequestedMap':'sharedMatchExistingMap';while(new RegExp('\\b'+name+'\\b').test(source))name+='x';defs.set(key,name);}
-   matches.push({start:t[i].index,end:t[i+parts.length-1].index,name});i+=parts.length-1;break;
-  }
- }
- if(!matches.length)return source;
- for(const m of matches.reverse())tokens.splice(m.start,m.end-m.start+1,m.name+'()');
- const declarations=[...defs].map(([path,name])=>'function '+name+'() { return '+path+'; }').join('\n');
- tokens.splice(t[root.start].index+1,0,'\n'+declarations+'\n');
- return tokens.join('');
-}
-
 export function compactRuleSymbols(source){
- return renameRuleSymbols(shareMatchResourceMaps(shareFieldReads(shareRuleAtoms(shareFieldComparisons(cacheWriteResourceMaps(shareDocumentReads(shareTenantPredicates(source))))))));
+ return renameRuleSymbols(shareFieldReads(shareRuleAtoms(shareFieldComparisons(cacheWriteResourceMaps(shareDocumentReads(shareTenantPredicates(source)))))));
 }
 export function renameRuleSymbols(source){
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];

@@ -1,6 +1,6 @@
 {
   "score": 4,
-  "summary": "Scoped Firebase auditor assessment of Phase 6 debtor-master authority, overlapping fallback rules, legacy ledger writes, and financial branch linkage. The pre-repair baseline allowed 22 unauthorized operations among 25 probes, plus a separate cross-branch legacy bank collection. Repairs are verified with authenticated negative and positive controls; hosted compiled-size certification remains mandatory and is not inferred from this score. An inactive Finance collection was separately reproduced and repaired; contradictory active/status values now fail closed, with legacy status-only and boolean-only compatibility. The final increment awaits exact-head CI because the local execution workspace became unavailable.",
+  "summary": "Scoped Firebase auditor assessment of debtor-master authority, overlapping fallback rules, legacy ledger writes and financial branch linkage. Authenticated baseline probes reproduced 22 unauthorized operations among 25 original cases, plus separate cross-branch and inactive-Finance legacy collections. Repairs pass 59 authenticated authority controls and 19 recognition scenarios. The resource-map compaction experiments were rejected after Operational Inventory exceeded the 1,000-expression runtime limit; the last behavior-passing transformer is restored. Actual hosted compiled-size certification remains blocked and is not inferred from this score.",
   "skill": {
     "url": "https://github.com/firebase/agent-skills/blob/main/skills/firebase-security-rules-auditor/SKILL.md",
     "blobSHA": "18d1abac06cd7f2a6546fc05d6590e43e770a1ad"
@@ -63,7 +63,19 @@
     "observed": "Complex candidate/control requests return HTTP 503 at about 5.1 seconds; minimal/source-size-matched deny-all controls succeed quickly. Retaining functions with permissions denied compiled in 3.5 seconds.",
     "inference": "A complexity/internal-deadline problem is plausible; a general Firebase outage and source-filename causation are not established.",
     "validation": "Production source name and bytes remain exact. Shared immutable exact source may be referenced read-only by an owned unbound probe; unproven source ownership forbids deletion. Actual release success and exact probe linkage remain mandatory.",
-    "runtimeCandidate": "Match-local resource getters plus equivalent inlining of existing primary/secondary role predicates in three hot inventory/procurement helpers. Authentication, role lists, custom realms and admin fallback retained. Exact-head Operational Inventory and all financial CI remain mandatory."
+    "rejectedCandidates": [
+      {
+        "commit": "ae403683fea8a061a370d08f24d47e5b140d8e54",
+        "issue": "Match-local resource getters exceeded Operational Inventory's 1,000-expression budget; credit and payroll controls passed.",
+        "run": 40520593207
+      },
+      {
+        "commit": "5af5e63f4914dc3bb4fa8a13d4d50529a71a1644",
+        "issue": "Equivalent inlining of three inventory/procurement role predicates did not resolve the runtime expression regression.",
+        "run": 40523330710
+      }
+    ],
+    "restoration": "Restore authored rules, compactor and structural tests exactly to behavior-passing dac45dd1ca0cce9556f7bf2f28f5367b4da242df. Retain all audited authorization, active-state and atomic branch guards. Do not accept source-byte reduction as executable proof."
   },
   "preRepairOriginal25": [
     {
@@ -207,5 +219,5 @@
     "Milestones 6.2 through 6.4 have not started.",
     "59 auditor cases and existing financial/recognition regressions are controlled emulator tests."
   ],
-  "authoredRulesGitBlobSHA": "e9d3c84b9fc21c4958410facd05f83f818fcb885"
+  "authoredRulesGitBlobSHA": "de366335f0d6019f96f3a3cbccdff59f05f3d989"
 }
