@@ -36,3 +36,12 @@ test('missing recognition is an exception rather than synthetic outstanding mone
 test('the established sale clientId alias retains canonical customer identity',()=>{
  const r=buildCreditRecognition({...sale,institutionId:undefined,clientId:'client'},payment(),{tenantId:'martin',full_name:'Peter',care_status:'active'});assert.equal(r.debtorId,'client');assert.equal(r.client_id,'client');
 });
+
+
+test('archiving a debtor stops new credit while preserving verified existing receivables',()=>{
+ const r={...buildCreditRecognition(sale,payment(),master),id:'sale'};
+ const archived={...master,id:'hospital',care_status:'inactive',status:'inactive'};
+ assert.throws(()=>buildCreditRecognition(sale,payment(),archived),/not eligible/);
+ const rows=buildReceivablesRegister([r],[sale],[],[archived],[]);
+ assert.equal(rows[0].verified,true);assert.equal(rows[0].outstanding_ugx,10000);assert.equal(rows[0].debtorId,'hospital');
+});

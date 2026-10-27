@@ -11,7 +11,8 @@ import {
   Filter, 
   MoreVertical, 
   Edit2, 
-  Trash2, 
+  Trash2,
+  Archive,
   Mail, 
   Phone, 
   MapPin, 
@@ -107,13 +108,16 @@ const Clients: React.FC = () => {
     return deduplicateStaff(all);
   }, [patients, staff]);
 
-  const handleDelete = async (collection: string, id: string) => {
-    if (window.confirm('Are you sure you want to delete this entry?')) {
+  const handleRemoveEntry = async (registry: string, id: string) => {
+    if (!hasPermission('clients', 'operate')) return;
+    const archive = registry === 'clients' || registry === 'institutions';
+    if (window.confirm(archive ? 'Archive this entry? Its history will remain available.' : 'Are you sure you want to delete this entry?')) {
       try {
-        await firestoreService.deleteDocument(collection, id);
-        toast.success('Entry deleted successfully');
-      } catch (error) {
-        toast.error('Failed to delete entry');
+        if (archive) await firestoreService.updateDocument(registry, id, { status: 'inactive', care_status: 'inactive' });
+        else await firestoreService.deleteDocument(registry, id);
+        toast.success(archive ? 'Entry archived successfully' : 'Entry deleted successfully');
+      } catch {
+        toast.error(archive ? 'Failed to archive entry' : 'Failed to delete entry');
       }
     }
   };
@@ -147,7 +151,7 @@ const Clients: React.FC = () => {
             setEditingItem(null);
             setIsModalOpen(true);
           }}
-          disabled={activeTab === 'suppliers' && !hasPermission('clients', 'operate')}
+          disabled={!hasPermission('clients', 'operate')}
           className="bg-zinc-900 hover:bg-zinc-800 text-white px-6 py-3 rounded-2xl font-bold transition-all flex items-center gap-2 w-fit shadow-lg shadow-zinc-900/20 uppercase text-xs tracking-widest disabled:opacity-50"
         >
           <Plus size={20} />
@@ -344,7 +348,7 @@ const Clients: React.FC = () => {
                             setEditingItem(item);
                             setIsModalOpen(true);
                           }}
-                          disabled={activeTab === 'suppliers' && !hasPermission('clients', 'operate')}
+                          disabled={!hasPermission('clients', 'operate')}
                           className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-all disabled:opacity-50"
                         >
                           <Edit2 size={16} />
@@ -355,15 +359,16 @@ const Clients: React.FC = () => {
                               toast.info('Staff customers are linked to HR records and cannot be deleted here.');
                               return;
                             }
-                            handleDelete(activeTab === 'patients' ? 'clients' : activeTab === 'institutions' ? 'institutions' : 'prescribers', item.id);
+                            handleRemoveEntry(activeTab === 'patients' ? 'clients' : activeTab === 'institutions' ? 'institutions' : 'prescribers', item.id);
                           }}
-                          title={item.isStaff ? 'Manage this staff record in HR Admin' : 'Delete entry'}
+                          disabled={!hasPermission('clients', 'operate')}
+                          title={item.isStaff ? 'Manage this staff record in HR Admin' : activeTab === 'prescribers' ? 'Delete entry' : 'Archive entry'}
                           className={cn(
                             "p-2 rounded-lg transition-all",
                             item.isStaff ? "text-zinc-300 cursor-help" : "text-zinc-400 hover:text-red-500 hover:bg-red-50"
                           )}
                         >
-                          <Trash2 size={16} />
+                          {activeTab === 'prescribers' ? <Trash2 size={16} /> : <Archive size={16} />}
                         </button>}
                       </div>
                     </td>

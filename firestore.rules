@@ -516,7 +516,7 @@ service cloud.firestore {
       return collectionName in [
         'finance_v2_transfers','finance_v2_events','finance_v2_account_movements','finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
         'credit_receivables', 'supplier_payables', 'banking_records', 'welfare_records', 'staff', 'leave_requests',
-        'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
+        'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger', 'clients', 'institutions',
         'petty_cash_ledger', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
         'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
       ];
@@ -1918,6 +1918,7 @@ service cloud.firestore {
       let movement = getAfter(/databases/$(database)/documents/banking_records/$(after.lastReceiptMovementId)).data;
       let transfer = getAfter(/databases/$(database)/documents/cashTransfers/$(movement.transferId)).data;
       return before.get('controlVersion',0) != 2 && isFinance() && isTenantMember(before.tenantId)
+        && isAssignedToBranch(before.get('branch_id',before.get('branchId','HQ')))
         && after.diff(before).affectedKeys().hasOnly(['outstanding_ugx','status','lastProcessedAt','lastReceiptMovementId'])
         && !exists(/databases/$(database)/documents/banking_records/$(after.lastReceiptMovementId))
         && before.outstanding_ugx is int && after.outstanding_ugx is int && after.outstanding_ugx >= 0
@@ -1936,7 +1937,8 @@ service cloud.firestore {
 
     match /supplier_payables/{payableId} {
       allow read: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
+      // Unused legacy balances remain readable; no direct client financial writer is certified.
+      allow write: if false;
     }
 
     match /banking_records/{recordId} {
@@ -1948,17 +1950,20 @@ service cloud.firestore {
 
     match /client_credit_ledger/{entryId} {
       allow read: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
+      // Unused legacy balances remain readable; no direct client financial writer is certified.
+      allow write: if false;
     }
 
     match /institution_credit_ledger/{entryId} {
       allow read: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
+      // Unused legacy balances remain readable; no direct client financial writer is certified.
+      allow write: if false;
     }
 
     match /supplier_credit_ledger/{entryId} {
       allow read: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
+      // Unused legacy balances remain readable; no direct client financial writer is certified.
+      allow write: if false;
     }
 
     match /creditPayments/{paymentId} {
@@ -3616,8 +3621,79 @@ service cloud.firestore {
     match /cashTransfers/{recordId} {
       allow create: if atomicWelfareRecord(recordId, 'cashTransfers');
     }
+    // CRM masters are shared identities, not financial balance editors.
+    function creditMasterCustomAccess(requireWriteAccess) {
+      let user=getUserData();
+      let configured=user.get('roleRealmId','');
+      let realmId=configured is string && configured.size() > 0 ? configured : user.tenantId + '_' + user.role.replace('\\s+','_').lower();
+      let path=/databases/$(database)/documents/role_realms_of_operation/$(realmId);
+      let realm=exists(path) ? get(path).data : {};
+      let permissions=realm.get('permissions',{});
+      let functional=['view_functional','all'];
+      let readable=['view_only','view_functional','all'];
+      return realm.get('tenantId','') == user.tenantId && realm.get('roleType','') == 'custom' && realm.get('roleName','') == user.role
+        && (permissions.get('clients',{}).get('accessLevel','') in (requireWriteAccess ? functional : readable)
+          || (!requireWriteAccess && (permissions.get('finance',{}).get('accessLevel','') in readable
+            || permissions.get('sales',{}).get('accessLevel','') in functional
+            || permissions.get('marketing',{}).get('accessLevel','') in functional)));
+    }
+    function canMaintainCreditMaster() {
+      return hasActiveStaffProfile()
+        && (hasAnyRole(['owner','Owner','CEO','ceo','CEO / MD','ceo / md','admin','Admin','Pharmacist','pharmacist','Cashier','cashier','IT Head','Marketing Head','Branch Manager','branch manager','Dispenser','dispenser'])
+          || creditMasterCustomAccess(true));
+    }
+    function canReadCreditMaster() {
+      return hasActiveStaffProfile()
+        && (hasAnyRole(['owner','Owner','CEO','ceo','CEO / MD','ceo / md','admin','Admin','Pharmacist','pharmacist','Cashier','cashier','IT Head','Marketing Head','Branch Manager','branch manager','Dispenser','dispenser','Finance Head','Finance Officer','Accountant','Marketing Personnel','Procurement Head','Procurement Officer','Procurement Personnel','QA Head','QA Officer','Logistics Head','IT Support Staff','IT Support Personnel','Trainee'])
+          || creditMasterCustomAccess(false));
+    }
+    function creditMasterScope(row) {
+      return isAuthenticated() && row.tenantId == getUserData().tenantId
+        && (!('branch_id' in row) || isAssignedToBranch(row.branch_id))
+        && (!('branchId' in row) || isAssignedToBranch(row.branchId));
+    }
+    function immutableCreditMaster(before, after) {
+      return after.tenantId == before.tenantId
+        && (!('patient_code' in before) || after.patient_code == before.patient_code)
+        && (!('institution_code' in before) || after.institution_code == before.institution_code);
+    }
+    function noClientWelfareGrant(row) {
+      return row.get('welfare_spent',0) == 0 && row.get('welfare_used_ytd',0) == 0
+        && row.get('welfare_limit',0) == 0 && row.get('welfare_allocation_ugx',0) == 0;
+    }
+    function marketingClientCreate(row) {
+      return row.keys().hasOnly(['tenantId','patient_code','name','phone','type','sms_opt_in','sms_opt_in_date','sms_opt_in_logged_by','preferred_channel','segment_tags','loyalty_points','balance','createdAt','updatedAt']) && hasActiveStaffProfile() && isMarketing()
+        && row.get('balance',0) == 0 && row.get('loyalty_points',0) == 0;
+    }
+    function marketingConsentUpdate(before, after) {
+      return after.diff(before).affectedKeys().hasOnly(['sms_opt_in','sms_opt_in_date','sms_opt_in_logged_by','preferred_channel','segment_tags','updatedAt']) && hasActiveStaffProfile() && isMarketing();
+    }
+    function validCreditMasterFields(row) {
+      let terms=row.get('payment_terms',null);
+      let limit=row.get('credit_limit',0);
+      return (terms == null || (terms is string && terms.size() <= 120))
+        && limit is int && limit >= 0 && limit <= 9007199254740991;
+    }
     match /clients/{clientId} {
-      allow update: if atomicWelfareBalance(clientId);
+      allow get: if canReadCreditMaster() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if canReadCreditMaster() && isTenantMember(resource.data.tenantId);
+      allow create: if (marketingClientCreate(request.resource.data) || canMaintainCreditMaster())
+        && creditMasterScope(request.resource.data) && validCreditMasterFields(request.resource.data)
+        && noClientWelfareGrant(request.resource.data);
+      allow update: if atomicWelfareBalance(clientId)
+        || ((marketingConsentUpdate(resource.data,request.resource.data) || canMaintainCreditMaster())
+          && creditMasterScope(resource.data) && creditMasterScope(request.resource.data)
+          && validCreditMasterFields(request.resource.data) && immutableCreditMaster(resource.data,request.resource.data)
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['welfare_spent','welfare_used_ytd','welfare_limit','welfare_allocation_ugx']));
+      allow delete: if false;
+    }
+    match /institutions/{institutionId} {
+      allow get: if canReadCreditMaster() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if canReadCreditMaster() && isTenantMember(resource.data.tenantId);
+      allow create: if canMaintainCreditMaster() && creditMasterScope(request.resource.data) && validCreditMasterFields(request.resource.data);
+      allow update: if canMaintainCreditMaster() && creditMasterScope(resource.data) && creditMasterScope(request.resource.data)
+        && immutableCreditMaster(resource.data,request.resource.data) && validCreditMasterFields(request.resource.data);
+      allow delete: if false;
     }
     match /{collectionName}/{reversalId} {
       allow get: if collectionName in ['pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals']

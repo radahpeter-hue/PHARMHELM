@@ -12,7 +12,7 @@ test('diagnostics retain API failure details without logging request credentials
 test('candidate recovery rejects another operation, changed bytes and old metadata',async()=>{
  const name='projects/p/rulesets/owned';
  for(const variation of ['correct','foreign-name','changed-source','old']){
-  const result=await recoverOwnedCandidate({project:'p',token:'PRIVATE',rules:'exact rules',fileName:'unique-run.rules',startedAt:Date.now(),log:()=>{},fetchImpl:async(url:URL|string)=>{
+  const result=await recoverOwnedCandidate({project:'p',token:'PRIVATE',rules:'exact rules',fileName:'unique-run.rules',runOwnedFileName:true,startedAt:Date.now(),log:()=>{},fetchImpl:async(url:URL|string)=>{
    if(String(url).includes('?'))return new Response(JSON.stringify({rulesets:[{name,createTime:variation==='old'?'2000-01-01T00:00:00Z':new Date().toISOString()}]}),{status:200});
    return new Response(JSON.stringify({name,source:{files:[{name:variation==='foreign-name'?'other-run.rules':'unique-run.rules',content:variation==='changed-source'?'changed':'exact rules'}]}}),{status:200});
   }});

@@ -17,13 +17,13 @@ function run(mode:string) {
    url=String(url);
    calls.push({url,method:options.method||'GET'});
    let status=200,body={};
-   if(url.includes('/rulesets?'))body={rulesets:${JSON.stringify(mode)}==='create-ambiguous'?[{name:ruleset,createTime:new Date().toISOString()}]:[]};
-   else if(url.endsWith('/rulesets')){createdSource=JSON.parse(options.body).source;body={name:ruleset};if(['service-error','baseline-error','create-ambiguous'].includes(${JSON.stringify(mode)})){
+   if(url.includes('/rulesets?'))body={rulesets:${JSON.stringify(mode)}==='create-ambiguous'||${JSON.stringify(mode)}==='shared-candidate'?[{name:ruleset,createTime:new Date().toISOString()}]:[]};
+   else if(url.endsWith('/rulesets')){createdSource=JSON.parse(options.body).source;body={name:ruleset};if(['service-error','baseline-error','create-ambiguous','shared-candidate'].includes(${JSON.stringify(mode)})){
      status=${JSON.stringify(mode)}==='baseline-error'&&calls.filter(c=>c.url.endsWith('/rulesets')&&c.method==='POST').length>4?200:503;
      body=status===200?{name:ruleset}:{error:{message:'fixture unavailable'}};
    }}
    else if(url.endsWith('/rulesets/test-candidate')&&options.method==='DELETE')body={};
-   else if(url.endsWith('/rulesets/test-candidate'))body={name:ruleset,source:createdSource};
+   else if(url.endsWith('/rulesets/test-candidate'))body={name:ruleset,source:${JSON.stringify(mode)}==='shared-candidate'?{files:createdSource.files.map(f=>({...f,fingerprint:'another-operation'}))}:createdSource};
    else if(url.endsWith('/releases')) {status=${JSON.stringify(mode)}==='size-error'?400:503;body={error:{message:'fixture'}};}
    else if(url.endsWith('/pharmhelm_size_probe_123_1')) {
      if(options.method==='DELETE'){body={};probeDeleted=true;}
@@ -100,4 +100,13 @@ test('the comparison mode changes only source metadata and still requires actual
  const fingerprint=JSON.parse(result.stdout.split('\n').find(line=>line.includes('CANDIDATE_FINGERPRINT'))!);
  assert.match(fingerprint.fileName,/^phase5_candidate_123_1_[0-9a-f]{32}\.rules$/);
  assert.match(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);
+});
+
+
+test('a shared exact canonical source is validated through its own probe and never deleted',()=>{
+ const result=run('shared-candidate');assert.equal(result.status,0,result.stderr);
+ assert.match(result.stdout,/RECOVERED_SHARED_EXACT_SOURCE_READ_ONLY/);assert.match(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);assert.match(result.stdout,/SHARED_EXACT_SOURCE_RETAINED/);
+ const calls=JSON.parse(result.stdout.trim().split('\n').at(-1)!);
+ assert.ok(calls.some((c:any)=>c.method==='DELETE'&&c.url.includes('/releases/')));
+ assert.ok(!calls.some((c:any)=>c.method==='DELETE'&&c.url.includes('/rulesets/')));
 });

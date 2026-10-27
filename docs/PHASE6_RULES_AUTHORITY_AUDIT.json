@@ -1,0 +1,204 @@
+{
+  "score": 4,
+  "summary": "Scoped Firebase auditor assessment of Phase 6 debtor-master authority, overlapping fallback rules, legacy ledger writes, and financial branch linkage. The pre-repair baseline allowed 22 unauthorized operations among 25 probes, plus a separate cross-branch legacy bank collection. Repairs are verified with authenticated negative and positive controls; hosted compiled-size certification remains mandatory and is not inferred from this score.",
+  "skill": {
+    "url": "https://github.com/firebase/agent-skills/blob/main/skills/firebase-security-rules-auditor/SKILL.md",
+    "blobSHA": "18d1abac06cd7f2a6546fc05d6590e43e770a1ad"
+  },
+  "baselineCommit": "68b73577a00cb8d66c80901f3d8ee61137dec2d9",
+  "authoredRulesSHA256": "a7422fe86959ccb0730c0160a3e7d69488db9a80aead22ccaa3905e7201e184f",
+  "findings": [
+    {
+      "check": "Storage Abuse / Type Safety",
+      "severity": "minor",
+      "issue": "Some optional CRM contact and free-text fields, and schemas in unaudited fallback collections, lack explicit per-field length/type bounds. Credit-limit UGX, payment terms and protected welfare state are validated in this scope.",
+      "recommendation": "Continue collection-specific payload hardening without weakening current financial or role constraints."
+    }
+  ],
+  "resolved": [
+    {
+      "check": "Authority Source / Business Logic vs Rules",
+      "priorSeverity": "major",
+      "issue": "No-access and view-only users could create or edit canonical debtor masters through the generic tenant fallback.",
+      "repair": "Dedicated active-staff, tenant, optional branch, primary/secondary-role and owner-approved custom-realm checks. Restricted Marketing consent/registration and custom Finance/POS master-reading flows retain positive controls."
+    },
+    {
+      "check": "Update Bypass / Overlapping Rules",
+      "priorSeverity": "critical",
+      "issue": "The clients wildcard fallback bypassed the protected atomic welfare balance update and allowed arbitrary spending resets or allocation grants.",
+      "repair": "Exclude clients/institutions from fallback; ordinary CRM updates cannot alter welfare balances/limits; the existing independently linked atomic correction remains the separate authorized path."
+    },
+    {
+      "check": "Historical Identity / Ownership",
+      "priorSeverity": "major",
+      "issue": "Debtor masters could be deleted despite outstanding historical source references.",
+      "repair": "Hard deletion denied; authorized UI archives status/care_status instead. Existing receivables remain verified and outstanding after archival."
+    },
+    {
+      "check": "Tenant Ownership / Legacy Write Bypass",
+      "priorSeverity": "critical",
+      "issue": "Finance from another tenant could create, mutate or delete supplier_payables and the three old credit-ledger collections.",
+      "repair": "These unused direct-client legacy posting paths are read-only, with existing tenant-scoped Finance reporting preserved. Active invoice/GRN/supplier settlement contracts remain unchanged."
+    },
+    {
+      "check": "Branch Authorization / Atomic Financial Source",
+      "priorSeverity": "major",
+      "issue": "An HQ-only Finance identity could settle a Masaka legacy debt through a correctly linked raw bank batch without reading that debtor document.",
+      "repair": "Debt update independently requires source-branch authority; negative acceptance asserts bank, debt and movement all roll back. Existing authorized legacy settlement remains positive-tested."
+    },
+    {
+      "check": "Business Logic vs Rules / Generated Artifact Integrity",
+      "priorSeverity": "major",
+      "issue": "Identifier substitution could rewrite permission-method names when a helper parameter shared a name such as write.",
+      "repair": "Permission-method tokens are excluded from alpha-renaming; the regression covers all seven permission methods. Existing authenticated positive workflows validate the emitted rules."
+    }
+  ],
+  "compilerInvestigation": {
+    "status": "actual hosted compiled-size proof pending",
+    "observed": "Complex candidate/control requests return HTTP 503 at about 5.1 seconds; minimal/source-size-matched deny-all controls succeed quickly. Retaining functions with permissions denied compiled in 3.5 seconds.",
+    "inference": "A complexity/internal-deadline problem is plausible; a general Firebase outage and source-filename causation are not established.",
+    "validation": "Production source name and bytes remain exact. Shared immutable exact source may be referenced read-only by an owned unbound probe; unproven source ownership forbids deletion. Actual release success and exact probe linkage remain mandatory."
+  },
+  "preRepairOriginal25": [
+    {
+      "id": "crm-no-access-cannot-edit-client",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "crm-view-only-cannot-change-credit-policy",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "crm-no-access-cannot-create-master",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "crm-cannot-reset-welfare-spent",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "crm-cannot-reset-welfare-used",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "crm-cannot-grant-welfare-allocation",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "crm-cannot-create-financial-balances",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "crm-other-branch-cannot-edit-master",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "crm-owner-cannot-delete-canonical-client",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "crm-owner-cannot-delete-canonical-institution",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "crm-client-identity-immutable",
+      "expected": "denied",
+      "observed": "denied"
+    },
+    {
+      "id": "crm-operator-contact-edit",
+      "expected": "allowed",
+      "observed": "allowed"
+    },
+    {
+      "id": "crm-operator-archive",
+      "expected": "allowed",
+      "observed": "allowed"
+    },
+    {
+      "id": "supplier_payables-foreign-update",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "supplier_payables-foreign-create",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "supplier_payables-foreign-delete",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "client_credit_ledger-foreign-update",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "client_credit_ledger-foreign-create",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "client_credit_ledger-foreign-delete",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "institution_credit_ledger-foreign-update",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "institution_credit_ledger-foreign-create",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "institution_credit_ledger-foreign-delete",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "supplier_credit_ledger-foreign-update",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "supplier_credit_ledger-foreign-create",
+      "expected": "denied",
+      "observed": "allowed"
+    },
+    {
+      "id": "supplier_credit_ledger-foreign-delete",
+      "expected": "denied",
+      "observed": "allowed"
+    }
+  ],
+  "evidence": [
+    "scripts/phase6-authority-audit-emulator.mjs",
+    "scripts/phase6-credit-recognition-emulator.mjs",
+    "scripts/management-cash-settlement-rules-emulator.mjs",
+    "tests/firestore-release-symbols.test.ts",
+    "tests/firestore-size-probe.test.ts",
+    "tests/credit-recognition.test.ts"
+  ],
+  "limitations": [
+    "Scoped assessment; full application-wide security sign-off is not claimed.",
+    "Live Martin Pharma workspace/UI acceptance and production deployment are not performed.",
+    "The original Phase 3 generalized transfer pathway remains separately uncertified.",
+    "Milestones 6.2 through 6.4 have not started.",
+    "55 auditor cases and existing financial/recognition regressions are controlled emulator tests."
+  ]
+}

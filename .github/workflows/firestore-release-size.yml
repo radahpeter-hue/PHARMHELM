@@ -55,7 +55,7 @@ jobs:
       # Same source and strict verifier, changing only filename metadata. A failed
       # comparison is diagnostic; it cannot override the mandatory canonical gate.
       - name: Compare run-labelled source filename without production activation
-        if: always() && steps.candidate_size.outcome != 'skipped'
+        if: always() && (steps.candidate_size.outcome == 'success' || steps.candidate_size.outcome == 'failure')
         continue-on-error: true
         env:
           PHARMHELM_COMPILER_FILE_NAME_MODE: unique

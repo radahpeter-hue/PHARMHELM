@@ -19,14 +19,14 @@ const nonce=randomUUID().replaceAll('-','');
 const fileName=fileNameMode==='canonical'?'firestore.rules':`phase5_candidate_${operation}_${nonce}.rules`;
 const fileFingerprint=Buffer.from(`pharmhelm:${operation}:${nonce}`).toString('base64'),startedAt=Date.now();
 console.log(JSON.stringify({mode:'CANDIDATE_FINGERPRINT',fileName,fileFingerprint,sourceSHA256:createHash('sha256').update(rules).digest('hex'),sourceBytes:Buffer.byteLength(rules),commit:process.env.GITHUB_SHA||null}));
-let result;
+let result,ownedCandidate=true;
 for(let attempt=1;attempt<=4;attempt++) {
  const response=await fetch(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({source:{files:[{name:fileName,content:rules,fingerprint:fileFingerprint}]}}),signal:AbortSignal.timeout(60000)});
  result=await response.json();
  if(response.ok)break;
  if([500,502,503,504].includes(response.status)) {
-  const recovered=await recoverOwnedCandidate({project,token,rules,fileName,fileFingerprint,startedAt,fetchImpl:fetch});
-  if(recovered){result=recovered;break;}
+  const recovered=await recoverOwnedCandidate({project,token,rules,fileName,fileFingerprint,runOwnedFileName:fileNameMode==='unique',allowSharedExactSource:fileNameMode==='canonical',startedAt,fetchImpl:fetch});
+  if(recovered){result=recovered;ownedCandidate=recovered.recoveryOwned!==false;break;}
  }
  if(![429,500,502,503,504].includes(response.status)||attempt===4) {
   if(response.status===503) {
@@ -104,7 +104,7 @@ for (let attempt=1;attempt<=4;attempt++) {
 }
 try{
  if(release.name!==probeName||release.rulesetName!==result.name)throw new Error('Unexpected size-validation release.');
- console.log(JSON.stringify({mode:'UNBOUND_RELEASE_SIZE_VALIDATION',ruleset:result.name,sourceSHA256:createHash('sha256').update(rules).digest('hex'),sourceBytes:Buffer.byteLength(rules),productionReleaseModified:false}));
+ console.log(JSON.stringify({mode:'UNBOUND_RELEASE_SIZE_VALIDATION',ruleset:result.name,ownedCandidate,sourceSHA256:createHash('sha256').update(rules).digest('hex'),sourceBytes:Buffer.byteLength(rules),productionReleaseModified:false}));
 }finally{
  const cleanup=await fetch(`https://firebaserules.googleapis.com/v1/${probeName}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
  if(!cleanup.ok)throw new Error(`Temporary validation release cleanup failed (${cleanup.status}).`);
@@ -120,6 +120,8 @@ try{
  if(!absent){
   if(!validationFailure)throw new Error('Candidate cleanup deferred: exact temporary probe absence could not be verified.');
   console.log(JSON.stringify({mode:'OWNED_CANDIDATE_CLEANUP_DEFERRED',productionReleaseModified:false}));
+ } else if(!ownedCandidate) {
+ console.log(JSON.stringify({mode:'SHARED_EXACT_SOURCE_RETAINED',ruleset:result.name,productionReleaseModified:false}));
  } else {
  const removed=await fetch(`https://firebaserules.googleapis.com/v1/${result.name}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
  if(!removed.ok)throw new Error(`Owned inactive candidate cleanup failed (${removed.status}).`);
