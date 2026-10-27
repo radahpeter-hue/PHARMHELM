@@ -118,3 +118,5 @@ The final authority sweep reproduced collection by an inactive Finance profile u
 The broad financial-reversal match is replaced with three explicit collection paths invoking the same reversal validator, removing unnecessary whole-database overlap. A diagnostic also runs the unchanged actual-release verifier on minimal deny-all source after candidate failure, distinguishing basic release-service availability from application-graph complexity. Neither diagnostic can override the mandatory candidate result.
 
 The local execution workspace became unavailable before this final increment could be validated locally. This increment is therefore validated through exact-head CI; no local success is claimed for it. Previous committed repairs passed 777 local unit tests, 55 authenticated auditor cases, 19 recognition cases and financial/inventory regressions.
+
+The first CI run of the final active-state increment identified an old source-shape test expecting repeated uncached staff reads. That test now checks the canonical cached staff path, existence guard and stricter active/status predicate. Authenticated negative and positive controls are unchanged.
