@@ -1,12 +1,11 @@
 {
   "score": 4,
-  "summary": "Scoped Firebase auditor assessment of Phase 6 debtor-master authority, overlapping fallback rules, legacy ledger writes, and financial branch linkage. The pre-repair baseline allowed 22 unauthorized operations among 25 probes, plus a separate cross-branch legacy bank collection. Repairs are verified with authenticated negative and positive controls; hosted compiled-size certification remains mandatory and is not inferred from this score.",
+  "summary": "Scoped Firebase auditor assessment of Phase 6 debtor-master authority, overlapping fallback rules, legacy ledger writes, and financial branch linkage. The pre-repair baseline allowed 22 unauthorized operations among 25 probes, plus a separate cross-branch legacy bank collection. Repairs are verified with authenticated negative and positive controls; hosted compiled-size certification remains mandatory and is not inferred from this score. An inactive Finance collection was separately reproduced and repaired; contradictory active/status values now fail closed, with legacy status-only and boolean-only compatibility. The final increment awaits exact-head CI because the local execution workspace became unavailable.",
   "skill": {
     "url": "https://github.com/firebase/agent-skills/blob/main/skills/firebase-security-rules-auditor/SKILL.md",
     "blobSHA": "18d1abac06cd7f2a6546fc05d6590e43e770a1ad"
   },
   "baselineCommit": "68b73577a00cb8d66c80901f3d8ee61137dec2d9",
-  "authoredRulesSHA256": "a7422fe86959ccb0730c0160a3e7d69488db9a80aead22ccaa3905e7201e184f",
   "findings": [
     {
       "check": "Storage Abuse / Type Safety",
@@ -51,6 +50,12 @@
       "priorSeverity": "major",
       "issue": "Identifier substitution could rewrite permission-method names when a helper parameter shared a name such as write.",
       "repair": "Permission-method tokens are excluded from alpha-renaming; the regression covers all seven permission methods. Existing authenticated positive workflows validate the emitted rules."
+    },
+    {
+      "check": "Authority Source / Operator Lifecycle",
+      "priorSeverity": "major",
+      "issue": "Inactive Finance could still collect legacy debt; contradictory active/status flags could retain operator authority.",
+      "repair": "Independent active-profile guards on credit reads and legacy receipts; consistent active-state validation with four legacy/contradictory-state controls."
     }
   ],
   "compilerInvestigation": {
@@ -199,6 +204,7 @@
     "Live Martin Pharma workspace/UI acceptance and production deployment are not performed.",
     "The original Phase 3 generalized transfer pathway remains separately uncertified.",
     "Milestones 6.2 through 6.4 have not started.",
-    "55 auditor cases and existing financial/recognition regressions are controlled emulator tests."
-  ]
+    "59 auditor cases and existing financial/recognition regressions are controlled emulator tests."
+  ],
+  "authoredRulesGitBlobSHA": "de366335f0d6019f96f3a3cbccdff59f05f3d989"
 }

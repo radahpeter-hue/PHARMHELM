@@ -53,6 +53,10 @@ try{
  await probe('crm-custom-pos-read',true,()=>getDoc(doc(actor('custom-pos'),'institutions','hospital')));
  await probe('crm-custom-client-view-read',true,()=>getDoc(doc(actor('custom-view'),'clients','patient')));
  await probe('crm-no-access-client-read-denied',false,()=>getDoc(doc(actor('cleaner'),'clients','patient')));
+ for(const [id,patch,allowed] of [['status-inactive',{active:true,status:'inactive'},false],['active-false',{active:false,status:'active'},false],['legacy-active-only',{active:true,status:null},true],['legacy-status-only',{active:null,status:'active'},true]])await probe(`crm-staff-${id}`,allowed,async()=>{
+  await env.withSecurityRulesDisabled(async ctx=>{const ref=doc(ctx.firestore(),'staff','dispenser');const row=(await getDoc(ref)).data();Object.assign(row,patch);if(row.active===null)delete row.active;if(row.status===null)delete row.status;await setDoc(ref,row);});
+  await updateDoc(doc(actor('dispenser'),'clients','patient'),{phone_number:'0700111222'});
+ });
  await probe('crm-tenant-reassignment-denied',false,()=>updateDoc(doc(actor('owner'),'institutions','hospital'),{tenantId:'foreign'}));
  await probe('crm-marketing-consent',true,()=>updateDoc(doc(actor('viewer'),'clients','patient'),{sms_opt_in:true,preferred_channel:'SMS'}));
  await probe('crm-marketing-client-registration',true,()=>setDoc(doc(actor('viewer'),'clients','marketing-new'),{tenantId,name:'Marketing Patient',phone:'0700111222',type:'individual',sms_opt_in:true,balance:0,loyalty_points:0}));

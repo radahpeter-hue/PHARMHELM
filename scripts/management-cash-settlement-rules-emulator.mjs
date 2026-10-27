@@ -124,6 +124,16 @@ try {
  assert.equal((await value('credit_receivables','other-branch-debt')).outstanding_ugx,1000);
  assert.equal(await value('cashTransfers',unauthorizedTransfer.id),undefined);
  console.log('PASS raw cross-branch legacy collection rolls back bank, debt and movement together.');
+ await admin(async db=>{
+   await setDoc(doc(db,'credit_receivables','inactive-finance-debt'),{tenantId,branch_id:'HQ',outstanding_ugx:1000,amount_ugx:1000,status:'outstanding'});
+   await updateDoc(doc(db,'staff',financeUid),{active:false,status:'inactive'});
+ });
+ await assertFails(postManagementReceivablePayment({tenantId,receivableId:'inactive-finance-debt',amountUGX:1000,requestId:'inactive-finance',actorId:financeUid},finance));
+ assert.equal((await value('finance_payment_accounts',accountId('bank'))).balanceUGX,10000);
+ assert.equal((await value('credit_receivables','inactive-finance-debt')).outstanding_ugx,1000);
+ await admin(db=>updateDoc(doc(db,'staff',financeUid),{active:true,status:'active'}));
+ console.log('PASS inactive Finance cannot read or collect legacy debt despite a valid role and branch.');
+
 
 
  await assertFails(updateDoc(doc(actor('foreign-finance'),'credit_receivables','receivable'),{outstanding_ugx:999999}));

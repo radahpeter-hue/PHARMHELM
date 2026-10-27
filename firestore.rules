@@ -208,18 +208,11 @@ service cloud.firestore {
     }
 
     function hasActiveStaffProfile() {
-      return isAuthenticated()
-        && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
-        && (
-          (
-            'active' in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data &&
-            get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.active == true
-          ) ||
-          (
-            'status' in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data &&
-            get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.status in ['active', 'Active', 'ACTIVE']
-          )
-        );
+      let path=/databases/$(database)/documents/staff/$(request.auth.uid);
+      let present=exists(path);
+      let staff=present ? get(path).data : {};
+      return isAuthenticated() && present && staff.get('active',true) == true
+        && staff.get('status',staff.get('active',false) == true ? 'active' : '') in ['active','Active','ACTIVE'];
     }
 
     function isPOSOperator() {
@@ -1907,7 +1900,7 @@ service cloud.firestore {
         && validCreditDebtor(row, sale);
     }
     function canReadCredit(row) {
-      return isAuthenticated() && row.tenantId == getUserData().tenantId
+      return hasActiveStaffProfile() && row.tenantId == getUserData().tenantId
         && isAssignedToBranch(row.get('branch_id',row.get('branchId','HQ')))
         && (hasAnyRole(['owner','Owner','CEO','ceo','CEO / MD','ceo / md','Finance Head','Finance Officer','Accountant','Pharmacist','pharmacist','Dispenser','dispenser','Branch Manager','branch manager','Cashier','cashier','IT Head','IT Support Staff','IT Support Personnel','IT Staff'])
           || hasCustomModuleView('clients') || hasCustomModuleView('finance') || hasCustomModuleFunctional('sales'));
@@ -1917,7 +1910,7 @@ service cloud.firestore {
     function validLegacyCreditReceipt(id, before, after) {
       let movement = getAfter(/databases/$(database)/documents/banking_records/$(after.lastReceiptMovementId)).data;
       let transfer = getAfter(/databases/$(database)/documents/cashTransfers/$(movement.transferId)).data;
-      return before.get('controlVersion',0) != 2 && isFinance() && isTenantMember(before.tenantId)
+      return before.get('controlVersion',0) != 2 && hasActiveStaffProfile() && isFinance() && isTenantMember(before.tenantId)
         && isAssignedToBranch(before.get('branch_id',before.get('branchId','HQ')))
         && after.diff(before).affectedKeys().hasOnly(['outstanding_ugx','status','lastProcessedAt','lastReceiptMovementId'])
         && !exists(/databases/$(database)/documents/banking_records/$(after.lastReceiptMovementId))
@@ -3695,11 +3688,22 @@ service cloud.firestore {
         && immutableCreditMaster(resource.data,request.resource.data) && validCreditMasterFields(request.resource.data);
       allow delete: if false;
     }
-    match /{collectionName}/{reversalId} {
-      allow get: if collectionName in ['pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals']
-        && isPOSOperator() && (resource == null || resource.data.tenantId == getUserData().tenantId);
-      allow create: if collectionName in ['pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals']
-        && atomicFinancialReversal(reversalId, collectionName);
+    // These explicit paths preserve the reversal contract without a second
+    // whole-database wildcard overlapping unrelated collections.
+    function canReadFinancialReversal() {
+      return isPOSOperator() && (resource == null || resource.data.tenantId == getUserData().tenantId);
+    }
+    match /pos_welfare_reversals/{reversalId} {
+      allow get: if canReadFinancialReversal();
+      allow create: if atomicFinancialReversal(reversalId,'pos_welfare_reversals');
+    }
+    match /pos_credit_reversals/{reversalId} {
+      allow get: if canReadFinancialReversal();
+      allow create: if atomicFinancialReversal(reversalId,'pos_credit_reversals');
+    }
+    match /pos_quotation_reversals/{reversalId} {
+      allow get: if canReadFinancialReversal();
+      allow create: if atomicFinancialReversal(reversalId,'pos_quotation_reversals');
     }
 
     match /audit_logs/{auditId} {

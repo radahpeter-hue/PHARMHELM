@@ -60,6 +60,13 @@ jobs:
         env:
           PHARMHELM_COMPILER_FILE_NAME_MODE: unique
         run: GITHUB_RUN_ID="${GITHUB_RUN_ID}01" node /tmp/rules-size/validate.mjs
+      - name: Diagnose a minimal actual unbound release
+        if: failure() && steps.candidate_size.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          echo "DIAGNOSTIC_ONLY_MINIMAL_UNBOUND_RELEASE"
+          printf '%s\n' "rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read, write: if false; } } }" > /tmp/minimal-control.rules
+          GITHUB_RUN_ID="${GITHUB_RUN_ID}02" node /tmp/rules-size/validate.mjs /tmp/minimal-control.rules
       # Diagnostic only: the failed candidate step continues to fail this job.
       # Use a distinct owned operation so no candidate probe is reused.
       - name: Diagnose the exact signed-off Phase 5 activation control
