@@ -153,3 +153,22 @@ test('internal parameter names cannot rewrite Firestore permission methods',()=>
  assert.match(result,/allow read, write:/);assert.match(result,/allow create, update, delete, get, list:/);
  assert.doesNotMatch(result,/function permitted/);
 });
+
+
+test('match resource factoring preserves lazy guards, global authority and quoted content',async()=>{
+ const {shareMatchResourceMaps}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source="service cloud.firestore {match /databases/{database}/documents {function authority(){return resource.data.tenantId;} match /entries/{id} {allow get: if resource == null || resource.data.tenantId == request.resource.data.tenantId;function literal(){return 'request.resource.data';}}}}";
+ const result=shareMatchResourceMaps(source);
+ assert.match(result,/function authority\(\)\{return resource.data.tenantId;\}/);
+ assert.match(result,/resource == null \|\| sharedMatchExistingMap\(\).tenantId == sharedMatchRequestedMap\(\).tenantId/);
+ assert.match(result,/'request.resource.data'/);
+});
+test('match resource factoring leaves shadowed native names and unrelated properties untouched',async()=>{
+ const {shareMatchResourceMaps}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source="service cloud.firestore {match /databases/{database}/documents {match /entries/{id} {function shadow(resource){return resource.data.x;} function local(){let request = {};return request.resource.data;} function unrelated(value){return value.resource.data;} allow read: if resource.data.ok;} match /shadow/{resource} {allow read: if resource.data.ok;}}}";
+ const result=shareMatchResourceMaps(source);
+ assert.match(result,/function shadow\(resource\)\{return resource.data.x;\}/);
+ assert.match(result,/let request = \{\};return request.resource.data/);
+ assert.match(result,/return value.resource.data/);
+ assert.match(result,/match \/shadow\/\{resource\} \{allow read: if resource.data.ok;\}/);
+});
