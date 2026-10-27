@@ -19,10 +19,10 @@ test('candidate recovery rejects another operation, changed bytes and old metada
   assert.equal(!!result,variation==='correct');
  }
 });
-test('inventory counts all pages using read-only requests and reports incomplete access honestly',async()=>{
+test('inventory respects its default request budget and reports partial access honestly',async()=>{
  const calls:any[]=[];const logs:string[]=[];
  await readRulesetInventory({project:'p',token:'PRIVATE',log:(s:string)=>logs.push(s),fetchImpl:async(url:URL,options:any)=>{calls.push({url:String(url),method:options.method});return new Response(JSON.stringify(calls.length===1?{rulesets:[{},{}],nextPageToken:'page2'}:{rulesets:[{}]}),{status:200});}});
- assert.equal(JSON.parse(logs[0]).count,3);assert.equal(JSON.parse(logs[0]).complete,true);assert.equal(calls.length,2);assert.ok(calls.every(c=>c.method===undefined));
+ assert.equal(JSON.parse(logs[0]).count,2);assert.equal(JSON.parse(logs[0]).complete,false);assert.equal(calls.length,1);assert.ok(calls.every(c=>c.method===undefined));
  assert.ok(calls.every(c=>new URL(c.url).searchParams.get('pageSize')==='100'));
  const denied:string[]=[];await readRulesetInventory({project:'p',token:'PRIVATE',log:(s:string)=>denied.push(s),fetchImpl:async()=>new Response('{}',{status:403})});
  assert.equal(JSON.parse(denied[0]).complete,false);assert.equal(JSON.parse(denied[0]).status,403);
@@ -35,4 +35,32 @@ test('canonical filename recovery requires the exact run fingerprint as well as 
   const result=await recoverOwnedCandidate({project:'p',token:'PRIVATE',rules:'exact rules',fileName:'firestore.rules',fileFingerprint:'owned',startedAt:Date.now(),log:()=>{},fetchImpl:async(url:URL|string)=>new Response(JSON.stringify(String(url).includes('?')?{rulesets:[{name,createTime:new Date().toISOString()}]}:{name,source:{files:[{name:'firestore.rules',content:'exact rules',fingerprint}]}}),{status:200})});
   assert.equal(!!result,fingerprint==='owned');
  }
+});
+
+test('quota backoff retries an exact owned cleanup and honors bounded Retry-After',async()=>{
+ const calls:any[]=[],delays:number[]=[];
+ const fetch=createRulesDiagnosticFetch({log:()=>{},sleep:async(ms:number)=>{delays.push(ms);},fetchImpl:async(url:any,options:any)=>{
+  calls.push([url,options]);return new Response('{}',{status:calls.length===1?429:200,headers:{'retry-after':'90'}});
+ }});
+ const url='https://firebaserules.googleapis.com/v1/projects/p/rulesets/owned';
+ const options={method:'DELETE'};const response=await fetch(url,options);
+ assert.equal(response.status,200);assert.deepEqual(delays,[90000]);
+ assert.equal(calls.length,2);assert.ok(calls.every(c=>c[0]===url&&c[1].method===options.method));
+ assert.notEqual(calls[0][1].signal,calls[1][1].signal);assert.equal(calls[1][1].signal.aborted,false);
+});
+test('persistent quota exhaustion remains failure after bounded retries; creation is never replayed here',async()=>{
+ for(const method of ['GET','DELETE','POST']){
+  let calls=0;const delays:number[]=[];
+  const fetch=createRulesDiagnosticFetch({log:()=>{},sleep:async(ms:number)=>{delays.push(ms);},fetchImpl:async()=>{calls++;return new Response('{}',{status:429,headers:{'retry-after':'9999'}});}});
+  assert.equal((await fetch('https://firebaserules.googleapis.com/v1/projects/p/rulesets',{method})).status,429);
+  assert.equal(calls,method==='POST'?1:3);assert.deepEqual(delays,method==='POST'?[]:[120000,120000]);
+ }
+});
+test('recovery filters recent metadata at the server and bounds pagination without accepting old records',async()=>{
+ const startedAt=Date.now(),urls:string[]=[];
+ const result=await recoverOwnedCandidate({project:'p',token:'PRIVATE',rules:'exact',fileName:'firestore.rules',startedAt,log:()=>{},fetchImpl:async(url:any)=>{
+  urls.push(String(url));return new Response(JSON.stringify({rulesets:[{name:'projects/p/rulesets/old',createTime:'2000-01-01T00:00:00Z'}],nextPageToken:'more'}),{status:200});
+ }});
+ assert.equal(result,null);assert.equal(urls.length,3);
+ for(const url of urls)assert.equal(new URL(url).searchParams.get('filter'),'createTime > date('+JSON.stringify(new Date(startedAt-60000).toISOString())+')');
 });

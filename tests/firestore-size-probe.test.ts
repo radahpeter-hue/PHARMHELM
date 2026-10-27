@@ -11,7 +11,7 @@ function run(mode:string) {
  const name=project+'/releases/pharmhelm_size_probe_123_1';
  const ruleset=project+'/rulesets/test-candidate';
  const calls=[];
- let probeDeleted=false,createdSource,probeReads=0;
+ let probeDeleted=false,createdSource,probeReads=0,cleanupAttempts=0;
  globalThis.setTimeout=(callback)=>{queueMicrotask(callback);return 0;};
  globalThis.fetch=async (url,options)=>{
    url=String(url);
@@ -22,7 +22,7 @@ function run(mode:string) {
      status=${JSON.stringify(mode)}==='baseline-error'&&calls.filter(c=>c.url.endsWith('/rulesets')&&c.method==='POST').length>4?200:503;
      body=status===200?{name:ruleset}:{error:{message:'fixture unavailable'}};
    }}
-   else if(url.endsWith('/rulesets/test-candidate')&&options.method==='DELETE')body={};
+   else if(url.endsWith('/rulesets/test-candidate')&&options.method==='DELETE'){body={};if(${JSON.stringify(mode)}==='cleanup-throttled'&&++cleanupAttempts===1)status=429;}
    else if(url.endsWith('/rulesets/test-candidate'))body={name:ruleset,source:${JSON.stringify(mode)}==='shared-candidate'?{files:createdSource.files.map(f=>({...f,fingerprint:'another-operation'}))}:createdSource};
    else if(url.endsWith('/releases')) {status=${JSON.stringify(mode)}==='size-error'?400:503;body={error:{message:'fixture'}};}
    else if(url.endsWith('/pharmhelm_size_probe_123_1')) {
@@ -109,4 +109,11 @@ test('a shared exact canonical source is validated through its own probe and nev
  const calls=JSON.parse(result.stdout.trim().split('\n').at(-1)!);
  assert.ok(calls.some((c:any)=>c.method==='DELETE'&&c.url.includes('/releases/')));
  assert.ok(!calls.some((c:any)=>c.method==='DELETE'&&c.url.includes('/rulesets/')));
+});
+
+test('quota during exact candidate cleanup retries without skipping the actual release gate',()=>{
+ const result=run('cleanup-throttled');assert.equal(result.status,0,result.stderr);
+ assert.match(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);assert.match(result.stdout,/RULES_API_QUOTA_BACKOFF/);assert.match(result.stdout,/OWNED_CANDIDATE_CLEANUP/);
+ const calls=JSON.parse(result.stdout.trim().split('\n').at(-1)!);
+ assert.equal(calls.filter((c:any)=>c.method==='DELETE'&&c.url.endsWith('/rulesets/test-candidate')).length,2);
 });
