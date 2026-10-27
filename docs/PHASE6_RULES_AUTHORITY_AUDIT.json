@@ -62,7 +62,8 @@
     "status": "actual hosted compiled-size proof pending",
     "observed": "Complex candidate/control requests return HTTP 503 at about 5.1 seconds; minimal/source-size-matched deny-all controls succeed quickly. Retaining functions with permissions denied compiled in 3.5 seconds.",
     "inference": "A complexity/internal-deadline problem is plausible; a general Firebase outage and source-filename causation are not established.",
-    "validation": "Production source name and bytes remain exact. Shared immutable exact source may be referenced read-only by an owned unbound probe; unproven source ownership forbids deletion. Actual release success and exact probe linkage remain mandatory."
+    "validation": "Production source name and bytes remain exact. Shared immutable exact source may be referenced read-only by an owned unbound probe; unproven source ownership forbids deletion. Actual release success and exact probe linkage remain mandatory.",
+    "runtimeCandidate": "Match-local resource getters plus equivalent inlining of existing primary/secondary role predicates in three hot inventory/procurement helpers. Authentication, role lists, custom realms and admin fallback retained. Exact-head Operational Inventory and all financial CI remain mandatory."
   },
   "preRepairOriginal25": [
     {
@@ -206,5 +207,5 @@
     "Milestones 6.2 through 6.4 have not started.",
     "59 auditor cases and existing financial/recognition regressions are controlled emulator tests."
   ],
-  "authoredRulesGitBlobSHA": "de366335f0d6019f96f3a3cbccdff59f05f3d989"
+  "authoredRulesGitBlobSHA": "e9d3c84b9fc21c4958410facd05f83f818fcb885"
 }

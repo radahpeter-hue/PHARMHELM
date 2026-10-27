@@ -172,8 +172,10 @@ service cloud.firestore {
     }
 
     function isProcurement() {
+      let user = getUserData();
+      let roleNames = ['Procurement Head', 'Procurement Officer', 'Procurement Manager', 'Procurement Personnel'];
       return isAuthenticated() && (
-        hasAnyRole(['Procurement Head', 'Procurement Officer', 'Procurement Manager', 'Procurement Personnel']) ||
+        user.role in roleNames || (("secondaryRoles" in user) && user.secondaryRoles.hasAny(roleNames)) ||
         hasCustomModuleFunctional('procurement') ||
         isAdmin()
       );
@@ -186,22 +188,26 @@ service cloud.firestore {
     }
 
     function isInventoryOperator() {
-      return isAuthenticated() && (
-        hasAnyRole([
+      let user = getUserData();
+      let roleNames = [
           'Branch Manager', 'branch manager', 'Pharmacist', 'pharmacist',
           'Procurement Head', 'Procurement Officer', 'Procurement Manager', 'Procurement Personnel', 'admin', 'Admin'
-        ]) ||
+        ];
+      return isAuthenticated() && (
+        user.role in roleNames || (("secondaryRoles" in user) && user.secondaryRoles.hasAny(roleNames)) ||
         hasCustomModuleFunctional('inventory') ||
         isAdmin()
       );
     }
 
     function isStockOperator() {
-      return isAuthenticated() && (
-        hasAnyRole([
+      let user = getUserData();
+      let roleNames = [
           'Branch Manager', 'branch manager', 'Pharmacist', 'pharmacist',
           'Dispenser', 'dispenser', 'Procurement Head', 'Procurement Officer', 'Procurement Manager'
-        ]) ||
+        ];
+      return isAuthenticated() && (
+        user.role in roleNames || (("secondaryRoles" in user) && user.secondaryRoles.hasAny(roleNames)) ||
         hasCustomModuleFunctional('stock') ||
         isAdmin()
       );
