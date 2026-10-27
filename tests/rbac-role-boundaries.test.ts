@@ -125,8 +125,8 @@ test('Finance page keeps Finance Officer out of Branch Operations unless another
 
 test('Firestore rules cannot fall back to generic tenant read for protected Finance collections', () => {
   const rules = readFileSync('firestore.rules', 'utf8');
-  assert.match(rules, /function isProtectedFinanceCollection\(collectionName\)/);
-  assert.match(rules, /!isProtectedFinanceCollection\(collectionName\)/);
+  assert.match(rules, /function dedicatedCollection\(\)/);
+  assert.match(rules, /!dedicatedCollection\(\)/);
   assert.match(rules, /function canViewBranchFinance\(\)/);
   assert.doesNotMatch(rules, /match \/eod_reconciliations[\s\S]{0,250}allow read:[^;]*\|\| isTenantMember/);
   assert.doesNotMatch(rules, /match \/branch_expenses[\s\S]{0,250}allow read:[^;]*\|\| isTenantMember/);

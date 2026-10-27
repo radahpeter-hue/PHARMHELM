@@ -75,7 +75,23 @@
         "run": 40523330710
       }
     ],
-    "restoration": "Restore authored rules, compactor and structural tests exactly to behavior-passing dac45dd1ca0cce9556f7bf2f28f5367b4da242df. Retain all audited authorization, active-state and atomic branch guards. Do not accept source-byte reduction as executable proof."
+    "restoration": "Restore authored rules, compactor and structural tests exactly to behavior-passing dac45dd1ca0cce9556f7bf2f28f5367b4da242df. Retain all audited authorization, active-state and atomic branch guards. Do not accept source-byte reduction as executable proof.",
+    "isolation": {
+      "commit": "da7b8a613201d4034ea479f1c87de0362b678507",
+      "run": 40572417323,
+      "actualReleasePassed": [
+        "all-denied",
+        "credit-pos-crm",
+        "finance-payroll",
+        "generic-fallback"
+      ],
+      "http503": [
+        "first-half",
+        "second-half"
+      ],
+      "interpretation": "Broader combined graphs fail while individual families pass; aggregate complexity/interactions are supported, but vendor root cause and whole-application executable fit are not established."
+    },
+    "targetedSimplification": "Consolidate equivalent generic-fallback exclusions and remove unreachable staff/client/institution identity branches behind exclusions. Historical policy fixture proves the exact read/write protected sets. No account or debtor authority is weakened. Whole-candidate hosted validation remains mandatory."
   },
   "preRepairOriginal25": [
     {
@@ -219,5 +235,5 @@
     "Milestones 6.2 through 6.4 have not started.",
     "59 auditor cases and existing financial/recognition regressions are controlled emulator tests."
   ],
-  "authoredRulesGitBlobSHA": "de366335f0d6019f96f3a3cbccdff59f05f3d989"
+  "authoredRulesGitBlobSHA": "95a287dc5438a379fbdf7e2860162f40c214bd0e"
 }

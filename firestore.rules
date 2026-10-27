@@ -505,15 +505,7 @@ service cloud.firestore {
       );
     }
 
-    function isProtectedFinanceCollection(collectionName) {
-      return collectionName in [
-        'finance_v2_transfers','finance_v2_events','finance_v2_account_movements','finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
-        'credit_receivables', 'supplier_payables', 'banking_records', 'welfare_records', 'staff', 'leave_requests',
-        'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger', 'clients', 'institutions',
-        'petty_cash_ledger', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
-        'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
-      ];
-    }
+
 
     function canPostManagementCash() {
       return isAuthenticated() && (
@@ -3879,37 +3871,34 @@ service cloud.firestore {
     // Generic tenant fallback. Dedicated collections retain their explicit rules.
     // Share exclusions and dispatch by method instead of compiling five copies.
     match /{collectionName}/{docId} {
+      // Exact union of the prior dedicated and financial exclusions. Flattening
+      // avoids repeated fallback guard expansion across overlapping matches.
       function dedicatedCollection() {
-        return authorityCollection() || ordinaryDedicatedCollection();
-      }
-      function authorityCollection() {
-        return collectionName in ['tenants','system_settings','master_registries','platform_users','platform_revenue','platform_audit_logs','global_audit_logs','predictive_settings','pending_activations'];
-      }
-      function ordinaryDedicatedCollection() {
-        return collectionName in ['payroll_approvals','identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox','payroll','payslips','advance_requests','attendance'];
+        return collectionName in ['tenants','system_settings','master_registries','platform_users','platform_revenue','platform_audit_logs','global_audit_logs','predictive_settings','pending_activations']
+          || collectionName in ['payroll_approvals','identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox','payroll','payslips','advance_requests','attendance']
+          || collectionName in [
+        'finance_v2_transfers','finance_v2_events','finance_v2_account_movements','finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
+        'credit_receivables', 'supplier_payables', 'banking_records', 'welfare_records', 'staff', 'leave_requests',
+        'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger', 'clients', 'institutions',
+        'petty_cash_ledger', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
+        'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
+      ];
       }
       function dedicatedWriteCollection() {
-        return dedicatedCollection() || collectionName in ['hr_roles', 'product_batches', 'products', 'role_realms_of_operation', 'sales', 'payroll', 'payslips', 'advance_requests', 'attendance'];
+        return dedicatedCollection() || collectionName in ['hr_roles','product_batches','products','role_realms_of_operation','sales'];
       }
       function immutableFallbackIdentities() {
+        // Staff, clients and institutions are excluded before this helper runs;
+        // their dedicated rules retain their own immutable identity controls.
         let requestedMap = request.resource.data;
         let existingMap = resource.data;
-        return true
-        && (collectionName != 'staff' || !('employee_id' in existingMap)
-          || requestedMap.employee_id == existingMap.employee_id)
-        && (collectionName != 'staff' || !('staff_code' in existingMap)
-          || requestedMap.staff_code == existingMap.staff_code)
-        && (collectionName != 'clients' || !('patient_code' in existingMap)
-          || requestedMap.patient_code == existingMap.patient_code)
-        && (collectionName != 'prescribers' || !('prescriber_code' in existingMap)
-          || requestedMap.prescriber_code == existingMap.prescriber_code)
-        && (collectionName != 'institutions' || !('institution_code' in existingMap)
-          || requestedMap.institution_code == existingMap.institution_code);
+        return collectionName != 'prescribers' || !('prescriber_code' in existingMap)
+          || requestedMap.prescriber_code == existingMap.prescriber_code;
       }
-      allow read: if !dedicatedCollection() && !isProtectedFinanceCollection(collectionName)
+      allow read: if !dedicatedCollection()
         && isAuthenticated()
         && ((request.method == 'get' && resource == null) || isTenantMember(resource.data.tenantId));
-      allow write: if !dedicatedWriteCollection() && !isProtectedFinanceCollection(collectionName)
+      allow write: if !dedicatedWriteCollection()
         && (request.method == 'delete'
           ? (isAdmin() && isTenantMember(resource.data.tenantId))
           : (isTenantMember(request.resource.data.tenantId)

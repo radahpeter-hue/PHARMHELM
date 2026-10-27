@@ -18,8 +18,8 @@ const revisionRules = block(
 );
 
 const protectedHelper = block(
-  'function isProtectedFinanceCollection(collectionName)',
-  'function canViewProcurement()'
+  'function dedicatedCollection()',
+  'function dedicatedWriteCollection()'
 );
 
 test('POS V2 revision requests have a dedicated create-only client boundary', () => {
@@ -89,7 +89,7 @@ test('generic tenant fallback cannot reopen revision request reads, writes or de
   for (const line of genericAllows) {
     assert.match(
       line,
-      /!isProtectedFinanceCollection\(collectionName\)/,
+      /!(dedicatedCollection|dedicatedWriteCollection)\(\)/,
       `protected revision collection escaped generic boundary: ${line.trim()}`
     );
   }

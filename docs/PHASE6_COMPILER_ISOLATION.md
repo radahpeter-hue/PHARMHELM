@@ -9,3 +9,24 @@ The diagnostic workflow measures six inputs sequentially, using the unchanged ac
 Local validation: 783 unit tests pass, including parser coverage for nested paths, wildcard captures, quoted/commented permissions, exact partition and deny-all replacements. Application rules and release compactor are unchanged. Conclusions require the actual CI observations; none are invented in this record.
 
 Stopping rule: use this isolation evidence for one targeted simplification and actual runtime/compiled-size checks, or produce a reproducible compiler failure and explicit architecture/support decision. Subset success cannot replace whole-application certification.
+
+## Observed hosted results
+
+Run https://github.com/radahpeter-hue/PHARMHELM/actions/runs/40572417323 on da7b8a613201d4034ea479f1c87de0362b678507 completed the six observations. Evidence artifact: https://github.com/radahpeter-hue/PHARMHELM/actions/runs/40572417323/artifacts/12766046032 .
+
+| Input | Retained permissions | Actual release result | Seconds |
+|---|---:|---|---:|
+| All denied | 0 | Passed | 27.7 |
+| First half | 250 | HTTP 503 during source compilation | 54.3 |
+| Second half | 243 | HTTP 503 during source compilation | 55.3 |
+| Credit/POS/CRM | 60 | Passed | 27.9 |
+| Finance/payroll | 82 | Passed | 118.5 |
+| Generic fallback | 2 | Passed | 16.5 |
+
+This supports aggregate graph complexity/interactions rather than identifying a single invalid credit rule. It does not establish the vendor root cause, a Spark architectural impossibility or executable fit for the full source.
+
+## One targeted candidate
+
+Generic fallback repeats separate authority/dedicated/finance exclusion wrappers and checks immutable staff/client/institution fields even though all three collections are excluded from fallback writes. The candidate consolidates the exclusion predicate, removes duplicate write-only exclusions and retains only the reachable prescriber identity check. The original membership groups remain lazy; the finance exclusion can be evaluated earlier on the write path. No staff/debtor dedicated guard, role policy, branch check, financial posting relationship or account balance contract changes. A checked-in fixture from 9264674 proves identical read/write exclusion sets, including near-match and unknown collection names. Authenticated inventory and POS tests validate the runtime budget after the evaluation-order change.
+
+Local result: 785 unit tests, TypeScript, 59 authority probes, 19 credit-recognition scenarios, Management settlement/full POS corrections, ten inventory/procurement/identity suites, and Phase 5 authority/advance/reconciliation scripts all pass against generated rules. Phase 5 controlled Martin Pharma/Masaka acceptance passed all 20 financial scenarios. Generated full source is approximately 137,877 bytes, which is only a source measurement. The actual whole-application hosted gate and exact-head CI must still pass before milestone acceptance. If this one targeted candidate fails hosted validation, this bounded pass ends with the reproducible evidence above; do not restart unchanged retries or claim sign-off.
