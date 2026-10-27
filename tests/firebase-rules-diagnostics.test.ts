@@ -56,11 +56,11 @@ test('persistent quota exhaustion remains failure after bounded retries; creatio
   assert.equal(calls,method==='POST'?1:3);assert.deepEqual(delays,method==='POST'?[]:[120000,120000]);
  }
 });
-test('recovery filters recent metadata at the server and bounds pagination without accepting old records',async()=>{
+test('bounded recovery rejects old metadata without unsupported API filters',async()=>{
  const startedAt=Date.now(),urls:string[]=[];
  const result=await recoverOwnedCandidate({project:'p',token:'PRIVATE',rules:'exact',fileName:'firestore.rules',startedAt,log:()=>{},fetchImpl:async(url:any)=>{
   urls.push(String(url));return new Response(JSON.stringify({rulesets:[{name:'projects/p/rulesets/old',createTime:'2000-01-01T00:00:00Z'}],nextPageToken:'more'}),{status:200});
  }});
  assert.equal(result,null);assert.equal(urls.length,3);
- for(const url of urls)assert.equal(new URL(url).searchParams.get('filter'),'createTime > date('+JSON.stringify(new Date(startedAt-60000).toISOString())+')');
+ for(const url of urls)assert.equal(new URL(url).searchParams.has('filter'),false);
 });

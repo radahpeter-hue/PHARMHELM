@@ -48,10 +48,9 @@ export async function runInactiveCompilerControl({project,token,rules,mode,fetch
 /** Recover exact immutable source; separately prove ownership before any cleanup. */
 export async function recoverOwnedCandidate({project,token,rules,fileName,fileFingerprint=null,runOwnedFileName=false,allowSharedExactSource=false,startedAt,fetchImpl=globalThis.fetch,log=console.log}) {
  if(!Number.isFinite(startedAt))throw new Error('Invalid recovery start time.');
- const filter='createTime > date('+JSON.stringify(new Date(startedAt-60000).toISOString())+')';
  let pageToken='',pages=0;
  do {
-  const url=new URL(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`);url.searchParams.set('pageSize','100');url.searchParams.set('filter',filter);if(pageToken)url.searchParams.set('pageToken',pageToken);
+  const url=new URL(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`);url.searchParams.set('pageSize','100');if(pageToken)url.searchParams.set('pageToken',pageToken);
   const response=await fetchImpl(url,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
   if(!response.ok)return null;
   const result=await response.json();
