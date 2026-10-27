@@ -44,5 +44,5 @@ test('Firestore rules tie usage records and USAGE movements to the same Operatio
   assert.match(usageRule, /existsAfter\([\s\S]*operational_inventory_movements/);
   assert.match(usageRule, /allow update, delete: if false/);
   assert.match(rules, /function validUsageMovement\(item\)/);
-  assert.match(rules, /usage\.issuedAmount == -request\.resource\.data\.quantityDelta/);
+  assert.match(rules, /usage\.issuedAmount == -requestedMap\.quantityDelta/);
 });

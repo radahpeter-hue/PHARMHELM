@@ -95,7 +95,7 @@ test('context rules block missing or incompatible identities before review', () 
   assert.equal(validatePosV2RevisionDraftContext(draft, sale), null);
   assert.match(validatePosV2RevisionDraftContext({ ...draft, context: 'telepharmacy' }, sale) || '', /required/i);
   assert.match(validatePosV2RevisionDraftContext({ ...draft, context: 'institutional' }, sale) || '', /institution/i);
-  assert.match(validatePosV2RevisionDraftContext({ ...draft, paymentMethod: 'institutional_credit', patientId: 'client-1', patientName: 'Client' }, sale) || '', /eligible institution/i);
+  assert.equal(validatePosV2RevisionDraftContext({ ...draft, paymentMethod: 'institutional_credit', patientId: 'client-1', patientName: 'Client' }, sale), null);
   assert.match(validatePosV2RevisionDraftContext({ ...draft, context: 'walk-in', institutionId: 'historical-inst', institutionName: 'Historical' }, sale) || '', /remove the institution/i);
 });
 

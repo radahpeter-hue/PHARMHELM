@@ -208,18 +208,11 @@ service cloud.firestore {
     }
 
     function hasActiveStaffProfile() {
-      return isAuthenticated()
-        && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
-        && (
-          (
-            'active' in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data &&
-            get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.active == true
-          ) ||
-          (
-            'status' in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data &&
-            get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.status in ['active', 'Active', 'ACTIVE']
-          )
-        );
+      let path=/databases/$(database)/documents/staff/$(request.auth.uid);
+      let present=exists(path);
+      let staff=present ? get(path).data : {};
+      return isAuthenticated() && present && staff.get('active',true) == true
+        && staff.get('status',staff.get('active',false) == true ? 'active' : '') in ['active','Active','ACTIVE'];
     }
 
     function isPOSOperator() {
@@ -253,20 +246,21 @@ service cloud.firestore {
     }
 
     function isAtomicOriginalUpdate(saleId) {
+      let existingMap = resource.data;
       let next = request.resource.data;
       let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(next.revisionRequestId)).data;
       return isFreshAtomicRevision(next.revisionRequestId)
-        && resource.data.engineVersion == 2 && resource.data.status == 'completed'
-        && resource.data.get('revisionId', '') == '' && !resource.data.get('revisionLocked', false)
-        && resource.data.get('supersededBySaleId', '') == ''
-        && resource.data.createdAt is timestamp
-        && request.time >= resource.data.createdAt
-        && request.time - resource.data.createdAt <= duration.value(72, 'h')
+        && existingMap.engineVersion == 2 && existingMap.status == 'completed'
+        && existingMap.get('revisionId', '') == '' && !existingMap.get('revisionLocked', false)
+        && existingMap.get('supersededBySaleId', '') == ''
+        && existingMap.createdAt is timestamp
+        && request.time >= existingMap.createdAt
+        && request.time - existingMap.createdAt <= duration.value(72, 'h')
         && correction.originalSaleId == saleId
-        && correction.tenantId == resource.data.tenantId && correction.branchId == resource.data.branchId
-        && correction.originalTotal == resource.data.totalAmount
-        && correction.originalPaymentId == resource.data.canonicalPaymentId
-        && correction.originalOutboxEventId == resource.data.transactionOutboxEventId
+        && correction.tenantId == existingMap.tenantId && correction.branchId == existingMap.branchId
+        && correction.originalTotal == existingMap.totalAmount
+        && correction.originalPaymentId == existingMap.canonicalPaymentId
+        && correction.originalOutboxEventId == existingMap.transactionOutboxEventId
         && next.revisionId == correction.revisionId
         && next.revisionLifecycle == 'COMPLETED' && next.revisionLocked == true
         && next.supersededBySaleId == correction.replacementSaleId
@@ -275,8 +269,8 @@ service cloud.firestore {
         && next.revisionReason == correction.reason
         && next.revisionCompletedAt == request.time
         && (!correction.originalCreditPosted || atomicCreditCommit(correction))
-        && (!(correction.originalWelfarePosted || correction.welfareAmount > 0) || atomicWelfareCommit(correction, resource.data))
-        && next.diff(resource.data).affectedKeys().hasOnly([
+        && (!(correction.originalWelfarePosted || correction.welfareAmount > 0) || atomicWelfareCommit(correction, existingMap))
+        && next.diff(existingMap).affectedKeys().hasOnly([
           'revisionId', 'revisionRequestId', 'revisionLocked', 'revisionLifecycle',
           'pendingReplacementSaleId', 'supersededBySaleId', 'supersededByReceiptNumber',
           'revisionReason', 'revisionRequestedBy', 'revisionRequestedByName',
@@ -337,17 +331,18 @@ service cloud.firestore {
     }
 
     function atomicOutboxSupersession(eventId) {
+      let existingMap = resource.data;
       let next = request.resource.data;
       let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(next.revisionRequestId)).data;
       return isFreshAtomicRevision(next.revisionRequestId)
         && eventId == correction.originalOutboxEventId
-        && resource.data.saleId == correction.originalSaleId
-        && resource.data.paymentId == correction.originalPaymentId
-        && resource.data.tenantId == correction.tenantId && resource.data.branchId == correction.branchId
-        && resource.data.status != 'SUPERSEDED'
+        && existingMap.saleId == correction.originalSaleId
+        && existingMap.paymentId == correction.originalPaymentId
+        && existingMap.tenantId == correction.tenantId && existingMap.branchId == correction.branchId
+        && existingMap.status != 'SUPERSEDED'
         && next.status == 'SUPERSEDED' && next.supersededByEventId == correction.replacementOutboxEventId
         && next.leaseOwner == null && next.leaseExpiresAt == null
-        && next.diff(resource.data).affectedKeys().hasOnly(['status', 'supersededByEventId', 'revisionRequestId', 'leaseOwner', 'leaseExpiresAt', 'updatedAt']);
+        && next.diff(existingMap).affectedKeys().hasOnly(['status', 'supersededByEventId', 'revisionRequestId', 'leaseOwner', 'leaseExpiresAt', 'updatedAt']);
     }
 
     function canReadPosFinancial() {
@@ -359,32 +354,21 @@ service cloud.firestore {
         && isAssignedToBranch(sale.branchId);
     }
 
-    function atomicCreditCreate(receivableId) {
-      let row = request.resource.data;
-      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(row.atomicRevisionRequestId)).data;
-      let payment = getAfter(/databases/$(database)/documents/pos_payments/$(correction.replacementPaymentId)).data;
-      return isFreshAtomicRevision(row.atomicRevisionRequestId)
-        && receivableId == correction.replacementSaleId && row.receipt_id == receivableId
-        && row.tenantId == correction.tenantId && row.branch_id == correction.branchId
-        && row.paymentId == correction.replacementPaymentId && row.source == 'POS' && row.engineVersion == 2
-        && payment.paymentMethod == 'institutional_credit' && row.amount_ugx == payment.amount
-        && row.outstanding_ugx == row.amount_ugx && row.status == 'outstanding';
-    }
-
     function atomicCreditUpdate(receivableId) {
+      let existingMap = resource.data;
       let row = request.resource.data;
       let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(row.atomicRevisionRequestId)).data;
       let payment = get(/databases/$(database)/documents/pos_payments/$(correction.originalPaymentId)).data;
       return isFreshAtomicRevision(row.atomicRevisionRequestId)
-        && receivableId == correction.originalSaleId && resource.data.receipt_id == receivableId
-        && resource.data.tenantId == correction.tenantId && resource.data.branch_id == correction.branchId
+        && receivableId == correction.originalSaleId && existingMap.receipt_id == receivableId
+        && existingMap.tenantId == correction.tenantId && existingMap.branch_id == correction.branchId
         && payment.paymentMethod == 'institutional_credit'
-        && resource.data.amount_ugx == payment.amount && resource.data.outstanding_ugx == payment.amount
+        && existingMap.amount_ugx == payment.amount && existingMap.outstanding_ugx == payment.amount
         && row.outstanding_ugx == 0 && row.status == 'reversed'
         && row.revisionId == correction.revisionId
         && row.reversalId == correction.creditReversal.reversalId
         && getAfter(/databases/$(database)/documents/pos_credit_reversals/$(row.reversalId)).data.amountDelta == -payment.amount
-        && row.diff(resource.data).affectedKeys().hasOnly(['status', 'outstanding_ugx', 'reversalId', 'revisionId', 'reversedAmount', 'reversedAt', 'reversedBy', 'reversedByName', 'reversalReason', 'updatedAt', 'atomicRevisionRequestId']);
+        && row.diff(existingMap).affectedKeys().hasOnly(['status', 'outstanding_ugx', 'reversalId', 'revisionId', 'reversedAmount', 'reversedAt', 'reversedBy', 'reversedByName', 'reversalReason', 'updatedAt', 'atomicRevisionRequestId']);
     }
 
     function atomicWelfareRecord(recordId, collectionName) {
@@ -405,20 +389,21 @@ service cloud.firestore {
     }
 
     function atomicWelfareBalance(beneficiaryId) {
+      let existingMap = resource.data;
       let next = request.resource.data;
       let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(next.atomicRevisionRequestId)).data;
       let original = getAfter(/databases/$(database)/documents/sales/$(correction.originalSaleId)).data;
       let oldPayment = get(/databases/$(database)/documents/pos_payments/$(correction.originalPaymentId)).data;
       let oldAmount = correction.originalWelfarePosted ? -oldPayment.components[0].amount : 0;
-      let nextSpent = resource.data.get('welfare_spent', 0) + oldAmount + correction.welfareAmount;
+      let nextSpent = existingMap.get('welfare_spent', 0) + oldAmount + correction.welfareAmount;
       return isFreshAtomicRevision(next.atomicRevisionRequestId)
-        && resource.data.tenantId == correction.tenantId
+        && existingMap.tenantId == correction.tenantId
         && beneficiaryId == original.patientId
         && (correction.welfareAmount == 0 || beneficiaryId == correction.welfareBeneficiaryId)
         && next.welfare_spent == nextSpent && next.welfare_spent >= 0
-        && next.welfare_used_ytd == resource.data.get('welfare_used_ytd', 0) + oldAmount + correction.welfareAmount
+        && next.welfare_used_ytd == existingMap.get('welfare_used_ytd', 0) + oldAmount + correction.welfareAmount
         && next.welfare_used_ytd >= 0
-        && next.diff(resource.data).affectedKeys().hasOnly(['welfare_spent', 'welfare_used_ytd', 'updatedAt', 'atomicRevisionRequestId']);
+        && next.diff(existingMap).affectedKeys().hasOnly(['welfare_spent', 'welfare_used_ytd', 'updatedAt', 'atomicRevisionRequestId']);
     }
 
     function atomicFinancialPostingChain() {
@@ -520,15 +505,7 @@ service cloud.firestore {
       );
     }
 
-    function isProtectedFinanceCollection(collectionName) {
-      return collectionName in [
-        'finance_v2_transfers','finance_v2_events','finance_v2_account_movements','finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
-        'credit_receivables', 'supplier_payables', 'banking_records', 'welfare_records', 'staff', 'leave_requests',
-        'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
-        'petty_cash_ledger', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
-        'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
-      ];
-    }
+
 
     function canPostManagementCash() {
       return isAuthenticated() && (
@@ -762,12 +739,13 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/welfare_records/$(d.obligationId)/settlements/$(d.requestId)).data == d;
     }
     function welfareSettlementCreate(welfareCollection,sourceId,requestId) {
+      let requestedMap = request.resource.data;
       return isFinance()
-        && request.resource.data.kind == (welfareCollection == 'advance_requests' ? 'ADVANCE' : 'BENEFIT')
-        && request.resource.data.obligationId == sourceId && request.resource.data.requestId == requestId
-        && !exists(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId))
-        && getAfter(/databases/$(database)/documents/finance_v2_events/$(request.resource.data.eventId)).data == request.resource.data
-        && getAfter(/databases/$(database)/documents/finance_payment_accounts/$(request.resource.data.tenantId + '_' + request.resource.data.accountId)/payment_references/$(request.resource.data.externalReference)).data.eventId == request.resource.data.eventId;
+        && requestedMap.kind == (welfareCollection == 'advance_requests' ? 'ADVANCE' : 'BENEFIT')
+        && requestedMap.obligationId == sourceId && requestedMap.requestId == requestId
+        && !exists(/databases/$(database)/documents/finance_v2_events/$(requestedMap.eventId))
+        && getAfter(/databases/$(database)/documents/finance_v2_events/$(requestedMap.eventId)).data == requestedMap
+        && getAfter(/databases/$(database)/documents/finance_payment_accounts/$(requestedMap.tenantId + '_' + requestedMap.accountId)/payment_references/$(requestedMap.externalReference)).data.eventId == requestedMap.eventId;
     }
     function welfareHistoryScope(welfareCollection,sourceId) {
       let r=get(/databases/$(database)/documents/$(welfareCollection)/$(sourceId)).data;
@@ -1031,17 +1009,19 @@ service cloud.firestore {
 
     match /hiring_applications/{applicationId} {
       function isSupervisorPracticalAssessmentUpdate() {
+        let requestedMap = request.resource.data;
+        let existingMap = resource.data;
         return isPeopleSupervisor()
-          && isTenantMember(resource.data.tenantId)
-          && isTenantMember(request.resource.data.tenantId)
-          && request.resource.data.tenantId == resource.data.tenantId
-          && resource.data.status == 'practical_scheduled'
-          && request.resource.data.status == 'practical_completed'
-          && request.resource.data.practical_score is number
-          && request.resource.data.practical_score >= 0
-          && request.resource.data.practical_score <= 100
-          && request.resource.data.practical_assessed_by_user_id == request.auth.uid
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          && isTenantMember(existingMap.tenantId)
+          && isTenantMember(requestedMap.tenantId)
+          && requestedMap.tenantId == existingMap.tenantId
+          && existingMap.status == 'practical_scheduled'
+          && requestedMap.status == 'practical_completed'
+          && requestedMap.practical_score is number
+          && requestedMap.practical_score >= 0
+          && requestedMap.practical_score <= 100
+          && requestedMap.practical_assessed_by_user_id == request.auth.uid
+          && requestedMap.diff(existingMap).affectedKeys().hasOnly([
             'practical_score', 'status',
             'practical_assessed_by_user_id', 'practical_assessed_by_name', 'practical_assessed_by_role',
             'practical_assessed_at', 'practical_assessed_branch_id', 'updatedAt'
@@ -1049,14 +1029,16 @@ service cloud.firestore {
       }
 
       function isSupervisorTraineeAssessmentUpdate() {
+        let requestedMap = request.resource.data;
+        let existingMap = resource.data;
         return isPeopleSupervisor()
-          && isTenantMember(resource.data.tenantId)
-          && isTenantMember(request.resource.data.tenantId)
-          && request.resource.data.tenantId == resource.data.tenantId
-          && resource.data.status == 'training_accepted'
-          && request.resource.data.status == 'training_accepted'
-          && request.resource.data.training_assessment_last_by_user_id == request.auth.uid
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          && isTenantMember(existingMap.tenantId)
+          && isTenantMember(requestedMap.tenantId)
+          && requestedMap.tenantId == existingMap.tenantId
+          && existingMap.status == 'training_accepted'
+          && requestedMap.status == 'training_accepted'
+          && requestedMap.training_assessment_last_by_user_id == request.auth.uid
+          && requestedMap.diff(existingMap).affectedKeys().hasOnly([
             'week4_appraisal_score', 'week4_theory_score', 'week4_assessment_date',
             'week4_assessed_by_user_id', 'week4_assessed_by_name', 'week4_assessed_by_role', 'week4_assessed_at',
             'week8_appraisal_score', 'week8_theory_score', 'week8_assessment_date',
@@ -1066,17 +1048,17 @@ service cloud.firestore {
             'training_assessment_last_by_user_id', 'training_assessment_last_by_name',
             'training_assessment_last_by_role', 'training_assessment_last_at', 'updatedAt'
           ])
-          && request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          && requestedMap.diff(existingMap).affectedKeys().hasAny([
             'week4_appraisal_score', 'week4_theory_score',
             'week8_appraisal_score', 'week8_theory_score',
             'week12_appraisal_score', 'week12_theory_score'
           ])
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_appraisal_score']) || (request.resource.data.week4_appraisal_score is number && request.resource.data.week4_appraisal_score >= 0 && request.resource.data.week4_appraisal_score <= 100))
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week4_theory_score']) || (request.resource.data.week4_theory_score is number && request.resource.data.week4_theory_score >= 0 && request.resource.data.week4_theory_score <= 100))
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_appraisal_score']) || (request.resource.data.week8_appraisal_score is number && request.resource.data.week8_appraisal_score >= 0 && request.resource.data.week8_appraisal_score <= 100))
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week8_theory_score']) || (request.resource.data.week8_theory_score is number && request.resource.data.week8_theory_score >= 0 && request.resource.data.week8_theory_score <= 100))
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_appraisal_score']) || (request.resource.data.week12_appraisal_score is number && request.resource.data.week12_appraisal_score >= 0 && request.resource.data.week12_appraisal_score <= 100))
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['week12_theory_score']) || (request.resource.data.week12_theory_score is number && request.resource.data.week12_theory_score >= 0 && request.resource.data.week12_theory_score <= 100));
+          && (!requestedMap.diff(existingMap).affectedKeys().hasAny(['week4_appraisal_score']) || (requestedMap.week4_appraisal_score is number && requestedMap.week4_appraisal_score >= 0 && requestedMap.week4_appraisal_score <= 100))
+          && (!requestedMap.diff(existingMap).affectedKeys().hasAny(['week4_theory_score']) || (requestedMap.week4_theory_score is number && requestedMap.week4_theory_score >= 0 && requestedMap.week4_theory_score <= 100))
+          && (!requestedMap.diff(existingMap).affectedKeys().hasAny(['week8_appraisal_score']) || (requestedMap.week8_appraisal_score is number && requestedMap.week8_appraisal_score >= 0 && requestedMap.week8_appraisal_score <= 100))
+          && (!requestedMap.diff(existingMap).affectedKeys().hasAny(['week8_theory_score']) || (requestedMap.week8_theory_score is number && requestedMap.week8_theory_score >= 0 && requestedMap.week8_theory_score <= 100))
+          && (!requestedMap.diff(existingMap).affectedKeys().hasAny(['week12_appraisal_score']) || (requestedMap.week12_appraisal_score is number && requestedMap.week12_appraisal_score >= 0 && requestedMap.week12_appraisal_score <= 100))
+          && (!requestedMap.diff(existingMap).affectedKeys().hasAny(['week12_theory_score']) || (requestedMap.week12_theory_score is number && requestedMap.week12_theory_score >= 0 && requestedMap.week12_theory_score <= 100));
       }
 
       allow read: if isTenantMember(resource.data.tenantId) && (
@@ -1125,9 +1107,10 @@ service cloud.firestore {
     // Platform tenant numbering and tenant-scoped branch numbering remain separate.
     match /identity_sequence_counters/{counterId} {
       function validIncrement() {
-        return request.resource.data.lastSequence is int
-          && request.resource.data.lastSequence > 0
-          && request.resource.data.updatedAt is string;
+        let requestedMap = request.resource.data;
+        return requestedMap.lastSequence is int
+          && requestedMap.lastSequence > 0
+          && requestedMap.updatedAt is string;
       }
       function platformCounter() {
         return counterId == 'platform_tenants'
@@ -1136,20 +1119,22 @@ service cloud.firestore {
           && isPlatformAdmin();
       }
       function branchCounter() {
-        return request.resource.data.kind == 'branches'
-          && request.resource.data.tenantId is string
-          && counterId == request.resource.data.tenantId + '_branches'
+        let requestedMap = request.resource.data;
+        return requestedMap.kind == 'branches'
+          && requestedMap.tenantId is string
+          && counterId == requestedMap.tenantId + '_branches'
           && isCEO()
-          && isTenantMember(request.resource.data.tenantId);
+          && isTenantMember(requestedMap.tenantId);
       }
       function scopedCounter() {
-        return request.resource.data.kind in ['patients', 'prescribers', 'institutions', 'products', 'staff', 'operational_assets', 'operational_consumables']
-          && request.resource.data.tenantId is string
-          && counterId == request.resource.data.tenantId + '_' + request.resource.data.kind
-          && isTenantMember(request.resource.data.tenantId)
-          && (request.resource.data.kind == 'staff'
+        let requestedMap = request.resource.data;
+        return requestedMap.kind in ['patients', 'prescribers', 'institutions', 'products', 'staff', 'operational_assets', 'operational_consumables']
+          && requestedMap.tenantId is string
+          && counterId == requestedMap.tenantId + '_' + requestedMap.kind
+          && isTenantMember(requestedMap.tenantId)
+          && (requestedMap.kind == 'staff'
             ? (isHR() || isIT())
-            : request.resource.data.kind in ['products', 'operational_assets', 'operational_consumables']
+            : requestedMap.kind in ['products', 'operational_assets', 'operational_consumables']
               ? isInventoryOperator()
               : isAuthenticated());
       }
@@ -1182,14 +1167,15 @@ service cloud.firestore {
 
     match /branches/{branchId} {
       function hasValidBranchShape() {
-        return request.resource.data.keys().hasAll([
+        let requestedMap = request.resource.data;
+        return requestedMap.keys().hasAll([
           'tenantId', 'name', 'branch_code', 'type', 'address', 'phone',
           'status', 'created_at', 'created_by'
         ])
-        && request.resource.data.tenantId is string
-        && request.resource.data.name is string
-        && request.resource.data.branch_code is string
-        && request.resource.data.status in ['Active', 'Inactive', 'Closed'];
+        && requestedMap.tenantId is string
+        && requestedMap.name is string
+        && requestedMap.branch_code is string
+        && requestedMap.status in ['Active', 'Inactive', 'Closed'];
       }
 
       // Checkout and quotation validation point-read missing branch IDs before
@@ -1255,24 +1241,26 @@ service cloud.firestore {
       allow delete: if false;
     }
     function validHrRequestReview() {
-      return isTenantMember(resource.data.tenantId)
-        && isAssignedToBranch(get(/databases/$(database)/documents/staff/$(resource.data.staffId)).data.branch_id)
-        && request.auth.uid != resource.data.staffId
-        && request.resource.data.tenantId == resource.data.tenantId && resource.data.status == 'Pending'
-        && request.resource.data.updatedAt == request.time
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hr_approval_status','hr_notes','hr_reviewed_by','hr_reviewed_at','ceo_approval_status','ceo_notes','ceo_reviewed_by','ceo_reviewed_at','status','updatedAt'])
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['hr_approval_status','hr_notes','hr_reviewed_by','hr_reviewed_at'])
-          || (isHR() && request.resource.data.hr_reviewed_by == request.auth.uid && request.resource.data.hr_approval_status in ['Approved','Rejected']
-            && resource.data.hr_approval_status == 'Pending' && request.resource.data.hr_reviewed_at == request.time
-            && resource.data.get('ceo_reviewed_by','') != request.auth.uid))
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['ceo_approval_status','ceo_notes','ceo_reviewed_by','ceo_reviewed_at'])
-          || (isCEO() && request.resource.data.ceo_reviewed_by == request.auth.uid && request.resource.data.ceo_approval_status in ['Approved','Rejected']
-            && resource.data.ceo_approval_status == 'Pending' && request.resource.data.ceo_reviewed_at == request.time
-            && resource.data.get('hr_reviewed_by','') != request.auth.uid))
-        && request.resource.data.get('hr_reviewed_by','') != request.resource.data.get('ceo_reviewed_by','')
-        && request.resource.data.hr_approval_status in ['Pending','Approved','Rejected'] && request.resource.data.ceo_approval_status in ['Pending','Approved','Rejected']
-        && request.resource.data.status == (request.resource.data.hr_approval_status == 'Rejected' || request.resource.data.ceo_approval_status == 'Rejected' ? 'Rejected'
-          : (request.resource.data.hr_approval_status == 'Approved' && request.resource.data.ceo_approval_status == 'Approved' ? 'Approved' : 'Pending'));
+      let requestedMap = request.resource.data;
+      let existingMap = resource.data;
+      return isTenantMember(existingMap.tenantId)
+        && isAssignedToBranch(get(/databases/$(database)/documents/staff/$(existingMap.staffId)).data.branch_id)
+        && request.auth.uid != existingMap.staffId
+        && requestedMap.tenantId == existingMap.tenantId && existingMap.status == 'Pending'
+        && requestedMap.updatedAt == request.time
+        && requestedMap.diff(existingMap).affectedKeys().hasOnly(['hr_approval_status','hr_notes','hr_reviewed_by','hr_reviewed_at','ceo_approval_status','ceo_notes','ceo_reviewed_by','ceo_reviewed_at','status','updatedAt'])
+        && (!requestedMap.diff(existingMap).affectedKeys().hasAny(['hr_approval_status','hr_notes','hr_reviewed_by','hr_reviewed_at'])
+          || (isHR() && requestedMap.hr_reviewed_by == request.auth.uid && requestedMap.hr_approval_status in ['Approved','Rejected']
+            && existingMap.hr_approval_status == 'Pending' && requestedMap.hr_reviewed_at == request.time
+            && existingMap.get('ceo_reviewed_by','') != request.auth.uid))
+        && (!requestedMap.diff(existingMap).affectedKeys().hasAny(['ceo_approval_status','ceo_notes','ceo_reviewed_by','ceo_reviewed_at'])
+          || (isCEO() && requestedMap.ceo_reviewed_by == request.auth.uid && requestedMap.ceo_approval_status in ['Approved','Rejected']
+            && existingMap.ceo_approval_status == 'Pending' && requestedMap.ceo_reviewed_at == request.time
+            && existingMap.get('hr_reviewed_by','') != request.auth.uid))
+        && requestedMap.get('hr_reviewed_by','') != requestedMap.get('ceo_reviewed_by','')
+        && requestedMap.hr_approval_status in ['Pending','Approved','Rejected'] && requestedMap.ceo_approval_status in ['Pending','Approved','Rejected']
+        && requestedMap.status == (requestedMap.hr_approval_status == 'Rejected' || requestedMap.ceo_approval_status == 'Rejected' ? 'Rejected'
+          : (requestedMap.hr_approval_status == 'Approved' && requestedMap.ceo_approval_status == 'Approved' ? 'Approved' : 'Pending'));
     }
 
     // Salary accrual uses an exact HR-approved snapshot, never a browser review flag.
@@ -1826,21 +1814,116 @@ service cloud.firestore {
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
+    function isCreditMethod(method) {
+      return method in ['institutional_credit','credit','insurance'];
+    }
+    function validCreditComponents(payment) {
+      let c = payment.components;
+      let credit = {'method':payment.paymentMethod,'amount':payment.outstandingAmount,'settledAmount':0,'outstandingAmount':payment.outstandingAmount,'status':'unpaid'};
+      return payment.amount is int && payment.amount > 0 && payment.amount <= 9007199254740991
+        && payment.outstandingAmount is int && payment.outstandingAmount > 0
+        && payment.settledAmount is int && payment.settledAmount >= 0
+        && payment.settledAmount + payment.outstandingAmount == payment.amount
+        && (payment.settledAmount == 0 ? payment.status == 'unpaid' && c == [credit]
+          : (payment.status == 'partially_settled' && c.size() == 2
+            && c[1].method in ['cash','mtn_momo','airtel_money']
+            && c == [credit,{'method':c[1].method,'amount':payment.settledAmount,'settledAmount':payment.settledAmount,'outstandingAmount':0,'status':'settled'}]));
+    }
+    function creditSaleMatchesPayment(sale, payment) {
+      return sale.paymentMethod == payment.paymentMethod
+        && sale.get('institutionId',null) == payment.get('institutionId',null)
+        && sale.get('patientId',null) == payment.get('patientId',null)
+        && sale.get('clientId',null) == payment.get('customerId',null)
+        && (payment.components.size() == 1 ? sale.get('secondaryPaymentMethod',null) == null
+          : (sale.secondaryPaymentMethod == payment.components[1].method && sale.secondaryAmount == payment.components[1].amount));
+    }
+    function creditPaymentRecognized(id, payment) {
+      return !isCreditMethod(payment.paymentMethod) || (validCreditComponents(payment)
+        && getAfter(/databases/$(database)/documents/credit_receivables/$(payment.saleId)).data.paymentId == id
+        && getAfter(/databases/$(database)/documents/credit_receivables/$(payment.saleId)).data.controlVersion == 2);
+    }
+    function creditMaster(row) {
+      return row.debtorType == 'institution'
+        ? get(/databases/$(database)/documents/institutions/$(row.debtorId)).data
+        : get(/databases/$(database)/documents/clients/$(row.debtorId)).data;
+    }
+    function validCreditDebtor(row, sale) {
+      let master = creditMaster(row);
+      let institution = sale.get('institutionId', null);
+      let client = sale.get('patientId', sale.get('clientId', null));
+      return row.debtorType in ['client','institution'] && row.debtorId is string
+        && row.debtorId == (institution != null ? institution : client)
+        && row.debtorType == (institution != null ? 'institution' : 'client')
+        && row.institution_id == institution && row.client_id == client
+        && master.tenantId == row.tenantId
+        && master.get('care_status',master.get('status','active')) in ['active','Active']
+        && master.get('active',true) == true && master.get('isActive',true) == true
+        && master.get('billingEligible',true) == true && master.get('billing_eligible',true) == true
+        && master.get('creditEligible',true) == true && master.get('credit_eligible',true) == true
+        && master.get('branch_id',row.branch_id) == row.branch_id && master.get('branchId',row.branch_id) == row.branch_id
+        && (row.debtorType == 'institution' ? master.get('role','billable') in ['billable','both'] : master.get('billing_type','self-pay') != 'institutional-pay')
+        && row.client_name == (row.debtorType == 'institution'
+          ? master.get('supplier_name',master.get('institution_name',master.get('name','')))
+          : master.get('full_name',master.get('fullName',master.get('name',''))))
+        && row.client_name != '' && row.credit_terms == master.get('payment_terms',null)
+        && (institution == null || client == null || validCreditClient(client, institution, row.tenantId));
+    }
+    function validCreditClient(clientId, institutionId, tenantId) {
+      let client = get(/databases/$(database)/documents/clients/$(clientId)).data;
+      return client.tenantId == tenantId && (client.get('billing_type','self-pay') != 'institutional-pay' || client.institution_to_bill_id == institutionId);
+    }
+    function validCreditRecognition(id, row) {
+      let sale = getAfter(/databases/$(database)/documents/sales/$(id)).data;
+      let payment = getAfter(/databases/$(database)/documents/pos_payments/$(row.paymentId)).data;
+      return isAuthenticated() && row.tenantId == getUserData().tenantId && isAssignedToBranch(row.branch_id)
+        && !exists(/databases/$(database)/documents/sales/$(id))
+        && row.keys().hasOnly(['tenantId','branch_id','receipt_id','paymentId','invoice_number','debtorType','debtorId','client_id','institution_id','client_name','invoice_amount_ugx','amount_ugx','outstanding_ugx','status','credit_terms','due_date','created_at','recognizedBy','source','engineVersion','controlVersion','currency','createdAt','updatedAt','atomicRevisionRequestId'])
+        && row.controlVersion == 2 && row.engineVersion == 2 && row.source == 'POS' && row.currency == 'UGX'
+        && row.receipt_id == id && row.recognizedBy == request.auth.uid
+        && row.createdAt == request.time && row.updatedAt == request.time && row.due_date == null
+        && sale.engineVersion == 2 && sale.status == 'completed' && sale.inventoryPosted == true
+        && sale.tenantId == row.tenantId && sale.branchId == row.branch_id && sale.canonicalPaymentId == row.paymentId
+        && row.invoice_number == sale.receiptNumber && row.created_at == sale.timestamp
+        && sale.totalAmount == row.invoice_amount_ugx && payment.amount == row.invoice_amount_ugx
+        && payment.saleId == id && payment.tenantId == row.tenantId && payment.branchId == row.branch_id
+        && payment.paymentId == row.paymentId && isCreditMethod(payment.paymentMethod)
+        && !exists(/databases/$(database)/documents/pos_payments/$(row.paymentId))
+        && row.amount_ugx == payment.outstandingAmount && row.outstanding_ugx == row.amount_ugx && row.status == 'outstanding'
+        && validCreditDebtor(row, sale);
+    }
+    function canReadCredit(row) {
+      return hasActiveStaffProfile() && row.tenantId == getUserData().tenantId
+        && isAssignedToBranch(row.get('branch_id',row.get('branchId','HQ')))
+        && (hasAnyRole(['owner','Owner','CEO','ceo','CEO / MD','ceo / md','Finance Head','Finance Officer','Accountant','Pharmacist','pharmacist','Dispenser','dispenser','Branch Manager','branch manager','Cashier','cashier','IT Head','IT Support Staff','IT Support Personnel','IT Staff'])
+          || hasCustomModuleView('clients') || hasCustomModuleView('finance') || hasCustomModuleFunctional('sales'));
+    }
+    // Preserve the independently tested legacy bank pathway, but require its
+    // fresh immutable bank movement. V2 receivables await milestone 6.2.
+    function validLegacyCreditReceipt(id, before, after) {
+      let movement = getAfter(/databases/$(database)/documents/banking_records/$(after.lastReceiptMovementId)).data;
+      let transfer = getAfter(/databases/$(database)/documents/cashTransfers/$(movement.transferId)).data;
+      return before.get('controlVersion',0) != 2 && hasActiveStaffProfile() && isFinance() && isTenantMember(before.tenantId)
+        && isAssignedToBranch(before.get('branch_id',before.get('branchId','HQ')))
+        && after.diff(before).affectedKeys().hasOnly(['outstanding_ugx','status','lastProcessedAt','lastReceiptMovementId'])
+        && !exists(/databases/$(database)/documents/banking_records/$(after.lastReceiptMovementId))
+        && before.outstanding_ugx is int && after.outstanding_ugx is int && after.outstanding_ugx >= 0
+        && movement.type == 'incoming' && movement.amount == before.outstanding_ugx - after.outstanding_ugx
+        && movement.tenantId == before.tenantId && movement.postedBy == request.auth.uid
+        && transfer.receivableId == id && transfer.amount == movement.amount
+        && after.status == (after.outstanding_ugx == 0 ? 'paid' : 'outstanding');
+    }
     match /credit_receivables/{receivableId} {
-      allow get: if isAuthenticated() && ((resource == null && isPOSOperator()) || canReadPosFinancial());
-      allow create: if atomicCreditCreate(receivableId);
-      allow update: if atomicCreditUpdate(receivableId);
-      allow read: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isFinance() && isTenantMember(resource.data.tenantId)
-        && isTenantMember(request.resource.data.tenantId)
-        && request.resource.data.tenantId == resource.data.tenantId;
-      allow delete: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow get: if isAuthenticated() && ((resource == null && isPOSOperator()) || canReadCredit(resource.data));
+      allow list: if canReadCredit(resource.data);
+      allow create: if validCreditRecognition(receivableId,request.resource.data);
+      allow update: if atomicCreditUpdate(receivableId) || validLegacyCreditReceipt(receivableId,resource.data,request.resource.data);
+      allow delete: if false;
     }
 
     match /supplier_payables/{payableId} {
       allow read: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
+      // Unused legacy balances remain readable; no direct client financial writer is certified.
+      allow write: if false;
     }
 
     match /banking_records/{recordId} {
@@ -1852,17 +1935,20 @@ service cloud.firestore {
 
     match /client_credit_ledger/{entryId} {
       allow read: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
+      // Unused legacy balances remain readable; no direct client financial writer is certified.
+      allow write: if false;
     }
 
     match /institution_credit_ledger/{entryId} {
       allow read: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
+      // Unused legacy balances remain readable; no direct client financial writer is certified.
+      allow write: if false;
     }
 
     match /supplier_credit_ledger/{entryId} {
       allow read: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow write: if isFinance();
+      // Unused legacy balances remain readable; no direct client financial writer is certified.
+      allow write: if false;
     }
 
     match /creditPayments/{paymentId} {
@@ -2057,12 +2143,13 @@ service cloud.firestore {
 
     match /operational_inventory_masters/{masterItemId} {
       function hasIdentityClaim() {
-        let claimId = operationalIdentityClaimId(request.resource.data);
+        let requestedMap = request.resource.data;
+        let claimId = operationalIdentityClaimId(requestedMap);
         let claim = /databases/$(database)/documents/operational_inventory_identity_claims/$(claimId);
-        return operationalIdentityReady(request.resource.data.tenantId)
-          && request.resource.data.unitPerPack is int && request.resource.data.unitPerPack > 0
-          && request.resource.data.identityClaimId == claimId
-          && existsAfter(claim) && getAfter(claim).data.tenantId == request.resource.data.tenantId
+        return operationalIdentityReady(requestedMap.tenantId)
+          && requestedMap.unitPerPack is int && requestedMap.unitPerPack > 0
+          && requestedMap.identityClaimId == claimId
+          && existsAfter(claim) && getAfter(claim).data.tenantId == requestedMap.tenantId
           && getAfter(claim).data.masterItemId == masterItemId;
       }
       // Client transactions read their deterministic target documents before
@@ -2100,42 +2187,46 @@ service cloud.firestore {
 
     match /operational_inventory/{itemId} {
       function hasOperationalMaster() {
-        let masterPath = /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.masterItemId);
-        return request.resource.data.masterItemId is string
-          && operationalIdentityReady(request.resource.data.tenantId)
+        let requestedMap = request.resource.data;
+        let masterPath = /databases/$(database)/documents/operational_inventory_masters/$(requestedMap.masterItemId);
+        return requestedMap.masterItemId is string
+          && operationalIdentityReady(requestedMap.tenantId)
           && existsAfter(masterPath)
-          && getAfter(masterPath).data.tenantId == request.resource.data.tenantId
+          && getAfter(masterPath).data.tenantId == requestedMap.tenantId
           && getAfter(masterPath).data.inventoryClass == 'OPERATIONAL'
-          && getAfter(masterPath).data.operationalType == request.resource.data.operationalType
-          && operationalIdentityFingerprint(getAfter(masterPath).data) == operationalIdentityFingerprint(request.resource.data);
+          && getAfter(masterPath).data.operationalType == requestedMap.operationalType
+          && operationalIdentityFingerprint(getAfter(masterPath).data) == operationalIdentityFingerprint(requestedMap);
       }
       function hasMatchingOperationalMovement() {
-        let movementId = request.resource.data.lastMovementId;
+        let requestedMap = request.resource.data;
+        let existingMap = resource.data;
+        let movementId = requestedMap.lastMovementId;
         let movementPath = /databases/$(database)/documents/operational_inventory_movements/$(movementId);
         let movement = getAfter(movementPath).data;
         return movementId is string
           && existsAfter(movementPath)
-          && movement.tenantId == resource.data.tenantId
+          && movement.tenantId == existingMap.tenantId
           && movement.inventoryClass == 'OPERATIONAL'
           && movement.itemId == itemId
-          && movement.locationId == (resource.data.branchId == 'HQ' ? 'HQ_OPERATIONAL' : 'BRANCH_' + resource.data.branchId)
-          && movement.balanceBefore == resource.data.quantityInStock
-          && movement.balanceAfter == request.resource.data.quantityInStock
-          && movement.quantityDelta == request.resource.data.quantityInStock - resource.data.quantityInStock;
+          && movement.locationId == (existingMap.branchId == 'HQ' ? 'HQ_OPERATIONAL' : 'BRANCH_' + existingMap.branchId)
+          && movement.balanceBefore == existingMap.quantityInStock
+          && movement.balanceAfter == requestedMap.quantityInStock
+          && movement.quantityDelta == requestedMap.quantityInStock - existingMap.quantityInStock;
       }
       function hasOpeningOperationalMovement() {
-        let movementId = request.resource.data.lastMovementId;
+        let requestedMap = request.resource.data;
+        let movementId = requestedMap.lastMovementId;
         let movementPath = /databases/$(database)/documents/operational_inventory_movements/$(movementId);
-        return request.resource.data.quantityInStock == 0
+        return requestedMap.quantityInStock == 0
           || (movementId is string
             && existsAfter(movementPath)
-            && getAfter(movementPath).data.tenantId == request.resource.data.tenantId
+            && getAfter(movementPath).data.tenantId == requestedMap.tenantId
             && getAfter(movementPath).data.inventoryClass == 'OPERATIONAL'
             && getAfter(movementPath).data.itemId == itemId
             && getAfter(movementPath).data.movementType == 'ADJUSTMENT'
             && getAfter(movementPath).data.balanceBefore == 0
-            && getAfter(movementPath).data.balanceAfter == request.resource.data.quantityInStock
-            && getAfter(movementPath).data.quantityDelta == request.resource.data.quantityInStock
+            && getAfter(movementPath).data.balanceAfter == requestedMap.quantityInStock
+            && getAfter(movementPath).data.quantityDelta == requestedMap.quantityInStock
             && getAfter(movementPath).data.actorId == request.auth.uid);
       }
       allow get: if isAuthenticated()
@@ -2191,21 +2282,22 @@ service cloud.firestore {
         return /databases/$(database)/documents/operational_inventory_usage/$(request.resource.data.get('sourceTransactionId', ''));
       }
       function validUsageMovement(item) {
+        let requestedMap = request.resource.data;
         let usage = getAfter(usagePath()).data;
-        return request.resource.data.movementType == 'USAGE'
-          && request.resource.data.quantityDelta < 0
-          && request.resource.data.sourceTransactionId is string
-          && request.resource.data.sourceLineId == request.resource.data.sourceTransactionId
+        return requestedMap.movementType == 'USAGE'
+          && requestedMap.quantityDelta < 0
+          && requestedMap.sourceTransactionId is string
+          && requestedMap.sourceLineId == requestedMap.sourceTransactionId
           && existsAfter(usagePath())
-          && usage.tenantId == request.resource.data.tenantId
+          && usage.tenantId == requestedMap.tenantId
           && usage.inventoryClass == 'OPERATIONAL'
           && usage.operationalType == 'CONSUMABLE_OPERATIONAL'
-          && usage.inventoryId == request.resource.data.itemId
+          && usage.inventoryId == requestedMap.itemId
           && usage.branchId == item.branchId
-          && usage.movementId == 'opm_' + request.resource.data.idempotencyKey
-          && usage.issuedAmount == -request.resource.data.quantityDelta
-          && usage.staffId == request.resource.data.actorId
-          && usage.reference == request.resource.data.reference;
+          && usage.movementId == 'opm_' + requestedMap.idempotencyKey
+          && usage.issuedAmount == -requestedMap.quantityDelta
+          && usage.staffId == requestedMap.actorId
+          && usage.reference == requestedMap.reference;
       }
       function validTransferMovement(item) {
         let transferPathValue = transferPath();
@@ -2968,42 +3060,44 @@ service cloud.firestore {
         return /databases/$(database)/documents/stock_orders/$(request.resource.data.order_id);
       }
       function hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath) {
+        let requestedMap = request.resource.data;
         let item = get(operationalItemPath).data;
         let master = get(operationalMasterPath).data;
         let order = getAfter(orderPath).data;
-        return request.resource.data.masterItemId is string
-          && request.resource.data.masterItemId == item.get('masterItemId', '')
-          && master.tenantId == request.resource.data.tenantId
+        return requestedMap.masterItemId is string
+          && requestedMap.masterItemId == item.get('masterItemId', '')
+          && master.tenantId == requestedMap.tenantId
           && master.inventoryClass == 'OPERATIONAL'
           && item.branchId == order.requesting_branch_id
           && (order.requesting_branch_id != 'HQ'
-            || (item.branchId == 'HQ' && master.hqLocationItemId == request.resource.data.product_id));
+            || (item.branchId == 'HQ' && master.hqLocationItemId == requestedMap.product_id));
       }
       function hasValidLineClass(requireExplicitClass) {
+        let requestedMap = request.resource.data;
         let orderPath = parentOrderPath();
-        let operationalItemPath = /databases/$(database)/documents/operational_inventory/$(request.resource.data.product_id);
-        let operationalMasterPath = /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.get('masterItemId', ''));
-        let sellableItemPath = /databases/$(database)/documents/products/$(request.resource.data.product_id);
+        let operationalItemPath = /databases/$(database)/documents/operational_inventory/$(requestedMap.product_id);
+        let operationalMasterPath = /databases/$(database)/documents/operational_inventory_masters/$(requestedMap.get('masterItemId', ''));
+        let sellableItemPath = /databases/$(database)/documents/products/$(requestedMap.product_id);
         return existsAfter(orderPath)
-          && getAfter(orderPath).data.tenantId == request.resource.data.tenantId
+          && getAfter(orderPath).data.tenantId == requestedMap.tenantId
           && (
             (
               isOperationalOrderData(getAfter(orderPath).data)
-              && isOperationalInventoryEnabled(request.resource.data.tenantId)
-              && (!requireExplicitClass || request.resource.data.inventoryClass == 'OPERATIONAL')
-              && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'OPERATIONAL')
+              && isOperationalInventoryEnabled(requestedMap.tenantId)
+              && (!requireExplicitClass || requestedMap.inventoryClass == 'OPERATIONAL')
+              && (!('inventoryClass' in requestedMap) || requestedMap.inventoryClass == 'OPERATIONAL')
               && exists(operationalItemPath)
-              && get(operationalItemPath).data.tenantId == request.resource.data.tenantId
+              && get(operationalItemPath).data.tenantId == requestedMap.tenantId
               && get(operationalItemPath).data.inventoryClass == 'OPERATIONAL'
-              && (!(requireExplicitClass || ('masterItemId' in request.resource.data))
+              && (!(requireExplicitClass || ('masterItemId' in requestedMap))
                 || hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath))
             )
             || (
               !isOperationalOrderData(getAfter(orderPath).data)
-              && (!requireExplicitClass || request.resource.data.inventoryClass == 'SELLABLE')
-              && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'SELLABLE')
+              && (!requireExplicitClass || requestedMap.inventoryClass == 'SELLABLE')
+              && (!('inventoryClass' in requestedMap) || requestedMap.inventoryClass == 'SELLABLE')
               && exists(sellableItemPath)
-              && get(sellableItemPath).data.tenantId == request.resource.data.tenantId
+              && get(sellableItemPath).data.tenantId == requestedMap.tenantId
               && get(sellableItemPath).data.get('inventoryClass', 'SELLABLE') == 'SELLABLE'
               && get(sellableItemPath).data.get('category', '') != 'non_sellable'
               && get(sellableItemPath).data.get('isOperational', false) != true
@@ -3158,22 +3252,23 @@ service cloud.firestore {
         return /databases/$(database)/documents/transfer_invoices/$(request.resource.data.transfer_id);
       }
       function validTransferLineClass(requireExplicitClass) {
+        let requestedMap = request.resource.data;
         let invoicePath = transferPath();
-        let operationalItemPath = /databases/$(database)/documents/operational_inventory/$(request.resource.data.product_id);
-        let sellableItemPath = /databases/$(database)/documents/products/$(request.resource.data.product_id);
+        let operationalItemPath = /databases/$(database)/documents/operational_inventory/$(requestedMap.product_id);
+        let sellableItemPath = /databases/$(database)/documents/products/$(requestedMap.product_id);
         return existsAfter(invoicePath)
-          && getAfter(invoicePath).data.tenantId == request.resource.data.tenantId
+          && getAfter(invoicePath).data.tenantId == requestedMap.tenantId
           && ((isOperationalTransfer(getAfter(invoicePath).data)
-              && isOperationalInventoryEnabled(request.resource.data.tenantId)
-              && (!requireExplicitClass || request.resource.data.inventoryClass == 'OPERATIONAL')
-              && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'OPERATIONAL')
+              && isOperationalInventoryEnabled(requestedMap.tenantId)
+              && (!requireExplicitClass || requestedMap.inventoryClass == 'OPERATIONAL')
+              && (!('inventoryClass' in requestedMap) || requestedMap.inventoryClass == 'OPERATIONAL')
               && exists(operationalItemPath)
-              && get(operationalItemPath).data.tenantId == request.resource.data.tenantId)
+              && get(operationalItemPath).data.tenantId == requestedMap.tenantId)
             || (!isOperationalTransfer(getAfter(invoicePath).data)
-              && (!requireExplicitClass || request.resource.data.inventoryClass == 'SELLABLE')
-              && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'SELLABLE')
+              && (!requireExplicitClass || requestedMap.inventoryClass == 'SELLABLE')
+              && (!('inventoryClass' in requestedMap) || requestedMap.inventoryClass == 'SELLABLE')
               && exists(sellableItemPath)
-              && get(sellableItemPath).data.tenantId == request.resource.data.tenantId));
+              && get(sellableItemPath).data.tenantId == requestedMap.tenantId));
       }
       allow read: if isTenantMember(resource.data.tenantId);
       allow create: if (isStockOperator() || (
@@ -3287,7 +3382,8 @@ service cloud.firestore {
           && sale.receiptNumber == payment.receiptNumber
           && sale.checkoutAttemptId == payment.checkoutAttemptId
           && sale.totalAmount == payment.amount
-          && sale.canonicalPaymentId == paymentId;
+          && sale.canonicalPaymentId == paymentId
+          && (!isCreditMethod(payment.paymentMethod) || creditSaleMatchesPayment(sale,payment));
       }
 
       allow get: if isAuthenticated()
@@ -3298,7 +3394,7 @@ service cloud.firestore {
         && isTenantMember(request.resource.data.tenantId)
         && isAssignedToBranch(request.resource.data.branchId)
         && hasValidPaymentIdentity(paymentId)
-        && hasValidPaymentSettlement()
+        && (isCreditMethod(request.resource.data.paymentMethod) ? creditPaymentRecognized(paymentId,request.resource.data) : hasValidPaymentSettlement())
         && paymentMatchesSale(paymentId)
         && (!request.resource.data.get('isRevisionReplacement', false) ||
           !('executionMode' in getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(request.resource.data.revisionRequestId)).data) || atomicFinancialPostingChain());
@@ -3510,14 +3606,96 @@ service cloud.firestore {
     match /cashTransfers/{recordId} {
       allow create: if atomicWelfareRecord(recordId, 'cashTransfers');
     }
-    match /clients/{clientId} {
-      allow update: if atomicWelfareBalance(clientId);
+    // CRM masters are shared identities, not financial balance editors.
+    function creditMasterCustomAccess(requireWriteAccess) {
+      let user=getUserData();
+      let configured=user.get('roleRealmId','');
+      let realmId=configured is string && configured.size() > 0 ? configured : user.tenantId + '_' + user.role.replace('\\s+','_').lower();
+      let path=/databases/$(database)/documents/role_realms_of_operation/$(realmId);
+      let realm=exists(path) ? get(path).data : {};
+      let permissions=realm.get('permissions',{});
+      let functional=['view_functional','all'];
+      let readable=['view_only','view_functional','all'];
+      return realm.get('tenantId','') == user.tenantId && realm.get('roleType','') == 'custom' && realm.get('roleName','') == user.role
+        && (permissions.get('clients',{}).get('accessLevel','') in (requireWriteAccess ? functional : readable)
+          || (!requireWriteAccess && (permissions.get('finance',{}).get('accessLevel','') in readable
+            || permissions.get('sales',{}).get('accessLevel','') in functional
+            || permissions.get('marketing',{}).get('accessLevel','') in functional)));
     }
-    match /{collectionName}/{reversalId} {
-      allow get: if collectionName in ['pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals']
-        && isPOSOperator() && (resource == null || resource.data.tenantId == getUserData().tenantId);
-      allow create: if collectionName in ['pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals']
-        && atomicFinancialReversal(reversalId, collectionName);
+    function canMaintainCreditMaster() {
+      return hasActiveStaffProfile()
+        && (hasAnyRole(['owner','Owner','CEO','ceo','CEO / MD','ceo / md','admin','Admin','Pharmacist','pharmacist','Cashier','cashier','IT Head','Marketing Head','Branch Manager','branch manager','Dispenser','dispenser'])
+          || creditMasterCustomAccess(true));
+    }
+    function canReadCreditMaster() {
+      return hasActiveStaffProfile()
+        && (hasAnyRole(['owner','Owner','CEO','ceo','CEO / MD','ceo / md','admin','Admin','Pharmacist','pharmacist','Cashier','cashier','IT Head','Marketing Head','Branch Manager','branch manager','Dispenser','dispenser','Finance Head','Finance Officer','Accountant','Marketing Personnel','Procurement Head','Procurement Officer','Procurement Personnel','QA Head','QA Officer','Logistics Head','IT Support Staff','IT Support Personnel','Trainee'])
+          || creditMasterCustomAccess(false));
+    }
+    function creditMasterScope(row) {
+      return isAuthenticated() && row.tenantId == getUserData().tenantId
+        && (!('branch_id' in row) || isAssignedToBranch(row.branch_id))
+        && (!('branchId' in row) || isAssignedToBranch(row.branchId));
+    }
+    function immutableCreditMaster(before, after) {
+      return after.tenantId == before.tenantId
+        && (!('patient_code' in before) || after.patient_code == before.patient_code)
+        && (!('institution_code' in before) || after.institution_code == before.institution_code);
+    }
+    function noClientWelfareGrant(row) {
+      return row.get('welfare_spent',0) == 0 && row.get('welfare_used_ytd',0) == 0
+        && row.get('welfare_limit',0) == 0 && row.get('welfare_allocation_ugx',0) == 0;
+    }
+    function marketingClientCreate(row) {
+      return row.keys().hasOnly(['tenantId','patient_code','name','phone','type','sms_opt_in','sms_opt_in_date','sms_opt_in_logged_by','preferred_channel','segment_tags','loyalty_points','balance','createdAt','updatedAt']) && hasActiveStaffProfile() && isMarketing()
+        && row.get('balance',0) == 0 && row.get('loyalty_points',0) == 0;
+    }
+    function marketingConsentUpdate(before, after) {
+      return after.diff(before).affectedKeys().hasOnly(['sms_opt_in','sms_opt_in_date','sms_opt_in_logged_by','preferred_channel','segment_tags','updatedAt']) && hasActiveStaffProfile() && isMarketing();
+    }
+    function validCreditMasterFields(row) {
+      let terms=row.get('payment_terms',null);
+      let limit=row.get('credit_limit',0);
+      return (terms == null || (terms is string && terms.size() <= 120))
+        && limit is int && limit >= 0 && limit <= 9007199254740991;
+    }
+    match /clients/{clientId} {
+      allow get: if canReadCreditMaster() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if canReadCreditMaster() && isTenantMember(resource.data.tenantId);
+      allow create: if (marketingClientCreate(request.resource.data) || canMaintainCreditMaster())
+        && creditMasterScope(request.resource.data) && validCreditMasterFields(request.resource.data)
+        && noClientWelfareGrant(request.resource.data);
+      allow update: if atomicWelfareBalance(clientId)
+        || ((marketingConsentUpdate(resource.data,request.resource.data) || canMaintainCreditMaster())
+          && creditMasterScope(resource.data) && creditMasterScope(request.resource.data)
+          && validCreditMasterFields(request.resource.data) && immutableCreditMaster(resource.data,request.resource.data)
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['welfare_spent','welfare_used_ytd','welfare_limit','welfare_allocation_ugx']));
+      allow delete: if false;
+    }
+    match /institutions/{institutionId} {
+      allow get: if canReadCreditMaster() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if canReadCreditMaster() && isTenantMember(resource.data.tenantId);
+      allow create: if canMaintainCreditMaster() && creditMasterScope(request.resource.data) && validCreditMasterFields(request.resource.data);
+      allow update: if canMaintainCreditMaster() && creditMasterScope(resource.data) && creditMasterScope(request.resource.data)
+        && immutableCreditMaster(resource.data,request.resource.data) && validCreditMasterFields(request.resource.data);
+      allow delete: if false;
+    }
+    // These explicit paths preserve the reversal contract without a second
+    // whole-database wildcard overlapping unrelated collections.
+    function canReadFinancialReversal() {
+      return isPOSOperator() && (resource == null || resource.data.tenantId == getUserData().tenantId);
+    }
+    match /pos_welfare_reversals/{reversalId} {
+      allow get: if canReadFinancialReversal();
+      allow create: if atomicFinancialReversal(reversalId,'pos_welfare_reversals');
+    }
+    match /pos_credit_reversals/{reversalId} {
+      allow get: if canReadFinancialReversal();
+      allow create: if atomicFinancialReversal(reversalId,'pos_credit_reversals');
+    }
+    match /pos_quotation_reversals/{reversalId} {
+      allow get: if canReadFinancialReversal();
+      allow create: if atomicFinancialReversal(reversalId,'pos_quotation_reversals');
     }
 
     match /audit_logs/{auditId} {
@@ -3693,35 +3871,34 @@ service cloud.firestore {
     // Generic tenant fallback. Dedicated collections retain their explicit rules.
     // Share exclusions and dispatch by method instead of compiling five copies.
     match /{collectionName}/{docId} {
+      // Exact union of the prior dedicated and financial exclusions. Flattening
+      // avoids repeated fallback guard expansion across overlapping matches.
       function dedicatedCollection() {
-        return authorityCollection() || ordinaryDedicatedCollection();
-      }
-      function authorityCollection() {
-        return collectionName in ['tenants','system_settings','master_registries','platform_users','platform_revenue','platform_audit_logs','global_audit_logs','predictive_settings','pending_activations'];
-      }
-      function ordinaryDedicatedCollection() {
-        return collectionName in ['payroll_approvals','identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox','payroll','payslips','advance_requests','attendance'];
+        return collectionName in ['tenants','system_settings','master_registries','platform_users','platform_revenue','platform_audit_logs','global_audit_logs','predictive_settings','pending_activations']
+          || collectionName in ['payroll_approvals','identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox','payroll','payslips','advance_requests','attendance']
+          || collectionName in [
+        'finance_v2_transfers','finance_v2_events','finance_v2_account_movements','finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
+        'credit_receivables', 'supplier_payables', 'banking_records', 'welfare_records', 'staff', 'leave_requests',
+        'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger', 'clients', 'institutions',
+        'petty_cash_ledger', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
+        'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
+      ];
       }
       function dedicatedWriteCollection() {
-        return dedicatedCollection() || collectionName in ['hr_roles', 'product_batches', 'products', 'role_realms_of_operation', 'sales', 'payroll', 'payslips', 'advance_requests', 'attendance'];
+        return dedicatedCollection() || collectionName in ['hr_roles','product_batches','products','role_realms_of_operation','sales'];
       }
       function immutableFallbackIdentities() {
-        return true
-        && (collectionName != 'staff' || !('employee_id' in resource.data)
-          || request.resource.data.employee_id == resource.data.employee_id)
-        && (collectionName != 'staff' || !('staff_code' in resource.data)
-          || request.resource.data.staff_code == resource.data.staff_code)
-        && (collectionName != 'clients' || !('patient_code' in resource.data)
-          || request.resource.data.patient_code == resource.data.patient_code)
-        && (collectionName != 'prescribers' || !('prescriber_code' in resource.data)
-          || request.resource.data.prescriber_code == resource.data.prescriber_code)
-        && (collectionName != 'institutions' || !('institution_code' in resource.data)
-          || request.resource.data.institution_code == resource.data.institution_code);
+        // Staff, clients and institutions are excluded before this helper runs;
+        // their dedicated rules retain their own immutable identity controls.
+        let requestedMap = request.resource.data;
+        let existingMap = resource.data;
+        return collectionName != 'prescribers' || !('prescriber_code' in existingMap)
+          || requestedMap.prescriber_code == existingMap.prescriber_code;
       }
-      allow read: if !dedicatedCollection() && !isProtectedFinanceCollection(collectionName)
+      allow read: if !dedicatedCollection()
         && isAuthenticated()
         && ((request.method == 'get' && resource == null) || isTenantMember(resource.data.tenantId));
-      allow write: if !dedicatedWriteCollection() && !isProtectedFinanceCollection(collectionName)
+      allow write: if !dedicatedWriteCollection()
         && (request.method == 'delete'
           ? (isAdmin() && isTenantMember(resource.data.tenantId))
           : (isTenantMember(request.resource.data.tenantId)

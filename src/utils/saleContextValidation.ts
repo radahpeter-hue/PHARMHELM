@@ -46,11 +46,11 @@ export function validateSaleCheckoutContext(
     };
   }
 
-  if ((paymentMethod === 'credit' || paymentMethod === 'institutional_credit') && !input.hasInstitution) {
+  if ((paymentMethod === 'credit' || paymentMethod === 'institutional_credit') && !input.hasInstitution && !input.hasPatient) {
     return {
       valid: false,
       code: 'credit_institution_required',
-      message: 'Select an eligible institution before using Institutional Credit.'
+      message: 'Select a registered client or eligible institution before using Credit.'
     };
   }
 

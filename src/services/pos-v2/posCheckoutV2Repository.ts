@@ -17,6 +17,7 @@ import { normalizeDateValue } from '../../utils/dateValue';
 import type { Branch, Product, ProductBatch, Sale, SaleItem, Staff, SystemSettings } from '../../types';
 import { SYSTEM_ROLE_PERMISSIONS, roleRealmId } from '../../config/rbac';
 import { calculateCheckoutV2 } from './posCheckoutV2Calculator';
+import { CREDIT_METHODS, creditDebtorReference, assertCreditDebtor, buildCreditRecognition } from '../creditRecognition';
 import { PosCheckoutV2Error } from './posCheckoutV2Errors';
 import { checkoutV2AttemptDocumentId, checkoutV2SaleDocumentId } from './posCheckoutV2Identity';
 import {
@@ -541,6 +542,24 @@ export async function writeCheckoutV2Transaction(request: CheckoutV2Request, pre
     });
     const quotationConvertedAt = request.sourceQuotationId ? new Date().toISOString() : undefined;
 
+    // Read CRM authority before any stock/payment writes. The debtor is part of
+    // checkout's retry identity; no late asynchronous receivable is required.
+    let creditMaster: Record<string, any> | null = null;
+    if (CREDIT_METHODS.includes(payment.paymentMethod)) {
+      const reference = creditDebtorReference(request);
+      const debtor = await transaction.get(doc(db, reference.collection, reference.id));
+      if (!debtor.exists()) throw new Error('The registered credit debtor no longer exists.');
+      creditMaster = debtor.data();
+      assertCreditDebtor(reference, creditMaster, prepared.authority.tenantId, prepared.authority.branch.id);
+      if (request.patientId && request.institutionId) {
+        const client = await transaction.get(doc(db, 'clients', request.patientId));
+        if (!client.exists() || client.data().tenantId !== prepared.authority.tenantId
+          || (client.data().billing_type === 'institutional-pay' && client.data().institution_to_bill_id !== request.institutionId)) {
+          throw new Error('The client and billing institution do not match.');
+        }
+      }
+    }
+
     for (const [productId, deductions] of calculation.batchDeductions.entries()) {
       const rows = rawBatchesByProduct.get(productId) || [];
       for (const [batchId, deduction] of deductions.entries()) {
@@ -640,6 +659,13 @@ export async function writeCheckoutV2Transaction(request: CheckoutV2Request, pre
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     }));
+
+    if (creditMaster) {
+      transaction.set(doc(db, 'credit_receivables', prepared.saleId), {
+        ...buildCreditRecognition({ ...sale, canonicalPaymentId: prepared.paymentId }, payment, creditMaster),
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp()
+      });
+    }
 
     transaction.set(prepared.outboxRef, omitUndefinedDeep({
       ...outboxEvent,

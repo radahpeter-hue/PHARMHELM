@@ -1,7 +1,7 @@
 name: Phase 5 Payroll Spark validation
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'feature/finance-v2-phase5-hr-advance-validation-20261021']
   workflow_dispatch:
 permissions:
   contents: read

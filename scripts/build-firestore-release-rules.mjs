@@ -200,16 +200,31 @@ export function renameRuleSymbols(source){
  // collision suffix added bytes to every reference in the compiled executable.
  // Original identifiers (including paths, globals and keywords) stay reserved.
  const unique=()=>{for(;;){let index=serial++,name='';do{name=alphabet[index%52]+name;index=Math.floor(index/52)-1;}while(index>=0);if(names.has(name)||['as','do','if','for','in','is'].includes(name))continue;names.add(name);return name;}};
+ // Reserve declarations first, then give the shortest aliases to the most
+ // frequently referenced symbols. This changes names only, never expressions
+ // or call depth, unlike adding a helper for every resource-map lookup.
  for(const m of stripped.matchAll(/\bfunction\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/g)){
-  if(!functions.has(m[1]))functions.set(m[1],unique());
-  for(const name of m[2].split(',').map(s=>s.trim()).filter(Boolean))if(!reservedPaths.has(name)&&!variables.has(name))variables.set(name,unique());
+  if(!functions.has(m[1]))functions.set(m[1],null);
+  for(const name of m[2].split(',').map(s=>s.trim()).filter(Boolean))if(!reservedPaths.has(name)&&!variables.has(name))variables.set(name,null);
  }
- for(const m of stripped.matchAll(/\blet\s+([A-Za-z_]\w*)\s*=/g))if(!reservedPaths.has(m[1])&&!variables.has(m[1]))variables.set(m[1],unique());
- let previous='';const output=[];
+ for(const m of stripped.matchAll(/\blet\s+([A-Za-z_]\w*)\s*=/g))if(!reservedPaths.has(m[1])&&!variables.has(m[1]))variables.set(m[1],null);
+ const frequency=new Map([...functions.keys(),...variables.keys()].map(name=>[name,0]));
+ let prior='';
+ for(const token of tokens){
+  if(token.startsWith('//')||token.startsWith('/*')||/^\s+$/.test(token))continue;
+  if(prior!=='.'&&frequency.has(token))frequency.set(token,frequency.get(token)+1);
+  prior=token;
+ }
+ const aliases=new Map([...frequency].sort((a,b)=>b[1]-a[1]).map(([name])=>[name,unique()]));
+ for(const name of functions.keys())functions.set(name,aliases.get(name));
+ for(const name of variables.keys())variables.set(name,aliases.get(name));
+ let previous='',permissionMethods=false;const output=[];
  for(const token of tokens){
   if(token.startsWith('//')||token.startsWith('/*')){output.push(' ');continue;}
   if(/^\s+$/.test(token)){output.push(' ');continue;}
-  const internal=/^[A-Za-z_]\w*$/.test(token)&&previous!=='.';
+  if(token==='allow')permissionMethods=true;
+  if(token===':')permissionMethods=false;
+  const internal=/^[A-Za-z_]\w*$/.test(token)&&previous!=='.'&&!permissionMethods;
   output.push(internal?(functions.get(token)||variables.get(token)||token):token);previous=token;
  }
  return output.join('').trim();

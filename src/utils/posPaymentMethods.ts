@@ -4,7 +4,7 @@ export const POS_CANONICAL_PAYMENT_METHODS = [
   { id: 'airtel_money', label: 'Airtel Money' },
   { id: 'card', label: 'Card / POS' },
   { id: 'insurance', label: 'Insurance' },
-  { id: 'institutional_credit', label: 'Institutional Credit' },
+  { id: 'institutional_credit', label: 'Credit' },
   { id: 'staff_welfare', label: 'Staff Welfare' }
 ] as const;
 

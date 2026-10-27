@@ -5,29 +5,30 @@ function run(mode:string) {
  return spawnSync(process.execPath,['--input-type=module','-e',`
  process.env.GOOGLE_OAUTH_ACCESS_TOKEN='unit-test-sentinel';
  process.env.GITHUB_RUN_ID='123'; process.env.GITHUB_RUN_ATTEMPT='1';
+ if(${JSON.stringify(mode)}==='unique-filename')process.env.PHARMHELM_COMPILER_FILE_NAME_MODE='unique';
  if(${JSON.stringify(mode)}==='baseline-error')process.env.PHARMHELM_COMPILER_BASELINE_RULES='firestore.rules';
  const project='projects/gen-lang-client-0911422817';
  const name=project+'/releases/pharmhelm_size_probe_123_1';
  const ruleset=project+'/rulesets/test-candidate';
  const calls=[];
- let probeDeleted=false,createdSource;
+ let probeDeleted=false,createdSource,probeReads=0,cleanupAttempts=0;
  globalThis.setTimeout=(callback)=>{queueMicrotask(callback);return 0;};
  globalThis.fetch=async (url,options)=>{
    url=String(url);
    calls.push({url,method:options.method||'GET'});
    let status=200,body={};
-   if(url.includes('/rulesets?'))body={rulesets:${JSON.stringify(mode)}==='create-ambiguous'?[{name:ruleset,createTime:new Date().toISOString()}]:[]};
-   else if(url.endsWith('/rulesets')){createdSource=JSON.parse(options.body).source;body={name:ruleset};if(['service-error','baseline-error','create-ambiguous'].includes(${JSON.stringify(mode)})){
+   if(url.includes('/rulesets?'))body={rulesets:${JSON.stringify(mode)}==='create-ambiguous'||${JSON.stringify(mode)}==='shared-candidate'?[{name:ruleset,createTime:new Date().toISOString()}]:[]};
+   else if(url.endsWith('/rulesets')){createdSource=JSON.parse(options.body).source;body={name:ruleset};if(['service-error','baseline-error','create-ambiguous','shared-candidate'].includes(${JSON.stringify(mode)})){
      status=${JSON.stringify(mode)}==='baseline-error'&&calls.filter(c=>c.url.endsWith('/rulesets')&&c.method==='POST').length>4?200:503;
      body=status===200?{name:ruleset}:{error:{message:'fixture unavailable'}};
    }}
-   else if(url.endsWith('/rulesets/test-candidate')&&options.method==='DELETE')body={};
-   else if(url.endsWith('/rulesets/test-candidate'))body={name:ruleset,source:createdSource};
+   else if(url.endsWith('/rulesets/test-candidate')&&options.method==='DELETE'){body={};if(${JSON.stringify(mode)}==='cleanup-throttled'&&++cleanupAttempts===1)status=429;}
+   else if(url.endsWith('/rulesets/test-candidate'))body={name:ruleset,source:${JSON.stringify(mode)}==='shared-candidate'?{files:createdSource.files.map(f=>({...f,fingerprint:'another-operation'}))}:createdSource};
    else if(url.endsWith('/releases')) {status=${JSON.stringify(mode)}==='size-error'?400:503;body={error:{message:'fixture'}};}
    else if(url.endsWith('/pharmhelm_size_probe_123_1')) {
      if(options.method==='DELETE'){body={};probeDeleted=true;}
-     else if(probeDeleted||${JSON.stringify(mode)}==='size-error'){status=404;body={error:{message:'not found'}};}
-     else body={name,rulesetName:${JSON.stringify(mode)}==='conflict'?ruleset+'-other':ruleset};
+     else if(probeDeleted||${JSON.stringify(mode)}==='size-error'||${JSON.stringify(mode)}==='probe-absent'||(['delayed-release','delayed-conflict'].includes(${JSON.stringify(mode)})&&++probeReads<=4)){status=404;body={error:{message:'not found'}};}
+     else body={name,rulesetName:['conflict','delayed-conflict'].includes(${JSON.stringify(mode)})?ruleset+'-other':ruleset};
    } else throw new Error('Unexpected network request');
    return new Response(JSON.stringify(body),{status});
  };
@@ -73,4 +74,46 @@ test('a successful certified baseline control cannot certify the failing new can
  assert.match(result.stdout,/"status":200/);
  assert.match(result.stdout,/"candidateCertified":false/);
  assert.doesNotMatch(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);
+});
+
+test('late server completion still requires the real exact unbound release before certification',()=>{
+ const result=run('delayed-release');assert.equal(result.status,0,result.stderr);
+ assert.match(result.stdout,/RECOVERED_EXACT_LATE_UNBOUND_RELEASE/);assert.match(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);assert.match(result.stdout,/OWNED_CANDIDATE_CLEANUP/);
+});
+test('late recovery cannot accept a conflicting ruleset',()=>{
+ const result=run('delayed-conflict');assert.notEqual(result.status,0);assert.match(result.stderr,/Conflicting late size probe release/);assert.doesNotMatch(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);
+});
+test('an absent probe after the bounded grace period never receives a size certificate',()=>{
+ const result=run('probe-absent');assert.notEqual(result.status,0);assert.match(result.stderr,/probe recovery HTTP 404/);assert.doesNotMatch(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);
+});
+
+
+test('the mandatory probe compiles the production filename and carries separate run ownership',()=>{
+ const result=run('recovery');assert.equal(result.status,0,result.stderr);
+ const fingerprint=JSON.parse(result.stdout.split('\n').find(line=>line.includes('CANDIDATE_FINGERPRINT'))!);
+ assert.equal(fingerprint.fileName,'firestore.rules');
+ assert.match(Buffer.from(fingerprint.fileFingerprint,'base64').toString(),/^pharmhelm:123_1:[0-9a-f]{32}$/);
+});
+
+test('the comparison mode changes only source metadata and still requires actual release validation',()=>{
+ const result=run('unique-filename');assert.equal(result.status,0,result.stderr);
+ const fingerprint=JSON.parse(result.stdout.split('\n').find(line=>line.includes('CANDIDATE_FINGERPRINT'))!);
+ assert.match(fingerprint.fileName,/^phase5_candidate_123_1_[0-9a-f]{32}\.rules$/);
+ assert.match(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);
+});
+
+
+test('a shared exact canonical source is validated through its own probe and never deleted',()=>{
+ const result=run('shared-candidate');assert.equal(result.status,0,result.stderr);
+ assert.match(result.stdout,/RECOVERED_SHARED_EXACT_SOURCE_READ_ONLY/);assert.match(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);assert.match(result.stdout,/SHARED_EXACT_SOURCE_RETAINED/);
+ const calls=JSON.parse(result.stdout.trim().split('\n').at(-1)!);
+ assert.ok(calls.some((c:any)=>c.method==='DELETE'&&c.url.includes('/releases/')));
+ assert.ok(!calls.some((c:any)=>c.method==='DELETE'&&c.url.includes('/rulesets/')));
+});
+
+test('quota during exact candidate cleanup retries without skipping the actual release gate',()=>{
+ const result=run('cleanup-throttled');assert.equal(result.status,0,result.stderr);
+ assert.match(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);assert.match(result.stdout,/RULES_API_QUOTA_BACKOFF/);assert.match(result.stdout,/OWNED_CANDIDATE_CLEANUP/);
+ const calls=JSON.parse(result.stdout.trim().split('\n').at(-1)!);
+ assert.equal(calls.filter((c:any)=>c.method==='DELETE'&&c.url.endsWith('/rulesets/test-candidate')).length,2);
 });

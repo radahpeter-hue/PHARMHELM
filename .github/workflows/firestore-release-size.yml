@@ -1,8 +1,11 @@
 name: Firestore compiled release size
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'feature/finance-v2-phase5-hr-advance-validation-20261021']
     paths:
+      - 'docs/FINANCE_V2_PHASE6_ACCEPTANCE.md'
+      - 'src/components/finance/ReceivablesRegister.tsx'
+      - 'scripts/phase6-*.mjs'
       - 'firestore.rules'
       - 'scripts/build-firestore-release-rules.mjs'
       - 'scripts/validate-inactive-finance-rules.mjs'
@@ -15,7 +18,7 @@ jobs:
   activation-size:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -29,15 +32,18 @@ jobs:
       - name: Read independently certified compiler control
         uses: actions/checkout@v4
         with:
-          ref: 8e7f7eadee5d9bbea8d2834625d5f86956076a5a
+          ref: c542ce834a60b0a21a9ea278b9dd90ab60fd8a17
           path: .phase5-certified-baseline
       - name: Build exact certified control rules
-        run: node .phase5-certified-baseline/scripts/build-firestore-release-rules.mjs .phase5-certified-baseline/firestore.rules
+        run: |
+          node .phase5-certified-baseline/scripts/build-firestore-release-rules.mjs .phase5-certified-baseline/firestore.rules
+          echo '5162b4f375af5a9cc288a3502659e3e7833bf1fcf7c6bd4e35e20cce2fae40ad  .phase5-certified-baseline/firestore.rules' | sha256sum --check
       - uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
       - run: npm install --prefix /tmp/rules-size --no-save --ignore-scripts google-auth-library
       - name: Require actual compiled executable to fit the activation limit
+        id: candidate_size
         env:
           PHARMHELM_COMPILER_BASELINE_RULES: .phase5-certified-baseline/firestore.rules
           PHARMHELM_COMPILER_AUTHORED_RULES: /tmp/phase5-authored.rules
@@ -46,3 +52,23 @@ jobs:
           cp scripts/validate-inactive-finance-rules.mjs /tmp/rules-size/validate.mjs
           cp scripts/firebase-rules-diagnostics.mjs /tmp/rules-size/firebase-rules-diagnostics.mjs
           node /tmp/rules-size/validate.mjs
+      # Same source and strict verifier, changing only filename metadata. A failed
+      # comparison is diagnostic; it cannot override the mandatory canonical gate.
+      - name: Compare run-labelled source filename without production activation
+        if: always() && (steps.candidate_size.outcome == 'success' || steps.candidate_size.outcome == 'failure')
+        continue-on-error: true
+        env:
+          PHARMHELM_COMPILER_FILE_NAME_MODE: unique
+        run: GITHUB_RUN_ID="${GITHUB_RUN_ID}01" node /tmp/rules-size/validate.mjs
+      - name: Diagnose a minimal actual unbound release
+        if: failure() && steps.candidate_size.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          echo "DIAGNOSTIC_ONLY_MINIMAL_UNBOUND_RELEASE"
+          printf '%s\n' "rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read, write: if false; } } }" > /tmp/minimal-control.rules
+          GITHUB_RUN_ID="${GITHUB_RUN_ID}02" node /tmp/rules-size/validate.mjs /tmp/minimal-control.rules
+      # Diagnostic only: the failed candidate step continues to fail this job.
+      # Use a distinct owned operation so no candidate probe is reused.
+      - name: Diagnose the exact signed-off Phase 5 activation control
+        if: failure() && steps.candidate_size.outcome == 'failure'
+        run: GITHUB_RUN_ID="${GITHUB_RUN_ID}00" node /tmp/rules-size/validate.mjs .phase5-certified-baseline/firestore.rules

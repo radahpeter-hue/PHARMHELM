@@ -28,7 +28,7 @@ await build({ entryPoints: [resolve('src/services/pos-v2/posSaleRevisionV2Planne
   platform: 'node', format: 'esm', packages: 'external', outfile: plannerBundle });
 const { buildPosV2RevisionPlan } = await import(pathToFileURL(plannerBundle));
 const env = await initializeTestEnvironment({ projectId: 'demo-pharmhelm-spark-production',
-  firestore: { rules: readFileSync('firestore.rules', 'utf8') } });
+  firestore: { rules: readFileSync(process.env.PHARMHELM_TEST_RULES || 'firestore.rules', 'utf8') } });
 let checks = 0;
 
 async function seed({ method = 'cash', posted = false, role = 'Dispenser', quantity = 90, settledCredit = false, multipleBatches = false, productCount = 1, originalQuantity = 10, unitPrice = 500 } = {}) {

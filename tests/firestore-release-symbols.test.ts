@@ -143,3 +143,13 @@ test('shared pure atoms preserve conditional reads, exact path values and point-
  assert.match(result,/'get\(path\).data request.auth.uid'/);
  assert.match(result,/data.get\('field', \{\}\).get\('other', false\)/);
 });
+
+
+test('internal parameter names cannot rewrite Firestore permission methods',()=>{
+ const result=compactRuleSymbols(`rules_version = '2'; service cloud.firestore { match /databases/{database}/documents {
+ function permitted(write, read, create, update, delete, get, list) { return write && read && create && update && delete && get && list; }
+ match /entries/{id} {allow read, write: if permitted(true,true,true,true,true,true,true); allow create, update, delete, get, list: if permitted(true,true,true,true,true,true,true);}
+ }}`);
+ assert.match(result,/allow read, write:/);assert.match(result,/allow create, update, delete, get, list:/);
+ assert.doesNotMatch(result,/function permitted/);
+});

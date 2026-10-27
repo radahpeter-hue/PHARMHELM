@@ -8,7 +8,7 @@ if(!process.env.FIRESTORE_EMULATOR_HOST)throw new Error('FIRESTORE_EMULATOR_HOST
 mkdirSync('node_modules/.cache/finance-emulator',{recursive:true});
 await build({entryPoints:['src/services/cashGrnSettlementService.ts','src/services/managementCashPosting.ts','src/services/managementPaymentAccountService.ts'],outdir:'node_modules/.cache/finance-emulator',bundle:true,platform:'node',format:'esm',packages:'external',plugins:[{name:'isolated-firebase',setup(b){b.onResolve({filter:/\/firebase$/},()=>({path:'firebase',namespace:'stub'}));b.onLoad({filter:/.*/,namespace:'stub'},()=>({contents:'export const db={};export const auth={currentUser:null};',loader:'js'}));}}]});
 const {settleCashGrnDraft}=await import('../node_modules/.cache/finance-emulator/cashGrnSettlementService.js');
-const {postManagementCashEntry,createManagementFinanceWriteGroup,postManagementReceivablePayment}=await import('../node_modules/.cache/finance-emulator/managementCashPosting.js');
+const {postManagementCashEntry,createManagementFinanceWriteGroup,postManagementReceivablePayment,stageManagementCashEntry}=await import('../node_modules/.cache/finance-emulator/managementCashPosting.js');
 const {registerManagementPaymentAccount}=await import('../node_modules/.cache/finance-emulator/managementPaymentAccountService.js');
 const tenantId='finance-test',financeUid='finance-secondary';
 const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-settlement-rules',firestore:{rules:readFileSync(process.env.PHARMHELM_TEST_RULES || 'firestore.rules','utf8')}});
@@ -35,7 +35,7 @@ const count=async c=>admin(async db=>(await getDocs(collection(db,c))).size);
 try {
  await admin(async db=>{
   await setDoc(doc(db,'system_settings',tenantId),{tenantId,managementCashAccountControlV1:true,managementCashSettlementV1:true});
-  for(const [uid,role,secondaryRoles,t] of [[financeUid,'IT Head',['Finance Officer'],tenantId],['finance-primary','Finance Head',[],tenantId],['procurement-only','IT Head',['Procurement Personnel'],tenantId],['logistics','Logistics Head',[],tenantId],['hr','HR Head',[],tenantId],['foreign-finance','Finance Head',[],'other']]) await setDoc(doc(db,'staff',uid),{tenantId:t,role,secondaryRoles,active:true,status:'active',assigned_branches:[]});
+  for(const [uid,role,secondaryRoles,t] of [[financeUid,'IT Head',['Finance Officer'],tenantId],['finance-primary','Finance Head',[],tenantId],['procurement-only','IT Head',['Procurement Personnel'],tenantId],['logistics','Logistics Head',[],tenantId],['hr','HR Head',[],tenantId],['foreign-finance','Finance Head',[],'other']]) await setDoc(doc(db,'staff',uid),{tenantId:t,role,secondaryRoles,active:true,status:'active',assigned_branches:['HQ']});
  });
  // First-time reconciliation is separate from settlement and preserves historical entries.
  await admin(db=>setDoc(doc(db,'petty_cash_ledger','historical-opening'),{tenantId,type:'incoming',amount:50000}));
@@ -105,12 +105,36 @@ try {
  assert.equal((await value('finance_payment_accounts',accountId('petty_cash'))).balanceUGX,didTransfer?20000:0);
  console.log('PASS bank transfer and supplier settlement share the same bank balance.');
  await seed('receivable-source','bank',0);
- await admin(db=>setDoc(doc(db,'credit_receivables','receivable'),{tenantId,outstanding_ugx:10000,amount_ugx:10000,status:'outstanding'}));
+ await admin(db=>setDoc(doc(db,'credit_receivables','receivable'),{tenantId,branch_id:'HQ',outstanding_ugx:10000,amount_ugx:10000,status:'outstanding'}));
  const receivableInput={tenantId,receivableId:'receivable',amountUGX:10000,requestId:'receivable-request',actorId:financeUid};
  await Promise.all([postManagementReceivablePayment(receivableInput,finance),postManagementReceivablePayment(receivableInput,finance)]);
  assert.equal((await value('finance_payment_accounts',accountId('bank'))).balanceUGX,10000);
  assert.equal((await value('credit_receivables','receivable')).outstanding_ugx,0);
  console.log('PASS receivable-to-bank funding is atomic and duplicate-safe.');
+ // Knowing a debt ID must not bypass branch authority through a raw valid bank batch.
+ await admin(db=>setDoc(doc(db,'credit_receivables','other-branch-debt'),{tenantId,branch_id:'MASAKA',outstanding_ugx:1000,amount_ugx:1000,status:'outstanding'}));
+ const unauthorizedBranch=writeBatch(finance);
+ const unauthorizedTransfer=doc(finance,'cashTransfers','unauthorized-branch-transfer');
+ const unauthorizedMovement=`transfer_${unauthorizedTransfer.id}`;
+ stageManagementCashEntry(unauthorizedBranch,unauthorizedMovement,{tenantId,type:'incoming',amount:1000,source:'Credit receivable payment',transferId:unauthorizedTransfer.id},finance,'management_bank',financeUid);
+ unauthorizedBranch.set(unauthorizedTransfer,{tenantId,fromPortfolio:'receivables',toPortfolio:'banked',amount:1000,receivableId:'other-branch-debt',bankMovementId:unauthorizedMovement,processedBy:financeUid});
+ unauthorizedBranch.update(doc(finance,'credit_receivables','other-branch-debt'),{outstanding_ugx:0,status:'paid',lastProcessedAt:new Date(),lastReceiptMovementId:unauthorizedMovement});
+ await assertFails(unauthorizedBranch.commit());
+ assert.equal((await value('finance_payment_accounts',accountId('bank'))).balanceUGX,10000);
+ assert.equal((await value('credit_receivables','other-branch-debt')).outstanding_ugx,1000);
+ assert.equal(await value('cashTransfers',unauthorizedTransfer.id),undefined);
+ console.log('PASS raw cross-branch legacy collection rolls back bank, debt and movement together.');
+ await admin(async db=>{
+   await setDoc(doc(db,'credit_receivables','inactive-finance-debt'),{tenantId,branch_id:'HQ',outstanding_ugx:1000,amount_ugx:1000,status:'outstanding'});
+   await updateDoc(doc(db,'staff',financeUid),{active:false,status:'inactive'});
+ });
+ await assertFails(postManagementReceivablePayment({tenantId,receivableId:'inactive-finance-debt',amountUGX:1000,requestId:'inactive-finance',actorId:financeUid},finance));
+ assert.equal((await value('finance_payment_accounts',accountId('bank'))).balanceUGX,10000);
+ assert.equal((await value('credit_receivables','inactive-finance-debt')).outstanding_ugx,1000);
+ await admin(db=>updateDoc(doc(db,'staff',financeUid),{active:true,status:'active'}));
+ console.log('PASS inactive Finance cannot read or collect legacy debt despite a valid role and branch.');
+
+
 
  await assertFails(updateDoc(doc(actor('foreign-finance'),'credit_receivables','receivable'),{outstanding_ugx:999999}));
  await assertFails(updateDoc(doc(finance,'credit_receivables','receivable'),{tenantId:'other'}));

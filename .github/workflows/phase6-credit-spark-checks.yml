@@ -1,0 +1,51 @@
+name: Phase 6 Credit Spark validation
+on:
+  pull_request:
+    branches: [main, 'feature/finance-v2-phase5-hr-advance-validation-20261021']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recognition:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Compile equivalent release rules
+        run: node scripts/build-firestore-release-rules.mjs
+      - name: Authenticated credit recognition and financial regressions
+        env:
+          PHASE6_TEST_COMMIT: '${{ github.event.pull_request.head.sha || github.sha }}'
+        run: node scripts/run-phase6-recognition-emulator.mjs scripts/phase6-authority-audit-emulator.mjs scripts/phase6-credit-recognition-emulator.mjs scripts/management-cash-settlement-rules-emulator.mjs scripts/pos-v2-spark-atomic-emulator.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase6-recognition-evidence
+          path: |
+            /tmp/phase6-recognition-acceptance.json
+            /tmp/phase6-authority-audit-evidence.json
+      - name: Install isolated register verification browser
+        run: |
+          npm install --prefix /tmp/phase6-browser --no-save --ignore-scripts playwright@1.51.1
+          /tmp/phase6-browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Real receivables register at phone widths
+        env:
+          PLAYWRIGHT_MODULE: /tmp/phase6-browser/node_modules/playwright
+        run: node scripts/phase6-credit-register-ui-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase6-credit-register-mobile-proof
+          path: /tmp/phase6-credit-ui-*/*.png

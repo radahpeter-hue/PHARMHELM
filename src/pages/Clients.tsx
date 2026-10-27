@@ -1,3 +1,4 @@
+import { ReceivablesRegister } from '../components/finance/ReceivablesRegister';
 import { createScopedIdentity, type ScopedIdentityCollection } from '../services/systemIdentityService';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
@@ -10,7 +11,8 @@ import {
   Filter, 
   MoreVertical, 
   Edit2, 
-  Trash2, 
+  Trash2,
+  Archive,
   Mail, 
   Phone, 
   MapPin, 
@@ -106,13 +108,16 @@ const Clients: React.FC = () => {
     return deduplicateStaff(all);
   }, [patients, staff]);
 
-  const handleDelete = async (collection: string, id: string) => {
-    if (window.confirm('Are you sure you want to delete this entry?')) {
+  const handleRemoveEntry = async (registry: string, id: string) => {
+    if (!hasPermission('clients', 'operate')) return;
+    const archive = registry === 'clients' || registry === 'institutions';
+    if (window.confirm(archive ? 'Archive this entry? Its history will remain available.' : 'Are you sure you want to delete this entry?')) {
       try {
-        await firestoreService.deleteDocument(collection, id);
-        toast.success('Entry deleted successfully');
-      } catch (error) {
-        toast.error('Failed to delete entry');
+        if (archive) await firestoreService.updateDocument(registry, id, { status: 'inactive', care_status: 'inactive' });
+        else await firestoreService.deleteDocument(registry, id);
+        toast.success(archive ? 'Entry archived successfully' : 'Entry deleted successfully');
+      } catch {
+        toast.error(archive ? 'Failed to archive entry' : 'Failed to delete entry');
       }
     }
   };
@@ -146,7 +151,7 @@ const Clients: React.FC = () => {
             setEditingItem(null);
             setIsModalOpen(true);
           }}
-          disabled={activeTab === 'suppliers' && !hasPermission('clients', 'operate')}
+          disabled={!hasPermission('clients', 'operate')}
           className="bg-zinc-900 hover:bg-zinc-800 text-white px-6 py-3 rounded-2xl font-bold transition-all flex items-center gap-2 w-fit shadow-lg shadow-zinc-900/20 uppercase text-xs tracking-widest disabled:opacity-50"
         >
           <Plus size={20} />
@@ -343,7 +348,7 @@ const Clients: React.FC = () => {
                             setEditingItem(item);
                             setIsModalOpen(true);
                           }}
-                          disabled={activeTab === 'suppliers' && !hasPermission('clients', 'operate')}
+                          disabled={!hasPermission('clients', 'operate')}
                           className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-all disabled:opacity-50"
                         >
                           <Edit2 size={16} />
@@ -354,15 +359,16 @@ const Clients: React.FC = () => {
                               toast.info('Staff customers are linked to HR records and cannot be deleted here.');
                               return;
                             }
-                            handleDelete(activeTab === 'patients' ? 'clients' : activeTab === 'institutions' ? 'institutions' : 'prescribers', item.id);
+                            handleRemoveEntry(activeTab === 'patients' ? 'clients' : activeTab === 'institutions' ? 'institutions' : 'prescribers', item.id);
                           }}
-                          title={item.isStaff ? 'Manage this staff record in HR Admin' : 'Delete entry'}
+                          disabled={!hasPermission('clients', 'operate')}
+                          title={item.isStaff ? 'Manage this staff record in HR Admin' : activeTab === 'prescribers' ? 'Delete entry' : 'Archive entry'}
                           className={cn(
                             "p-2 rounded-lg transition-all",
                             item.isStaff ? "text-zinc-300 cursor-help" : "text-zinc-400 hover:text-red-500 hover:bg-red-50"
                           )}
                         >
-                          <Trash2 size={16} />
+                          {activeTab === 'prescribers' ? <Trash2 size={16} /> : <Archive size={16} />}
                         </button>}
                       </div>
                     </td>
@@ -1078,23 +1084,6 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
     return new Date(field);
   };
 
-  // 1. Credit Ledger Calculations (Branch specific & Date filtered)
-  const branchClientCredits = useMemo(() => {
-    return sales.filter(s => {
-      // Branch check
-      if (activeBranchId && s.branchId !== activeBranchId) return false;
-      // Date check
-      const saleDate = getParsedDate(s.timestamp || s.createdAt);
-      const start = new Date(fromDate);
-      start.setHours(0,0,0,0);
-      const end = new Date(toDate);
-      end.setHours(23,59,59,999);
-      if (saleDate < start || saleDate > end) return false;
-      // Credit check
-      return s.paymentMethod === 'institutional_credit' || s.paymentMethod === 'credit';
-    });
-  }, [sales, activeBranchId, fromDate, toDate]);
-
   const branchSupplierCredits = useMemo(() => {
     return supplierCredits.filter(c => {
       // Branch check
@@ -1269,17 +1258,8 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
 
   // Specific Exports
   const exportCreditLedger = () => {
-    if (creditSubTab === 'to_branch') {
-      const headers = ['Date', 'Debtor (Customer/Institution)', 'Receipt Reference', 'Credit Amount (UGX)', 'Audited Status'];
-      const rows = branchClientCredits.map(s => [
-        format(getParsedDate(s.timestamp), 'yyyy-MM-dd'),
-        s.institutionName || s.patientName || 'Walk-in Client',
-        s.receiptNumber,
-        s.total,
-        s.status === 'completed' ? 'Outstanding' : 'Paid'
-      ]);
-      downloadReport("Credits_Owed_To_Branch", headers, rows);
-    } else {
+    {
+
       const headers = ['Date', 'Creditor (Supplier)', 'Invoice Reference', 'Original Credit (UGX)', 'Remaining Balance (UGX)', 'Audited Status'];
       const rows = branchSupplierCredits.map(c => [
         format(getParsedDate(c.createdAt || c.creditAccruedAt), 'yyyy-MM-dd'),
@@ -1384,7 +1364,7 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
               </div>
 
               {/* Date Filters */}
-              <div className="flex items-center gap-3">
+              {creditSubTab === 'by_branch' && <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">From</span>
                   <input 
@@ -1410,7 +1390,7 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
                   <Download size={14} />
                   Export
                 </button>
-              </div>
+              </div>}
             </div>
 
             {/* Table Area */}
@@ -1420,40 +1400,7 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-500" />
                 </div>
               ) : creditSubTab === 'to_branch' ? (
-                /* TO our branch table */
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-zinc-50 border-b border-zinc-100">
-                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Date</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Debtor (Client / Institution)</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Ref Receipt</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Owed Balance</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Audited Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100">
-                    {branchClientCredits.map(c => (
-                      <tr key={c.id} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="px-6 py-4 text-xs font-medium text-zinc-500">{format(getParsedDate(c.timestamp || c.createdAt), 'MMM dd, yyyy')}</td>
-                        <td className="px-6 py-4 font-bold text-zinc-900">{c.institutionName || c.patientName || 'Walk-in Client'}</td>
-                        <td className="px-6 py-4 text-xs font-mono text-zinc-500">{c.receiptNumber}</td>
-                        <td className="px-6 py-4 text-xs font-black text-right text-amber-600">{(c.total || c.subtotal || 0).toLocaleString()} UGX</td>
-                        <td className="px-6 py-4 text-xs font-bold text-zinc-900">
-                          <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-black uppercase tracking-widest">
-                            {c.status === 'completed' ? 'Outstanding' : 'Paid'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {branchClientCredits.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="px-6 py-12 text-center text-zinc-400 italic">
-                          No client credits found in this date range.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+                <ReceivablesRegister branchOnly />
               ) : (
                 /* BY our branch table */
                 <table className="w-full text-left border-collapse">

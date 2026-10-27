@@ -98,11 +98,8 @@ export const CashAndBanking: React.FC = () => {
       setTransfers(transferData);
 
       // 3. Fetch all Credit Receivables
-      const recSnap = await getDocs(query(
-        collection(db, 'credit_receivables'),
-        where('tenantId', '==', profile.tenantId)
-      ));
-      const recData = recSnap.docs.map(doc => ({ ...(doc.data() as any), id: doc.id })) as CreditReceivable[];
+      const recData = (await loadCreditRegister(profile.tenantId, creditReadScope(profile)))
+        .filter(r => r.verified && r.status !== 'reversed') as CreditReceivable[];
       setReceivables(recData);
 
       // 4. Fetch all Welfare Allocations
@@ -671,3 +668,4 @@ export const CashAndBanking: React.FC = () => {
     </div>
   );
 };
+import { loadCreditRegister, creditReadScope } from '../../../services/creditRegisterLoader';
