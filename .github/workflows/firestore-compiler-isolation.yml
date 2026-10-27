@@ -1,0 +1,38 @@
+name: Firestore compiler isolation (diagnostic only)
+on:
+  pull_request:
+    branches: [main, 'feature/finance-v2-phase5-hr-advance-validation-20261021']
+    paths:
+      - 'scripts/isolate-firestore-compiler.mjs'
+      - 'scripts/run-firestore-compiler-isolation.mjs'
+      - '.github/workflows/firestore-compiler-isolation.yml'
+permissions:
+  contents: read
+jobs:
+  observe-subsets:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate fail-closed diagnostic inputs without editing application rules
+        run: node scripts/isolate-firestore-compiler.mjs firestore.rules /tmp/phase6-compiler-isolation
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - run: npm install --prefix /tmp/isolation-verifier --no-save --ignore-scripts google-auth-library
+      - name: Measure diagnostic subsets sequentially with the unchanged actual-release verifier
+        env:
+          ISOLATION_COMMIT: '${{ github.event.pull_request.head.sha }}'
+        run: |
+          cp scripts/validate-inactive-finance-rules.mjs /tmp/isolation-verifier/validate.mjs
+          cp scripts/firebase-rules-diagnostics.mjs /tmp/isolation-verifier/firebase-rules-diagnostics.mjs
+          node scripts/run-firestore-compiler-isolation.mjs /tmp/phase6-compiler-isolation /tmp/isolation-verifier/validate.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compiler-isolation-DIAGNOSTIC-NOT-RELEASE
+          path: /tmp/phase6-compiler-isolation
