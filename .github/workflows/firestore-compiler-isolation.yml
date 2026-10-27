@@ -33,7 +33,7 @@ jobs:
       - run: npm install --prefix /tmp/isolation-verifier --no-save --ignore-scripts google-auth-library
       - name: Measure diagnostic subsets sequentially with the unchanged actual-release verifier
         env:
-          ISOLATION_COMMIT: '${{ github.event.pull_request.head.sha }}'
+          ISOLATION_COMMIT: '${{ github.event.pull_request.head.sha || github.sha }}'
         run: |
           cp scripts/validate-inactive-finance-rules.mjs /tmp/isolation-verifier/validate.mjs
           cp scripts/firebase-rules-diagnostics.mjs /tmp/isolation-verifier/firebase-rules-diagnostics.mjs
