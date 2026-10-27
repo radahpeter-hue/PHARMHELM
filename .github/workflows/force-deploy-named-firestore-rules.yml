@@ -19,7 +19,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '22'
+
+      - name: Compile compact equivalent release rules
+        run: node scripts/build-firestore-release-rules.mjs
 
       - name: Authenticate Google service account
         uses: google-github-actions/auth@v2
@@ -38,7 +41,7 @@ jobs:
           cli_status=1
           for attempt in 1 2 3 4; do
             set +e
-            npx firebase-tools deploy --only firestore:rules --project "$FIREBASE_PROJECT_ID" --non-interactive
+            npx --yes firebase-tools@15.4.0 deploy --only firestore:rules --project "$FIREBASE_PROJECT_ID" --non-interactive
             cli_status=$?
             set -e
             if [ "$cli_status" -eq 0 ]; then

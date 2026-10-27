@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feature/finance-v2-phase5-hr-advance-validation-20261021
+      - feature/finance-v2-phase6-credit-20261026
     paths:
       - 'docs/FINANCE_V2_PHASE6_ACCEPTANCE.md'
       - 'src/components/finance/ReceivablesRegister.tsx'
@@ -147,7 +148,7 @@ jobs:
         run: npx firebase emulators:exec --only firestore --project pharmhelm-pos-v2-revision-rbac "node scripts/pos-v2-revision-rbac-rules-emulator.mjs"
 
       - name: Enforce Operational Inventory class and branch boundaries in Firestore emulator
-        run: npx firebase emulators:exec --only firestore --project pharmhelm-operational-inventory-v2-rules "node scripts/operational-inventory-rules-emulator.mjs && node scripts/operational-manual-order-regression.mjs && node scripts/auto-order-atomic-rules-emulator.mjs && node scripts/procurement-approval-rules-emulator.mjs && node scripts/procurement-grn-cash-draft-rules-emulator.mjs && node scripts/stock-in-concurrency-rules-emulator.mjs && node scripts/grn-dispatch-rules-emulator.mjs && node scripts/supplier-registry-rules-emulator.mjs && node scripts/system-identity-rules-emulator.mjs && node scripts/martin-pharma-identity-staging-emulator.mjs" && touch /tmp/pharmhelm-firestore-emulator-passed
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-operational-inventory-v2-rules "node scripts/operational-inventory-rules-emulator.mjs && node scripts/operational-manual-order-regression.mjs && node scripts/auto-order-atomic-rules-emulator.mjs && node scripts/procurement-approval-rules-emulator.mjs && node scripts/procurement-grn-cash-draft-rules-emulator.mjs && node scripts/stock-in-concurrency-rules-emulator.mjs && node scripts/grn-dispatch-rules-emulator.mjs && node scripts/supplier-registry-rules-emulator.mjs && node scripts/system-identity-rules-emulator.mjs && node scripts/martin-pharma-identity-staging-emulator.mjs"
 
       - name: Authenticate for hosted Firestore rules compilation
         uses: google-github-actions/auth@v2
@@ -187,24 +188,41 @@ jobs:
           test_rules_file() {
             local label="$1"
             local file="$2"
-            local body_file response_file http_status errors
+            local body_file response_file http_status errors attempt delay_sec
             response_file=$(mktemp)
             body_file=$(mktemp)
             jq -n --rawfile rules "$file" \
               '{source: {files: [{name: "firestore.rules", content: $rules}]}}' \
               > "$body_file"
 
-            http_status=$(curl --silent --show-error \
-              -o "$response_file" \
-              -w '%{http_code}' \
-              -X POST \
-              -H "Authorization: Bearer ${access_token}" \
-              -H "Content-Type: application/json" \
-              --data-binary "@${body_file}" \
-              "https://firebaserules.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}:test")
+            for attempt in 1 2 3 4; do
+              http_status=$(curl --silent --show-error \
+                --max-time 60 \
+                -o "$response_file" \
+                -w '%{http_code}' \
+                -X POST \
+                -H "Authorization: Bearer ${access_token}" \
+                -H "Content-Type: application/json" \
+                --data-binary "@${body_file}" \
+                "https://firebaserules.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}:test")
+              compiler_status="$http_status"
+              echo "${label} compiler attempt ${attempt}/4 response: HTTP ${http_status}"
+              if [ "$http_status" = "200" ]; then
+                break
+              fi
+              case "$http_status" in
+                429|500|502|503|504)
+                  if [ "$attempt" -lt 4 ]; then
+                    delay_sec=$(( (1 << (attempt - 1)) * 5 + (RANDOM % 3) ))
+                    echo "${label} transient HTTP ${http_status}; retrying in ${delay_sec}s."
+                    sleep "$delay_sec"
+                    continue
+                  fi
+                  ;;
+              esac
+              break
+            done
 
-            compiler_status="$http_status"
-            echo "${label} compiler response: HTTP ${http_status}"
             if [ "$http_status" != "200" ]; then
               jq . "$response_file" 2>/dev/null || cat "$response_file"
               return 1
@@ -234,11 +252,14 @@ jobs:
           fi
 
           if ! test_rules_file "PharmHelm candidate" firestore.rules; then
-            if [ "$compiler_status" = "503" ] && [ -f /tmp/pharmhelm-firestore-emulator-passed ]; then
-              echo "::warning title=Hosted rules compiler unavailable::Candidate compilation returned HTTP 503, but the exact candidate rules loaded and passed the POS RBAC and Operational Inventory Firestore emulator suites."
-            elif [ "$compiler_status" = "503" ] && bash scripts/verify-active-firestore-rules.sh; then
+            if [ "$compiler_status" = "503" ] && bash scripts/verify-active-firestore-rules.sh; then
               echo "::warning title=Firebase compiler unavailable::Candidate compilation returned HTTP 503. Exact active named-database rules content verified; this commit introduces no rules change."
+            elif [ "$compiler_status" = "429" ] || [ "$compiler_status" = "500" ] || [ "$compiler_status" = "502" ] || [ "$compiler_status" = "503" ] || [ "$compiler_status" = "504" ]; then
+              echo "VALIDATION_STATUS=BLOCKED_FIREBASE_SERVICE"
+              echo "::error title=BLOCKED_FIREBASE_SERVICE::Hosted compiler returned HTTP ${compiler_status} after bounded retries; emulator success cannot substitute for hosted rules certification. Candidate rules failed validation or could not be verified as the exact active version."
+              exit 3
             else
+              echo "VALIDATION_STATUS=FAIL_RULES"
               echo "::error title=PharmHelm rules compilation failed::Candidate rules failed validation or could not be verified as the exact active version."
               exit 3
             fi

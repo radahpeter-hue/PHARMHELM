@@ -23,7 +23,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '22'
           cache: npm
 
       - name: Install dependencies
@@ -73,7 +73,7 @@ jobs:
 
           for attempt in 1 2 3 4; do
             set +e
-            deploy_output=$(npx firebase-tools deploy --only firestore:rules --project "$FIREBASE_PROJECT_ID" --non-interactive 2>&1)
+            deploy_output=$(npx --yes firebase-tools@15.4.0 deploy --only firestore:rules --project "$FIREBASE_PROJECT_ID" --non-interactive 2>&1)
             deploy_status=$?
             set -e
             echo "$deploy_output"
@@ -261,7 +261,7 @@ jobs:
       - name: Deploy Firebase Storage rules
         id: deploy_storage
         continue-on-error: true
-        run: npx firebase-tools deploy --only storage --project gen-lang-client-0911422817 --non-interactive
+        run: npx --yes firebase-tools@15.4.0 deploy --only storage --project gen-lang-client-0911422817 --non-interactive
 
       - name: Report deferred Firebase Storage deployment
         if: steps.deploy_storage.outcome == 'failure'
