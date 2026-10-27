@@ -187,8 +187,30 @@ export function shareRuleAtoms(source,{pointReads=true}={}) {
  const decl=[...definitions.values()].map(d=>`function ${d.name}(${d.args}) { return ${d.body}; }`).join('\n');
  return tokens.join('').replace(root,'$1\n'+decl+'\n');
 }
+// Resolve request/resource maps at the original access site. A zero-argument
+// accessor shares the repeated global path without hoisting a missing-resource
+// lookup across an allow guard or changing any map field or document path.
+export function shareGlobalResourceMaps(source) {
+ const root=/(match \/databases\/\{database\}\/documents\s*\{)/;
+ if(!root.test(source))return source;
+ const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
+ const t=tokens.map((token,index)=>({token,index})).filter(({token})=>!/^\s+$/.test(token)&&!token.startsWith('//')&&!token.startsWith('/*'));
+ const defs=new Map(),matches=[];
+ for(let i=0;i<t.length;i++) {
+  if(t[i-1]?.token==='.')continue;
+  for(const parts of [['request','.','resource','.','data'],['resource','.','data']]) {
+   if(!parts.every((part,n)=>t[i+n]?.token===part))continue;
+   const key=parts.join('');let name=defs.get(key);
+   if(!name){name=key.startsWith('request')?'sharedGlobalRequestedMap':'sharedGlobalExistingMap';while(new RegExp('\\b'+name+'\\b').test(source))name+='x';defs.set(key,name);}
+   matches.push({start:t[i].index,end:t[i+parts.length-1].index,name});i+=parts.length-1;break;
+  }
+ }
+ for(const m of matches.reverse())tokens.splice(m.start,m.end-m.start+1,m.name+'()');
+ const declarations=[...defs].map(([path,name])=>`function ${name}() { return ${path}; }`).join('\n');
+ return tokens.join('').replace(root,'$1\n'+declarations+'\n');
+}
 export function compactRuleSymbols(source){
- return renameRuleSymbols(shareFieldReads(shareRuleAtoms(shareFieldComparisons(cacheWriteResourceMaps(shareDocumentReads(shareTenantPredicates(source)))))));
+ return renameRuleSymbols(shareGlobalResourceMaps(shareFieldReads(shareRuleAtoms(shareFieldComparisons(cacheWriteResourceMaps(shareDocumentReads(shareTenantPredicates(source))))))));
 }
 export function renameRuleSymbols(source){
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
