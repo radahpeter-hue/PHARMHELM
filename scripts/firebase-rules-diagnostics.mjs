@@ -34,7 +34,7 @@ export async function runInactiveCompilerControl({project,token,rules,mode,fetch
  return response.status;
 }
 /** Recover an ambiguous creation only through exact run-owned file identity and bytes. */
-export async function recoverOwnedCandidate({project,token,rules,fileName,startedAt,fetchImpl=globalThis.fetch,log=console.log}) {
+export async function recoverOwnedCandidate({project,token,rules,fileName,fileFingerprint,startedAt,fetchImpl=globalThis.fetch,log=console.log}) {
  let pageToken='',pages=0;
  do {
   const url=new URL(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`);url.searchParams.set('pageSize','100');if(pageToken)url.searchParams.set('pageToken',pageToken);
@@ -46,7 +46,7 @@ export async function recoverOwnedCandidate({project,token,rules,fileName,starte
    const detail=await fetchImpl(`https://firebaserules.googleapis.com/v1/${record.name}`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
    if(!detail.ok)continue;
    const candidate=await detail.json(),files=candidate.source?.files;
-   if(candidate.name===record.name&&files?.length===1&&files[0].name===fileName&&files[0].content===rules){
+   if(candidate.name===record.name&&files?.length===1&&files[0].name===fileName&&files[0].content===rules&&(!fileFingerprint||files[0].fingerprint===fileFingerprint)){
     log(JSON.stringify({mode:'RECOVERED_EXACT_RUN_OWNED_CANDIDATE',ruleset:candidate.name,productionReleaseModified:false,candidateCertified:false}));return candidate;
    }
   }

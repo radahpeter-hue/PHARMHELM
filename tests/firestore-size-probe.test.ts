@@ -5,6 +5,7 @@ function run(mode:string) {
  return spawnSync(process.execPath,['--input-type=module','-e',`
  process.env.GOOGLE_OAUTH_ACCESS_TOKEN='unit-test-sentinel';
  process.env.GITHUB_RUN_ID='123'; process.env.GITHUB_RUN_ATTEMPT='1';
+ if(${JSON.stringify(mode)}==='unique-filename')process.env.PHARMHELM_COMPILER_FILE_NAME_MODE='unique';
  if(${JSON.stringify(mode)}==='baseline-error')process.env.PHARMHELM_COMPILER_BASELINE_RULES='firestore.rules';
  const project='projects/gen-lang-client-0911422817';
  const name=project+'/releases/pharmhelm_size_probe_123_1';
@@ -84,4 +85,19 @@ test('late recovery cannot accept a conflicting ruleset',()=>{
 });
 test('an absent probe after the bounded grace period never receives a size certificate',()=>{
  const result=run('probe-absent');assert.notEqual(result.status,0);assert.match(result.stderr,/probe recovery HTTP 404/);assert.doesNotMatch(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);
+});
+
+
+test('the mandatory probe compiles the production filename and carries separate run ownership',()=>{
+ const result=run('recovery');assert.equal(result.status,0,result.stderr);
+ const fingerprint=JSON.parse(result.stdout.split('\n').find(line=>line.includes('CANDIDATE_FINGERPRINT'))!);
+ assert.equal(fingerprint.fileName,'firestore.rules');
+ assert.match(Buffer.from(fingerprint.fileFingerprint,'base64').toString(),/^pharmhelm:123_1:[0-9a-f]{32}$/);
+});
+
+test('the comparison mode changes only source metadata and still requires actual release validation',()=>{
+ const result=run('unique-filename');assert.equal(result.status,0,result.stderr);
+ const fingerprint=JSON.parse(result.stdout.split('\n').find(line=>line.includes('CANDIDATE_FINGERPRINT'))!);
+ assert.match(fingerprint.fileName,/^phase5_candidate_123_1_[0-9a-f]{32}\.rules$/);
+ assert.match(result.stdout,/UNBOUND_RELEASE_SIZE_VALIDATION/);
 });

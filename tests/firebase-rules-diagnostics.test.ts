@@ -27,3 +27,12 @@ test('inventory counts all pages using read-only requests and reports incomplete
  const denied:string[]=[];await readRulesetInventory({project:'p',token:'PRIVATE',log:(s:string)=>denied.push(s),fetchImpl:async()=>new Response('{}',{status:403})});
  assert.equal(JSON.parse(denied[0]).complete,false);assert.equal(JSON.parse(denied[0]).status,403);
 });
+
+
+test('canonical filename recovery requires the exact run fingerprint as well as exact source',async()=>{
+ for(const fingerprint of ['owned','other',undefined]){
+  const name='projects/p/rulesets/canonical';
+  const result=await recoverOwnedCandidate({project:'p',token:'PRIVATE',rules:'exact rules',fileName:'firestore.rules',fileFingerprint:'owned',startedAt:Date.now(),log:()=>{},fetchImpl:async(url:URL|string)=>new Response(JSON.stringify(String(url).includes('?')?{rulesets:[{name,createTime:new Date().toISOString()}]}:{name,source:{files:[{name:'firestore.rules',content:'exact rules',fingerprint}]}}),{status:200})});
+  assert.equal(!!result,fingerprint==='owned');
+ }
+});

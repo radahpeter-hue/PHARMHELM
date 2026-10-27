@@ -52,6 +52,14 @@ jobs:
           cp scripts/validate-inactive-finance-rules.mjs /tmp/rules-size/validate.mjs
           cp scripts/firebase-rules-diagnostics.mjs /tmp/rules-size/firebase-rules-diagnostics.mjs
           node /tmp/rules-size/validate.mjs
+      # Same source and strict verifier, changing only filename metadata. A failed
+      # comparison is diagnostic; it cannot override the mandatory canonical gate.
+      - name: Compare run-labelled source filename without production activation
+        if: always() && steps.candidate_size.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          PHARMHELM_COMPILER_FILE_NAME_MODE: unique
+        run: GITHUB_RUN_ID="${GITHUB_RUN_ID}01" node /tmp/rules-size/validate.mjs
       # Diagnostic only: the failed candidate step continues to fail this job.
       # Use a distinct owned operation so no candidate probe is reused.
       - name: Diagnose the exact signed-off Phase 5 activation control
