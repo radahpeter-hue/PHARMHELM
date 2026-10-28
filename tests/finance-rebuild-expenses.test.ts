@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canUseBranchExpenseCategory } from '../src/utils/branchExpensePolicy';
+import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName } from '../src/utils/branchExpensePolicy';
 
 test('new manual expenses cannot be salaries, including casing/spacing variants', () => {
   for (const category of ['salaries', 'Salaries', ' SALARY ']) {
@@ -29,7 +29,20 @@ test('Allowances is selectable and report categories remain data-driven', () => 
 
 test('Issued To is written on create and edit, restored when editing, and reviewed on the record', () => {
   const branch = fs.readFileSync('src/pages/Finance.tsx', 'utf8').split('const BranchExpenseLog:')[1].split('const BranchCreditView:')[0];
-  assert.equal((branch.match(/issued_to: formData.recipient.trim\(\)/g) || []).length, 2);
+  assert.equal((branch.match(/issued_to: issuedTo/g) || []).length, 2);
   assert.match(branch, /recipient: exp.issued_to/);
   assert.match(branch, /expense.issued_to \|\| 'Not recorded'/);
+});
+
+import type { Staff } from '../src/types';
+test('staff dropdown uses current authoritative tenant staff and distinguishes duplicate names', () => {
+  const rows = [
+    { id: 'a', tenantId: 't', full_name: 'Alex', active: true, status: 'active' },
+    { id: 'b', tenantId: 't', full_name: 'Alex', active: true, status: 'active' },
+    { id: 'cross', tenantId: 'other', full_name: 'Other tenant', active: true },
+    { id: 'inactive', tenantId: 't', active: false, status: 'active' },
+    { id: 'suspended', tenantId: 't', active: true, status: 'suspended' }
+  ] as Staff[];
+  assert.deepEqual(eligibleExpenseStaff(rows, 't').map(s => s.id), ['a', 'b']);
+  assert.equal(expenseStaffName(rows[0]), 'Alex');
 });

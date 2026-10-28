@@ -1,6 +1,6 @@
 import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
 import { inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../utils/financeDateFilters';
-import { canUseBranchExpenseCategory } from '../utils/branchExpensePolicy';
+import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName } from '../utils/branchExpensePolicy';
 import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect } from 'react';
@@ -48,7 +48,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
 import { UpgradeRequiredCard } from '../components/UpgradeRequiredCard';
 import { firestoreService } from '../services/firestore';
-import { FinanceLedger, EODReconciliation, BranchExpense, CashRequisition, CreditReceivable, SupplierPayable, ManagementExpense, ProcurementInvoice, PettyCashRequisition, PettyCashLedger, PettyCashIssue, Branch, SystemSettings, Sale, GRNRecord } from '../types';
+import { FinanceLedger, EODReconciliation, BranchExpense, Staff, CashRequisition, CreditReceivable, SupplierPayable, ManagementExpense, ProcurementInvoice, PettyCashRequisition, PettyCashLedger, PettyCashIssue, Branch, SystemSettings, Sale, GRNRecord } from '../types';
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -656,6 +656,10 @@ const VarianceRow: React.FC<{ label: string, declared: number, expected: number 
 const BranchExpenseLog: React.FC = () => {
   const { profile, activeBranchId } = useAuth();
   const isFinanceHead = hasAnyRole(profile, ['Finance Head']);
+  const [staff, setStaff] = useState<Staff[]>([]);
+  const [recipientType, setRecipientType] = useState<'manual' | 'staff'>('manual');
+  const [selectedStaffId, setSelectedStaffId] = useState('');
+  const availableStaff = eligibleExpenseStaff(staff, profile?.tenantId || '');
   const [expenses, setExpenses] = useState<BranchExpense[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [editingExpense, setEditingExpense] = useState<BranchExpense | null>(null);
@@ -673,9 +677,11 @@ const BranchExpenseLog: React.FC = () => {
 
   useEffect(() => {
     if (profile?.tenantId && activeBranchId) {
-      firestoreService.subscribeToCollection<BranchExpense>('branch_expenses', profile.tenantId, (data) => {
+      const unsubscribeExpenses = firestoreService.subscribeToCollection<BranchExpense>('branch_expenses', profile.tenantId, (data) => {
         setExpenses(data.filter(e => e.branch_id === activeBranchId).sort((a, b) => new Date(b.expense_date).getTime() - new Date(a.expense_date).getTime()));
       });
+      const unsubscribeStaff = firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setStaff);
+      return () => { unsubscribeExpenses(); unsubscribeStaff(); };
     }
   }, [profile?.tenantId, activeBranchId]);
 
@@ -695,13 +701,19 @@ const BranchExpenseLog: React.FC = () => {
       return;
     }
 
+    const selectedStaff = availableStaff.find(s => s.id === selectedStaffId);
+    if (recipientType === 'staff' && !selectedStaff) {
+      toast.error('Select an active employee from the staff register.');
+      return;
+    }
+    const issuedTo = recipientType === 'staff' ? expenseStaffName(selectedStaff!) : formData.recipient.trim();
     try {
       if (editingExpense) {
         await firestoreService.updateDocument('branch_expenses', editingExpense.id, {
           expense_date: formData.date,
           category: formData.category,
           description: formData.description,
-          issued_to: formData.recipient.trim(),
+          issued_to: issuedTo,
           amount_ugx: formData.amount,
         });
         toast.success('Expense updated');
@@ -712,7 +724,7 @@ const BranchExpenseLog: React.FC = () => {
           expense_date: formData.date,
           category: formData.category,
           description: formData.description,
-          issued_to: formData.recipient.trim(),
+          issued_to: issuedTo,
           amount_ugx: formData.amount,
           payment_method: 'Petty Cash',
           logged_by: profile.uid,
@@ -723,6 +735,8 @@ const BranchExpenseLog: React.FC = () => {
       }
       setIsAdding(false);
       setEditingExpense(null);
+      setRecipientType('manual');
+      setSelectedStaffId('');
       setFormData({ category: 'utilities', amount: 0, description: '', recipient: '', date: new Date().toISOString().split('T')[0] });
     } catch (error) {
       toast.error('Failed to save expense');
@@ -735,6 +749,8 @@ const BranchExpenseLog: React.FC = () => {
       return;
     }
     setEditingExpense(exp);
+    setRecipientType('manual');
+    setSelectedStaffId('');
     setFormData({
       category: exp.category,
       amount: exp.amount_ugx,
@@ -832,7 +848,22 @@ const BranchExpenseLog: React.FC = () => {
                 onChange={(e) => setFormData({...formData, description: e.target.value})}
               />
             </div>
-            <div className="space-y-1 md:col-span-2">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-zinc-500 uppercase">Recipient type</label>
+              <select aria-label="Recipient type" value={recipientType} onChange={e => { setRecipientType(e.target.value as 'manual' | 'staff'); setSelectedStaffId(''); }}
+                className="w-full px-4 py-2 bg-zinc-50 text-zinc-900 border border-zinc-200 rounded-xl">
+                <option value="manual">Other recipient</option><option value="staff">Staff</option>
+              </select>
+            </div>
+            {recipientType === 'staff' ? <div className="space-y-1 md:col-span-2">
+              <label htmlFor="branch-expense-staff" className="text-xs font-bold text-zinc-500 uppercase">Issued To — Staff</label>
+              <select id="branch-expense-staff" required value={selectedStaffId} onChange={e => setSelectedStaffId(e.target.value)}
+                className="w-full px-4 py-2 bg-zinc-50 text-zinc-900 border border-zinc-200 rounded-xl">
+                <option value="">Select employee</option>
+                {availableStaff.map(s => <option key={s.id} value={s.id}>{expenseStaffName(s)} ({s.staff_code || s.id})</option>)}
+              </select>
+              {!availableStaff.length && <p className="text-xs text-red-600">No active staff found in the employee register.</p>}
+            </div> : <div className="space-y-1 md:col-span-2">
               <label htmlFor="branch-expense-issued-to" className="text-xs font-bold text-zinc-500 uppercase">Issued To</label>
               <input id="branch-expense-issued-to" type="text" maxLength={200}
                 className="w-full px-4 py-2 bg-zinc-50 text-zinc-900 border border-zinc-200 rounded-xl"
@@ -840,7 +871,7 @@ const BranchExpenseLog: React.FC = () => {
                 value={formData.recipient}
                 onChange={(e) => setFormData({...formData, recipient: e.target.value})}
               />
-            </div>
+            </div>}
             <div className="md:col-span-4 flex justify-end gap-3 mt-2">
               <button 
                 type="button"

@@ -131,3 +131,12 @@ Changes 001–013 complete; Level 2 has not started at this checkpoint.
 - Screenshots visually reviewed at phone/desktop widths. Harness uses the existing light content surface and local fallback fonts; remote font imports are removed only from test CSS. No backend requests or tenant writes are possible in the isolated harness.
 - `firestore.rules`: byte-identical to base.
 - Level 1 engineering acceptance: **PASS**. Owner live acceptance pending.
+
+## CHANGE 014 — Select expense recipients from authoritative staff register
+
+- Modified files: `src/pages/Finance.tsx`, `src/utils/branchExpensePolicy.ts`, `tests/finance-rebuild-expenses.test.ts`.
+- Targeted checks: Tenant/active-staff eligibility and duplicate-name tests; dropdown labels include staff code or document ID; invalid staff selections blocked; existing manual recipient retained.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.
