@@ -227,8 +227,8 @@ export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branch
     const formattedTo = dateRange.end.split('-').reverse().join('-');
     await exportRecordsToExcel(
       reportData,
-      branchOnly ? 'Branch P&L' : 'Profitability Statement',
-      `${branchOnly ? `Branch_PnL_${reportBranchId}` : 'Profitability_Ledger_Statement'}_${formattedFrom}_to_${formattedTo}.xlsx`
+      branchOnly ? 'Branch P&L' : 'Consolidated Organisation P&L',
+      `${branchOnly ? `Branch_PnL_${reportBranchId}` : 'Consolidated_Organisation_PnL'}_${formattedFrom}_to_${formattedTo}.xlsx`
     );
     toast.success("Profitability excel ledger downloaded successfully!");
   };
@@ -245,6 +245,10 @@ export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branch
           </select>
         </label>
         <p className="text-xs text-zinc-500">Includes only records explicitly tagged to this branch. Untagged and HQ outflows remain in the consolidated view. Current P&L accounting logic is unchanged.</p>
+      </div>}
+      {!branchOnly && <div className="space-y-2">
+        <h2 className="text-2xl font-bold text-zinc-900">Consolidated Organisation P&L</h2>
+        <p className="text-xs text-zinc-500">Organisation-wide results for the current tenant, including HQ outflows. Current reporting data and accounting formulas are retained; the later P&L accounting redesign is not included.</p>
       </div>}
       {/* Date presets only: current accounting dataset and formulas are unchanged. */}
       <div className="bg-zinc-50 border border-zinc-200 p-4 sm:p-6 rounded-3xl flex flex-col gap-4 shadow-sm">

@@ -2274,7 +2274,7 @@ const ManagementFinance: React.FC<{ settings: SystemSettings | null }> = ({ sett
     { id: 'management_expenses', label: 'Management Cash Outflows', icon: Briefcase },
     { id: 'global_expenses', label: 'Global Cash Outflows', icon: Globe },
     { id: 'branch_profitability', label: 'Branch P&L', icon: BarChart3 },
-    { id: 'profitability', label: 'Profitability Ledger', icon: BarChart3 },
+    { id: 'profitability', label: 'Consolidated Organisation P&L', icon: BarChart3 },
     { id: 'credit_ledger', label: 'Credit Ledger', icon: CreditCard },
     { id: 'petty_cash', label: 'Petty Cash', icon: Wallet },
     { id: 'tax_engine', label: 'Tax Engine', icon: Sliders, hidden: !settings?.taxEngineEnabled },

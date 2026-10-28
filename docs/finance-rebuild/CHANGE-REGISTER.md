@@ -109,3 +109,12 @@ Accepted means engineering acceptance after the recorded checks. Owner live acce
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 013 — Identify consolidated organisation pnl separately
+
+- Modified files: `src/pages/Finance.tsx`, `src/pages/finance/management/ProfitabilityLedger.tsx`, `tests/finance-rebuild-pnl.test.ts`.
+- Targeted checks: Distinct report navigation, tenant-scoped reads and accounting-scope notice checks; consolidated formulas and unallocated HQ treatment retained.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.

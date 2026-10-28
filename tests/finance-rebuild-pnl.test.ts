@@ -27,3 +27,14 @@ test('branch P&L matches tenant and branch across existing field aliases without
   }
   assert.equal(matchesProfitabilityBranch({ tenantId: 't', branchId: 'masaka' }, 't', ''), false);
 });
+
+import fs from 'node:fs';
+test('Branch and Consolidated P&L remain distinct within existing management access', () => {
+  const finance = fs.readFileSync('src/pages/Finance.tsx', 'utf8');
+  assert.match(finance, /id: 'branch_profitability', label: 'Branch P&L'/);
+  assert.match(finance, /id: 'profitability', label: 'Consolidated Organisation P&L'/);
+  assert.match(finance, /canUseManagementFinance/);
+  const pnl = fs.readFileSync('src/pages/finance/management/ProfitabilityLedger.tsx', 'utf8');
+  assert.match(pnl, /where\('tenantId', '==', profile.tenantId\)/);
+  assert.match(pnl, /later P&L accounting redesign is not included/);
+});
