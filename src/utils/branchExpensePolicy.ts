@@ -22,3 +22,11 @@ export function staffExpenseAttribution(staff: Staff) {
     recipient_staff_code: staff.staff_code || '' // Human-readable snapshot, never the lookup key.
   };
 }
+
+export function isAllowanceCategory(category: string): boolean {
+  return ['allowance', 'allowances', 'allowances issued'].includes(category.trim().toLowerCase().replace(/[_-]+/g, ' '));
+}
+
+export function expenseRecipientTypeAllowed(category: string, type: string): boolean {
+  return !isAllowanceCategory(category) || type === 'staff';
+}

@@ -158,3 +158,12 @@ Changes 001–013 complete; Level 2 has not started at this checkpoint.
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 017 — Reject external recipients for allowances
+
+- Modified files: `src/pages/Finance.tsx`, `src/utils/branchExpensePolicy.ts`, `tests/finance-rebuild-expenses.test.ts`.
+- Targeted checks: Allowance alias and forged external-recipient tests; form switches to Staff and removes External choice; submit guard applies independently of UI hiding.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.

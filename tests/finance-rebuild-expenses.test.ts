@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, staffExpenseAttribution } from '../src/utils/branchExpensePolicy';
+import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, staffExpenseAttribution, isAllowanceCategory, expenseRecipientTypeAllowed } from '../src/utils/branchExpensePolicy';
 
 test('new manual expenses cannot be salaries, including casing/spacing variants', () => {
   for (const category of ['salaries', 'Salaries', ' SALARY ']) {
@@ -63,4 +63,13 @@ test('ordinary expenses allow an explicit external recipient without creating st
   assert.match(branch, /recipient_type: 'external' as const, recipient_staff_id: ''/);
   assert.doesNotMatch(branch, /addDocument\('staff'/);
   assert.match(branch, /setEditingExpense\(null\); setRecipientType\('external'\); setSelectedStaffId\(''\)/);
+});
+
+test('external recipients are rejected for allowance aliases, including forged submit values', () => {
+  for (const category of ['Allowance', 'Allowances', ' allowances ', 'Allowances Issued']) {
+    assert.equal(isAllowanceCategory(category), true);
+    assert.equal(expenseRecipientTypeAllowed(category, 'external'), false);
+    assert.equal(expenseRecipientTypeAllowed(category, 'staff'), true);
+  }
+  assert.equal(expenseRecipientTypeAllowed('utilities', 'external'), true);
 });

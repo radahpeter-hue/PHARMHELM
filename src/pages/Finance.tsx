@@ -1,6 +1,6 @@
 import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
 import { inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../utils/financeDateFilters';
-import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, staffExpenseAttribution } from '../utils/branchExpensePolicy';
+import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, staffExpenseAttribution, isAllowanceCategory, expenseRecipientTypeAllowed } from '../utils/branchExpensePolicy';
 import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect } from 'react';
@@ -701,6 +701,10 @@ const BranchExpenseLog: React.FC = () => {
       return;
     }
 
+    if (!expenseRecipientTypeAllowed(formData.category, recipientType)) {
+      toast.error('Allowances can only be issued to staff.');
+      return;
+    }
     const selectedStaff = availableStaff.find(s => s.id === selectedStaffId);
     if (recipientType === 'staff' && !selectedStaff) {
       toast.error('Select an active employee from the staff register.');
@@ -753,7 +757,7 @@ const BranchExpenseLog: React.FC = () => {
       return;
     }
     setEditingExpense(exp);
-    setRecipientType(exp.recipient_type === 'staff' ? 'staff' : 'external');
+    setRecipientType(exp.recipient_type === 'staff' || isAllowanceCategory(exp.category) ? 'staff' : 'external');
     setSelectedStaffId(exp.recipient_staff_id || '');
     setFormData({
       category: exp.category,
@@ -822,7 +826,7 @@ const BranchExpenseLog: React.FC = () => {
               <select 
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20"
                 value={formData.category}
-                onChange={(e) => setFormData({...formData, category: e.target.value})}
+                onChange={(e) => { setFormData({...formData, category: e.target.value}); if (isAllowanceCategory(e.target.value)) setRecipientType('staff'); }}
               >
                 <option value="utilities">Utilities</option>
                 <option value="rent">Rent</option>
@@ -860,7 +864,7 @@ const BranchExpenseLog: React.FC = () => {
               <label className="text-xs font-bold text-zinc-500 uppercase">Recipient type</label>
               <select aria-label="Recipient type" value={recipientType} onChange={e => { setRecipientType(e.target.value as 'external' | 'staff'); setSelectedStaffId(''); }}
                 className="w-full px-4 py-2 bg-zinc-50 text-zinc-900 border border-zinc-200 rounded-xl">
-                <option value="external">Outsource / External</option><option value="staff">Staff</option>
+                {!isAllowanceCategory(formData.category) && <option value="external">Outsource / External</option>}<option value="staff">Staff</option>
               </select>
             </div>
             {recipientType === 'staff' ? <div className="space-y-1 md:col-span-2">
