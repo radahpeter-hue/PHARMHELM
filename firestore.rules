@@ -113,10 +113,11 @@ service cloud.firestore {
     }
 
     function isAssignedToBranch(branchId) {
+      let user = getUserData();
       return isAuthenticated() && (
-        (("assigned_branches" in getUserData()) && getUserData().assigned_branches.hasAny([branchId])) ||
-        (("branch_id" in getUserData()) && getUserData().branch_id == branchId) ||
-        (("default_branch_id" in getUserData()) && getUserData().default_branch_id == branchId) ||
+        (("assigned_branches" in user) && user.assigned_branches.hasAny([branchId])) ||
+        (("branch_id" in user) && user.branch_id == branchId) ||
+        (("default_branch_id" in user) && user.default_branch_id == branchId) ||
         isAdmin()
       );
     }
