@@ -969,31 +969,35 @@ service cloud.firestore {
       // HR assigns organisational roles and branch placement. IT may perform account
       // activation/support updates but cannot silently change the HR-assigned role realm.
       allow update: if atomicWelfareBalance(staffId);
-      allow update: if isAuthenticated()
+      function canUpdateStaff() {
+        let changed = request.resource.data.diff(resource.data).affectedKeys();
+        return isAuthenticated()
         && !resource.data.get('is_duplicate', false)
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['duplicate_of', 'is_duplicate', 'identity_alias_ids'])
+        && !changed.hasAny(['duplicate_of', 'is_duplicate', 'identity_alias_ids'])
         && isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
         && (resource.data.get('canonical_staff_id', '') == ''
           || request.resource.data.get('canonical_staff_id', '') == resource.data.canonical_staff_id)
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['canonical_staff_id']) || isIT())
+        && (!changed.hasAny(['canonical_staff_id']) || isIT())
         && (request.resource.data.get('staff_code', '') == resource.data.get('staff_code', '') || validStaffIdentity(staffId, request.resource.data))
         && (!('employee_id' in resource.data) || request.resource.data.employee_id == resource.data.employee_id)
         && (resource.data.get('staff_code', '') in ['', null] || request.resource.data.staff_code == resource.data.staff_code)
         && (
         isAdmin() || isHR() ||
         (isITPersonnel() &&
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          !changed.hasAny([
             'tenantId', 'role', 'secondaryRoles', 'roleRealmId',
             'assigned_branches', 'branch_id', 'default_branch_id'
           ])) ||
         (request.auth.uid == staffId &&
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          !changed.hasAny([
             'tenantId', 'role', 'secondaryRoles', 'assigned_branches',
             'branch_id', 'default_branch_id', 'status', 'active',
             'authEmail', 'loginHandle', 'username', 'uid', 'password_set',
             'legacyStaffId', 'roleRealmId'
           ]))
       );
+      }
+      allow update: if canUpdateStaff();
       allow delete: if (isAdmin() || isIT()) && isTenantMember(resource.data.tenantId)
         && resource.data.get('staff_code', '') == '' && !resource.data.get('is_duplicate', false);
     }
