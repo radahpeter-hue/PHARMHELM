@@ -1112,6 +1112,7 @@ const BranchCreditView: React.FC = () => {
 
 const BranchPettyCash: React.FC = () => {
   const { profile, activeBranchId, activeBranch } = useAuth();
+  const [reportStaff, setReportStaff] = useState<Staff[]>([]);
   const [requisitions, setRequisitions] = useState<PettyCashRequisition[]>([]);
   const [issues, setIssues] = useState<PettyCashIssue[]>([]);
   const [expenses, setExpenses] = useState<BranchExpense[]>([]);
@@ -1127,6 +1128,7 @@ const BranchPettyCash: React.FC = () => {
 
   useEffect(() => {
     if (profile?.tenantId && activeBranchId) {
+      const unsubStaff = firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setReportStaff, { includeStaffAliases: true });
       const unsubReqs = firestoreService.subscribeToCollection<PettyCashRequisition>('petty_cash_requisitions', profile.tenantId, (data) => {
         setRequisitions(data.filter(r => r.branch_id === activeBranchId).sort((a, b) => new Date(b.requisition_date).getTime() - new Date(a.requisition_date).getTime()));
       });
@@ -1137,6 +1139,7 @@ const BranchPettyCash: React.FC = () => {
         setExpenses(data.filter(e => e.branch_id === activeBranchId && e.payment_method === 'Petty Cash'));
       });
       return () => {
+        unsubStaff();
         unsubReqs();
         unsubIssues();
         unsubExpenses();
@@ -1231,7 +1234,7 @@ const BranchPettyCash: React.FC = () => {
               Incoming Petty Cash
             </h3>
             <FinanceDateRangeFields label="Incoming petty cash" value={incomingDateRange} onChange={setIncomingDateRange} />
-            <PettyCashExportButtons rows={pettyCashIssueRows(filteredIssues)} name="Incoming petty cash" range={incomingDateRange} branch={activeBranch?.name || activeBranchId || "Branch"} />
+            <PettyCashExportButtons rows={pettyCashIssueRows(filteredIssues, {tenantId: profile?.tenantId || '', staff: reportStaff, requisitions})} name="Incoming petty cash" range={incomingDateRange} branch={activeBranch?.name || activeBranchId || "Branch"} />
             <label className="flex items-center gap-2 text-xs text-zinc-600 mt-3">
               <input type="checkbox" checked={includeReceived} onChange={e => setIncludeReceived(e.target.checked)} />
               Include received cash
@@ -1269,7 +1272,7 @@ const BranchPettyCash: React.FC = () => {
             </h3>
             <p className="text-xs text-zinc-500 mt-2">History opens on the last seven days. Change the dates to view older records.</p>
             <FinanceDateRangeFields label="Petty cash requisitions" value={requisitionDateRange} onChange={setRequisitionDateRange} />
-            <PettyCashExportButtons rows={pettyCashRequisitionRows(filteredRequisitions)} name="Petty cash requisitions" range={requisitionDateRange} branch={activeBranch?.name || activeBranchId || "Branch"} />
+            <PettyCashExportButtons rows={pettyCashRequisitionRows(filteredRequisitions, {tenantId: profile?.tenantId || '', staff: reportStaff})} name="Petty cash requisitions" range={requisitionDateRange} branch={activeBranch?.name || activeBranchId || "Branch"} />
             <div className="flex flex-wrap gap-3 mt-3 text-xs font-semibold text-emerald-700">
               <button onClick={() => setRequisitionDateRange(lastSevenFinanceDays())}>Last 7 Days</button>
               <button onClick={() => setRequisitionDateRange(previousFinanceMonth())}>Previous Month</button>

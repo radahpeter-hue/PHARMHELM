@@ -64,7 +64,7 @@ const deepClean = (obj: any): any => {
 };
 
 export const firestoreService = {
-  subscribeToCollection: <T>(path: string, tenantId: string, callback: (data: T[]) => void) => {
+  subscribeToCollection: <T>(path: string, tenantId: string, callback: (data: T[]) => void, options: { includeStaffAliases?: boolean } = {}) => {
     const q = query(collection(db, path), where('tenantId', '==', tenantId));
     return onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as T));

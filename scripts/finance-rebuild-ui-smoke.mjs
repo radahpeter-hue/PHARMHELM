@@ -94,7 +94,7 @@ try {
   await page.getByRole('button',{name:'Previous Month',exact:true}).click();await page.getByText('UGX 22,000',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Download Petty cash requisitions XLSX',exact:true}).click();
   const exportedReqs=await page.evaluate(()=>window.exported);
-  assert.equal(exportedReqs[0].length,2);assert.equal(exportedReqs[0][0]['Amount (UGX)'],22000);assert.equal(exportedReqs[0][1]['Record ID'],'TOTAL');
+  assert.equal(exportedReqs[0].length,2);assert.equal(exportedReqs[0][0]['Amount (UGX)'],22000);assert.equal(exportedReqs[0][1].Branch,'TOTAL');
   const csvDownload=page.waitForEvent('download');await page.getByRole('button',{name:'Download Petty cash requisitions CSV',exact:true}).click();
   const csvFile=await csvDownload;assert.ok(csvFile.suggestedFilename().endsWith('.csv'));
   const csvContent=await readFile(await csvFile.path(),'utf8');assert.ok(csvContent.includes('22000'));assert.ok(!csvContent.includes('11000'));
