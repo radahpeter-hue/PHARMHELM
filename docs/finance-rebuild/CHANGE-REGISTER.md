@@ -82,3 +82,12 @@ Accepted means engineering acceptance after the recorded checks. Owner live acce
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 010 — Verify employee welfare admin separation already present
+
+- Modified files: None; existing behaviour verified.
+- Targeted checks: Actual role policy checked for six employee roles, six administrative roles and secondary HR assignment; management controls retained; no application change needed.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.
