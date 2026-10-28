@@ -657,7 +657,7 @@ const BranchExpenseLog: React.FC = () => {
   const { profile, activeBranchId } = useAuth();
   const isFinanceHead = hasAnyRole(profile, ['Finance Head']);
   const [staff, setStaff] = useState<Staff[]>([]);
-  const [recipientType, setRecipientType] = useState<'manual' | 'staff'>('manual');
+  const [recipientType, setRecipientType] = useState<'external' | 'staff'>('external');
   const [selectedStaffId, setSelectedStaffId] = useState('');
   const availableStaff = eligibleExpenseStaff(staff, profile?.tenantId || '');
   const [expenses, setExpenses] = useState<BranchExpense[]>([]);
@@ -739,7 +739,7 @@ const BranchExpenseLog: React.FC = () => {
       }
       setIsAdding(false);
       setEditingExpense(null);
-      setRecipientType('manual');
+      setRecipientType('external');
       setSelectedStaffId('');
       setFormData({ category: 'utilities', amount: 0, description: '', recipient: '', date: new Date().toISOString().split('T')[0] });
     } catch (error) {
@@ -753,7 +753,7 @@ const BranchExpenseLog: React.FC = () => {
       return;
     }
     setEditingExpense(exp);
-    setRecipientType(exp.recipient_type === 'staff' ? 'staff' : 'manual');
+    setRecipientType(exp.recipient_type === 'staff' ? 'staff' : 'external');
     setSelectedStaffId(exp.recipient_staff_id || '');
     setFormData({
       category: exp.category,
@@ -790,7 +790,11 @@ const BranchExpenseLog: React.FC = () => {
             />
           </div>
           <button 
-            onClick={() => setIsAdding(true)}
+            onClick={() => {
+              setEditingExpense(null); setRecipientType('external'); setSelectedStaffId('');
+              setFormData({ category: 'utilities', amount: 0, description: '', recipient: '', date: new Date().toISOString().split('T')[0] });
+              setIsAdding(true);
+            }}
             className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl font-medium transition-colors flex items-center gap-2"
           >
             <Plus size={20} />
@@ -854,9 +858,9 @@ const BranchExpenseLog: React.FC = () => {
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-zinc-500 uppercase">Recipient type</label>
-              <select aria-label="Recipient type" value={recipientType} onChange={e => { setRecipientType(e.target.value as 'manual' | 'staff'); setSelectedStaffId(''); }}
+              <select aria-label="Recipient type" value={recipientType} onChange={e => { setRecipientType(e.target.value as 'external' | 'staff'); setSelectedStaffId(''); }}
                 className="w-full px-4 py-2 bg-zinc-50 text-zinc-900 border border-zinc-200 rounded-xl">
-                <option value="manual">Other recipient</option><option value="staff">Staff</option>
+                <option value="external">Outsource / External</option><option value="staff">Staff</option>
               </select>
             </div>
             {recipientType === 'staff' ? <div className="space-y-1 md:col-span-2">

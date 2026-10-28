@@ -56,3 +56,11 @@ test('staff attribution preserves immutable document identity despite duplicate 
   assert.equal(saved.issued_to, 'Original Name');
   assert.equal(staffExpenseAttribution(staff).recipient_staff_id, saved.recipient_staff_id);
 });
+
+test('ordinary expenses allow an explicit external recipient without creating staff accounts', () => {
+  const branch = fs.readFileSync('src/pages/Finance.tsx', 'utf8').split('const BranchExpenseLog:')[1].split('const BranchCreditView:')[0];
+  assert.match(branch, /value="external">Outsource \/ External/);
+  assert.match(branch, /recipient_type: 'external' as const, recipient_staff_id: ''/);
+  assert.doesNotMatch(branch, /addDocument\('staff'/);
+  assert.match(branch, /setEditingExpense\(null\); setRecipientType\('external'\); setSelectedStaffId\(''\)/);
+});

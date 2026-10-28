@@ -149,3 +149,12 @@ Changes 001–013 complete; Level 2 has not started at this checkpoint.
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 016 — Allow explicit outsource external expense recipients
+
+- Modified files: `src/pages/Finance.tsx`, `tests/finance-rebuild-expenses.test.ts`.
+- Targeted checks: External-recipient persistence and no-staff-account creation checks; new-entry reset prevents stale edited staff attribution; Finance regressions.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.
