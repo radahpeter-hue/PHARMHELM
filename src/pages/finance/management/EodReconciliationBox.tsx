@@ -1,3 +1,4 @@
+import { kampalaBusinessDate } from '../../../utils/eodBusinessDate';
 import { staffMatchesId } from '../../../utils/operationalStaff';
 import { canCorrectEod } from '../../../utils/eodEditPolicy';
 import { EodCorrectionModal } from '../../../components/finance/EodCorrectionModal';
@@ -73,9 +74,8 @@ export const EodReconciliationBox: React.FC = () => {
 
   // Date range filters based on reconciliation date (defaults to current month)
   const [dateRange, setDateRange] = useState(() => {
-    const today = new Date();
-    const start = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-    const end = today.toISOString().split('T')[0];
+    const end = kampalaBusinessDate();
+    const start = end.slice(0, 7) + '-01';
     return { start, end };
   });
 

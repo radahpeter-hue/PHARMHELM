@@ -1,3 +1,4 @@
+import { isBusinessDate, kampalaBusinessDate, timestampBusinessDate } from '../utils/eodBusinessDate';
 import { staffMatchesId } from '../utils/operationalStaff';
 import { PettyCashExportButtons } from '../components/finance/PettyCashExportButtons';
 import { pettyCashIssueRows, pettyCashRequisitionRows } from '../utils/pettyCashExport';
@@ -265,7 +266,7 @@ const EODReconciliationTab: React.FC = () => {
     insurance: 0,
     institutional_credit: 0,
     staff_welfare: 0,
-    date: new Date().toISOString().split('T')[0]
+    date: kampalaBusinessDate()
   });
 
   const [varianceReason, setVarianceReason] = useState('');
@@ -287,7 +288,7 @@ const EODReconciliationTab: React.FC = () => {
       const isCompleted = s.status === 'completed' || s.status === 'active';
       const isSameBranch = s.branchId === activeBranchId;
       if (!s.timestamp) return false;
-      const saleDate = s.timestamp.split('T')[0];
+      const saleDate = timestampBusinessDate(s.timestamp);
       return isCompleted && isSameBranch && saleDate === targetDate;
     });
 
@@ -360,6 +361,7 @@ const EODReconciliationTab: React.FC = () => {
 
   const handleSubmit = async () => {
     if (!profile) return;
+    if (!isBusinessDate(formData.date)) { toast.error('Select a valid business date.'); return; }
     try {
       const cash_var = eodVariance(formData.cash, computedExpected.cash);
       const mtn_var = eodVariance(formData.mtn, computedExpected.momo);
@@ -433,7 +435,7 @@ const EODReconciliationTab: React.FC = () => {
         insurance: 0,
         institutional_credit: 0,
         staff_welfare: 0,
-        date: new Date().toISOString().split('T')[0]
+        date: kampalaBusinessDate()
       });
       setVarianceReason('');
     } catch (error) {
@@ -454,9 +456,9 @@ const EODReconciliationTab: React.FC = () => {
           </div>
         </div>
         <div className="text-left sm:text-right">
-          <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Select Operations Date</p>
+          <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Business Date (Kampala)</p>
           <input 
-            type="date"
+            type="date" aria-label="EOD business date"
             className="px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20 font-bold text-sm text-zinc-800"
             value={formData.date}
             onChange={(e) => {
