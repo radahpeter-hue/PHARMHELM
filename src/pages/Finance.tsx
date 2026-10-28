@@ -1,3 +1,4 @@
+import { eodVariance, requiresEodVarianceReason } from '../utils/eodMoney';
 import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
 import { inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../utils/financeDateFilters';
 import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, buildBranchExpenseRecipient, isAllowanceCategory, expenseRecipientTypeAllowed } from '../utils/branchExpensePolicy';
@@ -342,16 +343,26 @@ const EODReconciliationTab: React.FC = () => {
     };
   }, [sales, formData.date, activeBranchId]);
 
+  const needsVarianceReason = requiresEodVarianceReason([
+    { declared: formData.cash, expected: computedExpected.cash },
+    { declared: formData.mtn, expected: computedExpected.momo },
+    { declared: formData.airtel, expected: computedExpected.airtel },
+    { declared: formData.card, expected: computedExpected.card },
+    { declared: formData.insurance, expected: computedExpected.insurance },
+    { declared: formData.institutional_credit, expected: computedExpected.institutional_credit },
+    { declared: formData.staff_welfare, expected: computedExpected.staff_welfare },
+  ]);
+
   const handleSubmit = async () => {
     if (!profile) return;
     try {
-      const cash_var = formData.cash - computedExpected.cash;
-      const mtn_var = formData.mtn - computedExpected.momo;
-      const airtel_var = formData.airtel - computedExpected.airtel;
-      const card_var = formData.card - computedExpected.card;
-      const insurance_var = formData.insurance - computedExpected.insurance;
-      const inst_var = formData.institutional_credit - computedExpected.institutional_credit;
-      const welfare_var = formData.staff_welfare - computedExpected.staff_welfare;
+      const cash_var = eodVariance(formData.cash, computedExpected.cash);
+      const mtn_var = eodVariance(formData.mtn, computedExpected.momo);
+      const airtel_var = eodVariance(formData.airtel, computedExpected.airtel);
+      const card_var = eodVariance(formData.card, computedExpected.card);
+      const insurance_var = eodVariance(formData.insurance, computedExpected.insurance);
+      const inst_var = eodVariance(formData.institutional_credit, computedExpected.institutional_credit);
+      const welfare_var = eodVariance(formData.staff_welfare, computedExpected.staff_welfare);
 
       const total_act = 
         formData.cash + 
@@ -363,9 +374,9 @@ const EODReconciliationTab: React.FC = () => {
         formData.staff_welfare;
 
       const total_exp = computedExpected.total;
-      const total_var = total_act - total_exp;
+      const total_var = eodVariance(total_act, total_exp);
 
-      if (total_var !== 0 && !varianceReason.trim()) {
+      if (needsVarianceReason && !varianceReason.trim()) {
         toast.warning("Please specify a reason for the discrepancy / variance to proceed.");
         return;
       }
@@ -590,12 +601,12 @@ const EODReconciliationTab: React.FC = () => {
               </div>
 
               <div className="pt-4 border-t border-zinc-100 space-y-4">
-                {(declaredTotals - computedExpected.total) !== 0 && (
+                {needsVarianceReason && (
                   <div className="space-y-2 animate-pulse-subtle">
-                    <label className="text-xs font-black text-red-600 uppercase flex items-center gap-1.5">
+                    <label htmlFor="eod-variance-reason" className="text-xs font-black text-red-600 uppercase flex items-center gap-1.5">
                       <AlertTriangle size={14} /> Variance Reason Required
                     </label>
-                    <textarea 
+                    <textarea id="eod-variance-reason"
                       required
                       className="w-full px-4 py-3 bg-red-50/30 border border-red-200 rounded-2xl focus:ring-2 focus:ring-red-500/20 outline-none text-sm min-h-[80px]"
                       placeholder="Please account for the discrepancy found..."
@@ -607,6 +618,7 @@ const EODReconciliationTab: React.FC = () => {
                 
                 <button 
                   onClick={handleSubmit}
+                  disabled={needsVarianceReason && !varianceReason.trim()}
                   className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-lg transition-all shadow-xl shadow-emerald-600/10"
                 >
                   Submit EOD Audit Report

@@ -176,3 +176,12 @@ Changes 001–013 complete; Level 2 has not started at this checkpoint.
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 019 — Require reasons for genuine eod variances
+
+- Modified files: `src/pages/Finance.tsx`.
+- Targeted checks: Shortage/over and offsetting-channel tests; machine-roundoff-only normalization; independent submit guard and disabled reasonless submit; stored channel/total variances use the same comparator.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.
