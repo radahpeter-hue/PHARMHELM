@@ -1,3 +1,7 @@
+import { matchesProfitabilityBranch } from '../../../utils/profitabilityScope';
+import { profitabilityPeriodRange, type ProfitabilityPeriod } from '../../../utils/profitabilityPeriod';
+import { financeDateKey } from '../../../utils/financeDateFilters';
+import { FinanceDateRangeFields } from '../../../components/finance/FinanceDateRangeFields';
 import { getSaleCostOfGoods } from '../../../utils/salePresentation';
 import { isActiveSale } from '../../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
@@ -47,8 +51,13 @@ interface ManagementExpense {
   excludeFromOpexRollup?: boolean;
 }
 
-export const ProfitabilityLedger: React.FC = () => {
-  const { profile } = useAuth();
+export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branchOnly = false }) => {
+  const { profile, activeBranchId, assignedBranches } = useAuth();
+  const branchChoices = assignedBranches.filter(b => b.tenantId === profile?.tenantId);
+  const [selectedBranchId, setSelectedBranchId] = useState(activeBranchId || '');
+  const selectedBranch = branchChoices.find(b => b.id === selectedBranchId) || branchChoices[0];
+  const reportBranchId = selectedBranch?.id || '';
+  const inScope = (record: any) => !branchOnly || matchesProfitabilityBranch(record, profile?.tenantId || '', reportBranchId);
   const [sales, setSales] = useState<any[]>([]);
   const [branchExpenses, setBranchExpenses] = useState<BranchExpense[]>([]);
   const [mgmtExpenses, setMgmtExpenses] = useState<ManagementExpense[]>([]);
@@ -59,10 +68,19 @@ export const ProfitabilityLedger: React.FC = () => {
 
   // Date Range Ledger Filter (defaults to Today)
   const [isDateFilterActive, setIsDateFilterActive] = useState(true);
-  const [dateRange, setDateRange] = useState({
-    start: new Date().toISOString().split('T')[0],
-    end: new Date().toISOString().split('T')[0],
-  });
+  const [period, setPeriod] = useState<ProfitabilityPeriod | 'custom'>('today');
+  const [periodAnchor, setPeriodAnchor] = useState(() => financeDateKey(new Date()));
+  const [dateRange, setDateRange] = useState(() => profitabilityPeriodRange('today'));
+
+  const selectPeriod = (value: ProfitabilityPeriod | 'custom') => {
+    setPeriod(value);
+    setIsDateFilterActive(true);
+    if (value !== 'custom') {
+      const anchor = value === 'today' ? financeDateKey(new Date()) : periodAnchor;
+      setPeriodAnchor(anchor);
+      setDateRange(profitabilityPeriodRange(value, anchor));
+    }
+  };
 
   const fetchData = async () => {
     if (!profile?.tenantId) return;
@@ -105,32 +123,36 @@ export const ProfitabilityLedger: React.FC = () => {
   // Filter items globally based on Date Range
   const filteredSales = useMemo(() => {
     return sales.filter(s => {
+      if (!inScope(s)) return false;
       if (s.status === 'voided') return false; // Exclude voided sales
       if (!isDateFilterActive) return true;
       const d = (s.timestamp || s.date || '').split('T')[0];
       return d && d >= dateRange.start && d <= dateRange.end;
     });
-  }, [sales, isDateFilterActive, dateRange]);
+  }, [sales, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
 
   const filteredBranchExpenses = useMemo(() => {
     return branchExpenses.filter(e => {
+      if (!inScope(e)) return false;
       if (!isDateFilterActive) return true;
       const d = (e.expense_date || '').split('T')[0];
       return d && d >= dateRange.start && d <= dateRange.end;
     });
-  }, [branchExpenses, isDateFilterActive, dateRange]);
+  }, [branchExpenses, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
 
   const filteredMgmtExpenses = useMemo(() => {
     return mgmtExpenses.filter(e => {
+      if (!inScope(e)) return false;
       if (!['approved', 'issued'].includes((e.status || '').toLowerCase())) return false;
       if (isExcludedFromOpex(e)) return false;
       if (!isDateFilterActive) return true;
       const d = (e.expense_date || e.date || '').split('T')[0];
       return d && d >= dateRange.start && d <= dateRange.end;
     });
-  }, [mgmtExpenses, isDateFilterActive, dateRange]);
+  }, [mgmtExpenses, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
 
   const filterByPeriod = (items: any[]) => items.filter(item => {
+    if (!inScope(item)) return false;
     if (!isDateFilterActive) return true;
     const d = (item.date || item.expense_date || item.created_at || '').split('T')[0];
     return d && d >= dateRange.start && d <= dateRange.end;
@@ -138,11 +160,12 @@ export const ProfitabilityLedger: React.FC = () => {
 
   const filteredQuarantine = useMemo(() => {
     return quarantineLogs.filter(q => {
+      if (!inScope(q)) return false;
       if (!isDateFilterActive) return true;
       const d = (q.dateLogged || q.date || q.created_at || '').split('T')[0];
       return d && d >= dateRange.start && d <= dateRange.end;
     });
-  }, [quarantineLogs, isDateFilterActive, dateRange]);
+  }, [quarantineLogs, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
 
   // Calculations
   const totalRevenue = useMemo(() => {
@@ -167,11 +190,11 @@ export const ProfitabilityLedger: React.FC = () => {
 
   const totalLogisticsExp = useMemo(() => {
     return filterByPeriod(logisticsExpenses).reduce((sum, e) => sum + (e.cost_ugx || e.fine_amount_ugx || e.amount || 0), 0);
-  }, [logisticsExpenses, isDateFilterActive, dateRange]);
+  }, [logisticsExpenses, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
 
   const totalMarketingExp = useMemo(() => {
     return filterByPeriod(marketingExpenses).reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
-  }, [marketingExpenses, isDateFilterActive, dateRange]);
+  }, [marketingExpenses, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
 
   const totalWastage = useMemo(() => {
     return filteredQuarantine.reduce((sum, q) => sum + (q.totalCost || q.total_cost || q.estimatedValue || q.cost || 0), 0);
@@ -194,7 +217,7 @@ export const ProfitabilityLedger: React.FC = () => {
       { 'Metric Label': 'Branch Operational Expenses', 'Value (UGX)': totalBranchExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalBranchExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Logistics and Transport Expenses', 'Value (UGX)': totalLogisticsExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalLogisticsExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Marketing Expenses', 'Value (UGX)': totalMarketingExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalMarketingExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
-      { 'Metric Label': 'Corporate HQ & Management Expenses', 'Value (UGX)': totalMgmtExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalMgmtExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
+      { 'Metric Label': 'Corporate HQ & Management Cash Outflows', 'Value (UGX)': totalMgmtExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalMgmtExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Wastage & Quarantine Loss', 'Value (UGX)': totalWastage, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalWastage / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Total Consolidated Expenses', 'Value (UGX)': totalExpenses, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalExpenses / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Net Profit Payout Baseline', 'Value (UGX)': netProfit, 'Percentage of Revenue': totalRevenue > 0 ? `${((netProfit / totalRevenue) * 100).toFixed(1)}%` : '0.0%' }
@@ -204,48 +227,55 @@ export const ProfitabilityLedger: React.FC = () => {
     const formattedTo = dateRange.end.split('-').reverse().join('-');
     await exportRecordsToExcel(
       reportData,
-      'Profitability Statement',
-      `Profitability_Ledger_Statement_${formattedFrom}_to_${formattedTo}.xlsx`
+      branchOnly ? 'Branch P&L' : 'Consolidated Organisation P&L',
+      `${branchOnly ? `Branch_PnL_${reportBranchId}` : 'Consolidated_Organisation_PnL'}_${formattedFrom}_to_${formattedTo}.xlsx`
     );
     toast.success("Profitability excel ledger downloaded successfully!");
   };
 
   return (
     <div className="space-y-6">
-      {/* Date filter auditor */}
-      <div className="bg-zinc-50 border border-zinc-200 p-6 rounded-3xl flex flex-col md:flex-row items-center justify-between gap-6 shadow-sm">
+      {branchOnly && <div className="space-y-3">
+        <h2 className="text-2xl font-bold text-zinc-900">Branch P&L</h2>
+        <label className="block text-sm text-zinc-700">Branch
+          <select aria-label="P&L branch" value={reportBranchId} onChange={e => setSelectedBranchId(e.target.value)}
+            className="block w-full sm:w-auto max-w-full bg-white text-zinc-900 border border-zinc-200 rounded-xl p-2">
+            {!branchChoices.length && <option value="">No assigned branch</option>}
+            {branchChoices.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </label>
+        <p className="text-xs text-zinc-500">Includes only records explicitly tagged to this branch. Untagged and HQ outflows remain in the consolidated view. Current P&L accounting logic is unchanged.</p>
+      </div>}
+      {!branchOnly && <div className="space-y-2">
+        <h2 className="text-2xl font-bold text-zinc-900">Consolidated Organisation P&L</h2>
+        <p className="text-xs text-zinc-500">Organisation-wide results for the current tenant, including HQ outflows. Current reporting data and accounting formulas are retained; the later P&L accounting redesign is not included.</p>
+      </div>}
+      {/* Date presets only: current accounting dataset and formulas are unchanged. */}
+      <div className="bg-zinc-50 border border-zinc-200 p-4 sm:p-6 rounded-3xl flex flex-col gap-4 shadow-sm">
         <div>
-          <h4 className="font-extrabold text-zinc-950 text-sm">Profitability Ledger Auditor</h4>
-          <p className="text-[10px] text-zinc-500 font-medium">Configure date intervals to verify Month-to-Date (MTD) or custom period margins.</p>
+          <h4 className="font-extrabold text-zinc-950 text-sm">P&L Reporting Period</h4>
+          <p className="text-xs text-zinc-500">Month is month-to-date; Monthly is a full calendar month. Week runs Monday to Sunday. Bi-Annual uses January–June or July–December.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 text-xs font-bold text-zinc-750 cursor-pointer">
-            <input 
-              type="checkbox" 
-              checked={isDateFilterActive} 
-              onChange={(e) => setIsDateFilterActive(e.target.checked)}
-              className="rounded bg-white border-zinc-200 text-zinc-950 focus:ring-0"
-            />
-            Filter Ledger Date
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs text-zinc-700">Period
+            <select aria-label="P&L period" value={period} onChange={e => selectPeriod(e.target.value as ProfitabilityPeriod | 'custom')}
+              className="block rounded-xl border border-zinc-200 bg-white text-zinc-900 p-2">
+              <option value="today">Today</option><option value="week">Week</option>
+              <option value="month">Month (to date)</option><option value="custom">Custom</option>
+              <option value="monthly">Monthly</option><option value="biannual">Bi-Annual</option><option value="annual">Annual</option>
+            </select>
           </label>
-          {isDateFilterActive && (
-            <div className="flex items-center gap-2">
-              <input 
-                type="date"
-                value={dateRange.start}
-                onChange={(e) => setDateRange({...dateRange, start: e.target.value})}
-                className="bg-white border border-zinc-200 text-xs font-semibold px-3 py-1.5 rounded-xl outline-none"
-              />
-              <span className="text-zinc-400 text-xs">-</span>
-              <input 
-                type="date"
-                value={dateRange.end}
-                onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
-                className="bg-white border border-zinc-200 text-xs font-semibold px-3 py-1.5 rounded-xl outline-none"
-              />
-            </div>
-          )}
+          {period !== 'custom' && period !== 'today' && <label className="text-xs text-zinc-700">Date within period
+            <input aria-label="P&L period anchor" type="date" value={periodAnchor}
+              onChange={e => { if (!e.target.value) return; setPeriodAnchor(e.target.value); setDateRange(profitabilityPeriodRange(period, e.target.value)); setIsDateFilterActive(true); }}
+              className="block max-w-full rounded-xl border border-zinc-200 bg-white text-zinc-900 p-2" />
+          </label>}
+          <label className="flex items-center gap-2 text-xs text-zinc-700 p-2">
+            <input type="checkbox" checked={isDateFilterActive} onChange={e => setIsDateFilterActive(e.target.checked)} /> Filter Ledger Date
+          </label>
         </div>
+        {isDateFilterActive && <FinanceDateRangeFields label="P&L dates" value={dateRange}
+          onChange={range => { setPeriod('custom'); setDateRange(range); }} />}
       </div>
 
       {/* Margins Dashboard */}
@@ -327,7 +357,7 @@ export const ProfitabilityLedger: React.FC = () => {
               <span className="font-black text-red-500 font-mono text-sm">- UGX {totalMarketingExp.toLocaleString()}</span>
             </div>
             <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
-              <span className="font-bold text-zinc-600 text-sm">Management/HQ Expenses</span>
+              <span className="font-bold text-zinc-600 text-sm">Management/HQ Cash Outflows</span>
               <span className="font-black text-red-500 font-mono text-sm">- UGX {totalMgmtExp.toLocaleString()}</span>
             </div>
             <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">

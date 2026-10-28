@@ -208,7 +208,7 @@ export const ManagementExpenseLedger: React.FC = () => {
       setPcLedger(pcData);
     } catch (e: any) {
       console.error("Error fetching management expenses ledger:", e);
-      toast.error("Failed to load management expenses.");
+      toast.error("Failed to load management cash outflows.");
     } finally {
       setLoading(false);
     }
@@ -648,8 +648,8 @@ export const ManagementExpenseLedger: React.FC = () => {
     const formattedTo = dateRange.end.split('-').reverse().join('-');
     await exportRecordsToExcel(
       exportData,
-      'Management Expenses',
-      `ManagementExpenses_Report_${formattedFrom}_to_${formattedTo}.xlsx`
+      'Management Cash Outflows',
+      `ManagementCashOutflows_Report_${formattedFrom}_to_${formattedTo}.xlsx`
     );
     toast.success("Excel report exported successfully!");
   };
@@ -660,7 +660,7 @@ export const ManagementExpenseLedger: React.FC = () => {
       {/* Treasury Header */}
       <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 bg-white p-6 border border-zinc-200 rounded-[32px] shadow-sm">
         <div className="space-y-1">
-          <h2 className="text-2xl font-black text-zinc-950 tracking-tight">Management Expense Ledger</h2>
+          <h2 className="text-2xl font-black text-zinc-950 tracking-tight">Management Cash Outflows</h2>
           <p className="text-xs text-zinc-500 font-medium">Log, audit, review, and confirm company HQ, HR, procurement, and administrative payments.</p>
         </div>
         <div className="flex min-w-0 flex-col items-stretch gap-4 sm:flex-row sm:items-center self-stretch lg:self-auto justify-between lg:justify-end border-t lg:border-t-0 pt-4 lg:pt-0">
@@ -818,7 +818,7 @@ export const ManagementExpenseLedger: React.FC = () => {
         {loading ? (
           <div className="p-12 text-center text-zinc-500 font-bold flex flex-col items-center gap-2">
             <RefreshCw className="animate-spin text-zinc-400" size={24} />
-            Loading management expenses ledger...
+            Loading management cash outflows ledger...
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -898,7 +898,7 @@ export const ManagementExpenseLedger: React.FC = () => {
                 {filteredExpenses.length === 0 && (
                   <tr>
                     <td colSpan={8} className="px-6 py-12 text-center text-zinc-400 italic text-sm">
-                      No management expenses logs found matching current search filters.
+                      No management cash outflows logs found matching current search filters.
                     </td>
                   </tr>
                 )}
@@ -914,7 +914,7 @@ export const ManagementExpenseLedger: React.FC = () => {
           <div className="bg-white rounded-[32px] w-full max-w-md overflow-hidden shadow-2xl border border-zinc-100 animate-in zoom-in-95 duration-150">
             <div className="p-8">
               <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-black text-zinc-950">Log Management Expense</h3>
+                <h3 className="text-xl font-black text-zinc-950">Log Management Cash Outflow</h3>
                 <button onClick={() => setIsManualModalOpen(false)} className="text-zinc-400 hover:text-zinc-600">
                   <X size={24} />
                 </button>

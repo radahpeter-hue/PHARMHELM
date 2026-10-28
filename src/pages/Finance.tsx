@@ -1,3 +1,7 @@
+import { eodVariance, requiresEodVarianceReason, formatEodAmount, eodAmountNumber, sumEodAmounts } from '../utils/eodMoney';
+import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
+import { inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../utils/financeDateFilters';
+import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, buildBranchExpenseRecipient, isAllowanceCategory, expenseRecipientTypeAllowed } from '../utils/branchExpensePolicy';
 import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect } from 'react';
@@ -45,7 +49,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
 import { UpgradeRequiredCard } from '../components/UpgradeRequiredCard';
 import { firestoreService } from '../services/firestore';
-import { FinanceLedger, EODReconciliation, BranchExpense, CashRequisition, CreditReceivable, SupplierPayable, ManagementExpense, ProcurementInvoice, PettyCashRequisition, PettyCashLedger, PettyCashIssue, Branch, SystemSettings, Sale, GRNRecord } from '../types';
+import { FinanceLedger, EODReconciliation, BranchExpense, Staff, CashRequisition, CreditReceivable, SupplierPayable, ManagementExpense, ProcurementInvoice, PettyCashRequisition, PettyCashLedger, PettyCashIssue, Branch, SystemSettings, Sale, GRNRecord } from '../types';
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -94,7 +98,7 @@ const Finance: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold text-zinc-900">Financial Operations</h1>
           <p className="text-zinc-500">Manage branch reconciliations, expenses, and management-level oversight.</p>
@@ -217,13 +221,13 @@ const BranchFinance: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex border-b border-zinc-200">
+      <div className="flex border-b border-zinc-200 overflow-x-auto">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveSubTab(tab.id as any)}
             className={cn(
-              "flex items-center gap-2 px-6 py-3 text-sm font-medium transition-all border-b-2",
+              "flex shrink-0 items-center gap-2 px-6 py-3 text-sm font-medium transition-all border-b-2",
               activeSubTab === tab.id 
                 ? "border-emerald-500 text-emerald-600" 
                 : "border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300"
@@ -284,85 +288,90 @@ const EODReconciliationTab: React.FC = () => {
       return isCompleted && isSameBranch && saleDate === targetDate;
     });
 
-    let cash = 0;
-    let momo = 0;
-    let airtel = 0;
-    let card = 0;
-    let insurance = 0;
-    let instCredit = 0;
-    let staffWelfare = 0;
+    const cash: number[] = [];
+    const momo: number[] = [];
+    const airtel: number[] = [];
+    const card: number[] = [];
+    const insurance: number[] = [];
+    const instCredit: number[] = [];
+    const staffWelfare: number[] = [];
 
     filtered.forEach(s => {
-      const totalAmount = s.totalAmount ?? s.total ?? 0;
+      const totalAmount = eodAmountNumber(s.totalAmount ?? s.total ?? 0);
       const isSplit = s.paymentMethod === 'staff_welfare' && s.secondaryPaymentMethod;
       
       if (isSplit) {
-        const welfareVal = s.welfareAmount ?? 0;
-        const secVal = s.secondaryAmount ?? (totalAmount - welfareVal);
+        const welfareVal = eodAmountNumber(s.welfareAmount ?? 0);
+        const secVal = eodAmountNumber(s.secondaryAmount ?? (totalAmount - welfareVal));
         
         // Welfare component
-        staffWelfare += welfareVal;
+        staffWelfare.push(welfareVal);
         
         // Secondary payment component
         const secMethod = s.secondaryPaymentMethod;
-        if (secMethod === 'cash') cash += secVal;
-        else if (secMethod === 'mtn_momo') momo += secVal;
-        else if (secMethod === 'airtel_money') airtel += secVal;
-        else if (secMethod === 'card') card += secVal;
-        else if (secMethod === 'insurance') insurance += secVal;
-        else if (secMethod === 'institutional_credit') instCredit += secVal;
+        if (secMethod === 'cash') cash.push(secVal);
+        else if (secMethod === 'mtn_momo') momo.push(secVal);
+        else if (secMethod === 'airtel_money') airtel.push(secVal);
+        else if (secMethod === 'card') card.push(secVal);
+        else if (secMethod === 'insurance') insurance.push(secVal);
+        else if (secMethod === 'institutional_credit') instCredit.push(secVal);
       } else {
         // Simple direct payment
         const pMethod = s.paymentMethod;
-        if (pMethod === 'cash') cash += totalAmount;
-        else if (pMethod === 'mtn_momo') momo += totalAmount;
-        else if (pMethod === 'airtel_money') airtel += totalAmount;
-        else if (pMethod === 'card') card += totalAmount;
-        else if (pMethod === 'insurance') insurance += totalAmount;
-        else if (pMethod === 'institutional_credit') instCredit += totalAmount;
-        else if (pMethod === 'staff_welfare') staffWelfare += totalAmount;
+        if (pMethod === 'cash') cash.push(totalAmount);
+        else if (pMethod === 'mtn_momo') momo.push(totalAmount);
+        else if (pMethod === 'airtel_money') airtel.push(totalAmount);
+        else if (pMethod === 'card') card.push(totalAmount);
+        else if (pMethod === 'insurance') insurance.push(totalAmount);
+        else if (pMethod === 'institutional_credit') instCredit.push(totalAmount);
+        else if (pMethod === 'staff_welfare') staffWelfare.push(totalAmount);
       }
     });
 
     return {
       computedExpected: {
-        cash,
-        momo,
-        airtel,
-        card,
-        insurance,
-        institutional_credit: instCredit,
-        staff_welfare: staffWelfare,
-        total: cash + momo + airtel + card + insurance + instCredit + staffWelfare
+        cash: sumEodAmounts(cash),
+        momo: sumEodAmounts(momo),
+        airtel: sumEodAmounts(airtel),
+        card: sumEodAmounts(card),
+        insurance: sumEodAmounts(insurance),
+        institutional_credit: sumEodAmounts(instCredit),
+        staff_welfare: sumEodAmounts(staffWelfare),
+        total: sumEodAmounts([...cash, ...momo, ...airtel, ...card, ...insurance, ...instCredit, ...staffWelfare])
       },
       relevantSalesCount: filtered.length
     };
   }, [sales, formData.date, activeBranchId]);
 
+  const declaredTotals = sumEodAmounts([formData.cash, formData.mtn, formData.airtel, formData.card, formData.insurance, formData.institutional_credit, formData.staff_welfare]);
+
+  const needsVarianceReason = requiresEodVarianceReason([
+    { declared: formData.cash, expected: computedExpected.cash },
+    { declared: formData.mtn, expected: computedExpected.momo },
+    { declared: formData.airtel, expected: computedExpected.airtel },
+    { declared: formData.card, expected: computedExpected.card },
+    { declared: formData.insurance, expected: computedExpected.insurance },
+    { declared: formData.institutional_credit, expected: computedExpected.institutional_credit },
+    { declared: formData.staff_welfare, expected: computedExpected.staff_welfare },
+  ]);
+
   const handleSubmit = async () => {
     if (!profile) return;
     try {
-      const cash_var = formData.cash - computedExpected.cash;
-      const mtn_var = formData.mtn - computedExpected.momo;
-      const airtel_var = formData.airtel - computedExpected.airtel;
-      const card_var = formData.card - computedExpected.card;
-      const insurance_var = formData.insurance - computedExpected.insurance;
-      const inst_var = formData.institutional_credit - computedExpected.institutional_credit;
-      const welfare_var = formData.staff_welfare - computedExpected.staff_welfare;
+      const cash_var = eodVariance(formData.cash, computedExpected.cash);
+      const mtn_var = eodVariance(formData.mtn, computedExpected.momo);
+      const airtel_var = eodVariance(formData.airtel, computedExpected.airtel);
+      const card_var = eodVariance(formData.card, computedExpected.card);
+      const insurance_var = eodVariance(formData.insurance, computedExpected.insurance);
+      const inst_var = eodVariance(formData.institutional_credit, computedExpected.institutional_credit);
+      const welfare_var = eodVariance(formData.staff_welfare, computedExpected.staff_welfare);
 
-      const total_act = 
-        formData.cash + 
-        formData.mtn + 
-        formData.airtel + 
-        formData.card + 
-        formData.insurance + 
-        formData.institutional_credit + 
-        formData.staff_welfare;
+      const total_act = declaredTotals;
 
       const total_exp = computedExpected.total;
-      const total_var = total_act - total_exp;
+      const total_var = eodVariance(total_act, total_exp);
 
-      if (total_var !== 0 && !varianceReason.trim()) {
+      if (needsVarianceReason && !varianceReason.trim()) {
         toast.warning("Please specify a reason for the discrepancy / variance to proceed.");
         return;
       }
@@ -429,14 +438,6 @@ const EODReconciliationTab: React.FC = () => {
     }
   };
 
-  const declaredTotals = 
-    formData.cash + 
-    formData.mtn + 
-    formData.airtel + 
-    formData.card + 
-    formData.insurance + 
-    formData.institutional_credit + 
-    formData.staff_welfare;
 
   return (
     <div className="max-w-6xl mx-auto bg-white p-6 sm:p-8 rounded-3xl border border-zinc-200 shadow-xl animate-fade-in">
@@ -474,11 +475,11 @@ const EODReconciliationTab: React.FC = () => {
                 <Banknote size={14} className="text-emerald-500" /> Cash (Physical Cash Hand)
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.cash || ''}
-                onChange={(e) => setFormData({...formData, cash: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, cash: Number(e.target.value) || 0})}
               />
             </div>
 
@@ -487,11 +488,11 @@ const EODReconciliationTab: React.FC = () => {
                 <Smartphone size={14} className="text-amber-500" /> MTN MoMo Tally
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.mtn || ''}
-                onChange={(e) => setFormData({...formData, mtn: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, mtn: Number(e.target.value) || 0})}
               />
             </div>
 
@@ -500,11 +501,11 @@ const EODReconciliationTab: React.FC = () => {
                 <Smartphone size={14} className="text-red-500" /> Airtel Money Tally
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.airtel || ''}
-                onChange={(e) => setFormData({...formData, airtel: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, airtel: Number(e.target.value) || 0})}
               />
             </div>
 
@@ -513,11 +514,11 @@ const EODReconciliationTab: React.FC = () => {
                 <CreditCard size={14} className="text-blue-500" /> Card / POS Terminal
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.card || ''}
-                onChange={(e) => setFormData({...formData, card: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, card: Number(e.target.value) || 0})}
               />
             </div>
 
@@ -526,11 +527,11 @@ const EODReconciliationTab: React.FC = () => {
                 <CheckCircle2 size={14} className="text-cyan-500" /> Insurance Orders
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.insurance || ''}
-                onChange={(e) => setFormData({...formData, insurance: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, insurance: Number(e.target.value) || 0})}
               />
             </div>
 
@@ -539,11 +540,11 @@ const EODReconciliationTab: React.FC = () => {
                 <Building2 size={14} className="text-indigo-500" /> Institutional Credit
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.institutional_credit || ''}
-                onChange={(e) => setFormData({...formData, institutional_credit: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, institutional_credit: Number(e.target.value) || 0})}
               />
             </div>
 
@@ -552,11 +553,11 @@ const EODReconciliationTab: React.FC = () => {
                 <Users size={14} className="text-violet-500" /> Staff Welfare Deductions
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.staff_welfare || ''}
-                onChange={(e) => setFormData({...formData, staff_welfare: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, staff_welfare: Number(e.target.value) || 0})}
               />
             </div>
           </div>
@@ -587,12 +588,12 @@ const EODReconciliationTab: React.FC = () => {
               </div>
 
               <div className="pt-4 border-t border-zinc-100 space-y-4">
-                {(declaredTotals - computedExpected.total) !== 0 && (
+                {needsVarianceReason && (
                   <div className="space-y-2 animate-pulse-subtle">
-                    <label className="text-xs font-black text-red-600 uppercase flex items-center gap-1.5">
+                    <label htmlFor="eod-variance-reason" className="text-xs font-black text-red-600 uppercase flex items-center gap-1.5">
                       <AlertTriangle size={14} /> Variance Reason Required
                     </label>
-                    <textarea 
+                    <textarea id="eod-variance-reason"
                       required
                       className="w-full px-4 py-3 bg-red-50/30 border border-red-200 rounded-2xl focus:ring-2 focus:ring-red-500/20 outline-none text-sm min-h-[80px]"
                       placeholder="Please account for the discrepancy found..."
@@ -604,6 +605,7 @@ const EODReconciliationTab: React.FC = () => {
                 
                 <button 
                   onClick={handleSubmit}
+                  disabled={needsVarianceReason && !varianceReason.trim()}
                   className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-lg transition-all shadow-xl shadow-emerald-600/10"
                 >
                   Submit EOD Audit Report
@@ -630,7 +632,7 @@ const EODReconciliationTab: React.FC = () => {
 };
 
 const VarianceRow: React.FC<{ label: string, declared: number, expected: number }> = ({ label, declared, expected }) => {
-  const variance = declared - expected;
+  const variance = eodVariance(declared, expected);
   return (
     <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100 flex items-center justify-between">
       <div>
@@ -642,7 +644,7 @@ const VarianceRow: React.FC<{ label: string, declared: number, expected: number 
           "text-sm font-black",
           variance === 0 ? "text-emerald-600" : "text-red-500"
         )}>
-          {variance > 0 ? '+' : ''}{(variance || 0).toLocaleString()}
+          {variance > 0 ? '+' : ''}{formatEodAmount(variance)}
         </p>
         <p className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider">Variance</p>
       </div>
@@ -653,6 +655,10 @@ const VarianceRow: React.FC<{ label: string, declared: number, expected: number 
 const BranchExpenseLog: React.FC = () => {
   const { profile, activeBranchId } = useAuth();
   const isFinanceHead = hasAnyRole(profile, ['Finance Head']);
+  const [staff, setStaff] = useState<Staff[]>([]);
+  const [recipientType, setRecipientType] = useState<'external' | 'staff'>('external');
+  const [selectedStaffId, setSelectedStaffId] = useState('');
+  const availableStaff = eligibleExpenseStaff(staff, profile?.tenantId || '');
   const [expenses, setExpenses] = useState<BranchExpense[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [editingExpense, setEditingExpense] = useState<BranchExpense | null>(null);
@@ -670,9 +676,11 @@ const BranchExpenseLog: React.FC = () => {
 
   useEffect(() => {
     if (profile?.tenantId && activeBranchId) {
-      firestoreService.subscribeToCollection<BranchExpense>('branch_expenses', profile.tenantId, (data) => {
+      const unsubscribeExpenses = firestoreService.subscribeToCollection<BranchExpense>('branch_expenses', profile.tenantId, (data) => {
         setExpenses(data.filter(e => e.branch_id === activeBranchId).sort((a, b) => new Date(b.expense_date).getTime() - new Date(a.expense_date).getTime()));
       });
+      const unsubscribeStaff = firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setStaff);
+      return () => { unsubscribeExpenses(); unsubscribeStaff(); };
     }
   }, [profile?.tenantId, activeBranchId]);
 
@@ -687,12 +695,27 @@ const BranchExpenseLog: React.FC = () => {
     e.preventDefault();
     if (!profile?.tenantId || !activeBranchId) return;
 
+    if (!canUseBranchExpenseCategory(formData.category, editingExpense?.category)) {
+      toast.error('Salaries must be handled through payroll.');
+      return;
+    }
+
+    if (!expenseRecipientTypeAllowed(formData.category, recipientType)) {
+      toast.error('Allowances can only be issued to staff.');
+      return;
+    }
     try {
+      const currentStaff = recipientType === 'staff'
+        ? await firestoreService.getCollection<Staff>('staff', profile.tenantId) : [];
+      const recipient = buildBranchExpenseRecipient({
+        category: formData.category, recipientType, staffId: selectedStaffId, externalName: formData.recipient
+      }, currentStaff, profile.tenantId);
       if (editingExpense) {
         await firestoreService.updateDocument('branch_expenses', editingExpense.id, {
           expense_date: formData.date,
           category: formData.category,
           description: formData.description,
+          ...recipient,
           amount_ugx: formData.amount,
         });
         toast.success('Expense updated');
@@ -703,6 +726,7 @@ const BranchExpenseLog: React.FC = () => {
           expense_date: formData.date,
           category: formData.category,
           description: formData.description,
+          ...recipient,
           amount_ugx: formData.amount,
           payment_method: 'Petty Cash',
           logged_by: profile.uid,
@@ -713,9 +737,11 @@ const BranchExpenseLog: React.FC = () => {
       }
       setIsAdding(false);
       setEditingExpense(null);
+      setRecipientType('external');
+      setSelectedStaffId('');
       setFormData({ category: 'utilities', amount: 0, description: '', recipient: '', date: new Date().toISOString().split('T')[0] });
     } catch (error) {
-      toast.error('Failed to save expense');
+      toast.error(error instanceof Error ? error.message : 'Failed to save expense');
     }
   };
 
@@ -725,11 +751,13 @@ const BranchExpenseLog: React.FC = () => {
       return;
     }
     setEditingExpense(exp);
+    setRecipientType(exp.recipient_type === 'staff' || isAllowanceCategory(exp.category) ? 'staff' : 'external');
+    setSelectedStaffId(exp.recipient_staff_id || '');
     setFormData({
       category: exp.category,
       amount: exp.amount_ugx,
       description: exp.description,
-      recipient: '',
+      recipient: exp.issued_to || '',
       date: exp.expense_date
     });
     setIsAdding(true);
@@ -743,7 +771,7 @@ const BranchExpenseLog: React.FC = () => {
           <p className="text-xs text-zinc-500">Log of local expenses matching the current date by default.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-zinc-200 text-xs">
+          <div className="flex flex-wrap items-center gap-1.5 bg-white p-1 rounded-xl border border-zinc-200 text-xs">
             <span className="font-bold text-zinc-400 px-1 uppercase tracking-widest">Date:</span>
             <input 
               type="date" 
@@ -760,7 +788,11 @@ const BranchExpenseLog: React.FC = () => {
             />
           </div>
           <button 
-            onClick={() => setIsAdding(true)}
+            onClick={() => {
+              setEditingExpense(null); setRecipientType('external'); setSelectedStaffId('');
+              setFormData({ category: 'utilities', amount: 0, description: '', recipient: '', date: new Date().toISOString().split('T')[0] });
+              setIsAdding(true);
+            }}
             className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl font-medium transition-colors flex items-center gap-2"
           >
             <Plus size={20} />
@@ -788,13 +820,16 @@ const BranchExpenseLog: React.FC = () => {
               <select 
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20"
                 value={formData.category}
-                onChange={(e) => setFormData({...formData, category: e.target.value})}
+                onChange={(e) => { setFormData({...formData, category: e.target.value}); if (isAllowanceCategory(e.target.value)) setRecipientType('staff'); }}
               >
                 <option value="utilities">Utilities</option>
                 <option value="rent">Rent</option>
-                <option value="salaries">Salaries</option>
+                {editingExpense && ['salary', 'salaries'].includes(editingExpense.category.trim().toLowerCase()) && (
+                  <option value={editingExpense.category} disabled>{editingExpense.category} (historical)</option>
+                )}
                 <option value="supplies">Supplies</option>
                 <option value="maintenance">Maintenance</option>
+                <option value="allowances">Allowances</option>
                 <option value="other">Other</option>
               </select>
             </div>
@@ -819,6 +854,30 @@ const BranchExpenseLog: React.FC = () => {
                 onChange={(e) => setFormData({...formData, description: e.target.value})}
               />
             </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-zinc-500 uppercase">Recipient type</label>
+              <select aria-label="Recipient type" value={recipientType} onChange={e => { setRecipientType(e.target.value as 'external' | 'staff'); setSelectedStaffId(''); }}
+                className="w-full px-4 py-2 bg-zinc-50 text-zinc-900 border border-zinc-200 rounded-xl">
+                {!isAllowanceCategory(formData.category) && <option value="external">Outsource / External</option>}<option value="staff">Staff</option>
+              </select>
+            </div>
+            {recipientType === 'staff' ? <div className="space-y-1 md:col-span-2">
+              <label htmlFor="branch-expense-staff" className="text-xs font-bold text-zinc-500 uppercase">Issued To — Staff</label>
+              <select id="branch-expense-staff" required value={selectedStaffId} onChange={e => setSelectedStaffId(e.target.value)}
+                className="w-full px-4 py-2 bg-zinc-50 text-zinc-900 border border-zinc-200 rounded-xl">
+                <option value="">Select employee</option>
+                {availableStaff.map(s => <option key={s.id} value={s.id}>{expenseStaffName(s)} ({s.staff_code || s.id})</option>)}
+              </select>
+              {!availableStaff.length && <p className="text-xs text-red-600">No active staff found in the employee register.</p>}
+            </div> : <div className="space-y-1 md:col-span-2">
+              <label htmlFor="branch-expense-issued-to" className="text-xs font-bold text-zinc-500 uppercase">Issued To</label>
+              <input id="branch-expense-issued-to" type="text" required maxLength={200}
+                className="w-full px-4 py-2 bg-zinc-50 text-zinc-900 border border-zinc-200 rounded-xl"
+                placeholder="Person or organisation receiving the money"
+                value={formData.recipient}
+                onChange={(e) => setFormData({...formData, recipient: e.target.value})}
+              />
+            </div>}
             <div className="md:col-span-4 flex justify-end gap-3 mt-2">
               <button 
                 type="button"
@@ -838,13 +897,14 @@ const BranchExpenseLog: React.FC = () => {
         </div>
       )}
 
-      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-x-auto">
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
               <th className="px-6 py-4">Date</th>
               <th className="px-6 py-4">Category</th>
               <th className="px-6 py-4">Description</th>
+              <th className="px-6 py-4">Issued To</th>
               <th className="px-6 py-4">Amount</th>
               <th className="px-6 py-4">Status</th>
               <th className="px-6 py-4 text-right">Actions</th>
@@ -862,6 +922,10 @@ const BranchExpenseLog: React.FC = () => {
                   </span>
                 </td>
                 <td className="px-6 py-4 text-sm text-zinc-600">{expense.description}</td>
+                <td className="px-6 py-4 text-sm text-zinc-600">
+                  {expense.issued_to || 'Not recorded'}
+                  {expense.recipient_type === 'staff' && <span className="block text-xs text-zinc-500 break-all">Staff ID: {expense.recipient_staff_id}{expense.recipient_staff_code ? ` (${expense.recipient_staff_code})` : ''}</span>}
+                </td>
                 <td className="px-6 py-4 font-bold text-zinc-900">UGX {(expense.amount_ugx || 0).toLocaleString()}</td>
                 <td className="px-6 py-4">
                   <span className={cn(
@@ -886,7 +950,7 @@ const BranchExpenseLog: React.FC = () => {
             ))}
             {filteredExpenses.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic">
+                <td colSpan={7} className="px-6 py-12 text-center text-zinc-400 italic">
                   No operational expenses found for the selected date range.
                 </td>
               </tr>
@@ -1049,6 +1113,9 @@ const BranchPettyCash: React.FC = () => {
   const [requisitions, setRequisitions] = useState<PettyCashRequisition[]>([]);
   const [issues, setIssues] = useState<PettyCashIssue[]>([]);
   const [expenses, setExpenses] = useState<BranchExpense[]>([]);
+  const [requisitionDateRange, setRequisitionDateRange] = useState(() => lastSevenFinanceDays());
+  const [incomingDateRange, setIncomingDateRange] = useState({ start: '', end: '' });
+  const [includeReceived, setIncludeReceived] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [formData, setFormData] = useState({
     amount: 0,
@@ -1120,6 +1187,9 @@ const BranchPettyCash: React.FC = () => {
     }
   };
 
+  const filteredRequisitions = requisitions.filter(r => inFinanceDateRange(r.requisition_date, requisitionDateRange));
+  const filteredIssues = issues.filter(i => (includeReceived || i.status !== 'received') && inFinanceDateRange(i.issue_date, incomingDateRange));
+
   const totalPettyCashReceived = issues
     .filter(i => i.status === 'received')
     .reduce((sum, i) => sum + i.amount, 0);
@@ -1158,26 +1228,31 @@ const BranchPettyCash: React.FC = () => {
               <Truck size={20} className="text-blue-500" />
               Incoming Petty Cash
             </h3>
+            <FinanceDateRangeFields label="Incoming petty cash" value={incomingDateRange} onChange={setIncomingDateRange} />
+            <label className="flex items-center gap-2 text-xs text-zinc-600 mt-3">
+              <input type="checkbox" checked={includeReceived} onChange={e => setIncludeReceived(e.target.checked)} />
+              Include received cash
+            </label>
           </div>
           <div className="p-4 space-y-3">
-            {issues.filter(i => i.status !== 'received').map((issue) => (
+            {filteredIssues.map((issue) => (
               <div key={issue.id} className="flex items-center justify-between p-4 bg-blue-50 rounded-2xl border border-blue-100">
                 <div>
                   <p className="font-bold text-blue-900">UGX {issue.amount.toLocaleString()}</p>
                   <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wider">Ref: {issue.reference_number}</p>
                   <p className="text-xs text-blue-500 mt-1">Issued on {new Date(issue.issue_date).toLocaleDateString()}</p>
                 </div>
-                <button 
+                {issue.status === 'received' ? <span className="text-xs text-emerald-700">Received</span> : <button
                   onClick={() => handleAcceptIssue(issue)}
                   className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/20"
                 >
                   Accept Cash
-                </button>
+                </button>}
               </div>
             ))}
-            {issues.filter(i => i.status !== 'received').length === 0 && (
+            {filteredIssues.length === 0 && (
               <div className="text-center py-12 text-zinc-400 italic text-sm">
-                No pending incoming petty cash
+                No incoming petty cash matches the selected filters
               </div>
             )}
           </div>
@@ -1189,6 +1264,13 @@ const BranchPettyCash: React.FC = () => {
               <FileText size={20} className="text-amber-500" />
               Petty Cash Requisitions
             </h3>
+            <p className="text-xs text-zinc-500 mt-2">History opens on the last seven days. Change the dates to view older records.</p>
+            <FinanceDateRangeFields label="Petty cash requisitions" value={requisitionDateRange} onChange={setRequisitionDateRange} />
+            <div className="flex flex-wrap gap-3 mt-3 text-xs font-semibold text-emerald-700">
+              <button onClick={() => setRequisitionDateRange(lastSevenFinanceDays())}>Last 7 Days</button>
+              <button onClick={() => setRequisitionDateRange(previousFinanceMonth())}>Previous Month</button>
+              <button onClick={() => setRequisitionDateRange({ start: '', end: '' })}>All History</button>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -1200,7 +1282,7 @@ const BranchPettyCash: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {requisitions.map((req) => (
+                {filteredRequisitions.map((req) => (
                   <tr key={req.id} className="hover:bg-zinc-50/50 transition-colors">
                     <td className="px-6 py-4 text-sm text-zinc-600">{new Date(req.requisition_date).toLocaleDateString()}</td>
                     <td className="px-6 py-4 font-bold text-zinc-900">UGX {req.amount_requested.toLocaleString()}</td>
@@ -1661,9 +1743,9 @@ const OldManagementExpenseLedger: React.FC = () => {
       await financeWrites.commit();
       financeMessages.forEach(({kind,message})=>toast[kind](message));
 
-      toast.success('Management expense approved and successfully deducted from petty cash!');
+      toast.success('Management cash outflow approved and successfully deducted from petty cash!');
     } catch (error) {
-      toast.error('Failed to disburse management expense');
+      toast.error('Failed to disburse management cash outflow');
     }
   };
 
@@ -1750,7 +1832,7 @@ const OldManagementExpenseLedger: React.FC = () => {
             {filteredExpenses.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic">
-                  No HQ management expenses found for the selected date range.
+                  No HQ management cash outflows found for the selected date range.
                 </td>
               </tr>
             )}
@@ -1821,7 +1903,7 @@ const ManagementExpenseModal: React.FC<{ isOpen: boolean, onClose: () => void }>
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-[32px] w-full max-w-md overflow-hidden shadow-2xl">
         <div className="p-8">
-          <h2 className="text-2xl font-bold text-zinc-900 mb-6">Log Management Expense</h2>
+          <h2 className="text-2xl font-bold text-zinc-900 mb-6">Log Management Cash Outflow</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
               <label className="text-xs font-bold text-zinc-500 uppercase">Category</label>
@@ -1987,7 +2069,7 @@ const OldGlobalExpenseLedger: React.FC = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
         <div>
-          <h3 className="text-xl font-black text-zinc-900">Global Expense Aggregator</h3>
+          <h3 className="text-xl font-black text-zinc-900">Global Cash Outflows</h3>
           <p className="text-sm text-zinc-500">Consolidated view of all operational costs</p>
         </div>
         <div className="flex items-center gap-4">
@@ -2202,7 +2284,7 @@ const OldProfitabilityLedger: React.FC = () => {
             <span className="font-black text-red-500">- UGX {totalBranchExp.toLocaleString()}</span>
           </div>
           <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl">
-            <span className="font-bold text-zinc-600">Management/HQ Expenses</span>
+            <span className="font-bold text-zinc-600">Management/HQ Cash Outflows</span>
             <span className="font-black text-red-500">- UGX {totalMgmtExp.toLocaleString()}</span>
           </div>
           <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl">
@@ -2224,14 +2306,15 @@ const OldProfitabilityLedger: React.FC = () => {
 };
 
 const ManagementFinance: React.FC<{ settings: SystemSettings | null }> = ({ settings }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'invoices' | 'management_expenses' | 'global_expenses' | 'profitability' | 'credit_ledger' | 'oversight' | 'inbox' | 'petty_cash' | 'tax_engine'>('invoices');
+  const [activeSubTab, setActiveSubTab] = useState<'invoices' | 'management_expenses' | 'global_expenses' | 'profitability' | 'branch_profitability' | 'credit_ledger' | 'oversight' | 'inbox' | 'petty_cash' | 'tax_engine'>('invoices');
   const { tenant } = useTenant();
 
   const tabs = [
     { id: 'invoices', label: 'Invoices Ledger', icon: FileText },
-    { id: 'management_expenses', label: 'Management Expenses', icon: Briefcase },
-    { id: 'global_expenses', label: 'Global Expense Ledger', icon: Globe },
-    { id: 'profitability', label: 'Profitability Ledger', icon: BarChart3 },
+    { id: 'management_expenses', label: 'Management Cash Outflows', icon: Briefcase },
+    { id: 'global_expenses', label: 'Global Cash Outflows', icon: Globe },
+    { id: 'branch_profitability', label: 'Branch P&L', icon: BarChart3 },
+    { id: 'profitability', label: 'Consolidated Organisation P&L', icon: BarChart3 },
     { id: 'credit_ledger', label: 'Credit Ledger', icon: CreditCard },
     { id: 'petty_cash', label: 'Petty Cash', icon: Wallet },
     { id: 'tax_engine', label: 'Tax Engine', icon: Sliders, hidden: !settings?.taxEngineEnabled },
@@ -2263,6 +2346,7 @@ const ManagementFinance: React.FC<{ settings: SystemSettings | null }> = ({ sett
         {activeSubTab === 'invoices' && <InvoicesLedger />}
         {activeSubTab === 'management_expenses' && <ManagementExpenseLedger />}
         {activeSubTab === 'global_expenses' && <GlobalExpenseLedger />}
+        {activeSubTab === 'branch_profitability' && <ProfitabilityLedger branchOnly />}
         {activeSubTab === 'profitability' && <ProfitabilityLedger />}
         {activeSubTab === 'credit_ledger' && <CreditLedgerPanel />}
         {activeSubTab === 'petty_cash' && <PettyCashManagement />}

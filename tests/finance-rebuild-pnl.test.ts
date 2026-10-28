@@ -1,0 +1,40 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { profitabilityPeriodRange } from '../src/utils/profitabilityPeriod';
+
+test('P&L calendar presets map to explicit inclusive dates without changing accounting', () => {
+  const anchor = '2026-10-28';
+  assert.deepEqual(profitabilityPeriodRange('today', anchor), { start: anchor, end: anchor });
+  assert.deepEqual(profitabilityPeriodRange('week', anchor), { start: '2026-10-26', end: '2026-11-01' });
+  assert.deepEqual(profitabilityPeriodRange('month', anchor), { start: '2026-10-01', end: anchor });
+  assert.deepEqual(profitabilityPeriodRange('monthly', anchor), { start: '2026-10-01', end: '2026-10-31' });
+  assert.deepEqual(profitabilityPeriodRange('biannual', anchor), { start: '2026-07-01', end: '2026-12-31' });
+  assert.deepEqual(profitabilityPeriodRange('annual', anchor), { start: '2026-01-01', end: '2026-12-31' });
+});
+
+test('P&L periods handle leap years, half-year and week/year boundaries', () => {
+  assert.deepEqual(profitabilityPeriodRange('monthly', '2024-02-12'), { start: '2024-02-01', end: '2024-02-29' });
+  assert.deepEqual(profitabilityPeriodRange('biannual', '2026-06-30'), { start: '2026-01-01', end: '2026-06-30' });
+  assert.deepEqual(profitabilityPeriodRange('week', '2026-01-01'), { start: '2025-12-29', end: '2026-01-04' });
+});
+
+import { matchesProfitabilityBranch } from '../src/utils/profitabilityScope';
+test('branch P&L matches tenant and branch across existing field aliases without HQ allocation', () => {
+  assert.equal(matchesProfitabilityBranch({ tenantId: 't', branchId: 'masaka' }, 't', 'masaka'), true);
+  assert.equal(matchesProfitabilityBranch({ tenantId: 't', branch_id: 'masaka' }, 't', 'masaka'), true);
+  for (const record of [{ tenantId: 'other', branchId: 'masaka' }, { tenantId: 't', branchId: 'other' }, { tenantId: 't' }]) {
+    assert.equal(matchesProfitabilityBranch(record, 't', 'masaka'), false);
+  }
+  assert.equal(matchesProfitabilityBranch({ tenantId: 't', branchId: 'masaka' }, 't', ''), false);
+});
+
+import fs from 'node:fs';
+test('Branch and Consolidated P&L remain distinct within existing management access', () => {
+  const finance = fs.readFileSync('src/pages/Finance.tsx', 'utf8');
+  assert.match(finance, /id: 'branch_profitability', label: 'Branch P&L'/);
+  assert.match(finance, /id: 'profitability', label: 'Consolidated Organisation P&L'/);
+  assert.match(finance, /canUseManagementFinance/);
+  const pnl = fs.readFileSync('src/pages/finance/management/ProfitabilityLedger.tsx', 'utf8');
+  assert.match(pnl, /where\('tenantId', '==', profile.tenantId\)/);
+  assert.match(pnl, /later P&L accounting redesign is not included/);
+});

@@ -350,7 +350,7 @@ export const CreditLedger: React.FC = () => {
       });
       await batch.commit();
 
-      toast.success('Payment draft sent to Management Expense Ledger for review and issuance.');
+      toast.success('Payment draft sent to Management Cash Outflows for review and issuance.');
       setProcessingId(null);
       fetchCredits(); // Refresh list
     } catch (e: any) {

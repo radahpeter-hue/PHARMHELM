@@ -1,0 +1,111 @@
+name: Finance Rebuild Levels 1-2 Preview
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/pages/Finance.tsx'
+      - 'src/pages/finance/**'
+      - 'src/modules/hr/LeaveAdvanceManager.tsx'
+      - 'src/components/finance/FinanceDateRangeFields.tsx'
+      - 'src/utils/branchExpensePolicy.ts'
+      - 'src/utils/eodMoney.ts'
+      - 'src/utils/financeDateFilters.ts'
+      - 'src/utils/profitability*.ts'
+      - 'src/types.ts'
+      - 'tests/finance-rebuild*.test.ts'
+      - 'scripts/finance-rebuild-ui-smoke.mjs'
+      - 'docs/finance-rebuild/**'
+      - '.github/workflows/finance-rebuild-preview.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finance-rebuild-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.head_ref == 'feature/finance-rebuild-levels-1-2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+        env:
+          VITE_BUILD_SHA: ${{ github.event.pull_request.head.sha }}
+      - name: Write auditable build identity
+        env:
+          BUILD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node --input-type=module - <<'JS'
+          import { writeFile } from 'node:fs/promises';
+          await writeFile('dist/finance-build.json', JSON.stringify({
+            commit: process.env.BUILD_SHA,
+            base: '4f6ef5706b22b6e8addf6e352568f2bf775e9f62',
+            scope: 'Finance Rebuild Levels 1-2',
+            production: false
+          }, null, 2));
+          JS
+      - name: Install isolated UI verification browser
+        run: |
+          npm install --prefix /tmp/finance-rebuild-browser --no-save playwright@1.51.1
+          /tmp/finance-rebuild-browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Actual Finance and Welfare component acceptance
+        env:
+          PLAYWRIGHT_MODULE: /tmp/finance-rebuild-browser/node_modules/playwright
+          FINANCE_LEVEL: '2'
+        run: node scripts/finance-rebuild-ui-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: finance-rebuild-ui-proof
+          path: /tmp/finance-rebuild-ui-*/*.png
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: finance-rebuild-hosting-${{ github.event.pull_request.head.sha }}
+          path: dist
+          retention-days: 7
+
+  preview:
+    needs: validate
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/finance-rebuild-levels-1-2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write
+      deployments: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: finance-rebuild-hosting-${{ github.event.pull_request.head.sha }}
+          path: dist
+      # Reuses the established Hosting action. This job publishes static files only.
+      # The preview shares the existing Firebase backend and tenant permissions.
+      # Never write tenant records, deploy rules/indexes, or target the live channel.
+      - name: Publish dedicated Finance test channel
+        id: hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          channelId: finance-rebuild-pr${{ github.event.pull_request.number }}
+          projectId: gen-lang-client-0911422817
+          expires: 7d

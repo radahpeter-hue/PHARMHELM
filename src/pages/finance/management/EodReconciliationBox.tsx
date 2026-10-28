@@ -1,3 +1,4 @@
+import { eodRecordVariance, formatEodAmount, eodVariance, sumEodAmounts } from '../../../utils/eodMoney';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
@@ -147,7 +148,7 @@ export const EodReconciliationBox: React.FC = () => {
       if (selectedBranchId !== 'All' && rec.branch_id !== selectedBranchId) return false;
 
       // Variance Type Filter
-      const variance = rec.total_variance || 0;
+      const variance = eodRecordVariance(rec);
       if (selectedVarianceType === 'Positive' && variance <= 0) return false;
       if (selectedVarianceType === 'Negative' && variance >= 0) return false;
       if (selectedVarianceType === 'Zero' && variance !== 0) return false;
@@ -179,8 +180,10 @@ export const EodReconciliationBox: React.FC = () => {
       credit += rec.institutional_credit_actual || 0;
       welfare += rec.staff_welfare_actual || 0;
       revenue += rec.total_actual || 0;
-      variance += rec.total_variance || 0;
+
     });
+    const variances = filteredReconciliations.map(eodRecordVariance);
+    variance = eodVariance(sumEodAmounts(variances.filter(v => v >= 0)), sumEodAmounts(variances.filter(v => v < 0).map(v => -v)));
     return { cash, card, momo, airtel, credit, welfare, revenue, variance };
   }, [filteredReconciliations]);
 
@@ -205,7 +208,7 @@ export const EodReconciliationBox: React.FC = () => {
         'Institution Credits (UGX)': rec.institutional_credit_actual || 0,
         'Welfare (UGX)': rec.staff_welfare_actual || 0,
         'Total Revenue (UGX)': rec.total_actual || 0,
-        'Variance (UGX)': rec.total_variance || 0,
+        'Variance (UGX)': eodRecordVariance(rec),
         'Reconciled By': getLoggedByName(rec.logged_by)
       };
     });
@@ -240,7 +243,7 @@ export const EodReconciliationBox: React.FC = () => {
   };
 
   const formatVariance = (val: number) => {
-    const formatted = Math.abs(val).toLocaleString();
+    const formatted = formatEodAmount(Math.abs(val));
     if (val > 0) {
       return <span className="text-emerald-600 font-bold font-mono">+{formatted}</span>;
     } else if (val < 0) {
@@ -368,7 +371,7 @@ export const EodReconciliationBox: React.FC = () => {
                       <td className="px-4 py-4 text-right font-mono">{rec.institutional_credit_actual?.toLocaleString() || 0}</td>
                       <td className="px-4 py-4 text-right font-mono">{rec.staff_welfare_actual?.toLocaleString() || 0}</td>
                       <td className="px-4 py-4 text-right font-mono font-bold text-zinc-950">{rec.total_actual?.toLocaleString() || 0}</td>
-                      <td className="px-4 py-4 text-right font-mono">{formatVariance(rec.total_variance || 0)}</td>
+                      <td className="px-4 py-4 text-right font-mono">{formatVariance(eodRecordVariance(rec))}</td>
                       <td className="px-4 py-4 text-zinc-500 truncate max-w-[120px]">{getLoggedByName(rec.logged_by)}</td>
                     </tr>
                   );
