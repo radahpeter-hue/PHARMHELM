@@ -932,6 +932,30 @@ service cloud.firestore {
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
+    // A staff number is permanently reserved to its original staff document.
+    function validStaffIdentity(staffId, data) {
+      let code = data.get('staff_code', '');
+      let claim = /databases/$(database)/documents/staff_identity_claims/$(data.tenantId + '_' + code);
+      return code == '' || (code is string && existsAfter(claim)
+        && getAfter(claim).data.tenantId == data.tenantId
+        && (getAfter(claim).data.staffId == staffId
+          || (data.get('legacyStaffId', '') == getAfter(claim).data.staffId
+            && data.get('uid', '') == staffId
+            && getAfter(/databases/$(database)/documents/staff/$(data.legacyStaffId)).data.get('canonical_staff_id', '') == staffId)));
+    }
+    match /staff_identity_claims/{claimId} {
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && (isHR() || isIT());
+      allow create: if isAuthenticated() && (isHR() || isIT())
+        && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.keys().hasOnly(['tenantId', 'staffId', 'code', 'createdAt'])
+        && request.resource.data.code is string && request.resource.data.code.size() > 0
+        && claimId == request.resource.data.tenantId + '_' + request.resource.data.code
+        && getAfter(/databases/$(database)/documents/staff/$(request.resource.data.staffId)).data.staff_code == request.resource.data.code
+        && getAfter(/databases/$(database)/documents/staff/$(request.resource.data.staffId)).data.tenantId == request.resource.data.tenantId;
+      allow update, delete: if false;
+    }
+
     match /staff/{staffId} {
       allow read: if isAuthenticated() && (
         request.auth.uid == staffId ||
@@ -939,13 +963,18 @@ service cloud.firestore {
         resource.data.authEmail == request.auth.token.email ||
         isTenantMember(resource.data.tenantId)
       );
-      allow create: if isAuthenticated() && (isAdmin() || isIT() || isHR()) && isTenantMember(request.resource.data.tenantId);
+      allow create: if isAuthenticated() && (isAdmin() || isIT() || isHR()) && isTenantMember(request.resource.data.tenantId) && validStaffIdentity(staffId, request.resource.data);
       // HR assigns organisational roles and branch placement. IT may perform account
       // activation/support updates but cannot silently change the HR-assigned role realm.
       allow update: if atomicWelfareBalance(staffId);
       allow update: if isAuthenticated()
+        && isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
+        && (resource.data.get('canonical_staff_id', '') == ''
+          || request.resource.data.get('canonical_staff_id', '') == resource.data.canonical_staff_id)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['canonical_staff_id']) || isIT())
+        && (request.resource.data.get('staff_code', '') == resource.data.get('staff_code', '') || validStaffIdentity(staffId, request.resource.data))
         && (!('employee_id' in resource.data) || request.resource.data.employee_id == resource.data.employee_id)
-        && (!('staff_code' in resource.data) || request.resource.data.staff_code == resource.data.staff_code)
+        && (resource.data.get('staff_code', '') in ['', null] || request.resource.data.staff_code == resource.data.staff_code)
         && (
         isAdmin() || isHR() ||
         (isITPersonnel() &&
@@ -961,7 +990,8 @@ service cloud.firestore {
             'legacyStaffId', 'roleRealmId'
           ]))
       );
-      allow delete: if isAdmin() || isIT();
+      allow delete: if (isAdmin() || isIT()) && isTenantMember(resource.data.tenantId)
+        && resource.data.get('staff_code', '') == '';
     }
 
     match /leave_requests/{requestId} {
@@ -1248,10 +1278,28 @@ service cloud.firestore {
     }
 
     match /eod_reconciliations/{reconciliationId} {
+      function withinCorrectionWindow() {
+        let parts = resource.data.reconciliation_date.split('-');
+        let start = timestamp.date(int(parts[0]), int(parts[1]), int(parts[2])) - duration.value(3, 'h');
+        return resource.data.reconciliation_date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && request.time >= start && request.time < start + duration.value(14, 'd');
+      }
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewBranchFinance();
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && hasAnyRole(['IT Head']) && withinCorrectionWindow()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'cash_actual', 'cash_variance', 'momo_actual', 'momo_variance',
+          'airtel_actual', 'airtel_variance', 'card_actual', 'card_variance',
+          'insurance_actual', 'insurance_variance', 'institutional_credit_actual', 'institutional_credit_variance',
+          'staff_welfare_actual', 'staff_welfare_variance', 'total_actual', 'total_variance',
+          'variance_reason', 'correction_reason', 'corrected_by', 'corrected_at'
+        ])
+        && request.resource.data.correction_reason is string
+        && request.resource.data.correction_reason.trim().size() > 0 && request.resource.data.correction_reason.size() <= 1000
+        && request.resource.data.corrected_by == request.auth.uid
+        && request.resource.data.corrected_at == request.time;
+      allow delete: if false;
     }
 
     match /branch_expenses/{expenseId} {
@@ -3120,10 +3168,10 @@ service cloud.firestore {
     // Share exclusions and dispatch by method instead of compiling five copies.
     match /{collectionName}/{docId} {
       function dedicatedCollection() {
-        return collectionName in ['identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox'];
+        return collectionName in ['staff_identity_claims', 'identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox'];
       }
       function dedicatedWriteCollection() {
-        return dedicatedCollection() || collectionName in ['hr_roles', 'product_batches', 'products', 'role_realms_of_operation', 'sales'];
+        return dedicatedCollection() || collectionName in ['staff', 'staff_identity_claims', 'hr_roles', 'product_batches', 'products', 'role_realms_of_operation', 'sales'];
       }
       function immutableFallbackIdentities() {
         return true

@@ -1,3 +1,5 @@
+import { backfillStaffIdentities } from '../../services/staffIdentityService';
+import { hasAnyRole } from '../../utils/roles';
 import { createScopedIdentity } from '../../services/systemIdentityService';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
@@ -19,6 +21,14 @@ import { roleRealmId, SYSTEM_ROLES } from '../../config/rbac';
 
 export const StaffDirectory: React.FC = () => {
   const { profile } = useAuth();
+  const [numbering, setNumbering] = useState(false);
+  const assignNumbers = async () => {
+    if (!profile?.tenantId || numbering) return;
+    setNumbering(true);
+    try { const count = await backfillStaffIdentities(profile.tenantId); toast.success(`Staff numbers checked/assigned for ${count} records.`); }
+    catch (error) { toast.error(error instanceof Error ? error.message : 'Staff numbering failed. Retry safely; existing numbers are preserved.'); }
+    finally { setNumbering(false); }
+  };
   const [staff, setStaff] = useState<Staff[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [customRoles, setCustomRoles] = useState<any[]>([]);
@@ -63,8 +73,14 @@ export const StaffDirectory: React.FC = () => {
   });
 
   const handleDelete = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this staff member?')) {
+    if (window.confirm('Remove this staff member? Numbered staff will be deactivated to preserve their number and history.')) {
       try {
+        const member = staff.find(s => s.id === id);
+        if (member?.staff_code) {
+          await firestoreService.updateDocument('staff', id, { active: false, status: 'inactive' });
+          toast.success('Staff deactivated; their number and history are preserved.');
+          return;
+        }
         await firestoreService.deleteDocument('staff', id);
         toast.success('Staff member deleted');
       } catch (error) {
@@ -137,6 +153,10 @@ export const StaffDirectory: React.FC = () => {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+          {hasAnyRole(profile, ['owner', 'CEO', 'CEO / MD', 'HR Head', 'HR Manager', 'IT Head']) && <button
+            disabled={numbering} onClick={assignNumbers} className="px-4 py-2 rounded-xl border text-sm font-bold disabled:opacity-40">
+            {numbering ? 'Assigning staff numbers…' : 'Assign missing staff numbers'}
+          </button>}
           <button 
             onClick={() => {
               setEditingStaff(null);

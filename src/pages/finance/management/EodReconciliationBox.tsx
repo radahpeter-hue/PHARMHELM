@@ -1,3 +1,5 @@
+import { canCorrectEod } from '../../../utils/eodEditPolicy';
+import { EodCorrectionModal } from '../../../components/finance/EodCorrectionModal';
 import { eodRecordVariance, formatEodAmount, eodVariance, sumEodAmounts } from '../../../utils/eodMoney';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -62,6 +64,7 @@ interface Branch {
 
 export const EodReconciliationBox: React.FC = () => {
   const { profile } = useAuth();
+  const [editing, setEditing] = useState<EODReconciliation | null>(null);
   const [reconciliations, setReconciliations] = useState<EODReconciliation[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [staffList, setStaffList] = useState<any[]>([]);
@@ -353,7 +356,7 @@ export const EodReconciliationBox: React.FC = () => {
                   <th className="px-4 py-4 text-right">Welfare (UGX)</th>
                   <th className="px-4 py-4 text-right">Total Rev (UGX)</th>
                   <th className="px-4 py-4 text-right">Variance (UGX)</th>
-                  <th className="px-4 py-4">Reconciled By</th>
+                  <th className="px-4 py-4">Reconciled By</th><th className="px-4 py-4">Correction access</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
@@ -373,6 +376,7 @@ export const EodReconciliationBox: React.FC = () => {
                       <td className="px-4 py-4 text-right font-mono font-bold text-zinc-950">{rec.total_actual?.toLocaleString() || 0}</td>
                       <td className="px-4 py-4 text-right font-mono">{formatVariance(eodRecordVariance(rec))}</td>
                       <td className="px-4 py-4 text-zinc-500 truncate max-w-[120px]">{getLoggedByName(rec.logged_by)}</td>
+                      <td className="px-4 py-4">{canCorrectEod(profile, rec) ? <button className="underline text-emerald-700" onClick={() => setEditing(rec)}>Correct EOD</button> : 'Locked'}</td>
                     </tr>
                   );
                 })}
@@ -389,7 +393,7 @@ export const EodReconciliationBox: React.FC = () => {
                   <td className="px-4 py-4 text-right font-mono">{totals.welfare.toLocaleString()}</td>
                   <td className="px-4 py-4 text-right font-mono">{totals.revenue.toLocaleString()}</td>
                   <td className="px-4 py-4 text-right font-mono">{formatVariance(totals.variance)}</td>
-                  <td className="px-4 py-4"></td>
+                  <td className="px-4 py-4"></td><td className="px-4 py-4"></td>
                 </tr>
               </tbody>
             </table>
@@ -421,6 +425,7 @@ export const EodReconciliationBox: React.FC = () => {
           </div>
         )}
       </div>
+      {editing && <EodCorrectionModal record={editing} onClose={() => setEditing(null)} onSaved={fetchData} />}
     </div>
   );
 };

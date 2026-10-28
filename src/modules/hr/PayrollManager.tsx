@@ -272,7 +272,7 @@ export const PayrollManager: React.FC = () => {
         staffId: member.id,
         staffName: member.full_name,
         role: member.role || member.jobTitle || 'Staff',
-        employeeId: member.tin || member.id.slice(0, 8),
+        employeeId: member.staff_code || member.employee_id || member.id.slice(0, 8),
         remunerationType: member.remunerationType || 'Salary',
         loggedHours,
         baseSalary: basePay, // Saved as computed gross pay so existing UI/downstream works
@@ -548,7 +548,7 @@ export const PayrollManager: React.FC = () => {
       const sId = p.staffId || 'Unknown';
       const staffMember = staff.find(s => s.id === sId);
       const empType = staffMember?.employmentType || 'Full-Time';
-      const employeeId = p.employee_id || staffMember?.employee_id || 'n/a';
+      const employeeId = staffMember?.staff_code || p.employee_id || staffMember?.employee_id || 'n/a';
       
       const grossIncome = (p.base_salary || 0) + (p.allowances || 0);
       const nssfEmployee = p.nssf_employee || 0;

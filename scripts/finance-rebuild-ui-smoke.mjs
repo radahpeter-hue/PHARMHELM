@@ -26,6 +26,7 @@ const records={
  management_expenses:[{id:'hq',tenantId:'test',expense_date:day,date:day,category:'utilities',description:'HQ outflow fixture',amount:2000,amount_ugx:2000,status:'issued',department:'HQ',logged_by:'tester'}],
  petty_cash_ledger:[{id:'opening',tenantId:'test',type:'incoming',amount:100000,date:day,source:'Opening'}]
 };
+records.eod_reconciliations=[{id:'today-eod',tenantId:'test',branch_id:'masaka',reconciliation_date:day,cash_actual:500000,cash_expected:500000,total_actual:500000,total_expected:500000,total_variance:0,logged_by:'staff-one',status:'submitted'},{id:'old-eod',tenantId:'test',branch_id:'masaka',reconciliation_date:oldDay,total_actual:500000,total_expected:500000}];
 const eodMode=new URLSearchParams(location.search).get('eod');if(eodMode){const amount=eodMode==='float'?0.1+0.2:0.3001;records.sales[0].total=amount;records.sales[0].totalAmount=amount;}
 window.fixtureDates={day,oldDay};window.fixtureRecords=records;window.financeWrites=[];window.subscriptions=[];
 const watchers=[];
@@ -91,10 +92,18 @@ try {
   assert.equal(await page.getByLabel('Petty cash requisitions to',{exact:true}).inputValue(),dates.day);
   assert.equal(await page.getByText('22,000',{exact:false}).count(),0);
   await page.getByRole('button',{name:'Previous Month',exact:true}).click();await page.getByText('UGX 22,000',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Download Petty cash requisitions XLSX',exact:true}).click();
+  const exportedReqs=await page.evaluate(()=>window.exported);
+  assert.equal(exportedReqs[0].length,2);assert.equal(exportedReqs[0][0]['Amount (UGX)'],22000);assert.equal(exportedReqs[0][1]['Record ID'],'TOTAL');
+  const csvDownload=page.waitForEvent('download');await page.getByRole('button',{name:'Download Petty cash requisitions CSV',exact:true}).click();
+  const csvFile=await csvDownload;assert.ok(csvFile.suggestedFilename().endsWith('.csv'));
+  const csvContent=await readFile(await csvFile.path(),'utf8');assert.ok(csvContent.includes('22000'));assert.ok(!csvContent.includes('11000'));
   await page.getByRole('button',{name:'All History',exact:true}).click();await page.getByText('UGX 11,000',{exact:true}).waitFor();await page.getByText('UGX 22,000',{exact:true}).waitFor();
   await page.getByLabel('Incoming petty cash from',{exact:true}).fill(dates.oldDay);await page.getByLabel('Incoming petty cash to',{exact:true}).fill(dates.oldDay);
   await page.getByText('Ref: PREVIOUS-INCOMING',{exact:true}).waitFor();assert.equal(await page.getByText('Ref: CURRENT-INCOMING',{exact:true}).count(),0);
   await page.getByLabel('Include received cash',{exact:true}).check();await page.getByText('Ref: RECEIVED-HISTORY',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Download Incoming petty cash XLSX',exact:true}).click();
+  const exportedIssues=await page.evaluate(()=>window.exported);assert.ok(exportedIssues[0].some(r=>r.Reference==='RECEIVED-HISTORY'));assert.ok(!exportedIssues[0].some(r=>r.Reference==='CURRENT-INCOMING'));
   await fit(page,'Petty cash '+width);await page.screenshot({path:path.join(output,`petty-${width}.png`),fullPage:true});
   await page.getByRole('button',{name:'Management',exact:true}).click();
   await page.getByRole('button',{name:'Management Cash Outflows',exact:true}).click();await page.getByRole('heading',{name:'Management Cash Outflows',exact:true}).waitFor();await page.getByText('HQ outflow fixture',{exact:true}).filter({visible:true}).first().waitFor();
@@ -139,7 +148,7 @@ try {
   await page.getByLabel('Recipient type',{exact:true}).selectOption('staff');await page.getByLabel('Issued To — Staff',{exact:true}).selectOption('staff-two');await page.screenshot({path:path.join(output,'staff-allowance-form-390.png'),fullPage:true});
   await page.getByRole('button',{name:'Save Expense',exact:true}).click();await page.getByText('Allowance recipient fixture',{exact:true}).waitFor();
   const allowance=await page.evaluate(()=>window.financeWrites.at(-1).data);assert.equal(allowance.recipient_staff_id,'staff-two');assert.equal(allowance.recipient_type,'staff');
-  await page.getByText('Staff ID: staff-two (MP-002)',{exact:true}).scrollIntoViewIfNeeded();await fit(page,'Staff and Allowance form');await page.screenshot({path:path.join(output,'staff-allowance-390.png'),fullPage:true});await page.close();
+  await page.getByText('Staff ID: MP-002',{exact:true}).scrollIntoViewIfNeeded();await fit(page,'Staff and Allowance form');await page.screenshot({path:path.join(output,'staff-allowance-390.png'),fullPage:true});await page.close();
   console.log('Staff ID/name persistence, duplicate names, edit restore and forged/missing Allowance recipient guards passed');
   for(const scenario of [{name:'match',actual:'500000',variance:0},{name:'shortage',actual:'495000',variance:-5000},{name:'over',actual:'505000',variance:5000},{name:'float',actual:'0.3',variance:0},{name:'tiny',actual:'0.3',variance:null}]){
    const query='?role=cashier'+(['float','tiny'].includes(scenario.name)?'&eod='+scenario.name:'');
@@ -158,6 +167,22 @@ try {
    assert.equal(Object.is(record.total_variance,-0),false);await eod.close();console.log(`EOD ${scenario.name} passes UI, reason validation and saved-value checks`);
   }
   const offset=await open(390,'?role=cashier');await offset.locator('input[type="number"]').nth(0).fill('495000');await offset.locator('input[type="number"]').nth(1).fill('5000');await offset.getByRole('button',{name:'Reveal System Totals',exact:true}).click();await offset.getByLabel('Variance Reason Required',{exact:true}).waitFor();assert.equal(await offset.getByRole('button',{name:'Submit EOD Audit Report',exact:true}).isEnabled(),false);await offset.close();
+ }
+ for (const role of ['IT Head','IT Support Staff','Finance Head','owner']) {
+  const page=await open(390,'?role='+encodeURIComponent(role));
+  await page.getByRole('button',{name:'Management',exact:true}).click();
+  await page.getByRole('button',{name:'Reconciliation Inbox',exact:true}).click();
+  const edit=page.getByRole('button',{name:'Correct EOD',exact:true});
+  assert.equal(await edit.count(),role==='IT Head'?1:0);
+  if(role==='IT Head') {
+   await edit.click();const modal=page.getByRole('dialog',{name:'Correct EOD reconciliation'});
+   assert.equal(await modal.getByRole('button',{name:'Save correction',exact:true}).isEnabled(),false);
+   await modal.getByLabel('Correction reason',{exact:true}).fill('Count correction');
+   assert.equal(await modal.getByRole('button',{name:'Save correction',exact:true}).isEnabled(),true);
+   await fit(page,'EOD correction modal');await page.screenshot({path:path.join(output,'eod-correction-390.png'),fullPage:true});
+   await modal.getByRole('button',{name:'Cancel',exact:true}).click();
+  }
+  await page.close();
  }
  for(const role of ['dispenser','owner']){
   const page=await open(390,`?surface=welfare&role=${role}`);await page.getByRole('button',{name:'Welfare Log',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Admin Welfare',exact:true}).count(),role==='owner'?1:0);await fit(page,'Welfare '+role);await page.close();

@@ -1,0 +1,43 @@
+name: Complete authorised Martin Pharma staff numbers
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/staff-identity-backfill-plan.mjs'
+      - 'scripts/staff-identity-backfill-execute.mjs'
+      - 'scripts/backfill-martin-staff-identities.mjs'
+      - '.github/workflows/staff-identity-release.yml'
+  workflow_run:
+    workflows: ['Deploy to Firebase']
+    types: [completed]
+permissions:
+  contents: read
+concurrency:
+  group: martin-pharma-staff-number-backfill
+  cancel-in-progress: false
+jobs:
+  staff_numbers:
+    # Only this reviewed release may apply the owner-authorised one-time backfill.
+    # Pull requests perform a read-only preflight against the same named database.
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.number == 94 && github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && contains(github.event.workflow_run.head_commit.message, 'Merge pull request #94 '))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --prefix /tmp/staff-backfill-runtime --no-save --ignore-scripts firebase-admin@13.6.0
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - name: Read-only staff numbering preflight
+        if: github.event_name == 'pull_request'
+        run: node scripts/backfill-martin-staff-identities.mjs
+      - name: Apply and verify the authorised staff-only backfill after production deployment
+        if: github.event_name == 'workflow_run'
+        run: node scripts/backfill-martin-staff-identities.mjs --apply

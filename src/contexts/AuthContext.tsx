@@ -810,16 +810,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   currentProfile = { ...staffData, id: staffDocMatched.id };
                   // Link Auth UID in Firestore for faster future lookups
                   try {
-                    await setDoc(doc(db, 'staff', incomingUser.uid), { ...staffData, id: incomingUser.uid, uid: incomingUser.uid }, { merge: true });
-                    // If the matched staff doc used an auto-generated id (not the UID), delete it to avoid duplicates
-                    if (staffDocMatched.id && staffDocMatched.id !== incomingUser.uid) {
-                      try {
-                        await deleteDoc(doc(db, 'staff', staffDocMatched.id));
-                        console.info('Deleted legacy staff document', staffDocMatched.id, 'after linking to UID', incomingUser.uid);
-                      } catch (delErr) {
-                        console.warn('Failed to delete legacy staff doc', staffDocMatched.id, delErr);
-                      }
+                    // Keep the original immutable staff identity as an inactive alias.
+                    // Number reservations and historical expense references must survive linking.
+                    const linkBatch = writeBatch(db);
+                    linkBatch.set(doc(db, 'staff', incomingUser.uid), {
+                      ...staffData, id: incomingUser.uid, uid: incomingUser.uid,
+                      legacyStaffId: staffDocMatched.id
+                    }, { merge: true });
+                    if (staffDocMatched.id !== incomingUser.uid) {
+                      linkBatch.update(doc(db, 'staff', staffDocMatched.id), {
+                        canonical_staff_id: incomingUser.uid, active: false, status: 'inactive'
+                      });
                     }
+                    await linkBatch.commit();
                   } catch (e) {
                     console.warn("Could not link staff UID:", e);
                   }

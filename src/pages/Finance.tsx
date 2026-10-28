@@ -1,3 +1,5 @@
+import { PettyCashExportButtons } from '../components/finance/PettyCashExportButtons';
+import { pettyCashIssueRows, pettyCashRequisitionRows } from '../utils/pettyCashExport';
 import { eodVariance, requiresEodVarianceReason, formatEodAmount, eodAmountNumber, sumEodAmounts } from '../utils/eodMoney';
 import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
 import { inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../utils/financeDateFilters';
@@ -866,7 +868,7 @@ const BranchExpenseLog: React.FC = () => {
               <select id="branch-expense-staff" required value={selectedStaffId} onChange={e => setSelectedStaffId(e.target.value)}
                 className="w-full px-4 py-2 bg-zinc-50 text-zinc-900 border border-zinc-200 rounded-xl">
                 <option value="">Select employee</option>
-                {availableStaff.map(s => <option key={s.id} value={s.id}>{expenseStaffName(s)} ({s.staff_code || s.id})</option>)}
+                {availableStaff.map(s => <option key={s.id} value={s.id}>{expenseStaffName(s)} ({s.staff_code || 'Staff number pending'})</option>)}
               </select>
               {!availableStaff.length && <p className="text-xs text-red-600">No active staff found in the employee register.</p>}
             </div> : <div className="space-y-1 md:col-span-2">
@@ -924,7 +926,7 @@ const BranchExpenseLog: React.FC = () => {
                 <td className="px-6 py-4 text-sm text-zinc-600">{expense.description}</td>
                 <td className="px-6 py-4 text-sm text-zinc-600">
                   {expense.issued_to || 'Not recorded'}
-                  {expense.recipient_type === 'staff' && <span className="block text-xs text-zinc-500 break-all">Staff ID: {expense.recipient_staff_id}{expense.recipient_staff_code ? ` (${expense.recipient_staff_code})` : ''}</span>}
+                  {expense.recipient_type === 'staff' && <span className="block text-xs text-zinc-500 break-all">Staff ID: {staff.find(s => s.id === expense.recipient_staff_id)?.staff_code || expense.recipient_staff_code || 'Staff number pending'}</span>}
                 </td>
                 <td className="px-6 py-4 font-bold text-zinc-900">UGX {(expense.amount_ugx || 0).toLocaleString()}</td>
                 <td className="px-6 py-4">
@@ -1229,6 +1231,7 @@ const BranchPettyCash: React.FC = () => {
               Incoming Petty Cash
             </h3>
             <FinanceDateRangeFields label="Incoming petty cash" value={incomingDateRange} onChange={setIncomingDateRange} />
+            <PettyCashExportButtons rows={pettyCashIssueRows(filteredIssues)} name="Incoming petty cash" range={incomingDateRange} branch={activeBranch?.name || activeBranchId || "Branch"} />
             <label className="flex items-center gap-2 text-xs text-zinc-600 mt-3">
               <input type="checkbox" checked={includeReceived} onChange={e => setIncludeReceived(e.target.checked)} />
               Include received cash
@@ -1266,6 +1269,7 @@ const BranchPettyCash: React.FC = () => {
             </h3>
             <p className="text-xs text-zinc-500 mt-2">History opens on the last seven days. Change the dates to view older records.</p>
             <FinanceDateRangeFields label="Petty cash requisitions" value={requisitionDateRange} onChange={setRequisitionDateRange} />
+            <PettyCashExportButtons rows={pettyCashRequisitionRows(filteredRequisitions)} name="Petty cash requisitions" range={requisitionDateRange} branch={activeBranch?.name || activeBranchId || "Branch"} />
             <div className="flex flex-wrap gap-3 mt-3 text-xs font-semibold text-emerald-700">
               <button onClick={() => setRequisitionDateRange(lastSevenFinanceDays())}>Last 7 Days</button>
               <button onClick={() => setRequisitionDateRange(previousFinanceMonth())}>Previous Month</button>
@@ -2646,7 +2650,7 @@ const OldTaxManagement: React.FC<{ settings: SystemSettings | null }> = ({ setti
                       <tr key={p.id} className="hover:bg-zinc-50/50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="font-bold text-zinc-900">{stf?.full_name || p.staff_name || 'System Staff'}</div>
-                          <div className="text-[10px] text-zinc-400 font-mono">ID: {stf?.employeeId || stf?.id || p.staffId || 'N/A'}</div>
+                          <div className="text-[10px] text-zinc-400 font-mono">ID: {stf?.staff_code || stf?.employee_id || stf?.employeeId || stf?.id || p.staffId || 'N/A'}</div>
                         </td>
                         <td className="px-6 py-4 text-sm text-zinc-800 font-medium">
                           {br?.name || 'Main HQ / General'}
@@ -2696,7 +2700,7 @@ const OldTaxManagement: React.FC<{ settings: SystemSettings | null }> = ({ setti
                       <tr key={p.id} className="hover:bg-zinc-50/50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="font-bold text-zinc-900">{stf?.full_name || p.staff_name || 'System Staff'}</div>
-                          <div className="text-[10px] text-zinc-400 font-mono">ID: {stf?.employeeId || stf?.id || p.staffId || 'N/A'}</div>
+                          <div className="text-[10px] text-zinc-400 font-mono">ID: {stf?.staff_code || stf?.employee_id || stf?.employeeId || stf?.id || p.staffId || 'N/A'}</div>
                         </td>
                         <td className="px-6 py-4 text-sm text-zinc-800 font-medium">
                           {br?.name || 'Main HQ / General'}

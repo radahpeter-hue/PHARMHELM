@@ -56,6 +56,7 @@ try {
   await assertSucceeds(runTransaction(owner,async tx=>{
     await tx.get(staffCounter);
     tx.set(staffCounter,{tenantId,kind:'staff',lastSequence:1,updatedAt:'2026-10-15'});
+    tx.set(doc(owner,'staff_identity_claims',`${tenantId}_STF-000001`),{tenantId,staffId:'new-employee',code:'STF-000001',createdAt:'2026-10-15'});
     tx.set(doc(owner,'staff','new-employee'),{tenantId,role:'Staff',staff_code:'STF-000001',employee_id:'LEGACY-09',status:'pending'});
   }));
   await assertFails(updateDoc(doc(owner,'staff','new-employee'),{employee_id:'STF-123456'}));

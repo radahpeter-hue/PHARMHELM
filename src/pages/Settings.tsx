@@ -1,3 +1,4 @@
+import { ensureStaffIdentity } from '../services/staffIdentityService';
 import React, { useState, useEffect } from 'react';
 import { 
   Settings as SettingsIcon, 
@@ -547,6 +548,7 @@ const Settings = () => {
     setIsActivating(true);
     try {
       // Retrieve original staff record
+      await ensureStaffIdentity(tenant.id, selectedActivation.staffId);
       const staffDoc = await firestoreService.getDocument<Staff>('staff', selectedActivation.staffId);
       const tenantAcronym = tenant?.acronym ? tenant.acronym.toLowerCase().trim() : (tenant?.slug || 'radah');
       const baseHandle = normalizeName(staffDoc.full_name, selectedActivation.staffId);
@@ -590,7 +592,7 @@ const Settings = () => {
         updatedAt: new Date().toISOString()
       });
       if (selectedActivation.staffId !== authUid) {
-        activationBatch.delete(doc(db, 'staff', selectedActivation.staffId));
+        activationBatch.update(doc(db, 'staff', selectedActivation.staffId), { canonical_staff_id: authUid, active: false, status: 'inactive' });
       }
       activationBatch.update(doc(db, 'pending_activations', selectedActivation.id), {
         status: 'activated',
