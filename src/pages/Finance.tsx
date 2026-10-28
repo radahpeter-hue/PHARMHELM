@@ -1073,6 +1073,7 @@ const BranchPettyCash: React.FC = () => {
   const [requisitions, setRequisitions] = useState<PettyCashRequisition[]>([]);
   const [issues, setIssues] = useState<PettyCashIssue[]>([]);
   const [expenses, setExpenses] = useState<BranchExpense[]>([]);
+  const [requisitionDateRange, setRequisitionDateRange] = useState({ start: '', end: '' });
   const [incomingDateRange, setIncomingDateRange] = useState({ start: '', end: '' });
   const [includeReceived, setIncludeReceived] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
@@ -1146,6 +1147,7 @@ const BranchPettyCash: React.FC = () => {
     }
   };
 
+  const filteredRequisitions = requisitions.filter(r => inFinanceDateRange(r.requisition_date, requisitionDateRange));
   const filteredIssues = issues.filter(i => (includeReceived || i.status !== 'received') && inFinanceDateRange(i.issue_date, incomingDateRange));
 
   const totalPettyCashReceived = issues
@@ -1222,6 +1224,7 @@ const BranchPettyCash: React.FC = () => {
               <FileText size={20} className="text-amber-500" />
               Petty Cash Requisitions
             </h3>
+            <FinanceDateRangeFields label="Petty cash requisitions" value={requisitionDateRange} onChange={setRequisitionDateRange} />
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -1233,7 +1236,7 @@ const BranchPettyCash: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {requisitions.map((req) => (
+                {filteredRequisitions.map((req) => (
                   <tr key={req.id} className="hover:bg-zinc-50/50 transition-colors">
                     <td className="px-6 py-4 text-sm text-zinc-600">{new Date(req.requisition_date).toLocaleDateString()}</td>
                     <td className="px-6 py-4 font-bold text-zinc-900">UGX {req.amount_requested.toLocaleString()}</td>

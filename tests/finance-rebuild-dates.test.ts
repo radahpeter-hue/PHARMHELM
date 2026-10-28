@@ -19,3 +19,10 @@ test('single-ended filters and Timestamp/Date records work without losing all-hi
   assert.equal(inFinanceDateRange(null, { start: '', end: '' }), true);
   assert.equal(inFinanceDateRange(null, { start: '2026-09-01', end: '' }), false);
 });
+
+test('changing requisition dates retrieves older history without truncating the source', () => {
+  const history = [{ requisition_date: '2026-09-10' }, { requisition_date: '2026-10-28' }];
+  assert.equal(history.filter(r => inFinanceDateRange(r.requisition_date, { start: '2026-10-01', end: '2026-10-31' })).length, 1);
+  assert.equal(history.filter(r => inFinanceDateRange(r.requisition_date, { start: '2026-09-01', end: '2026-09-30' }))[0], history[0]);
+  assert.equal(history.length, 2);
+});
