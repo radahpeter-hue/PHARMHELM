@@ -1,4 +1,4 @@
-import { eodVariance, requiresEodVarianceReason, formatEodAmount } from '../utils/eodMoney';
+import { eodVariance, requiresEodVarianceReason, formatEodAmount, eodAmountNumber, sumEodAmounts } from '../utils/eodMoney';
 import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
 import { inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../utils/financeDateFilters';
 import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, buildBranchExpenseRecipient, isAllowanceCategory, expenseRecipientTypeAllowed } from '../utils/branchExpensePolicy';
@@ -288,60 +288,62 @@ const EODReconciliationTab: React.FC = () => {
       return isCompleted && isSameBranch && saleDate === targetDate;
     });
 
-    let cash = 0;
-    let momo = 0;
-    let airtel = 0;
-    let card = 0;
-    let insurance = 0;
-    let instCredit = 0;
-    let staffWelfare = 0;
+    const cash: number[] = [];
+    const momo: number[] = [];
+    const airtel: number[] = [];
+    const card: number[] = [];
+    const insurance: number[] = [];
+    const instCredit: number[] = [];
+    const staffWelfare: number[] = [];
 
     filtered.forEach(s => {
-      const totalAmount = s.totalAmount ?? s.total ?? 0;
+      const totalAmount = eodAmountNumber(s.totalAmount ?? s.total ?? 0);
       const isSplit = s.paymentMethod === 'staff_welfare' && s.secondaryPaymentMethod;
       
       if (isSplit) {
-        const welfareVal = s.welfareAmount ?? 0;
-        const secVal = s.secondaryAmount ?? (totalAmount - welfareVal);
+        const welfareVal = eodAmountNumber(s.welfareAmount ?? 0);
+        const secVal = eodAmountNumber(s.secondaryAmount ?? (totalAmount - welfareVal));
         
         // Welfare component
-        staffWelfare += welfareVal;
+        staffWelfare.push(welfareVal);
         
         // Secondary payment component
         const secMethod = s.secondaryPaymentMethod;
-        if (secMethod === 'cash') cash += secVal;
-        else if (secMethod === 'mtn_momo') momo += secVal;
-        else if (secMethod === 'airtel_money') airtel += secVal;
-        else if (secMethod === 'card') card += secVal;
-        else if (secMethod === 'insurance') insurance += secVal;
-        else if (secMethod === 'institutional_credit') instCredit += secVal;
+        if (secMethod === 'cash') cash.push(secVal);
+        else if (secMethod === 'mtn_momo') momo.push(secVal);
+        else if (secMethod === 'airtel_money') airtel.push(secVal);
+        else if (secMethod === 'card') card.push(secVal);
+        else if (secMethod === 'insurance') insurance.push(secVal);
+        else if (secMethod === 'institutional_credit') instCredit.push(secVal);
       } else {
         // Simple direct payment
         const pMethod = s.paymentMethod;
-        if (pMethod === 'cash') cash += totalAmount;
-        else if (pMethod === 'mtn_momo') momo += totalAmount;
-        else if (pMethod === 'airtel_money') airtel += totalAmount;
-        else if (pMethod === 'card') card += totalAmount;
-        else if (pMethod === 'insurance') insurance += totalAmount;
-        else if (pMethod === 'institutional_credit') instCredit += totalAmount;
-        else if (pMethod === 'staff_welfare') staffWelfare += totalAmount;
+        if (pMethod === 'cash') cash.push(totalAmount);
+        else if (pMethod === 'mtn_momo') momo.push(totalAmount);
+        else if (pMethod === 'airtel_money') airtel.push(totalAmount);
+        else if (pMethod === 'card') card.push(totalAmount);
+        else if (pMethod === 'insurance') insurance.push(totalAmount);
+        else if (pMethod === 'institutional_credit') instCredit.push(totalAmount);
+        else if (pMethod === 'staff_welfare') staffWelfare.push(totalAmount);
       }
     });
 
     return {
       computedExpected: {
-        cash,
-        momo,
-        airtel,
-        card,
-        insurance,
-        institutional_credit: instCredit,
-        staff_welfare: staffWelfare,
-        total: cash + momo + airtel + card + insurance + instCredit + staffWelfare
+        cash: sumEodAmounts(cash),
+        momo: sumEodAmounts(momo),
+        airtel: sumEodAmounts(airtel),
+        card: sumEodAmounts(card),
+        insurance: sumEodAmounts(insurance),
+        institutional_credit: sumEodAmounts(instCredit),
+        staff_welfare: sumEodAmounts(staffWelfare),
+        total: sumEodAmounts([...cash, ...momo, ...airtel, ...card, ...insurance, ...instCredit, ...staffWelfare])
       },
       relevantSalesCount: filtered.length
     };
   }, [sales, formData.date, activeBranchId]);
+
+  const declaredTotals = sumEodAmounts([formData.cash, formData.mtn, formData.airtel, formData.card, formData.insurance, formData.institutional_credit, formData.staff_welfare]);
 
   const needsVarianceReason = requiresEodVarianceReason([
     { declared: formData.cash, expected: computedExpected.cash },
@@ -364,14 +366,7 @@ const EODReconciliationTab: React.FC = () => {
       const inst_var = eodVariance(formData.institutional_credit, computedExpected.institutional_credit);
       const welfare_var = eodVariance(formData.staff_welfare, computedExpected.staff_welfare);
 
-      const total_act = 
-        formData.cash + 
-        formData.mtn + 
-        formData.airtel + 
-        formData.card + 
-        formData.insurance + 
-        formData.institutional_credit + 
-        formData.staff_welfare;
+      const total_act = declaredTotals;
 
       const total_exp = computedExpected.total;
       const total_var = eodVariance(total_act, total_exp);
@@ -443,14 +438,6 @@ const EODReconciliationTab: React.FC = () => {
     }
   };
 
-  const declaredTotals = 
-    formData.cash + 
-    formData.mtn + 
-    formData.airtel + 
-    formData.card + 
-    formData.insurance + 
-    formData.institutional_credit + 
-    formData.staff_welfare;
 
   return (
     <div className="max-w-6xl mx-auto bg-white p-6 sm:p-8 rounded-3xl border border-zinc-200 shadow-xl animate-fade-in">
@@ -488,11 +475,11 @@ const EODReconciliationTab: React.FC = () => {
                 <Banknote size={14} className="text-emerald-500" /> Cash (Physical Cash Hand)
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.cash || ''}
-                onChange={(e) => setFormData({...formData, cash: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, cash: Number(e.target.value) || 0})}
               />
             </div>
 
@@ -501,11 +488,11 @@ const EODReconciliationTab: React.FC = () => {
                 <Smartphone size={14} className="text-amber-500" /> MTN MoMo Tally
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.mtn || ''}
-                onChange={(e) => setFormData({...formData, mtn: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, mtn: Number(e.target.value) || 0})}
               />
             </div>
 
@@ -514,11 +501,11 @@ const EODReconciliationTab: React.FC = () => {
                 <Smartphone size={14} className="text-red-500" /> Airtel Money Tally
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.airtel || ''}
-                onChange={(e) => setFormData({...formData, airtel: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, airtel: Number(e.target.value) || 0})}
               />
             </div>
 
@@ -527,11 +514,11 @@ const EODReconciliationTab: React.FC = () => {
                 <CreditCard size={14} className="text-blue-500" /> Card / POS Terminal
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.card || ''}
-                onChange={(e) => setFormData({...formData, card: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, card: Number(e.target.value) || 0})}
               />
             </div>
 
@@ -540,11 +527,11 @@ const EODReconciliationTab: React.FC = () => {
                 <CheckCircle2 size={14} className="text-cyan-500" /> Insurance Orders
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.insurance || ''}
-                onChange={(e) => setFormData({...formData, insurance: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, insurance: Number(e.target.value) || 0})}
               />
             </div>
 
@@ -553,11 +540,11 @@ const EODReconciliationTab: React.FC = () => {
                 <Building2 size={14} className="text-indigo-500" /> Institutional Credit
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.institutional_credit || ''}
-                onChange={(e) => setFormData({...formData, institutional_credit: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, institutional_credit: Number(e.target.value) || 0})}
               />
             </div>
 
@@ -566,11 +553,11 @@ const EODReconciliationTab: React.FC = () => {
                 <Users size={14} className="text-violet-500" /> Staff Welfare Deductions
               </label>
               <input 
-                type="number" 
+                type="number" step="any" 
                 className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-md font-bold"
                 placeholder="0"
                 value={formData.staff_welfare || ''}
-                onChange={(e) => setFormData({...formData, staff_welfare: parseInt(e.target.value) || 0})}
+                onChange={(e) => setFormData({...formData, staff_welfare: Number(e.target.value) || 0})}
               />
             </div>
           </div>

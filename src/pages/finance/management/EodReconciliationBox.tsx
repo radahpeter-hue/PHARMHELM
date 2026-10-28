@@ -1,4 +1,4 @@
-import { eodRecordVariance, formatEodAmount } from '../../../utils/eodMoney';
+import { eodRecordVariance, formatEodAmount, eodVariance, sumEodAmounts } from '../../../utils/eodMoney';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
@@ -180,8 +180,10 @@ export const EodReconciliationBox: React.FC = () => {
       credit += rec.institutional_credit_actual || 0;
       welfare += rec.staff_welfare_actual || 0;
       revenue += rec.total_actual || 0;
-      variance += eodRecordVariance(rec);
+
     });
+    const variances = filteredReconciliations.map(eodRecordVariance);
+    variance = eodVariance(sumEodAmounts(variances.filter(v => v >= 0)), sumEodAmounts(variances.filter(v => v < 0).map(v => -v)));
     return { cash, card, momo, airtel, credit, welfare, revenue, variance };
   }, [filteredReconciliations]);
 

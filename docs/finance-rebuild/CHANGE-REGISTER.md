@@ -203,3 +203,12 @@ Changes 001–013 complete; Level 2 has not started at this checkpoint.
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 022 — Use stable eod money summation and comparisons
+
+- Modified files: `src/pages/Finance.tsx`, `src/pages/finance/management/EodReconciliationBox.tsx`, `src/utils/eodMoney.ts`, `tests/finance-rebuild-eod.test.ts`.
+- Targeted checks: 10000 fractional-payment accumulation, formatted amounts, invalid numbers, genuine sub-shilling/one-shilling discrepancies; fractional declarations preserved; no arbitrary monetary tolerance or POS accounting change.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.

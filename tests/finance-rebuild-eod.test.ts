@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { eodVariance, requiresEodVarianceReason, formatEodAmount, eodRecordVariance } from '../src/utils/eodMoney';
+import { eodVariance, requiresEodVarianceReason, formatEodAmount, eodRecordVariance, eodAmountNumber, sumEodAmounts } from '../src/utils/eodMoney';
 
 test('genuine shortage and over require a reason and preserve their exact financial difference', () => {
   assert.equal(eodVariance(495000, 500000), -5000);
@@ -46,4 +46,18 @@ test('negative zero and round-off display as zero, while a genuine fractional va
   assert.equal(eodRecordVariance({ total_actual: 0.3, total_expected: 0.1 + 0.2, total_variance: -5.55e-17 }), 0);
   assert.equal(eodRecordVariance({ total_actual: 495000, total_expected: 500000, total_variance: -5000 }), -5000);
   assert.equal(formatEodAmount(eodRecordVariance({ total_variance: -0 })), '0');
+});
+
+test('EOD summation prevents accumulated representation errors while retaining genuine fractional UGX', () => {
+  assert.equal(sumEodAmounts(Array.from({ length: 10000 }, () => 0.1)), 1000);
+  assert.equal(eodVariance(1000, sumEodAmounts(Array.from({ length: 10000 }, () => 0.1))), 0);
+  assert.equal(sumEodAmounts([1.25, 2.5, 0.25]), 4);
+  assert.equal(eodVariance('500,000.00', 500000), 0);
+  assert.equal(eodAmountNumber(' 500000.50 '), 500000.5);
+  assert.notEqual(eodVariance(0.3, 0.3001), 0);
+  const fractionalDisplay = formatEodAmount(eodVariance(0.3, 0.3001));
+  assert.notEqual(fractionalDisplay, '-0');
+  assert.ok(Math.abs(Number(fractionalDisplay) + 0.0001) < 1e-16);
+  assert.throws(() => eodAmountNumber('500,00'));
+  assert.throws(() => sumEodAmounts([Infinity]));
 });
