@@ -10,3 +10,12 @@ Accepted means engineering acceptance after the recorded checks. Owner live acce
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 002 — Rename global expenses to cash outflows
+
+- Modified files: `src/pages/Finance.tsx`, `src/pages/finance/management/GlobalExpenseLedger.tsx`.
+- Targeted checks: 12 Finance/settlement tests; UI/export label audit; existing collection and navigation identifiers retained.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.

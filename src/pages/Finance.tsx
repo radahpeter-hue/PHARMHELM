@@ -1987,7 +1987,7 @@ const OldGlobalExpenseLedger: React.FC = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
         <div>
-          <h3 className="text-xl font-black text-zinc-900">Global Expense Aggregator</h3>
+          <h3 className="text-xl font-black text-zinc-900">Global Cash Outflows</h3>
           <p className="text-sm text-zinc-500">Consolidated view of all operational costs</p>
         </div>
         <div className="flex items-center gap-4">
@@ -2230,7 +2230,7 @@ const ManagementFinance: React.FC<{ settings: SystemSettings | null }> = ({ sett
   const tabs = [
     { id: 'invoices', label: 'Invoices Ledger', icon: FileText },
     { id: 'management_expenses', label: 'Management Cash Outflows', icon: Briefcase },
-    { id: 'global_expenses', label: 'Global Expense Ledger', icon: Globe },
+    { id: 'global_expenses', label: 'Global Cash Outflows', icon: Globe },
     { id: 'profitability', label: 'Profitability Ledger', icon: BarChart3 },
     { id: 'credit_ledger', label: 'Credit Ledger', icon: CreditCard },
     { id: 'petty_cash', label: 'Petty Cash', icon: Wallet },

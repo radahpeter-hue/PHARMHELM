@@ -166,7 +166,7 @@ export const GlobalExpenseLedger: React.FC = () => {
 
     } catch (e: any) {
       console.error("Error gathering global expenses:", e);
-      toast.error("Failed to load global expenses.");
+      toast.error("Failed to load global cash outflows.");
     } finally {
       setLoading(false);
     }
@@ -397,7 +397,7 @@ export const GlobalExpenseLedger: React.FC = () => {
   // Excel export through the shared hardened exporter
   const handleExport = async () => {
     if (filteredList.length === 0) {
-      toast.error("No global expenses data to export.");
+      toast.error("No global cash outflows data to export.");
       return;
     }
 
@@ -427,8 +427,8 @@ export const GlobalExpenseLedger: React.FC = () => {
     const formattedTo = dateRange.end.split('-').reverse().join('-');
     await exportRecordsToExcel(
       exportData,
-      'Global Consolidated Expenses',
-      `GlobalExpenses_Consolidated_${formattedFrom}_to_${formattedTo}.xlsx`
+      'Global Cash Outflows',
+      `GlobalCashOutflows_Consolidated_${formattedFrom}_to_${formattedTo}.xlsx`
     );
     toast.success("Consolidated Excel report downloaded successfully!");
   };
@@ -438,7 +438,7 @@ export const GlobalExpenseLedger: React.FC = () => {
       {/* Aggregator Header */}
       <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 bg-white p-6 border border-zinc-200 rounded-[32px] shadow-sm">
         <div className="space-y-1">
-          <h2 className="text-2xl font-black text-zinc-950 tracking-tight">Global Expense Ledger</h2>
+          <h2 className="text-2xl font-black text-zinc-950 tracking-tight">Global Cash Outflows</h2>
           <p className="text-xs text-zinc-500 font-medium">Single source of truth of all operational outgoings from branches, fleet logistics, HR payroll, and corporate management.</p>
         </div>
         <button
@@ -686,7 +686,7 @@ export const GlobalExpenseLedger: React.FC = () => {
                 {filteredList.length === 0 && (
                   <tr>
                     <td colSpan={8} className="px-6 py-12 text-center text-zinc-400 italic text-sm">
-                      No consolidated global expenses matched current search/filter metrics.
+                      No consolidated global cash outflows matched current search/filter metrics.
                     </td>
                   </tr>
                 )}
