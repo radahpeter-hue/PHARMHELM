@@ -1275,10 +1275,28 @@ service cloud.firestore {
     }
 
     match /eod_reconciliations/{reconciliationId} {
+      function withinCorrectionWindow() {
+        let parts = resource.data.reconciliation_date.split('-');
+        let start = timestamp.date(int(parts[0]), int(parts[1]), int(parts[2])) - duration.value(3, 'h');
+        return resource.data.reconciliation_date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && request.time >= start && request.time < start + duration.value(14, 'd');
+      }
       allow read: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewBranchFinance();
       allow create: if isAuthenticated() && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
-      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+      allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId)
+        && hasAnyRole(['IT Head']) && withinCorrectionWindow()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'cash_actual', 'cash_variance', 'momo_actual', 'momo_variance',
+          'airtel_actual', 'airtel_variance', 'card_actual', 'card_variance',
+          'insurance_actual', 'insurance_variance', 'institutional_credit_actual', 'institutional_credit_variance',
+          'staff_welfare_actual', 'staff_welfare_variance', 'total_actual', 'total_variance',
+          'variance_reason', 'correction_reason', 'corrected_by', 'corrected_at'
+        ])
+        && request.resource.data.correction_reason is string
+        && request.resource.data.correction_reason.trim().size() > 0 && request.resource.data.correction_reason.size() <= 1000
+        && request.resource.data.corrected_by == request.auth.uid
+        && request.resource.data.corrected_at == request.time;
+      allow delete: if false;
     }
 
     match /branch_expenses/{expenseId} {
