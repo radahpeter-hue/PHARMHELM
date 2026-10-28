@@ -26,6 +26,7 @@ const records={
  management_expenses:[{id:'hq',tenantId:'test',expense_date:day,date:day,category:'utilities',description:'HQ outflow fixture',amount:2000,amount_ugx:2000,status:'issued',department:'HQ',logged_by:'tester'}],
  petty_cash_ledger:[{id:'opening',tenantId:'test',type:'incoming',amount:100000,date:day,source:'Opening'}]
 };
+const eodMode=new URLSearchParams(location.search).get('eod');if(eodMode){const amount=eodMode==='float'?0.1+0.2:0.3001;records.sales[0].total=amount;records.sales[0].totalAmount=amount;}
 window.fixtureDates={day,oldDay};window.fixtureRecords=records;window.financeWrites=[];window.subscriptions=[];
 const watchers=[];
 export const rows=name=>(records[name]||[]).filter(r=>r.tenantId==='test');
@@ -106,6 +107,57 @@ try {
   await page.getByRole('button',{name:'Consolidated Organisation P&L',exact:true}).click();await page.getByRole('heading',{name:'Consolidated Organisation P&L',exact:true}).waitFor();await page.getByText('Total Sales Revenue',{exact:true}).locator('..').getByText('UGX 800,000',{exact:true}).waitFor();
   await fit(page,'Consolidated P&L '+width);await page.screenshot({path:path.join(output,`pnl-${width}.png`),fullPage:true});await page.close();
   console.log(`Level 1 navigation, expense persistence/history, dates and P&L pass at ${width}px`);
+ }
+
+ if(process.env.FINANCE_LEVEL==='2') {
+  const page=await open(390,'?role=Finance%20Head');
+  await page.getByRole('button',{name:'Expense Log',exact:true}).click();
+  const newExpense=async(description,category='utilities')=>{
+   await page.getByRole('button',{name:'Log Expense',exact:true}).click();
+   const form=page.locator('form');await form.locator('select').first().selectOption(category);
+   await form.locator('input[type="number"]').fill('2000');await form.getByPlaceholder('What was this for?').fill(description);
+  };
+  await newExpense('Staff recipient fixture');await page.getByLabel('Recipient type',{exact:true}).selectOption('staff');
+  const staffSelect=page.getByLabel('Issued To — Staff',{exact:true});
+  assert.equal(await staffSelect.locator('option').filter({hasText:'Alex Example'}).count(),2);
+  assert.equal(await staffSelect.locator('option[value="inactive"]').count(),0);assert.equal(await staffSelect.locator('option[value="cross-tenant"]').count(),0);
+  await staffSelect.selectOption('staff-one');await page.getByRole('button',{name:'Save Expense',exact:true}).click();
+  await page.getByText('Staff recipient fixture',{exact:true}).waitFor();
+  const saved=await page.evaluate(()=>window.financeWrites.at(-1).data);
+  assert.equal(saved.recipient_staff_id,'staff-one');assert.equal(saved.recipient_staff_code,'MP-001');assert.equal(saved.issued_to,'Alex Example');assert.equal(saved.recipient_type,'staff');
+  const row=page.getByRole('row').filter({hasText:'Staff recipient fixture'});await row.getByRole('button').click();
+  assert.equal(await page.getByLabel('Issued To — Staff',{exact:true}).inputValue(),'staff-one');await page.getByRole('button',{name:'Cancel',exact:true}).click();
+  await newExpense('Allowance recipient fixture','allowances');
+  assert.equal(await page.getByLabel('Recipient type',{exact:true}).inputValue(),'staff');assert.equal(await page.getByLabel('Recipient type',{exact:true}).locator('option[value="external"]').count(),0);
+  const before=await page.evaluate(()=>window.financeWrites.length);
+  await page.locator('form').evaluate(el=>el.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+  await page.getByText('Select an active employee from the authoritative staff register.',{exact:true}).waitFor();assert.equal(await page.evaluate(()=>window.financeWrites.length),before);
+  // Bypass the hidden external option to prove the application guard still rejects it.
+  await page.getByLabel('Recipient type',{exact:true}).evaluate(el=>{el.append(new Option('Forged external','external'));el.value='external';el.dispatchEvent(new Event('change',{bubbles:true}));});
+  await page.locator('form').evaluate(el=>el.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+  await page.getByText('Allowances can only be issued to staff.',{exact:true}).waitFor();assert.equal(await page.evaluate(()=>window.financeWrites.length),before);
+  await page.getByLabel('Recipient type',{exact:true}).selectOption('staff');await page.getByLabel('Issued To — Staff',{exact:true}).selectOption('staff-two');await page.screenshot({path:path.join(output,'staff-allowance-form-390.png'),fullPage:true});
+  await page.getByRole('button',{name:'Save Expense',exact:true}).click();await page.getByText('Allowance recipient fixture',{exact:true}).waitFor();
+  const allowance=await page.evaluate(()=>window.financeWrites.at(-1).data);assert.equal(allowance.recipient_staff_id,'staff-two');assert.equal(allowance.recipient_type,'staff');
+  await page.getByText('Staff ID: staff-two (MP-002)',{exact:true}).scrollIntoViewIfNeeded();await fit(page,'Staff and Allowance form');await page.screenshot({path:path.join(output,'staff-allowance-390.png'),fullPage:true});await page.close();
+  console.log('Staff ID/name persistence, duplicate names, edit restore and forged/missing Allowance recipient guards passed');
+  for(const scenario of [{name:'match',actual:'500000',variance:0},{name:'shortage',actual:'495000',variance:-5000},{name:'over',actual:'505000',variance:5000},{name:'float',actual:'0.3',variance:0},{name:'tiny',actual:'0.3',variance:null}]){
+   const query='?role=cashier'+(['float','tiny'].includes(scenario.name)?'&eod='+scenario.name:'');
+   const eod=await open(390,query);await eod.locator('input[type="number"]').first().fill(scenario.actual);
+   await eod.getByRole('button',{name:'Reveal System Totals',exact:true}).click();
+   const submit=eod.getByRole('button',{name:'Submit EOD Audit Report',exact:true});
+   const reason=eod.getByLabel('Variance Reason Required',{exact:true});
+   if(scenario.variance===0){assert.equal(await reason.count(),0);assert.equal(await submit.isEnabled(),true);}
+   else{await reason.waitFor();assert.equal(await submit.isEnabled(),false);await reason.fill('Controlled acceptance test reason');assert.equal(await submit.isEnabled(),true);}
+   await eod.getByText('Grand Total',{exact:true}).scrollIntoViewIfNeeded();const varianceText=await eod.getByText('Grand Total',{exact:true}).locator('../..').innerText();
+   assert.equal(/(^|\s)-0(?:\s|$)/.test(varianceText),false,varianceText);
+   await fit(eod,'EOD '+scenario.name);await eod.screenshot({path:path.join(output,`eod-${scenario.name}-390.png`),fullPage:true});
+   await submit.click();await eod.waitForFunction(()=>window.financeWrites.some(w=>w.name==='eod_reconciliations'));
+   const record=await eod.evaluate(()=>window.financeWrites.find(w=>w.name==='eod_reconciliations').data);
+   if(scenario.variance!==null)assert.equal(record.total_variance,scenario.variance);else assert.ok(record.total_variance<0&&record.total_variance!==0);
+   assert.equal(Object.is(record.total_variance,-0),false);await eod.close();console.log(`EOD ${scenario.name} passes UI, reason validation and saved-value checks`);
+  }
+  const offset=await open(390,'?role=cashier');await offset.locator('input[type="number"]').nth(0).fill('495000');await offset.locator('input[type="number"]').nth(1).fill('5000');await offset.getByRole('button',{name:'Reveal System Totals',exact:true}).click();await offset.getByLabel('Variance Reason Required',{exact:true}).waitFor();assert.equal(await offset.getByRole('button',{name:'Submit EOD Audit Report',exact:true}).isEnabled(),false);await offset.close();
  }
  for(const role of ['dispenser','owner']){
   const page=await open(390,`?surface=welfare&role=${role}`);await page.getByRole('button',{name:'Welfare Log',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Admin Welfare',exact:true}).count(),role==='owner'?1:0);await fit(page,'Welfare '+role);await page.close();

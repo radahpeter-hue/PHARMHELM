@@ -43,3 +43,5 @@ Other Finance-named branches: `fix/branch-finance-credit-display`, `fix/finance-
 ## Scope boundaries
 
 No Phase 6 imports, Stage B, Credit Receivables V2, migrations, ledger redesign or rules compaction. `firestore.rules` must remain byte-identical. Existing broad application-validation architecture retained; no claim of new server-enforced allowance validation. Preview Hosting shares the existing backend and permissions; deployment itself must not write tenant records or deploy rules/indexes. Owner must use authorised test accounts and controlled test records.
+
+A paginated Finance-branch inventory also identifies `ops/stage2-finance-activation`, `feature/stage2-central-grn-finance-20261016`, and `release/systemwide-finance`. These remain excluded; no branch is treated as a production baseline merely because it exists.

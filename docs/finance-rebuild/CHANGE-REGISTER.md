@@ -212,3 +212,22 @@ Changes 001–013 complete; Level 2 has not started at this checkpoint.
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## LEVEL 2 CHECKPOINT
+
+Changes 014–022 complete. STOP: no Level 3 work authorised or included.
+
+- `npm test`: **728 passed, 0 failed**.
+- `npm run typecheck`: PASS.
+- `npm run build`: PASS; baseline bundle-size/dynamic-import warnings only.
+- Full Level 1 browser regression: PASS at 360, 390 and 1280px.
+- Level 2 actual React browser tests: PASS. Staff dropdown uses the HR register; duplicate names distinguished; immutable ID/type/name/code persist; edit restores selection; missing/fake/external Allowance recipients are rejected even when native form validation or the hidden option is bypassed. A valid recognised employee saves successfully.
+- EOD A: 500000 expected / 500000 declared -> 0, no reason, saved zero.
+- EOD B: 500000 expected / 495000 declared -> -5000, reason required and persisted.
+- EOD C: 500000 expected / 505000 declared -> +5000, reason required and persisted.
+- Floating representation equality (0.1 + 0.2 vs 0.3): zero, no reason. A genuine fractional difference remains nonzero and requires a reason. Offsetting channel discrepancies require explanation.
+- Negative zero: rejected by formatting and saved-value assertions. Phone screenshots visually reviewed.
+- Money policy: retain existing numeric UGX precision, including fractional POS values; use Neumaier compensated sums. Equality absorbs only four machine-epsilon units at operand scale (about 0.000000000444 UGX at UGX 500000), not a currency-sized tolerance. One-shilling and genuine small fractional discrepancies remain visible.
+- `firestore.rules`, indexes, Firebase configuration and dependency manifests: unchanged from base.
+- No live tenant data was written in automated tests. Owner acceptance against Martin Pharma / Masaka remains pending.
+- Level 2 engineering acceptance: **PASS**.
