@@ -25,7 +25,7 @@ service cloud.firestore {
     function getUserData() {
       let staffPath = /databases/$(database)/documents/staff/$(request.auth.uid);
       return exists(staffPath) ? (get(staffPath).data.get('is_duplicate', false) ? {
-        'role': '', 'tenantId': '', 'secondaryRoles': [], 'assigned_branches': []
+        'role': '', 'tenantId': ''
       } : get(staffPath).data) : {
         'role': request.auth.token.get('role', ''), 'tenantId': request.auth.token.get('tenantId', ''),
         'secondaryRoles': request.auth.token.get('roles', request.auth.token.get('secondaryRoles', [])), 'assigned_branches': []
@@ -401,7 +401,7 @@ service cloud.firestore {
         && resource.data.tenantId == correction.tenantId
         && beneficiaryId == original.patientId
         && (correction.welfareAmount == 0 || beneficiaryId == correction.welfareBeneficiaryId)
-        && (resource.data.get('duplicate_of', '') in ['', null] || next.welfare_spent <= resource.data.get('welfare_spent', 0))
+        && (!resource.data.get('is_duplicate', false) || next.welfare_spent <= resource.data.get('welfare_spent', 0))
         && next.welfare_spent == nextSpent && next.welfare_spent >= 0
         && next.welfare_used_ytd == resource.data.get('welfare_used_ytd', 0) + oldAmount + correction.welfareAmount
         && next.welfare_used_ytd >= 0
@@ -971,8 +971,8 @@ service cloud.firestore {
       // activation/support updates but cannot silently change the HR-assigned role realm.
       allow update: if atomicWelfareBalance(staffId);
       allow update: if isAuthenticated()
-        && resource.data.get('duplicate_of', '') in ['', null]
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['duplicate_of', 'is_duplicate', 'retired_staff_code', 'retired_employee_id', 'identity_alias_ids', 'identity_cleanup_at', 'identity_retired_at'])
+        && !resource.data.get('is_duplicate', false)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['duplicate_of', 'is_duplicate', 'identity_alias_ids'])
         && isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
         && (resource.data.get('canonical_staff_id', '') in ['', null]
           || request.resource.data.get('canonical_staff_id', '') == resource.data.canonical_staff_id)
@@ -996,7 +996,7 @@ service cloud.firestore {
           ]))
       );
       allow delete: if (isAdmin() || isIT()) && isTenantMember(resource.data.tenantId)
-        && resource.data.get('staff_code', '') == '' && resource.data.get('duplicate_of', '') in ['', null];
+        && resource.data.get('staff_code', '') == '' && !resource.data.get('is_duplicate', false);
     }
 
     match /leave_requests/{requestId} {
