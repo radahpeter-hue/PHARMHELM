@@ -803,6 +803,7 @@ const BranchExpenseLog: React.FC = () => {
                 )}
                 <option value="supplies">Supplies</option>
                 <option value="maintenance">Maintenance</option>
+                <option value="allowances">Allowances</option>
                 <option value="other">Other</option>
               </select>
             </div>
