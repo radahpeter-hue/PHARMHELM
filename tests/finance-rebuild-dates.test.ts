@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { financeDateKey, inFinanceDateRange } from '../src/utils/financeDateFilters';
+import { financeDateKey, inFinanceDateRange, lastSevenFinanceDays } from '../src/utils/financeDateFilters';
 
 test('date ranges include both boundaries and exclude records outside the selected dates', () => {
   const range = { start: '2026-09-01', end: '2026-09-30' };
@@ -25,4 +25,13 @@ test('changing requisition dates retrieves older history without truncating the 
   assert.equal(history.filter(r => inFinanceDateRange(r.requisition_date, { start: '2026-10-01', end: '2026-10-31' })).length, 1);
   assert.equal(history.filter(r => inFinanceDateRange(r.requisition_date, { start: '2026-09-01', end: '2026-09-30' }))[0], history[0]);
   assert.equal(history.length, 2);
+});
+
+test('last seven days includes today and six prior calendar dates, across year and Kampala midnight', () => {
+  assert.deepEqual(lastSevenFinanceDays(new Date('2026-10-28T10:00:00Z')), { start: '2026-10-22', end: '2026-10-28' });
+  assert.deepEqual(lastSevenFinanceDays(new Date('2025-12-31T22:00:00Z')), { start: '2025-12-26', end: '2026-01-01' });
+  const range = lastSevenFinanceDays(new Date('2026-10-28T10:00:00Z'));
+  assert.equal(inFinanceDateRange('2026-10-21', range), false);
+  assert.equal(inFinanceDateRange('2026-10-22', range), true);
+  assert.equal(inFinanceDateRange('2026-10-28', range), true);
 });

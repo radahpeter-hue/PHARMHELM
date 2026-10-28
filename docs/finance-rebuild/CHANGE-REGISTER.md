@@ -64,3 +64,12 @@ Accepted means engineering acceptance after the recorded checks. Owner live acce
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 008 — Default requisition history to last seven days
+
+- Modified files: `src/pages/Finance.tsx`, `src/utils/financeDateFilters.ts`, `tests/finance-rebuild-dates.test.ts`.
+- Targeted checks: Inclusive seven-day default, Kampala midnight, year rollover and history preservation tests; no subscription limits or deletion introduced.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.

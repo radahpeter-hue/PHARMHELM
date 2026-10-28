@@ -13,3 +13,11 @@ export function inFinanceDateRange(value: unknown, range: FinanceDateRange): boo
   const key = financeDateKey(value);
   return !!key && (!range.start || key >= range.start) && (!range.end || key <= range.end);
 }
+
+/** Seven inclusive Kampala calendar dates, including today. Display default only. */
+export function lastSevenFinanceDays(now = new Date()): FinanceDateRange {
+  const end = financeDateKey(now);
+  const start = new Date(`${end}T12:00:00Z`);
+  start.setUTCDate(start.getUTCDate() - 6);
+  return { start: start.toISOString().slice(0, 10), end };
+}
