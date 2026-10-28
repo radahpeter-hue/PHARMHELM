@@ -46,3 +46,12 @@ Accepted means engineering acceptance after the recorded checks. Owner live acce
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 006 — Filter incoming petty cash by date
+
+- Modified files: `src/pages/Finance.tsx`.
+- Targeted checks: Inclusive, open-ended, inverted-range and historical-date tests plus Finance regressions; received-history toggle; balance continues to use unfiltered records.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.

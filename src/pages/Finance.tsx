@@ -1,3 +1,5 @@
+import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
+import { inFinanceDateRange } from '../utils/financeDateFilters';
 import { canUseBranchExpenseCategory } from '../utils/branchExpensePolicy';
 import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
@@ -1071,6 +1073,8 @@ const BranchPettyCash: React.FC = () => {
   const [requisitions, setRequisitions] = useState<PettyCashRequisition[]>([]);
   const [issues, setIssues] = useState<PettyCashIssue[]>([]);
   const [expenses, setExpenses] = useState<BranchExpense[]>([]);
+  const [incomingDateRange, setIncomingDateRange] = useState({ start: '', end: '' });
+  const [includeReceived, setIncludeReceived] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [formData, setFormData] = useState({
     amount: 0,
@@ -1142,6 +1146,8 @@ const BranchPettyCash: React.FC = () => {
     }
   };
 
+  const filteredIssues = issues.filter(i => (includeReceived || i.status !== 'received') && inFinanceDateRange(i.issue_date, incomingDateRange));
+
   const totalPettyCashReceived = issues
     .filter(i => i.status === 'received')
     .reduce((sum, i) => sum + i.amount, 0);
@@ -1180,26 +1186,31 @@ const BranchPettyCash: React.FC = () => {
               <Truck size={20} className="text-blue-500" />
               Incoming Petty Cash
             </h3>
+            <FinanceDateRangeFields label="Incoming petty cash" value={incomingDateRange} onChange={setIncomingDateRange} />
+            <label className="flex items-center gap-2 text-xs text-zinc-600 mt-3">
+              <input type="checkbox" checked={includeReceived} onChange={e => setIncludeReceived(e.target.checked)} />
+              Include received cash
+            </label>
           </div>
           <div className="p-4 space-y-3">
-            {issues.filter(i => i.status !== 'received').map((issue) => (
+            {filteredIssues.map((issue) => (
               <div key={issue.id} className="flex items-center justify-between p-4 bg-blue-50 rounded-2xl border border-blue-100">
                 <div>
                   <p className="font-bold text-blue-900">UGX {issue.amount.toLocaleString()}</p>
                   <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wider">Ref: {issue.reference_number}</p>
                   <p className="text-xs text-blue-500 mt-1">Issued on {new Date(issue.issue_date).toLocaleDateString()}</p>
                 </div>
-                <button 
+                {issue.status === 'received' ? <span className="text-xs text-emerald-700">Received</span> : <button
                   onClick={() => handleAcceptIssue(issue)}
                   className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/20"
                 >
                   Accept Cash
-                </button>
+                </button>}
               </div>
             ))}
-            {issues.filter(i => i.status !== 'received').length === 0 && (
+            {filteredIssues.length === 0 && (
               <div className="text-center py-12 text-zinc-400 italic text-sm">
-                No pending incoming petty cash
+                No incoming petty cash matches the selected filters
               </div>
             )}
           </div>
