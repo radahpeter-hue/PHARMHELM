@@ -2650,7 +2650,7 @@ const OldTaxManagement: React.FC<{ settings: SystemSettings | null }> = ({ setti
                       <tr key={p.id} className="hover:bg-zinc-50/50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="font-bold text-zinc-900">{stf?.full_name || p.staff_name || 'System Staff'}</div>
-                          <div className="text-[10px] text-zinc-400 font-mono">ID: {stf?.employeeId || stf?.id || p.staffId || 'N/A'}</div>
+                          <div className="text-[10px] text-zinc-400 font-mono">ID: {stf?.staff_code || stf?.employee_id || stf?.employeeId || stf?.id || p.staffId || 'N/A'}</div>
                         </td>
                         <td className="px-6 py-4 text-sm text-zinc-800 font-medium">
                           {br?.name || 'Main HQ / General'}
@@ -2700,7 +2700,7 @@ const OldTaxManagement: React.FC<{ settings: SystemSettings | null }> = ({ setti
                       <tr key={p.id} className="hover:bg-zinc-50/50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="font-bold text-zinc-900">{stf?.full_name || p.staff_name || 'System Staff'}</div>
-                          <div className="text-[10px] text-zinc-400 font-mono">ID: {stf?.employeeId || stf?.id || p.staffId || 'N/A'}</div>
+                          <div className="text-[10px] text-zinc-400 font-mono">ID: {stf?.staff_code || stf?.employee_id || stf?.employeeId || stf?.id || p.staffId || 'N/A'}</div>
                         </td>
                         <td className="px-6 py-4 text-sm text-zinc-800 font-medium">
                           {br?.name || 'Main HQ / General'}

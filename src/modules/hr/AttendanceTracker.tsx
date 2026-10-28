@@ -178,7 +178,7 @@ export const AttendanceTracker: React.FC = () => {
       const s = staff.find(m => m.id === a.staffId);
       return [
         selectedDate,
-        s?.employee_id || a.staffId,
+        s?.staff_code || s?.employee_id || a.staffId,
         a.staff_name || s?.full_name || 'N/A',
         s?.role || 'N/A',
         a.status,
@@ -367,7 +367,7 @@ export const AttendanceTracker: React.FC = () => {
                         </td>
                         <td className="px-6 py-4">
                           <p className="font-bold text-slate-950 text-sm">{member.full_name}</p>
-                          <p className="text-[9px] text-slate-400 font-black tracking-widest uppercase mt-0.5">ID: {member.employee_id || member.id.slice(0, 8)}</p>
+                          <p className="text-[9px] text-slate-400 font-black tracking-widest uppercase mt-0.5">ID: {member.staff_code || member.employee_id || member.id.slice(0, 8)}</p>
                         </td>
                         <td className="px-6 py-4">
                           <p className="text-xs font-bold text-slate-700">{member.role}</p>
@@ -468,7 +468,7 @@ export const AttendanceTracker: React.FC = () => {
                             </div>
                             <div>
                               <p className="font-bold text-slate-900 text-sm">{record.staff_name || member?.full_name || 'Staff'}</p>
-                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">ID: {member?.employee_id || record.staffId.slice(0, 8)}</p>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">ID: {member?.staff_code || member?.employee_id || record.staffId.slice(0, 8)}</p>
                             </div>
                           </div>
                         </td>
