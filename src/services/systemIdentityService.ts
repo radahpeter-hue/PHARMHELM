@@ -81,6 +81,11 @@ export async function createScopedIdentity(
     }
     const next = Number(current.data()?.lastSequence || 0) + 1;
     const code = formatSystemIdentity(definition.prefix, next);
+    if (collectionName === 'staff') {
+      const claimRef = doc(connection, 'staff_identity_claims', `${tenantId}_${code}`);
+      if ((await transaction.get(claimRef)).exists()) throw new Error('Staff number already reserved; reconcile the staff sequence.');
+      transaction.set(claimRef, { tenantId, staffId: recordRef.id, code, createdAt: new Date().toISOString() });
+    }
     transaction.set(counterRef, { tenantId, kind: definition.kind, lastSequence: next, updatedAt: new Date().toISOString() });
     const payload: Record<string, unknown> = { ...data, tenantId, [definition.field]: code };
     if (collectionName === 'products') payload.sku = `SKU-${code.slice(4)}`;

@@ -868,7 +868,7 @@ const BranchExpenseLog: React.FC = () => {
               <select id="branch-expense-staff" required value={selectedStaffId} onChange={e => setSelectedStaffId(e.target.value)}
                 className="w-full px-4 py-2 bg-zinc-50 text-zinc-900 border border-zinc-200 rounded-xl">
                 <option value="">Select employee</option>
-                {availableStaff.map(s => <option key={s.id} value={s.id}>{expenseStaffName(s)} ({s.staff_code || s.id})</option>)}
+                {availableStaff.map(s => <option key={s.id} value={s.id}>{expenseStaffName(s)} ({s.staff_code || 'Staff number pending'})</option>)}
               </select>
               {!availableStaff.length && <p className="text-xs text-red-600">No active staff found in the employee register.</p>}
             </div> : <div className="space-y-1 md:col-span-2">
@@ -926,7 +926,7 @@ const BranchExpenseLog: React.FC = () => {
                 <td className="px-6 py-4 text-sm text-zinc-600">{expense.description}</td>
                 <td className="px-6 py-4 text-sm text-zinc-600">
                   {expense.issued_to || 'Not recorded'}
-                  {expense.recipient_type === 'staff' && <span className="block text-xs text-zinc-500 break-all">Staff ID: {expense.recipient_staff_id}{expense.recipient_staff_code ? ` (${expense.recipient_staff_code})` : ''}</span>}
+                  {expense.recipient_type === 'staff' && <span className="block text-xs text-zinc-500 break-all">Staff ID: {staff.find(s => s.id === expense.recipient_staff_id)?.staff_code || expense.recipient_staff_code || 'Staff number pending'}</span>}
                 </td>
                 <td className="px-6 py-4 font-bold text-zinc-900">UGX {(expense.amount_ugx || 0).toLocaleString()}</td>
                 <td className="px-6 py-4">
