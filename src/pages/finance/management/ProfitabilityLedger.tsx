@@ -194,7 +194,7 @@ export const ProfitabilityLedger: React.FC = () => {
       { 'Metric Label': 'Branch Operational Expenses', 'Value (UGX)': totalBranchExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalBranchExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Logistics and Transport Expenses', 'Value (UGX)': totalLogisticsExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalLogisticsExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Marketing Expenses', 'Value (UGX)': totalMarketingExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalMarketingExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
-      { 'Metric Label': 'Corporate HQ & Management Expenses', 'Value (UGX)': totalMgmtExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalMgmtExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
+      { 'Metric Label': 'Corporate HQ & Management Cash Outflows', 'Value (UGX)': totalMgmtExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalMgmtExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Wastage & Quarantine Loss', 'Value (UGX)': totalWastage, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalWastage / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Total Consolidated Expenses', 'Value (UGX)': totalExpenses, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalExpenses / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Net Profit Payout Baseline', 'Value (UGX)': netProfit, 'Percentage of Revenue': totalRevenue > 0 ? `${((netProfit / totalRevenue) * 100).toFixed(1)}%` : '0.0%' }
@@ -327,7 +327,7 @@ export const ProfitabilityLedger: React.FC = () => {
               <span className="font-black text-red-500 font-mono text-sm">- UGX {totalMarketingExp.toLocaleString()}</span>
             </div>
             <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
-              <span className="font-bold text-zinc-600 text-sm">Management/HQ Expenses</span>
+              <span className="font-bold text-zinc-600 text-sm">Management/HQ Cash Outflows</span>
               <span className="font-black text-red-500 font-mono text-sm">- UGX {totalMgmtExp.toLocaleString()}</span>
             </div>
             <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">

@@ -1661,9 +1661,9 @@ const OldManagementExpenseLedger: React.FC = () => {
       await financeWrites.commit();
       financeMessages.forEach(({kind,message})=>toast[kind](message));
 
-      toast.success('Management expense approved and successfully deducted from petty cash!');
+      toast.success('Management cash outflow approved and successfully deducted from petty cash!');
     } catch (error) {
-      toast.error('Failed to disburse management expense');
+      toast.error('Failed to disburse management cash outflow');
     }
   };
 
@@ -1750,7 +1750,7 @@ const OldManagementExpenseLedger: React.FC = () => {
             {filteredExpenses.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic">
-                  No HQ management expenses found for the selected date range.
+                  No HQ management cash outflows found for the selected date range.
                 </td>
               </tr>
             )}
@@ -1821,7 +1821,7 @@ const ManagementExpenseModal: React.FC<{ isOpen: boolean, onClose: () => void }>
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-[32px] w-full max-w-md overflow-hidden shadow-2xl">
         <div className="p-8">
-          <h2 className="text-2xl font-bold text-zinc-900 mb-6">Log Management Expense</h2>
+          <h2 className="text-2xl font-bold text-zinc-900 mb-6">Log Management Cash Outflow</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
               <label className="text-xs font-bold text-zinc-500 uppercase">Category</label>
@@ -2202,7 +2202,7 @@ const OldProfitabilityLedger: React.FC = () => {
             <span className="font-black text-red-500">- UGX {totalBranchExp.toLocaleString()}</span>
           </div>
           <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl">
-            <span className="font-bold text-zinc-600">Management/HQ Expenses</span>
+            <span className="font-bold text-zinc-600">Management/HQ Cash Outflows</span>
             <span className="font-black text-red-500">- UGX {totalMgmtExp.toLocaleString()}</span>
           </div>
           <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl">
@@ -2229,7 +2229,7 @@ const ManagementFinance: React.FC<{ settings: SystemSettings | null }> = ({ sett
 
   const tabs = [
     { id: 'invoices', label: 'Invoices Ledger', icon: FileText },
-    { id: 'management_expenses', label: 'Management Expenses', icon: Briefcase },
+    { id: 'management_expenses', label: 'Management Cash Outflows', icon: Briefcase },
     { id: 'global_expenses', label: 'Global Expense Ledger', icon: Globe },
     { id: 'profitability', label: 'Profitability Ledger', icon: BarChart3 },
     { id: 'credit_ledger', label: 'Credit Ledger', icon: CreditCard },

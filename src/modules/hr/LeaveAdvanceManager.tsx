@@ -636,7 +636,7 @@ const ReviewAdvanceModal: React.FC<{
           source: 'hr_advance',
           excludeFromOpexRollup: false
         });
-        toast.success(`Advance fully approved & sent to Finance Management Expenses!`);
+        toast.success(`Advance fully approved & sent to Finance Management Cash Outflows!`);
       } else {
         toast.success(`Request ${action.toLowerCase()} as ${reviewCapacity}`);
       }
@@ -671,7 +671,7 @@ const ReviewAdvanceModal: React.FC<{
         source: 'hr_advance',
         excludeFromOpexRollup: false
       });
-      toast.success('Approved both levels successfully & sent to Finance Management Expenses');
+      toast.success('Approved both levels successfully & sent to Finance Management Cash Outflows');
       onClose();
     } catch (error) {
       toast.error('Failed to update request');
