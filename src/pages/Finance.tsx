@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../utils/operationalStaff';
 import { PettyCashExportButtons } from '../components/finance/PettyCashExportButtons';
 import { pettyCashIssueRows, pettyCashRequisitionRows } from '../utils/pettyCashExport';
 import { eodVariance, requiresEodVarianceReason, formatEodAmount, eodAmountNumber, sumEodAmounts } from '../utils/eodMoney';
@@ -926,7 +927,7 @@ const BranchExpenseLog: React.FC = () => {
                 <td className="px-6 py-4 text-sm text-zinc-600">{expense.description}</td>
                 <td className="px-6 py-4 text-sm text-zinc-600">
                   {expense.issued_to || 'Not recorded'}
-                  {expense.recipient_type === 'staff' && <span className="block text-xs text-zinc-500 break-all">Staff ID: {staff.find(s => s.id === expense.recipient_staff_id)?.staff_code || expense.recipient_staff_code || 'Staff number pending'}</span>}
+                  {expense.recipient_type === 'staff' && <span className="block text-xs text-zinc-500 break-all">Staff ID: {staff.find(s => staffMatchesId(s, expense.recipient_staff_id))?.staff_code || expense.recipient_staff_code || 'Staff number pending'}</span>}
                 </td>
                 <td className="px-6 py-4 font-bold text-zinc-900">UGX {(expense.amount_ugx || 0).toLocaleString()}</td>
                 <td className="px-6 py-4">
@@ -1112,6 +1113,7 @@ const BranchCreditView: React.FC = () => {
 
 const BranchPettyCash: React.FC = () => {
   const { profile, activeBranchId, activeBranch } = useAuth();
+  const [reportStaff, setReportStaff] = useState<Staff[]>([]);
   const [requisitions, setRequisitions] = useState<PettyCashRequisition[]>([]);
   const [issues, setIssues] = useState<PettyCashIssue[]>([]);
   const [expenses, setExpenses] = useState<BranchExpense[]>([]);
@@ -1127,6 +1129,7 @@ const BranchPettyCash: React.FC = () => {
 
   useEffect(() => {
     if (profile?.tenantId && activeBranchId) {
+      const unsubStaff = firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setReportStaff, { includeStaffAliases: true });
       const unsubReqs = firestoreService.subscribeToCollection<PettyCashRequisition>('petty_cash_requisitions', profile.tenantId, (data) => {
         setRequisitions(data.filter(r => r.branch_id === activeBranchId).sort((a, b) => new Date(b.requisition_date).getTime() - new Date(a.requisition_date).getTime()));
       });
@@ -1137,6 +1140,7 @@ const BranchPettyCash: React.FC = () => {
         setExpenses(data.filter(e => e.branch_id === activeBranchId && e.payment_method === 'Petty Cash'));
       });
       return () => {
+        unsubStaff();
         unsubReqs();
         unsubIssues();
         unsubExpenses();
@@ -1189,8 +1193,8 @@ const BranchPettyCash: React.FC = () => {
     }
   };
 
-  const filteredRequisitions = requisitions.filter(r => inFinanceDateRange(r.requisition_date, requisitionDateRange));
-  const filteredIssues = issues.filter(i => (includeReceived || i.status !== 'received') && inFinanceDateRange(i.issue_date, incomingDateRange));
+  const filteredRequisitions = requisitions.filter(r => r.tenantId === profile?.tenantId && r.branch_id === activeBranchId && inFinanceDateRange(r.requisition_date, requisitionDateRange));
+  const filteredIssues = issues.filter(i => i.tenantId === profile?.tenantId && i.branch_id === activeBranchId && (includeReceived || i.status !== 'received') && inFinanceDateRange(i.issue_date, incomingDateRange));
 
   const totalPettyCashReceived = issues
     .filter(i => i.status === 'received')
@@ -1231,7 +1235,7 @@ const BranchPettyCash: React.FC = () => {
               Incoming Petty Cash
             </h3>
             <FinanceDateRangeFields label="Incoming petty cash" value={incomingDateRange} onChange={setIncomingDateRange} />
-            <PettyCashExportButtons rows={pettyCashIssueRows(filteredIssues)} name="Incoming petty cash" range={incomingDateRange} branch={activeBranch?.name || activeBranchId || "Branch"} />
+            <PettyCashExportButtons rows={pettyCashIssueRows(filteredIssues, {tenantId: profile?.tenantId || '', staff: reportStaff, requisitions})} name="Incoming petty cash" range={incomingDateRange} branch={activeBranch?.name || activeBranchId || "Branch"} />
             <label className="flex items-center gap-2 text-xs text-zinc-600 mt-3">
               <input type="checkbox" checked={includeReceived} onChange={e => setIncludeReceived(e.target.checked)} />
               Include received cash
@@ -1269,7 +1273,7 @@ const BranchPettyCash: React.FC = () => {
             </h3>
             <p className="text-xs text-zinc-500 mt-2">History opens on the last seven days. Change the dates to view older records.</p>
             <FinanceDateRangeFields label="Petty cash requisitions" value={requisitionDateRange} onChange={setRequisitionDateRange} />
-            <PettyCashExportButtons rows={pettyCashRequisitionRows(filteredRequisitions)} name="Petty cash requisitions" range={requisitionDateRange} branch={activeBranch?.name || activeBranchId || "Branch"} />
+            <PettyCashExportButtons rows={pettyCashRequisitionRows(filteredRequisitions, {tenantId: profile?.tenantId || '', staff: reportStaff})} name="Petty cash requisitions" range={requisitionDateRange} branch={activeBranch?.name || activeBranchId || "Branch"} />
             <div className="flex flex-wrap gap-3 mt-3 text-xs font-semibold text-emerald-700">
               <button onClick={() => setRequisitionDateRange(lastSevenFinanceDays())}>Last 7 Days</button>
               <button onClick={() => setRequisitionDateRange(previousFinanceMonth())}>Previous Month</button>
@@ -2644,7 +2648,7 @@ const OldTaxManagement: React.FC<{ settings: SystemSettings | null }> = ({ setti
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
                   {filteredPayroll.filter(p => (p.paye || 0) > 0).map((p) => {
-                    const stf = staffList.find(s => s.id === p.staffId || s.id === p.staff_id || s.employeeId === p.staffId);
+                    const stf = staffList.find(s => staffMatchesId(s, p.staffId) || staffMatchesId(s, p.staff_id) || s.employeeId === p.staffId);
                     const br = branchesList.find(b => b.id === (stf?.branch_id || p.branch_id || p.branchId));
                     return (
                       <tr key={p.id} className="hover:bg-zinc-50/50 transition-colors">
@@ -2694,7 +2698,7 @@ const OldTaxManagement: React.FC<{ settings: SystemSettings | null }> = ({ setti
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
                   {filteredPayroll.filter(p => (p.nssf_employee || 0) > 0).map((p) => {
-                    const stf = staffList.find(s => s.id === p.staffId || s.id === p.staff_id || s.employeeId === p.staffId);
+                    const stf = staffList.find(s => staffMatchesId(s, p.staffId) || staffMatchesId(s, p.staff_id) || s.employeeId === p.staffId);
                     const br = branchesList.find(b => b.id === (stf?.branch_id || p.branch_id || p.branchId));
                     return (
                       <tr key={p.id} className="hover:bg-zinc-50/50 transition-colors">

@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../../utils/operationalStaff';
 import React, { useState, useEffect } from 'react';
 import { 
   FileText, 
@@ -112,7 +113,7 @@ export const Licenses = () => {
         };
         await firestoreService.addDocument('premises_licenses', newLicense);
       } else {
-        const staffMember = staff.find(s => s.id === staffId);
+        const staffMember = staff.find(s => staffMatchesId(s, staffId));
         const newLicense: Omit<PersonnelLicense, 'id'> = {
           tenantId,
           staffId,

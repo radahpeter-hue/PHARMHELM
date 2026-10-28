@@ -1,3 +1,4 @@
+import { operationalStaff } from '../utils/operationalStaff';
 import { postManagementCashEntry, createManagementFinanceWriteGroup } from './managementCashPosting';
 import { auth } from '../firebase';
 import { 
@@ -64,11 +65,11 @@ const deepClean = (obj: any): any => {
 };
 
 export const firestoreService = {
-  subscribeToCollection: <T>(path: string, tenantId: string, callback: (data: T[]) => void) => {
+  subscribeToCollection: <T>(path: string, tenantId: string, callback: (data: T[]) => void, options: { includeStaffAliases?: boolean } = {}) => {
     const q = query(collection(db, path), where('tenantId', '==', tenantId));
     return onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as T));
-      callback(data);
+      callback(path === 'staff' && !options.includeStaffAliases ? operationalStaff(data as any[]) as T[] : data);
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, path);
     });
@@ -79,7 +80,7 @@ export const firestoreService = {
     const q = query(colRef, where('tenantId', '==', tenantId), ...constraints);
     return onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as T));
-      callback(data);
+      callback(path === 'staff' ? operationalStaff(data as any[]) as T[] : data);
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, path);
     });
@@ -107,6 +108,7 @@ export const firestoreService = {
   updateDocument: async (path: string, id: string, data: any) => {
     try {
       const cleanData = deepClean(data);
+      if (path === 'staff') delete cleanData.identity_alias_ids; // Derived history lookup metadata is never an editable profile field.
       const docRef = doc(db, path, id);
       return await updateDoc(docRef, {
         ...cleanData,
@@ -139,12 +141,13 @@ export const firestoreService = {
     }
   },
 
-  getCollection: async <T>(path: string, tenantId?: string) => {
+  getCollection: async <T>(path: string, tenantId?: string, options: { includeStaffAliases?: boolean } = {}) => {
     try {
       const colRef = collection(db, path);
       const q = tenantId ? query(colRef, where('tenantId', '==', tenantId)) : colRef;
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as T));
+      const rows = snapshot.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as T));
+      return path === 'staff' && !options.includeStaffAliases ? operationalStaff(rows as any[]) as T[] : rows;
     } catch (error) {
       handleFirestoreError(error, OperationType.GET, path);
       return [];

@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../../utils/operationalStaff';
 import type { Sale, Staff } from '../../types';
 import type { PosV2RevisionItemChange } from './posSaleRevisionV2Planner';
 import { revisionCommercialEvidenceIssues } from '../../../scripts/pos-v2-revision-commercial-evidence.mjs';
@@ -80,9 +81,7 @@ function operatorId(sale?: Sale | null): string | null {
 
 function staffName(id: string | null, staff: Staff[] = []): string | null {
   if (!id) return null;
-  const match = staff.find(member => [member.uid, member.id, member.legacyStaffId]
-    .filter(Boolean)
-    .some(identifier => clean(identifier) === id));
+  const match = staff.find(member => staffMatchesId(member, id));
   if (!match) return null;
   return [match.displayName, match.full_name, match.fullName, match.username]
     .map(optional)

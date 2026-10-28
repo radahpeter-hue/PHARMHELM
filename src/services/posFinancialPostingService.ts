@@ -85,6 +85,7 @@ export async function reconcilePosWelfarePosting(params: {
       if (!ref || !snap?.exists()) throw new Error('Welfare beneficiary no longer exists.');
       const data = snap.data();
       if (data.tenantId !== tenantId) throw new Error('Welfare beneficiary tenant mismatch.');
+      if (isStaff && data.duplicate_of && delta > 0) throw new Error('Use the canonical staff account for new welfare spending.');
       const currentSpent = numberValue(data.welfare_spent);
       const currentYtd = numberValue(data.welfare_used_ytd);
       const nextSpent = currentSpent + delta;

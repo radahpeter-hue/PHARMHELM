@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../../utils/operationalStaff';
 import React, { useState, useEffect } from 'react';
 import { 
   DollarSign, Calculator, Download, Search, CheckCircle2, Clock, 
@@ -10,7 +11,7 @@ import { firestoreService } from '../../services/firestore';
 import { Staff, AdvanceRequest, TrafficFineLog, Payslip } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
-import { deduplicateStaff } from '../../utils/deduplicateStaff';
+import { operationalStaff } from '../../utils/operationalStaff';
 
 interface DraftPayrollRecord {
   staffId: string;
@@ -112,11 +113,11 @@ export const PayrollManager: React.FC = () => {
     }
   }, [profile?.tenantId]);
 
-  const canonicalStaff = deduplicateStaff(staff);
+  const canonicalStaff = operationalStaff(staff);
 
   // Dynamic CME point retriever matching either fullName or full_name (case-insensitive) for YTD performance check
   const getStaffCmePoints = (targetStaffId: string) => {
-    const staffMember = staff.find(s => s.id === targetStaffId);
+    const staffMember = staff.find(s => staffMatchesId(s, targetStaffId));
     if (!staffMember) return 0;
     
     const namesToMatch = [
@@ -171,7 +172,7 @@ export const PayrollManager: React.FC = () => {
 
       // 2. Fetch actually worked hours in the selected period from the attendance ledger
       const matchingHoursList = attendance.filter(a => 
-        a.staffId === member.id && 
+        staffMatchesId(member, a.staffId) &&
         a.date >= fromDate && 
         a.date <= toDate && 
         a.status === 'present'
@@ -187,7 +188,7 @@ export const PayrollManager: React.FC = () => {
       // 4. Compute normal salary advance deductions in date range
       let advanceDeduction = 0;
       const activeAdvances = advances.filter(a => 
-        a.staff_id === member.id && 
+        staffMatchesId(member, a.staff_id) &&
         (a.status === 'Approved' || a.status === 'Disbursed') &&
         a.created_at && a.created_at.split('T')[0] >= fromDate && a.created_at.split('T')[0] <= toDate
       );
@@ -200,7 +201,7 @@ export const PayrollManager: React.FC = () => {
 
       // 4b. Fetch Leave requests during this period to capture approved/rejected outcomes
       const periodLeaves = leaveRequests.filter(l => 
-        (l.staffId === member.id || l.staff_id === member.id) &&
+        (staffMatchesId(member, l.staffId) || staffMatchesId(member, l.staff_id)) &&
         (l.status === 'Approved' || l.status === 'Rejected') &&
         l.created_at && l.created_at.split('T')[0] >= fromDate && l.created_at.split('T')[0] <= toDate
       );
@@ -356,7 +357,7 @@ export const PayrollManager: React.FC = () => {
 
       for (const item of draftPayroll) {
         // Find matching staff to copy properties (like branchId)
-        const staffMember = canonicalStaff.find(s => s.id === item.staffId);
+        const staffMember = canonicalStaff.find(s => staffMatchesId(s, item.staffId));
         
         // 1. Add to main payroll ledger
         const payrollData = {
@@ -474,7 +475,7 @@ export const PayrollManager: React.FC = () => {
           r.netSalary
         ];
       } else {
-        const member = staff.find(s => s.id === r.staffId);
+        const member = staff.find(s => staffMatchesId(s, r.staffId));
         return [
           r.staff_name || member?.full_name || 'N/A',
           member?.role || 'N/A',
@@ -546,7 +547,7 @@ export const PayrollManager: React.FC = () => {
 
     matchedRecords.forEach(p => {
       const sId = p.staffId || 'Unknown';
-      const staffMember = staff.find(s => s.id === sId);
+      const staffMember = staff.find(s => staffMatchesId(s, sId));
       const empType = staffMember?.employmentType || 'Full-Time';
       const employeeId = staffMember?.staff_code || p.employee_id || staffMember?.employee_id || 'n/a';
       
@@ -959,11 +960,11 @@ export const PayrollManager: React.FC = () => {
                 <tbody className="divide-y divide-slate-100">
                   {payroll
                     .filter(p => {
-                      const member = staff.find(s => s.id === p.staffId);
+                      const member = staff.find(s => staffMatchesId(s, p.staffId));
                       return (p.staff_name || member?.full_name || '').toLowerCase().includes(searchTerm.toLowerCase());
                     })
                     .map((pay) => {
-                      const member = staff.find(s => s.id === pay.staffId);
+                      const member = staff.find(s => staffMatchesId(s, pay.staffId));
                       return (
                         <tr key={pay.id} className="hover:bg-slate-50/50 transition-colors">
                           <td className="px-6 py-4 flex items-center gap-3">

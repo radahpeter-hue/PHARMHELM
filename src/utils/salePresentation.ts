@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../utils/operationalStaff';
 import type { Sale, Staff } from '../types';
 
 export const getReceiptLedgerReference = (sale: Sale): string => {
@@ -15,9 +16,7 @@ export const getSaleSystemReference = (sale: Sale): string => {
 export const resolveSaleOperatorName = (sale: Sale, staff: Staff[]): string => {
   const operatorId = String(sale.servedBy || (sale as Sale & { operatorUid?: string }).operatorUid || '').trim();
   if (!operatorId) return 'Operator';
-  const matched = staff.find(member => [member.uid, member.id, member.legacyStaffId]
-    .filter(Boolean)
-    .some(identifier => String(identifier).trim() === operatorId));
+  const matched = staff.find(member => staffMatchesId(member, operatorId));
   if (!matched) return 'Operator';
   return [matched.displayName, matched.full_name, matched.fullName, matched.username]
     .map(value => String(value || '').trim())

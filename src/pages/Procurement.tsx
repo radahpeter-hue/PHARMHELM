@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../utils/operationalStaff';
 import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { OperationalItemCode } from '../components/inventory/OperationalItemCode';
 import { OperationalGrnRouteSelector } from '../components/procurement/OperationalGrnRouteSelector';
@@ -4707,7 +4708,7 @@ const HQStockInOutTab: React.FC = () => {
 
   const getUserName = (uid?: string) => {
     if (!uid) return 'N/A';
-    const found = staff.find(s => s.uid === uid || s.id === uid);
+    const found = staff.find(s => s.uid === uid || staffMatchesId(s, uid));
     return found ? (found.full_name || found.displayName || found.username || found.email) : uid;
   };
 

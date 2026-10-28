@@ -16,7 +16,7 @@ import { Staff, Branch } from '../../types';
 import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
 import { registerAuthUser } from '../../firebase';
-import { deduplicateStaff } from '../../utils/deduplicateStaff';
+import { operationalStaff } from '../../utils/operationalStaff';
 import { roleRealmId, SYSTEM_ROLES } from '../../config/rbac';
 
 export const StaffDirectory: React.FC = () => {
@@ -63,7 +63,7 @@ export const StaffDirectory: React.FC = () => {
     }
   }, [profile?.tenantId]);
 
-  const dedupedStaff = useMemo(() => deduplicateStaff(staff), [staff]);
+  const dedupedStaff = useMemo(() => operationalStaff(staff), [staff]);
   const filteredStaff = dedupedStaff.filter(s => {
     const matchesSearch = s.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          s.role.toLowerCase().includes(searchTerm.toLowerCase()) ||

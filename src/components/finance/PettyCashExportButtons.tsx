@@ -11,7 +11,7 @@ export function PettyCashExportButtons({ rows, name, range, branch }: {
     try {
       const filename = `${name}-${branch}-${range.start || 'beginning'}-${range.end || 'latest'}`.replace(/[^a-zA-Z0-9-]/g, '-');
       const report = pettyCashReportRows(rows);
-      if (format === 'xlsx') await exportRecordsToExcel(report, name, `${filename}.xlsx`);
+      if (format === 'xlsx') await exportRecordsToExcel(report, name, `${filename}.xlsx`, { readable: true });
       else {
         const url = URL.createObjectURL(new Blob([pettyCashCSV(report)], { type: 'text/csv;charset=utf-8;' }));
         const a = document.createElement('a');

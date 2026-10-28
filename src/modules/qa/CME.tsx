@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../../utils/operationalStaff';
 import React, { useState, useEffect } from 'react';
 import { 
   GraduationCap, 
@@ -147,7 +148,7 @@ export const CME = () => {
     let staffPresenter: Staff | undefined = undefined;
 
     if (presenterType === 'Internal') {
-      staffPresenter = staff.find(s => s.id === internalPresenterId);
+      staffPresenter = staff.find(s => staffMatchesId(s, internalPresenterId));
       if (!staffPresenter) {
         toast.error('Please select an internal staff presenter.');
         return;
@@ -236,7 +237,7 @@ export const CME = () => {
   const handleAddAttendee = async () => {
     if (!selectedSession || !selectedAttendeeId) return;
 
-    const chosenStaff = staff.find(s => s.id === selectedAttendeeId);
+    const chosenStaff = staff.find(s => staffMatchesId(s, selectedAttendeeId));
     if (!chosenStaff) {
       toast.error('Selected staff not found.');
       return;

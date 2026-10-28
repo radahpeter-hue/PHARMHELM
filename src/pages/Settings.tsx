@@ -1,3 +1,4 @@
+import { isStaffAlias } from '../utils/staffIdentityAudit';
 import { ensureStaffIdentity } from '../services/staffIdentityService';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -547,7 +548,9 @@ const Settings = () => {
     if (!selectedActivation || !activationPassword || !tenant) return;
     setIsActivating(true);
     try {
-      // Retrieve original staff record
+      // A completed or retired source must never create another account.
+      const original = await firestoreService.getDocument<Staff>('staff', selectedActivation.staffId);
+      if (!original || isStaffAlias(original) || (original.uid === original.id && original.password_set && original.active)) throw new Error('This employee is already linked to an existing account.');
       await ensureStaffIdentity(tenant.id, selectedActivation.staffId);
       const staffDoc = await firestoreService.getDocument<Staff>('staff', selectedActivation.staffId);
       const tenantAcronym = tenant?.acronym ? tenant.acronym.toLowerCase().trim() : (tenant?.slug || 'radah');

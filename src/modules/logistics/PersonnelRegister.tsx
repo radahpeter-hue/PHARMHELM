@@ -1,3 +1,4 @@
+import { operationalStaff } from '../../utils/operationalStaff';
 import React, { useState, useEffect } from 'react';
 import { 
   Search, User, Phone, Mail, BadgeCheck, 
@@ -25,7 +26,7 @@ export const PersonnelRegister: React.FC = () => {
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as Staff));
+      const data = operationalStaff(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, uid: doc.data().uid || doc.id } as Staff)));
       setPersonnel(data);
       setLoading(false);
     });

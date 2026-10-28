@@ -1,3 +1,4 @@
+import { operationalStaff } from '../../utils/operationalStaff';
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, Search, Filter, MoreVertical, Edit, Trash2, 
@@ -59,7 +60,7 @@ export const TripManagement: React.FC = () => {
       const dData = snapshot.docs
         .map(doc => ({ uid: doc.id, ...doc.data() } as Staff))
         .filter(staff => hasAnyRole(staff, ['Transport & Logistics Personnel', 'Logistics Head']));
-      setDrivers(dData);
+      setDrivers(operationalStaff(dData));
     });
 
     return () => {

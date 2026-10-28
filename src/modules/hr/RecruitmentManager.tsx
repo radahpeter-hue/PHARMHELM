@@ -253,6 +253,7 @@ export const RecruitmentManager: React.FC<{ supervisorOnly?: boolean }> = ({ sup
 
       const createdStaff = await createScopedIdentity('staff', profile.tenantId, {
         tenantId: profile.tenantId,
+        source_application_id: app.id,
         full_name: app.full_name,
         username: generatedUsername,
         email: app.email,
@@ -282,8 +283,8 @@ export const RecruitmentManager: React.FC<{ supervisorOnly?: boolean }> = ({ sup
 
       toast.success(`Successfully hired ${app.full_name}! They are registered in the Staff Roster and pending IT account activation.`);
       setSelectedApp(null);
-    } catch {
-      toast.error('Failed to conclude hire transaction.');
+    } catch (error) {
+      toast.error(error instanceof Error && error.name === 'StaffAlreadyExistsError' ? error.message : 'Failed to conclude hire transaction.');
     }
   };
 

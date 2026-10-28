@@ -1,3 +1,5 @@
+import { staffMatchesId } from '../../utils/operationalStaff';
+import { operationalStaff } from '../../utils/operationalStaff';
 import { createManagementFinanceWriteGroup } from '../../services/managementCashPosting';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -59,7 +61,7 @@ export const CostLedger: React.FC = () => {
     });
 
     const unsubscribeS = onSnapshot(sQuery, (snapshot) => {
-      setStaff(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff)));
+      setStaff(operationalStaff(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Staff))));
     });
 
     const unsubscribeF = onSnapshot(fQuery, (snapshot) => {
@@ -611,7 +613,7 @@ export const CostLedger: React.FC = () => {
                         {log.driver_id && (
                           <div className="text-xs text-indigo-600 font-bold mt-1 flex items-center gap-1">
                             <User className="h-3 w-3" />
-                            {staff.find(s => s.id === log.driver_id)?.full_name}
+                            {staff.find(s => staffMatchesId(s, log.driver_id))?.full_name}
                           </div>
                         )}
                       </td>
@@ -649,7 +651,7 @@ export const CostLedger: React.FC = () => {
                           {log.driver_id && (
                             <span className="text-xs text-slate-500 font-semibold flex items-center gap-1">
                                <User className="h-3 w-3" />
-                               {staff.find(s => s.id === log.driver_id)?.full_name}
+                               {staff.find(s => staffMatchesId(s, log.driver_id))?.full_name}
                             </span>
                           )}
                         </div>
@@ -933,7 +935,7 @@ export const CostLedger: React.FC = () => {
               <div className="bg-slate-50 p-4 rounded-xl space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-500">Driver:</span>
-                  <span className="font-semibold text-slate-900">{staff.find(s => s.id === selectedFine.driver_id)?.full_name}</span>
+                  <span className="font-semibold text-slate-900">{staff.find(s => staffMatchesId(s, selectedFine.driver_id))?.full_name}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-500">Amount:</span>

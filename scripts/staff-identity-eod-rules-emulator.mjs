@@ -87,6 +87,39 @@ try {
   const saved=(await migrationDb.collection('staff').doc('legacy-admin').get()).data();assert.equal(saved.staff_code,'STF-000001');assert.equal(saved.full_name,'Synthetic Employee');
   const repeated=await executeStaffIdentityBackfill(migrationDb,migrationTenant,true);assert.equal(repeated.codesAssigned,0);assert.equal(repeated.reservationsCreated,0);
   console.log('PASS release backfill: Admin transaction, read-only preview, atomic reservation/counter, personal fields preserved, idempotent retry');
+  const {retireStaffDuplicates}=await import('./retire-staff-duplicates-core.mjs');
+  const {FieldValue}=req('firebase-admin/firestore');
+  const dupTenant='duplicate-test';
+  const canonical={tenantId:dupTenant,uid:'real-login',full_name:'Alex Example',email:'alex@example.com',phone_number:'0772123456',role:'cashier',staff_code:'STF-000001',active:true,status:'active',welfare_spent:5000};
+  await migrationDb.collection('staff').doc('real-login').set(canonical);
+  await migrationDb.collection('staff').doc('old-profile').set({...canonical,uid:'old-profile',staff_code:'STF-000002',employee_id:'STF-000002'});
+  await migrationDb.collection('staff').doc('duplicate-hr').set({tenantId:dupTenant,role:'HR Head',active:true,status:'active'});
+  for(const [staffId,code] of [['real-login','STF-000001'],['old-profile','STF-000002']])await migrationDb.collection('staff_identity_claims').doc(dupTenant+'_'+code).set({tenantId:dupTenant,staffId,code,createdAt:'test'});
+  await migrationDb.collection('identity_sequence_counters').doc(dupTenant+'_staff').set({tenantId:dupTenant,kind:'staff',lastSequence:2,updatedAt:'test'});
+  await migrationDb.collection('branch_expenses').doc('historical-expense').set({tenantId:dupTenant,recipient_staff_id:'old-profile',amount_ugx:1000});
+  await migrationDb.collection('pending_activations').doc('obsolete-pending').set({tenantId:dupTenant,staffId:'old-profile',status:'pending'});
+  const authEvidence={getUsers:async()=>({users:[{uid:'real-login',email:'alex@example.com',disabled:false}]})};
+  const previewDuplicates=await retireStaffDuplicates(migrationDb,authEvidence,dupTenant);
+  assert.equal(previewDuplicates.verifiedDuplicates,1);assert.equal((await migrationDb.collection('staff').doc('old-profile').get()).data().staff_code,'STF-000002');
+  const appliedDuplicates=await retireStaffDuplicates(migrationDb,authEvidence,dupTenant,{apply:true,deleteField:()=>FieldValue.delete()});
+  assert.equal(appliedDuplicates.operationalStaff,2); // Canonical employee plus HR operator.
+  const retired=(await migrationDb.collection('staff').doc('old-profile').get()).data();
+  assert.equal(retired.staff_code,undefined);assert.equal(retired.employee_id,undefined);assert.equal(retired.active,false);assert.equal(retired.duplicate_of,'real-login');
+  assert.equal((await migrationDb.collection('staff').doc('real-login').get()).data().welfare_spent,5000);
+  assert.equal((await migrationDb.collection('branch_expenses').doc('historical-expense').get()).data().recipient_staff_id,'old-profile');
+  assert.equal((await migrationDb.collection('staff_identity_claims').doc(dupTenant+'_STF-000002').get()).data().staffId,'old-profile');
+  assert.equal((await retireStaffDuplicates(migrationDb,authEvidence,dupTenant,{apply:true,deleteField:()=>FieldValue.delete()})).verifiedDuplicates,0);
+  const retiredClient=env.authenticatedContext('old-profile',{tenantId:dupTenant,role:'IT Head'}).firestore();
+  await assertFails(getDoc(doc(retiredClient,'branch_expenses','historical-expense')));
+  const hrClient=client('duplicate-hr');
+  await assertFails(updateDoc(doc(hrClient,'staff','old-profile'),{duplicate_of:'',active:true}));
+  await assertFails(deleteDoc(doc(hrClient,'staff','old-profile')));
+  const registration={role:'Staff',full_name:'New Employee',email:'new@example.com',phone_number:'0773456789'};
+  const race=await Promise.allSettled([createScopedIdentity('staff',dupTenant,registration,hrClient),createScopedIdentity('staff',dupTenant,registration,hrClient)]);
+  assert.equal(race.filter(r=>r.status==='fulfilled').length,1);assert.equal(race.filter(r=>r.status==='rejected').length,1);
+  assert.equal((await migrationDb.collection('identity_sequence_counters').doc(dupTenant+'_staff').get()).data().lastSequence,3);
+  console.log('PASS duplicate retirement: canonical identity only, no history/balance changes, retired codes never reused, stale roles blocked, concurrent duplicate registration rejected');
+
  } finally {await deleteApp(adminApp);}
 
 } finally { await env.cleanup(); }

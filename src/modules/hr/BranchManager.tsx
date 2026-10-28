@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../../utils/operationalStaff';
 import React, { useState, useEffect } from 'react';
 import { 
   MapPin, Phone, Mail, Users, Plus, Search, 
@@ -215,7 +216,7 @@ export const BranchManager: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredBranches.map((branch) => {
           const branchStaff = staff.filter(s => s.branch_id === branch.id);
-          const manager = staff.find(s => s.id === branch.manager_id);
+          const manager = staff.find(s => staffMatchesId(s, branch.manager_id));
 
           return (
             <div key={branch.id} className="bg-white rounded-[32px] border border-slate-200 p-6 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">

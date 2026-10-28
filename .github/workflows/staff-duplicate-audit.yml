@@ -1,0 +1,27 @@
+name: Staff duplicate identity audit
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: github.head_ref == 'fix/staff-duplicates-readable-reports' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node --import tsx --test tests/staff-duplicate-audit.test.ts
+      - run: npm install --prefix /tmp/staff-backfill-runtime --no-save --ignore-scripts firebase-admin@13.6.0
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - name: Read-only tenant-scoped staff/Auth identity evidence
+        run: node --import tsx scripts/audit-martin-staff-duplicates.mjs
