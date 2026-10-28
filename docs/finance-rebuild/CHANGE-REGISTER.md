@@ -185,3 +185,12 @@ Changes 001–013 complete; Level 2 has not started at this checkpoint.
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 020 — Verify balanced eod needs no variance reason
+
+- Modified files: `tests/finance-rebuild-eod.test.ts`.
+- Targeted checks: Exact UGX 500000 match, six empty channels and floating representation equality; reason prompt/disabled state/save guard use the same normalized result; no duplicate implementation needed.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.

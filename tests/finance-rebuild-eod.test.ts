@@ -21,3 +21,18 @@ test('normalisation removes representation round-off without hiding a real cent 
   assert.notEqual(eodVariance(500000.000001, 500000), 0);
   assert.throws(() => eodVariance(NaN, 0));
 });
+
+test('exact-match scenario A does not require a reason, including empty channels', () => {
+  const channels = [{ declared: 500000, expected: 500000 }, ...Array.from({ length: 6 }, () => ({ declared: 0, expected: 0 }))];
+  assert.equal(eodVariance(500000, 500000), 0);
+  assert.equal(requiresEodVarianceReason(channels), false);
+  assert.equal(requiresEodVarianceReason([{ declared: 0.3, expected: 0.1 + 0.2 }]), false);
+});
+
+import fs from 'node:fs';
+test('reason prompt, submit disable and persistence guard share the same normalised decision', () => {
+  const eod = fs.readFileSync('src/pages/Finance.tsx', 'utf8').split('const EODReconciliationTab:')[1].split('const VarianceRow:')[0];
+  assert.match(eod, /if \(needsVarianceReason && !varianceReason.trim\(\)\)/);
+  assert.match(eod, /\{needsVarianceReason && \(/);
+  assert.match(eod, /disabled=\{needsVarianceReason && !varianceReason.trim\(\)\}/);
+});
