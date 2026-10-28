@@ -194,3 +194,12 @@ Changes 001–013 complete; Level 2 has not started at this checkpoint.
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 021 — Remove negative zero from eod variance displays
+
+- Modified files: `src/pages/Finance.tsx`, `src/pages/finance/management/EodReconciliationBox.tsx`, `src/utils/eodMoney.ts`, `tests/finance-rebuild-eod.test.ts`.
+- Targeted checks: Negative-zero and genuine fractional-variance formatting tests; active branch rows and Management inbox/filter/export use normalized variances; historical documents are not rewritten.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.

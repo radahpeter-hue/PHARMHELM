@@ -1,4 +1,4 @@
-import { eodVariance, requiresEodVarianceReason } from '../utils/eodMoney';
+import { eodVariance, requiresEodVarianceReason, formatEodAmount } from '../utils/eodMoney';
 import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
 import { inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../utils/financeDateFilters';
 import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, buildBranchExpenseRecipient, isAllowanceCategory, expenseRecipientTypeAllowed } from '../utils/branchExpensePolicy';
@@ -645,7 +645,7 @@ const EODReconciliationTab: React.FC = () => {
 };
 
 const VarianceRow: React.FC<{ label: string, declared: number, expected: number }> = ({ label, declared, expected }) => {
-  const variance = declared - expected;
+  const variance = eodVariance(declared, expected);
   return (
     <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100 flex items-center justify-between">
       <div>
@@ -657,7 +657,7 @@ const VarianceRow: React.FC<{ label: string, declared: number, expected: number 
           "text-sm font-black",
           variance === 0 ? "text-emerald-600" : "text-red-500"
         )}>
-          {variance > 0 ? '+' : ''}{(variance || 0).toLocaleString()}
+          {variance > 0 ? '+' : ''}{formatEodAmount(variance)}
         </p>
         <p className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider">Variance</p>
       </div>

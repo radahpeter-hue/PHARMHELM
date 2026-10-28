@@ -14,3 +14,15 @@ export function eodVariance(declared: number, expected: number): number {
 export function requiresEodVarianceReason(channels: { declared: number; expected: number }[]): boolean {
   return channels.some(c => eodVariance(c.declared, c.expected) !== 0);
 }
+
+export function formatEodAmount(value: number, locale = 'en-UG'): string {
+  return (value === 0 ? 0 : value).toLocaleString(locale, { maximumSignificantDigits: 15 });
+}
+
+export function eodRecordVariance(record: { total_actual?: number; total_expected?: number; total_variance?: number }): number {
+  if (Number.isFinite(record.total_actual) && Number.isFinite(record.total_expected)) {
+    return eodVariance(record.total_actual!, record.total_expected!);
+  }
+  const variance = record.total_variance ?? 0;
+  return variance === 0 ? 0 : variance;
+}
