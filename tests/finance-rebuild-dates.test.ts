@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { financeDateKey, inFinanceDateRange, lastSevenFinanceDays } from '../src/utils/financeDateFilters';
+import { financeDateKey, inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../src/utils/financeDateFilters';
 
 test('date ranges include both boundaries and exclude records outside the selected dates', () => {
   const range = { start: '2026-09-01', end: '2026-09-30' };
@@ -34,4 +34,12 @@ test('last seven days includes today and six prior calendar dates, across year a
   assert.equal(inFinanceDateRange('2026-10-21', range), false);
   assert.equal(inFinanceDateRange('2026-10-22', range), true);
   assert.equal(inFinanceDateRange('2026-10-28', range), true);
+});
+
+test('previous-month and all-history ranges widen beyond the seven-day default, including leap February', () => {
+  assert.deepEqual(previousFinanceMonth(new Date('2026-10-28T10:00:00Z')), { start: '2026-09-01', end: '2026-09-30' });
+  assert.deepEqual(previousFinanceMonth(new Date('2024-03-10T10:00:00Z')), { start: '2024-02-01', end: '2024-02-29' });
+  assert.deepEqual(previousFinanceMonth(new Date('2026-01-10T10:00:00Z')), { start: '2025-12-01', end: '2025-12-31' });
+  assert.equal(inFinanceDateRange('2026-09-10', previousFinanceMonth(new Date('2026-10-28T10:00:00Z'))), true);
+  assert.equal(inFinanceDateRange('2020-01-01', { start: '', end: '' }), true);
 });

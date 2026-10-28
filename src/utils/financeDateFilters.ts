@@ -21,3 +21,12 @@ export function lastSevenFinanceDays(now = new Date()): FinanceDateRange {
   start.setUTCDate(start.getUTCDate() - 6);
   return { start: start.toISOString().slice(0, 10), end };
 }
+
+export function previousFinanceMonth(now = new Date()): FinanceDateRange {
+  const today = financeDateKey(now);
+  const first = new Date(`${today.slice(0, 7)}-01T12:00:00Z`);
+  const end = new Date(first);
+  end.setUTCDate(0);
+  first.setUTCMonth(first.getUTCMonth() - 1);
+  return { start: first.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+}

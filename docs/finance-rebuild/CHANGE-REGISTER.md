@@ -73,3 +73,12 @@ Accepted means engineering acceptance after the recorded checks. Owner live acce
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 009 — Allow wider petty cash history ranges
+
+- Modified files: `src/pages/Finance.tsx`, `src/utils/financeDateFilters.ts`, `tests/finance-rebuild-dates.test.ts`.
+- Targeted checks: Previous-month, all-history, year-boundary and leap-February retrieval tests; date controls remain unrestricted; historical source data retained.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.

@@ -1,5 +1,5 @@
 import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
-import { inFinanceDateRange, lastSevenFinanceDays } from '../utils/financeDateFilters';
+import { inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../utils/financeDateFilters';
 import { canUseBranchExpenseCategory } from '../utils/branchExpensePolicy';
 import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
@@ -1226,6 +1226,11 @@ const BranchPettyCash: React.FC = () => {
             </h3>
             <p className="text-xs text-zinc-500 mt-2">History opens on the last seven days. Change the dates to view older records.</p>
             <FinanceDateRangeFields label="Petty cash requisitions" value={requisitionDateRange} onChange={setRequisitionDateRange} />
+            <div className="flex flex-wrap gap-3 mt-3 text-xs font-semibold text-emerald-700">
+              <button onClick={() => setRequisitionDateRange(lastSevenFinanceDays())}>Last 7 Days</button>
+              <button onClick={() => setRequisitionDateRange(previousFinanceMonth())}>Previous Month</button>
+              <button onClick={() => setRequisitionDateRange({ start: '', end: '' })}>All History</button>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
