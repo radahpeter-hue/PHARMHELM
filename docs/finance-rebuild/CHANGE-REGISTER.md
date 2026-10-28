@@ -100,3 +100,12 @@ Accepted means engineering acceptance after the recorded checks. Owner live acce
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 012 — Expose branch pnl with exact branch attribution
+
+- Modified files: `src/pages/Finance.tsx`, `src/pages/finance/management/ProfitabilityLedger.tsx`, `tests/finance-rebuild-pnl.test.ts`.
+- Targeted checks: Tenant/branch alias and HQ-exclusion tests; assigned-branch selector; existing formulas applied to branch-tagged records; management permission boundary unchanged.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.

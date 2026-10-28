@@ -17,3 +17,13 @@ test('P&L periods handle leap years, half-year and week/year boundaries', () => 
   assert.deepEqual(profitabilityPeriodRange('biannual', '2026-06-30'), { start: '2026-01-01', end: '2026-06-30' });
   assert.deepEqual(profitabilityPeriodRange('week', '2026-01-01'), { start: '2025-12-29', end: '2026-01-04' });
 });
+
+import { matchesProfitabilityBranch } from '../src/utils/profitabilityScope';
+test('branch P&L matches tenant and branch across existing field aliases without HQ allocation', () => {
+  assert.equal(matchesProfitabilityBranch({ tenantId: 't', branchId: 'masaka' }, 't', 'masaka'), true);
+  assert.equal(matchesProfitabilityBranch({ tenantId: 't', branch_id: 'masaka' }, 't', 'masaka'), true);
+  for (const record of [{ tenantId: 'other', branchId: 'masaka' }, { tenantId: 't', branchId: 'other' }, { tenantId: 't' }]) {
+    assert.equal(matchesProfitabilityBranch(record, 't', 'masaka'), false);
+  }
+  assert.equal(matchesProfitabilityBranch({ tenantId: 't', branchId: 'masaka' }, 't', ''), false);
+});

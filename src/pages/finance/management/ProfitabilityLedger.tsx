@@ -1,3 +1,4 @@
+import { matchesProfitabilityBranch } from '../../../utils/profitabilityScope';
 import { profitabilityPeriodRange, type ProfitabilityPeriod } from '../../../utils/profitabilityPeriod';
 import { financeDateKey } from '../../../utils/financeDateFilters';
 import { FinanceDateRangeFields } from '../../../components/finance/FinanceDateRangeFields';
@@ -50,8 +51,13 @@ interface ManagementExpense {
   excludeFromOpexRollup?: boolean;
 }
 
-export const ProfitabilityLedger: React.FC = () => {
-  const { profile } = useAuth();
+export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branchOnly = false }) => {
+  const { profile, activeBranchId, assignedBranches } = useAuth();
+  const branchChoices = assignedBranches.filter(b => b.tenantId === profile?.tenantId);
+  const [selectedBranchId, setSelectedBranchId] = useState(activeBranchId || '');
+  const selectedBranch = branchChoices.find(b => b.id === selectedBranchId) || branchChoices[0];
+  const reportBranchId = selectedBranch?.id || '';
+  const inScope = (record: any) => !branchOnly || matchesProfitabilityBranch(record, profile?.tenantId || '', reportBranchId);
   const [sales, setSales] = useState<any[]>([]);
   const [branchExpenses, setBranchExpenses] = useState<BranchExpense[]>([]);
   const [mgmtExpenses, setMgmtExpenses] = useState<ManagementExpense[]>([]);
@@ -117,32 +123,36 @@ export const ProfitabilityLedger: React.FC = () => {
   // Filter items globally based on Date Range
   const filteredSales = useMemo(() => {
     return sales.filter(s => {
+      if (!inScope(s)) return false;
       if (s.status === 'voided') return false; // Exclude voided sales
       if (!isDateFilterActive) return true;
       const d = (s.timestamp || s.date || '').split('T')[0];
       return d && d >= dateRange.start && d <= dateRange.end;
     });
-  }, [sales, isDateFilterActive, dateRange]);
+  }, [sales, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
 
   const filteredBranchExpenses = useMemo(() => {
     return branchExpenses.filter(e => {
+      if (!inScope(e)) return false;
       if (!isDateFilterActive) return true;
       const d = (e.expense_date || '').split('T')[0];
       return d && d >= dateRange.start && d <= dateRange.end;
     });
-  }, [branchExpenses, isDateFilterActive, dateRange]);
+  }, [branchExpenses, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
 
   const filteredMgmtExpenses = useMemo(() => {
     return mgmtExpenses.filter(e => {
+      if (!inScope(e)) return false;
       if (!['approved', 'issued'].includes((e.status || '').toLowerCase())) return false;
       if (isExcludedFromOpex(e)) return false;
       if (!isDateFilterActive) return true;
       const d = (e.expense_date || e.date || '').split('T')[0];
       return d && d >= dateRange.start && d <= dateRange.end;
     });
-  }, [mgmtExpenses, isDateFilterActive, dateRange]);
+  }, [mgmtExpenses, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
 
   const filterByPeriod = (items: any[]) => items.filter(item => {
+    if (!inScope(item)) return false;
     if (!isDateFilterActive) return true;
     const d = (item.date || item.expense_date || item.created_at || '').split('T')[0];
     return d && d >= dateRange.start && d <= dateRange.end;
@@ -150,11 +160,12 @@ export const ProfitabilityLedger: React.FC = () => {
 
   const filteredQuarantine = useMemo(() => {
     return quarantineLogs.filter(q => {
+      if (!inScope(q)) return false;
       if (!isDateFilterActive) return true;
       const d = (q.dateLogged || q.date || q.created_at || '').split('T')[0];
       return d && d >= dateRange.start && d <= dateRange.end;
     });
-  }, [quarantineLogs, isDateFilterActive, dateRange]);
+  }, [quarantineLogs, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
 
   // Calculations
   const totalRevenue = useMemo(() => {
@@ -179,11 +190,11 @@ export const ProfitabilityLedger: React.FC = () => {
 
   const totalLogisticsExp = useMemo(() => {
     return filterByPeriod(logisticsExpenses).reduce((sum, e) => sum + (e.cost_ugx || e.fine_amount_ugx || e.amount || 0), 0);
-  }, [logisticsExpenses, isDateFilterActive, dateRange]);
+  }, [logisticsExpenses, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
 
   const totalMarketingExp = useMemo(() => {
     return filterByPeriod(marketingExpenses).reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
-  }, [marketingExpenses, isDateFilterActive, dateRange]);
+  }, [marketingExpenses, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
 
   const totalWastage = useMemo(() => {
     return filteredQuarantine.reduce((sum, q) => sum + (q.totalCost || q.total_cost || q.estimatedValue || q.cost || 0), 0);
@@ -216,14 +227,25 @@ export const ProfitabilityLedger: React.FC = () => {
     const formattedTo = dateRange.end.split('-').reverse().join('-');
     await exportRecordsToExcel(
       reportData,
-      'Profitability Statement',
-      `Profitability_Ledger_Statement_${formattedFrom}_to_${formattedTo}.xlsx`
+      branchOnly ? 'Branch P&L' : 'Profitability Statement',
+      `${branchOnly ? `Branch_PnL_${reportBranchId}` : 'Profitability_Ledger_Statement'}_${formattedFrom}_to_${formattedTo}.xlsx`
     );
     toast.success("Profitability excel ledger downloaded successfully!");
   };
 
   return (
     <div className="space-y-6">
+      {branchOnly && <div className="space-y-3">
+        <h2 className="text-2xl font-bold text-zinc-900">Branch P&L</h2>
+        <label className="block text-sm text-zinc-700">Branch
+          <select aria-label="P&L branch" value={reportBranchId} onChange={e => setSelectedBranchId(e.target.value)}
+            className="block w-full sm:w-auto max-w-full bg-white text-zinc-900 border border-zinc-200 rounded-xl p-2">
+            {!branchChoices.length && <option value="">No assigned branch</option>}
+            {branchChoices.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </label>
+        <p className="text-xs text-zinc-500">Includes only records explicitly tagged to this branch. Untagged and HQ outflows remain in the consolidated view. Current P&L accounting logic is unchanged.</p>
+      </div>}
       {/* Date presets only: current accounting dataset and formulas are unchanged. */}
       <div className="bg-zinc-50 border border-zinc-200 p-4 sm:p-6 rounded-3xl flex flex-col gap-4 shadow-sm">
         <div>

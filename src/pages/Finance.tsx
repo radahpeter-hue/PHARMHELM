@@ -2266,13 +2266,14 @@ const OldProfitabilityLedger: React.FC = () => {
 };
 
 const ManagementFinance: React.FC<{ settings: SystemSettings | null }> = ({ settings }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'invoices' | 'management_expenses' | 'global_expenses' | 'profitability' | 'credit_ledger' | 'oversight' | 'inbox' | 'petty_cash' | 'tax_engine'>('invoices');
+  const [activeSubTab, setActiveSubTab] = useState<'invoices' | 'management_expenses' | 'global_expenses' | 'profitability' | 'branch_profitability' | 'credit_ledger' | 'oversight' | 'inbox' | 'petty_cash' | 'tax_engine'>('invoices');
   const { tenant } = useTenant();
 
   const tabs = [
     { id: 'invoices', label: 'Invoices Ledger', icon: FileText },
     { id: 'management_expenses', label: 'Management Cash Outflows', icon: Briefcase },
     { id: 'global_expenses', label: 'Global Cash Outflows', icon: Globe },
+    { id: 'branch_profitability', label: 'Branch P&L', icon: BarChart3 },
     { id: 'profitability', label: 'Profitability Ledger', icon: BarChart3 },
     { id: 'credit_ledger', label: 'Credit Ledger', icon: CreditCard },
     { id: 'petty_cash', label: 'Petty Cash', icon: Wallet },
@@ -2305,6 +2306,7 @@ const ManagementFinance: React.FC<{ settings: SystemSettings | null }> = ({ sett
         {activeSubTab === 'invoices' && <InvoicesLedger />}
         {activeSubTab === 'management_expenses' && <ManagementExpenseLedger />}
         {activeSubTab === 'global_expenses' && <GlobalExpenseLedger />}
+        {activeSubTab === 'branch_profitability' && <ProfitabilityLedger branchOnly />}
         {activeSubTab === 'profitability' && <ProfitabilityLedger />}
         {activeSubTab === 'credit_ledger' && <CreditLedgerPanel />}
         {activeSubTab === 'petty_cash' && <PettyCashManagement />}
