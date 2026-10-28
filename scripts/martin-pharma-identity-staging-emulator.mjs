@@ -49,6 +49,7 @@ try {
       const snap=await tx.get(counter);
       assert.equal(snap.exists(),false);
       tx.set(counter,{tenantId,kind,lastSequence:1,updatedAt:'2026-10-15'});
+      if(coll==='staff')tx.set(doc(owner,'staff_identity_claims',`${tenantId}_${code}`),{tenantId,staffId:id,code,createdAt:'2026-10-15'});
       tx.set(doc(owner,coll,id),{
         tenantId,[field]:code,
         ...(coll==='products'?{inventoryClass:'SELLABLE',sku:'SKU-000001'}:{}),
