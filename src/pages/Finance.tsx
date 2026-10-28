@@ -1,3 +1,4 @@
+import { canUseBranchExpenseCategory } from '../utils/branchExpensePolicy';
 import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect } from 'react';
@@ -687,6 +688,11 @@ const BranchExpenseLog: React.FC = () => {
     e.preventDefault();
     if (!profile?.tenantId || !activeBranchId) return;
 
+    if (!canUseBranchExpenseCategory(formData.category, editingExpense?.category)) {
+      toast.error('Salaries must be handled through payroll.');
+      return;
+    }
+
     try {
       if (editingExpense) {
         await firestoreService.updateDocument('branch_expenses', editingExpense.id, {
@@ -792,7 +798,9 @@ const BranchExpenseLog: React.FC = () => {
               >
                 <option value="utilities">Utilities</option>
                 <option value="rent">Rent</option>
-                <option value="salaries">Salaries</option>
+                {editingExpense && ['salary', 'salaries'].includes(editingExpense.category.trim().toLowerCase()) && (
+                  <option value={editingExpense.category} disabled>{editingExpense.category} (historical)</option>
+                )}
                 <option value="supplies">Supplies</option>
                 <option value="maintenance">Maintenance</option>
                 <option value="other">Other</option>

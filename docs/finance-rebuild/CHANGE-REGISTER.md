@@ -19,3 +19,12 @@ Accepted means engineering acceptance after the recorded checks. Owner live acce
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 003 — Remove salaries from new manual branch expenses
+
+- Modified files: `src/pages/Finance.tsx`.
+- Targeted checks: 6 category-policy and Finance regression tests; historical category retained as disabled edit option; submit guard rejects new salary values.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.
