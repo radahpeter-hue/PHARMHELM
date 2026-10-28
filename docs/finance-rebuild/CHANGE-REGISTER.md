@@ -167,3 +167,12 @@ Changes 001–013 complete; Level 2 has not started at this checkpoint.
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 018 — Require recognised staff when saving allowances
+
+- Modified files: `src/pages/Finance.tsx`, `src/utils/branchExpensePolicy.ts`, `tests/finance-rebuild-expenses.test.ts`.
+- Targeted checks: Fresh authoritative HR read before staff expense writes; shared payload validation rejects missing/fake/inactive/cross-tenant staff and external allowances; no Firestore Rules changes.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.

@@ -30,3 +30,21 @@ export function isAllowanceCategory(category: string): boolean {
 export function expenseRecipientTypeAllowed(category: string, type: string): boolean {
   return !isAllowanceCategory(category) || type === 'staff';
 }
+
+/** Called immediately before persistence, independently of form visibility/HTML validation. */
+export function buildBranchExpenseRecipient(input: {
+  category: string; recipientType: string; staffId: string; externalName: string;
+}, authoritativeStaff: Staff[], tenantId: string) {
+  if (!expenseRecipientTypeAllowed(input.category, input.recipientType)) {
+    throw new Error('Allowances require a recognised active staff recipient.');
+  }
+  if (input.recipientType === 'staff') {
+    const staff = eligibleExpenseStaff(authoritativeStaff, tenantId).find(s => s.id === input.staffId);
+    if (!staff) throw new Error('Select an active employee from the authoritative staff register.');
+    return { ...staffExpenseAttribution(staff), issued_to: expenseStaffName(staff) };
+  }
+  if (input.recipientType !== 'external') throw new Error('Select a valid recipient type.');
+  const name = input.externalName.trim();
+  if (!name || name.length > 200) throw new Error('Enter an external recipient name (1–200 characters).');
+  return { recipient_type: 'external' as const, recipient_staff_id: '', recipient_staff_code: '', issued_to: name };
+}

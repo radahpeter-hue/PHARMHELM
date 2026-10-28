@@ -1,6 +1,6 @@
 import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
 import { inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../utils/financeDateFilters';
-import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, staffExpenseAttribution, isAllowanceCategory, expenseRecipientTypeAllowed } from '../utils/branchExpensePolicy';
+import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, buildBranchExpenseRecipient, isAllowanceCategory, expenseRecipientTypeAllowed } from '../utils/branchExpensePolicy';
 import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect } from 'react';
@@ -705,22 +705,18 @@ const BranchExpenseLog: React.FC = () => {
       toast.error('Allowances can only be issued to staff.');
       return;
     }
-    const selectedStaff = availableStaff.find(s => s.id === selectedStaffId);
-    if (recipientType === 'staff' && !selectedStaff) {
-      toast.error('Select an active employee from the staff register.');
-      return;
-    }
-    const attribution = recipientType === 'staff' ? staffExpenseAttribution(selectedStaff!)
-      : { recipient_type: 'external' as const, recipient_staff_id: '', recipient_staff_code: '' };
-    const issuedTo = recipientType === 'staff' ? expenseStaffName(selectedStaff!) : formData.recipient.trim();
     try {
+      const currentStaff = recipientType === 'staff'
+        ? await firestoreService.getCollection<Staff>('staff', profile.tenantId) : [];
+      const recipient = buildBranchExpenseRecipient({
+        category: formData.category, recipientType, staffId: selectedStaffId, externalName: formData.recipient
+      }, currentStaff, profile.tenantId);
       if (editingExpense) {
         await firestoreService.updateDocument('branch_expenses', editingExpense.id, {
           expense_date: formData.date,
           category: formData.category,
           description: formData.description,
-          issued_to: issuedTo,
-          ...attribution,
+          ...recipient,
           amount_ugx: formData.amount,
         });
         toast.success('Expense updated');
@@ -731,8 +727,7 @@ const BranchExpenseLog: React.FC = () => {
           expense_date: formData.date,
           category: formData.category,
           description: formData.description,
-          issued_to: issuedTo,
-          ...attribution,
+          ...recipient,
           amount_ugx: formData.amount,
           payment_method: 'Petty Cash',
           logged_by: profile.uid,
@@ -747,7 +742,7 @@ const BranchExpenseLog: React.FC = () => {
       setSelectedStaffId('');
       setFormData({ category: 'utilities', amount: 0, description: '', recipient: '', date: new Date().toISOString().split('T')[0] });
     } catch (error) {
-      toast.error('Failed to save expense');
+      toast.error(error instanceof Error ? error.message : 'Failed to save expense');
     }
   };
 
@@ -877,7 +872,7 @@ const BranchExpenseLog: React.FC = () => {
               {!availableStaff.length && <p className="text-xs text-red-600">No active staff found in the employee register.</p>}
             </div> : <div className="space-y-1 md:col-span-2">
               <label htmlFor="branch-expense-issued-to" className="text-xs font-bold text-zinc-500 uppercase">Issued To</label>
-              <input id="branch-expense-issued-to" type="text" maxLength={200}
+              <input id="branch-expense-issued-to" type="text" required maxLength={200}
                 className="w-full px-4 py-2 bg-zinc-50 text-zinc-900 border border-zinc-200 rounded-xl"
                 placeholder="Person or organisation receiving the money"
                 value={formData.recipient}
