@@ -1,3 +1,5 @@
+import { PettyCashExportButtons } from '../components/finance/PettyCashExportButtons';
+import { pettyCashIssueRows, pettyCashRequisitionRows } from '../utils/pettyCashExport';
 import { eodVariance, requiresEodVarianceReason, formatEodAmount, eodAmountNumber, sumEodAmounts } from '../utils/eodMoney';
 import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
 import { inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../utils/financeDateFilters';
@@ -1229,6 +1231,7 @@ const BranchPettyCash: React.FC = () => {
               Incoming Petty Cash
             </h3>
             <FinanceDateRangeFields label="Incoming petty cash" value={incomingDateRange} onChange={setIncomingDateRange} />
+            <PettyCashExportButtons rows={pettyCashIssueRows(filteredIssues)} name="Incoming petty cash" range={incomingDateRange} branch={activeBranch?.name || activeBranchId || "Branch"} />
             <label className="flex items-center gap-2 text-xs text-zinc-600 mt-3">
               <input type="checkbox" checked={includeReceived} onChange={e => setIncludeReceived(e.target.checked)} />
               Include received cash
@@ -1266,6 +1269,7 @@ const BranchPettyCash: React.FC = () => {
             </h3>
             <p className="text-xs text-zinc-500 mt-2">History opens on the last seven days. Change the dates to view older records.</p>
             <FinanceDateRangeFields label="Petty cash requisitions" value={requisitionDateRange} onChange={setRequisitionDateRange} />
+            <PettyCashExportButtons rows={pettyCashRequisitionRows(filteredRequisitions)} name="Petty cash requisitions" range={requisitionDateRange} branch={activeBranch?.name || activeBranchId || "Branch"} />
             <div className="flex flex-wrap gap-3 mt-3 text-xs font-semibold text-emerald-700">
               <button onClick={() => setRequisitionDateRange(lastSevenFinanceDays())}>Last 7 Days</button>
               <button onClick={() => setRequisitionDateRange(previousFinanceMonth())}>Previous Month</button>
