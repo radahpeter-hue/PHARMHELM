@@ -8,7 +8,7 @@ The owner explicitly authorised permanent staff numbers and narrow staff/EOD rul
 
 Retains the established tenant-scoped `STF-000001` format and allocator. Each number has an immutable `staff_identity_claims/{tenantId}_{code}` reservation bound to its original staff document. Transactions allocate numbers atomically with staff creation/backfill. Counters cannot decrease or be deleted. Claims cannot be updated or deleted. Retrying the backfill preserves previously assigned numbers. A stale counter collision fails closed; it never steals a reserved number.
 
-`staff_code` remains fixed; internal document identities and historical `employee_id` fields are preserved. New activation retains its original staff record as an inactive alias and links the Auth UID to that same person's reservation. Numbered staff departures deactivate the employee instead of deleting their identity. Codes are unique within the tenant namespace; identical local numbers in different tenants do not identify the same person.
+`staff_code` remains fixed; internal document identities and historical `employee_id` fields are preserved. New activation retains its original staff record as an inactive alias and links the Auth UID to that same person's reservation. Once linked, that canonical UID cannot be reassigned to another account. Numbered staff departures deactivate the employee instead of deleting their identity. Codes are unique within the tenant namespace; identical local numbers in different tenants do not identify the same person.
 
 The HR Staff Directory includes **Assign missing staff numbers** for HR/IT/owner management. It reads the tenant's actual authoritative register, checks duplicate existing codes before writes, reserves existing codes first, and numbers missing records. No production backfill is automatic. Run this once with the authorised management account after the rules and application are released. On partial failure, completed assignments remain valid and it is safe to retry.
 
@@ -36,8 +36,8 @@ Branch Requisitions and Incoming Petty Cash each expose CSV and Excel (.xlsx). E
 - Authenticated EOD tests: IT Head correction permitted today/day 13; owner, HR, cashier, IT Support rejected; day 14/day 15/future rejected; date and expected-value tampering rejected; foreign tenant and deletion rejected; exact-match and shortage correction arithmetic.
 - Existing system-identity and Martin Pharma/Masaka synthetic staging emulator regressions pass.
 - Isolated actual React browser tests pass at 360/390/1280px. They check filtered Excel payloads and downloaded CSV, recipient attribution and readable IDs, Allowance validation, EOD match/shortage/over/floating-point cases, and role-based correction form visibility/required reason.
-- Authored rules: 192,978 → 196,325 bytes (+3,347).
-- Existing release symbol generation: 138,184 → 140,883 source bytes (+2,699). This is source size, not Firebase executable size. The existing compiler script is unchanged. CI must separately pass inactive executable-size validation; no compaction/refactor is introduced.
+- Authored rules: 192,978 → 196,601 bytes (+3,623).
+- Existing release symbol generation: 138,184 → 141,131 source bytes (+2,947). This is source size, not Firebase executable size. The existing compiler script is unchanged. CI must separately pass inactive executable-size validation; no compaction/refactor is introduced.
 
 ## Release state
 

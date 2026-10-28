@@ -969,6 +969,9 @@ service cloud.firestore {
       allow update: if atomicWelfareBalance(staffId);
       allow update: if isAuthenticated()
         && isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
+        && (resource.data.get('canonical_staff_id', '') == ''
+          || request.resource.data.get('canonical_staff_id', '') == resource.data.canonical_staff_id)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['canonical_staff_id']) || isIT())
         && (request.resource.data.get('staff_code', '') == resource.data.get('staff_code', '') || validStaffIdentity(staffId, request.resource.data))
         && (!('employee_id' in resource.data) || request.resource.data.employee_id == resource.data.employee_id)
         && (resource.data.get('staff_code', '') == '' || request.resource.data.staff_code == resource.data.staff_code)

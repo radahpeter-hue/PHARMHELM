@@ -37,6 +37,8 @@ try {
  batch.update(doc(itDb,'staff','employee-a'),{canonical_staff_id:'activated-uid',active:false,status:'inactive'});
  await assertSucceeds(batch.commit());
  assert.equal(await ensureStaffIdentity(tenantId,'activated-uid',hr),numbers[0]);
+ await assertFails(updateDoc(doc(itDb,'staff','employee-a'),{canonical_staff_id:'another-person'}));
+ await assertFails(setDoc(doc(itDb,'staff','another-person'),{...source,uid:'another-person',legacyStaffId:'employee-a',active:true,status:'active'}));
  await assertSucceeds(backfillStaffIdentities(tenantId,hr));
  await assertSucceeds(backfillStaffIdentities(tenantId,hr));
  console.log('PASS staff: concurrent allocation, permanent claims, retries, legacy backfill, activation aliases, cross-tenant/unauthorised writes denied');
