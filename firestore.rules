@@ -978,9 +978,9 @@ service cloud.firestore {
         && (resource.data.get('canonical_staff_id', '') == ''
           || request.resource.data.get('canonical_staff_id', '') == resource.data.canonical_staff_id)
         && (!changed.hasAny(['canonical_staff_id']) || isIT())
-        && (request.resource.data.get('staff_code', '') == resource.data.get('staff_code', '') || validStaffIdentity(staffId, request.resource.data))
+        && (request.resource.data.get('staff_code', '') == resource.data.get('staff_code', '')
+          || (resource.data.get('staff_code', '') in ['', null] && validStaffIdentity(staffId, request.resource.data)))
         && (!('employee_id' in resource.data) || request.resource.data.employee_id == resource.data.employee_id)
-        && (resource.data.get('staff_code', '') in ['', null] || request.resource.data.staff_code == resource.data.staff_code)
         && (
         isAdmin() || isHR() ||
         (isITPersonnel() &&
