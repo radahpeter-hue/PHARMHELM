@@ -55,6 +55,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - run: npm install --prefix /tmp/staff-backfill-runtime --no-save --ignore-scripts firebase-admin@13.6.0
       - name: Staff number permanence and EOD lock database acceptance
         run: node scripts/run-staff-eod-emulator.mjs
       - run: npm run build

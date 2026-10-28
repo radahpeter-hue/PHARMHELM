@@ -4,6 +4,7 @@ import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebas
 import { doc, setDoc, getDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { compactRuleSymbols } from './build-firestore-release-rules.mjs';
 import { ensureStaffIdentity, backfillStaffIdentities } from '../src/services/staffIdentityService.ts';
+import { planStaffIdentityBackfill } from './staff-identity-backfill-plan.mjs';
 import { correctEod, EOD_CHANNELS } from '../src/services/eodCorrectionService.ts';
 import { createScopedIdentity } from '../src/services/systemIdentityService.ts';
 const env = await initializeTestEnvironment({projectId:'demo-staff-eod', firestore:{rules:compactRuleSymbols(readFileSync('firestore.rules','utf8'))}});
@@ -13,6 +14,7 @@ const client = uid => env.authenticatedContext(uid).firestore();
 try {
  await admin(async db => {
   for (const [id,role] of [['hr','HR Head'],['it','IT Head'],['support','IT Support Staff'],['cashier','cashier'],['owner','CEO']]) await setDoc(doc(db,'staff',id),{tenantId,role,status:'active',active:true,assigned_branches:['masaka']});
+  await setDoc(doc(db,'staff','null-code'),{tenantId,full_name:'Legacy Null Code',role:'Staff',staff_code:null,status:'active',active:true});
   for (const id of ['employee-a','employee-b','empty-code']) await setDoc(doc(db,'staff',id),{tenantId,full_name:'Same Name',role:'Staff',staff_code:'',status:'active',active:true});
  });
  const hr=client('hr');
@@ -29,6 +31,7 @@ try {
  const created=await assertSucceeds(createScopedIdentity('staff',tenantId,{role:'Staff',full_name:'New Employee'},hr));
  assert.ok(!numbers.includes(created.code));
  await ensureStaffIdentity(tenantId,'empty-code',hr);
+ assert.match(await ensureStaffIdentity(tenantId,'null-code',hr),/^STF-/);
  // The source survives activation and retains the reservation forever.
  const source=(await getDoc(doc(hr,'staff','employee-a'))).data();
  const itDb=client('it');
@@ -68,5 +71,22 @@ try {
  await assertSucceeds(correctEod('eod-0',{uid:'it',tenantId,role:'IT Head'},amounts,'Count shortage',it));
  assert.equal((await getDoc(doc(it,'eod_reconciliations','eod-0'))).data().total_variance,-5000);
  console.log('PASS EOD: IT Head-only corrections, no owner/support bypass, immutable date/expected, tenant boundary, 14-day cutoff, zero/shortage calculations');
+
+ // Exercise the same Admin SDK transaction used by the authorised release job.
+ const { createRequire }=await import('node:module');
+ const req=createRequire(process.env.STAFF_BACKFILL_RUNTIME || '/tmp/staff-backfill-runtime/package.json');
+ const {initializeApp,deleteApp}=req('firebase-admin/app');const {getFirestore}=req('firebase-admin/firestore');
+ const { executeStaffIdentityBackfill }=await import('./staff-identity-backfill-execute.mjs');
+ const adminApp=initializeApp({projectId:'demo-staff-eod'},'staff-backfill-test');const migrationDb=getFirestore(adminApp);
+ try {
+  const migrationTenant='migration-test';
+  await migrationDb.collection('staff').doc('legacy-admin').set({tenantId:migrationTenant,full_name:'Synthetic Employee',staff_code:null});
+  const preview=await executeStaffIdentityBackfill(migrationDb,migrationTenant,false);assert.equal(preview.codesAssigned,1);
+  assert.equal((await migrationDb.collection('staff').doc('legacy-admin').get()).data().staff_code,null);
+  const applied=await executeStaffIdentityBackfill(migrationDb,migrationTenant,true);assert.equal(applied.codesAssigned,1);
+  const saved=(await migrationDb.collection('staff').doc('legacy-admin').get()).data();assert.equal(saved.staff_code,'STF-000001');assert.equal(saved.full_name,'Synthetic Employee');
+  const repeated=await executeStaffIdentityBackfill(migrationDb,migrationTenant,true);assert.equal(repeated.codesAssigned,0);assert.equal(repeated.reservationsCreated,0);
+  console.log('PASS release backfill: Admin transaction, read-only preview, atomic reservation/counter, personal fields preserved, idempotent retry');
+ } finally {await deleteApp(adminApp);}
 
 } finally { await env.cleanup(); }

@@ -10,9 +10,9 @@ Retains the established tenant-scoped `STF-000001` format and allocator. Each nu
 
 `staff_code` remains fixed; internal document identities and historical `employee_id` fields are preserved. New activation retains its original staff record as an inactive alias and links the Auth UID to that same person's reservation. Once linked, that canonical UID cannot be reassigned to another account. Numbered staff departures deactivate the employee instead of deleting their identity. Codes are unique within the tenant namespace; identical local numbers in different tenants do not identify the same person.
 
-The HR Staff Directory includes **Assign missing staff numbers** for HR/IT/owner management. It reads the tenant's actual authoritative register, checks duplicate existing codes before writes, reserves existing codes first, and numbers missing records. No production backfill is automatic. Run this once with the authorised management account after the rules and application are released. On partial failure, completed assignments remain valid and it is safe to retry.
+The HR Staff Directory includes **Assign missing staff numbers** for HR/IT/owner management. It reads the tenant's actual authoritative register, checks duplicate existing codes before writes, reserves existing codes first, and numbers missing records. The one-time release workflow runs a read-only preflight on PR #94, then applies the authorised Martin Pharma backfill only after the successful production deployment of that merged PR. It verifies the target tenant, uses an atomic Admin SDK transaction, preserves existing codes and permanent claims (including departed staff), and verifies no missing codes/reservations remain. It changes only staff_code, staff reservations and the staff counter. The HR action remains available as an authorised retry mechanism. On partial failure, completed assignments remain valid and it is safe to retry.
 
-Repeated names alone never trigger a data merge. Duplicate existing codes stop the backfill for review. Inactive activation aliases are skipped. Existing coded legacy records remain editable while their missing reservation is being established. Finance displays the readable code; it retains the original immutable staff document ID in the saved expense. Historical expenses resolve a subsequently assigned code through the staff record.
+Repeated names alone never trigger a data merge. Duplicate existing codes stop the backfill for review. Inactive activation aliases are skipped. Existing coded legacy records remain editable while their missing reservation is being established. Finance, HR attendance and payroll ID labels/exports prefer the readable code; it retains the original immutable staff document ID in the saved expense. Historical expenses resolve a subsequently assigned code through the staff record.
 
 ## EOD
 
@@ -30,17 +30,17 @@ Branch Requisitions and Incoming Petty Cash each expose CSV and Excel (.xlsx). E
 
 ## Validation
 
-- 735 unit/regression tests pass; TypeScript and production build pass.
+- 740 unit/regression tests pass; TypeScript and production build pass.
 - Eight targeted petty cash/date tests; ten targeted EOD monetary/edit-policy tests pass.
 - Authenticated emulator tests: simultaneous staff allocation; duplicate names with distinct codes; permanent claim ownership; forbidden number overwrite, claim deletion and staff deletion; authorised legacy backfill and retry; UID activation with preserved alias; tenant and caller boundaries.
 - Authenticated EOD tests: IT Head correction permitted today/day 13; owner, HR, cashier, IT Support rejected; day 14/day 15/future rejected; date and expected-value tampering rejected; foreign tenant and deletion rejected; exact-match and shortage correction arithmetic.
 - Existing system-identity and Martin Pharma/Masaka synthetic staging emulator regressions pass.
 - Isolated actual React browser tests pass at 360/390/1280px. They check filtered Excel payloads and downloaded CSV, recipient attribution and readable IDs, Allowance validation, EOD match/shortage/over/floating-point cases, and role-based correction form visibility/required reason.
-- Authored rules: 192,978 → 196,601 bytes (+3,623).
-- Existing release symbol generation: 138,184 → 141,131 source bytes (+2,947). This is source size, not Firebase executable size. The existing compiler script is unchanged. CI must separately pass inactive executable-size validation; no compaction/refactor is introduced.
+- Authored rules: 192,978 → 196,609 bytes (+3,631).
+- Existing release symbol generation: 138,184 → 141,139 source bytes (+2,955). This is source size, not Firebase executable size. The existing compiler script is unchanged. CI must separately pass inactive executable-size validation; no compaction/refactor is introduced.
 
 ## Release state
 
 At preparation: not merged, not deployed; no live staff records written. CI and preview outcomes are recorded on PR #94. Preview Hosting shares the existing backend and cannot prove the new database protections until those exact rules are released. Use emulator/CI evidence for the new rules before release; use authorised management accounts for controlled live acceptance afterward.
 
-Owner acceptance: HR runs the missing-number backfill, checks existing/new staff and preserved expense attribution; records with repeated names are reviewed rather than merged; date-selected petty cash CSV/Excel totals match the screen; submitted EOD is locked for Finance/owner/support, recent IT Head correction succeeds, a 14-day-old record is locked even for IT Head.
+Owner acceptance: verify the release backfill succeeded, then check existing/new staff and preserved expense attribution; records with repeated names are reviewed rather than merged; date-selected petty cash CSV/Excel totals match the screen; submitted EOD is locked for Finance/owner/support, recent IT Head correction succeeds, a 14-day-old record is locked even for IT Head.
