@@ -24,12 +24,11 @@ service cloud.firestore {
     // and branch assignments. Token claims are used only during initial linking.
     function getUserData() {
       let staffPath = /databases/$(database)/documents/staff/$(request.auth.uid);
-      return exists(staffPath) ? (get(staffPath).data.get('is_duplicate', false) ? {
-        'role': '', 'tenantId': ''
-      } : get(staffPath).data) : {
+      let staff = exists(staffPath) ? get(staffPath).data : {
         'role': request.auth.token.get('role', ''), 'tenantId': request.auth.token.get('tenantId', ''),
         'secondaryRoles': request.auth.token.get('roles', request.auth.token.get('secondaryRoles', [])), 'assigned_branches': []
       };
+      return staff.get('is_duplicate', false) ? null : staff;
     }
 
     function isTenantMember(tenantId) {
@@ -401,7 +400,7 @@ service cloud.firestore {
         && resource.data.tenantId == correction.tenantId
         && beneficiaryId == original.patientId
         && (correction.welfareAmount == 0 || beneficiaryId == correction.welfareBeneficiaryId)
-        && (!resource.data.get('is_duplicate', false) || next.welfare_spent <= resource.data.get('welfare_spent', 0))
+        && (!resource.data.get('is_duplicate', false) || correction.welfareAmount == 0)
         && next.welfare_spent == nextSpent && next.welfare_spent >= 0
         && next.welfare_used_ytd == resource.data.get('welfare_used_ytd', 0) + oldAmount + correction.welfareAmount
         && next.welfare_used_ytd >= 0
@@ -974,7 +973,7 @@ service cloud.firestore {
         && !resource.data.get('is_duplicate', false)
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['duplicate_of', 'is_duplicate', 'identity_alias_ids'])
         && isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
-        && (resource.data.get('canonical_staff_id', '') in ['', null]
+        && (resource.data.get('canonical_staff_id', '') == ''
           || request.resource.data.get('canonical_staff_id', '') == resource.data.canonical_staff_id)
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['canonical_staff_id']) || isIT())
         && (request.resource.data.get('staff_code', '') == resource.data.get('staff_code', '') || validStaffIdentity(staffId, request.resource.data))
