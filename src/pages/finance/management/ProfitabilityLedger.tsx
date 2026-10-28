@@ -1,3 +1,6 @@
+import { profitabilityPeriodRange, type ProfitabilityPeriod } from '../../../utils/profitabilityPeriod';
+import { financeDateKey } from '../../../utils/financeDateFilters';
+import { FinanceDateRangeFields } from '../../../components/finance/FinanceDateRangeFields';
 import { getSaleCostOfGoods } from '../../../utils/salePresentation';
 import { isActiveSale } from '../../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
@@ -59,10 +62,19 @@ export const ProfitabilityLedger: React.FC = () => {
 
   // Date Range Ledger Filter (defaults to Today)
   const [isDateFilterActive, setIsDateFilterActive] = useState(true);
-  const [dateRange, setDateRange] = useState({
-    start: new Date().toISOString().split('T')[0],
-    end: new Date().toISOString().split('T')[0],
-  });
+  const [period, setPeriod] = useState<ProfitabilityPeriod | 'custom'>('today');
+  const [periodAnchor, setPeriodAnchor] = useState(() => financeDateKey(new Date()));
+  const [dateRange, setDateRange] = useState(() => profitabilityPeriodRange('today'));
+
+  const selectPeriod = (value: ProfitabilityPeriod | 'custom') => {
+    setPeriod(value);
+    setIsDateFilterActive(true);
+    if (value !== 'custom') {
+      const anchor = value === 'today' ? financeDateKey(new Date()) : periodAnchor;
+      setPeriodAnchor(anchor);
+      setDateRange(profitabilityPeriodRange(value, anchor));
+    }
+  };
 
   const fetchData = async () => {
     if (!profile?.tenantId) return;
@@ -212,40 +224,32 @@ export const ProfitabilityLedger: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Date filter auditor */}
-      <div className="bg-zinc-50 border border-zinc-200 p-6 rounded-3xl flex flex-col md:flex-row items-center justify-between gap-6 shadow-sm">
+      {/* Date presets only: current accounting dataset and formulas are unchanged. */}
+      <div className="bg-zinc-50 border border-zinc-200 p-4 sm:p-6 rounded-3xl flex flex-col gap-4 shadow-sm">
         <div>
-          <h4 className="font-extrabold text-zinc-950 text-sm">Profitability Ledger Auditor</h4>
-          <p className="text-[10px] text-zinc-500 font-medium">Configure date intervals to verify Month-to-Date (MTD) or custom period margins.</p>
+          <h4 className="font-extrabold text-zinc-950 text-sm">P&L Reporting Period</h4>
+          <p className="text-xs text-zinc-500">Month is month-to-date; Monthly is a full calendar month. Week runs Monday to Sunday. Bi-Annual uses January–June or July–December.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 text-xs font-bold text-zinc-750 cursor-pointer">
-            <input 
-              type="checkbox" 
-              checked={isDateFilterActive} 
-              onChange={(e) => setIsDateFilterActive(e.target.checked)}
-              className="rounded bg-white border-zinc-200 text-zinc-950 focus:ring-0"
-            />
-            Filter Ledger Date
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs text-zinc-700">Period
+            <select aria-label="P&L period" value={period} onChange={e => selectPeriod(e.target.value as ProfitabilityPeriod | 'custom')}
+              className="block rounded-xl border border-zinc-200 bg-white text-zinc-900 p-2">
+              <option value="today">Today</option><option value="week">Week</option>
+              <option value="month">Month (to date)</option><option value="custom">Custom</option>
+              <option value="monthly">Monthly</option><option value="biannual">Bi-Annual</option><option value="annual">Annual</option>
+            </select>
           </label>
-          {isDateFilterActive && (
-            <div className="flex items-center gap-2">
-              <input 
-                type="date"
-                value={dateRange.start}
-                onChange={(e) => setDateRange({...dateRange, start: e.target.value})}
-                className="bg-white border border-zinc-200 text-xs font-semibold px-3 py-1.5 rounded-xl outline-none"
-              />
-              <span className="text-zinc-400 text-xs">-</span>
-              <input 
-                type="date"
-                value={dateRange.end}
-                onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
-                className="bg-white border border-zinc-200 text-xs font-semibold px-3 py-1.5 rounded-xl outline-none"
-              />
-            </div>
-          )}
+          {period !== 'custom' && period !== 'today' && <label className="text-xs text-zinc-700">Date within period
+            <input aria-label="P&L period anchor" type="date" value={periodAnchor}
+              onChange={e => { if (!e.target.value) return; setPeriodAnchor(e.target.value); setDateRange(profitabilityPeriodRange(period, e.target.value)); setIsDateFilterActive(true); }}
+              className="block max-w-full rounded-xl border border-zinc-200 bg-white text-zinc-900 p-2" />
+          </label>}
+          <label className="flex items-center gap-2 text-xs text-zinc-700 p-2">
+            <input type="checkbox" checked={isDateFilterActive} onChange={e => setIsDateFilterActive(e.target.checked)} /> Filter Ledger Date
+          </label>
         </div>
+        {isDateFilterActive && <FinanceDateRangeFields label="P&L dates" value={dateRange}
+          onChange={range => { setPeriod('custom'); setDateRange(range); }} />}
       </div>
 
       {/* Margins Dashboard */}

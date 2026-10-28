@@ -91,3 +91,12 @@ Accepted means engineering acceptance after the recorded checks. Owner live acce
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 011 — Expose explicit pnl reporting period filters
+
+- Modified files: `src/pages/finance/management/ProfitabilityLedger.tsx`.
+- Targeted checks: Today, Monday-Sunday Week, Month-to-date, full Monthly, calendar half-year, Annual and Custom; leap/boundary tests; Bi-Monthly omitted because no established semantics exists.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.
