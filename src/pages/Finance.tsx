@@ -699,6 +699,7 @@ const BranchExpenseLog: React.FC = () => {
           expense_date: formData.date,
           category: formData.category,
           description: formData.description,
+          issued_to: formData.recipient.trim(),
           amount_ugx: formData.amount,
         });
         toast.success('Expense updated');
@@ -709,6 +710,7 @@ const BranchExpenseLog: React.FC = () => {
           expense_date: formData.date,
           category: formData.category,
           description: formData.description,
+          issued_to: formData.recipient.trim(),
           amount_ugx: formData.amount,
           payment_method: 'Petty Cash',
           logged_by: profile.uid,
@@ -735,7 +737,7 @@ const BranchExpenseLog: React.FC = () => {
       category: exp.category,
       amount: exp.amount_ugx,
       description: exp.description,
-      recipient: '',
+      recipient: exp.issued_to || '',
       date: exp.expense_date
     });
     setIsAdding(true);
@@ -828,6 +830,15 @@ const BranchExpenseLog: React.FC = () => {
                 onChange={(e) => setFormData({...formData, description: e.target.value})}
               />
             </div>
+            <div className="space-y-1 md:col-span-2">
+              <label htmlFor="branch-expense-issued-to" className="text-xs font-bold text-zinc-500 uppercase">Issued To</label>
+              <input id="branch-expense-issued-to" type="text" maxLength={200}
+                className="w-full px-4 py-2 bg-zinc-50 text-zinc-900 border border-zinc-200 rounded-xl"
+                placeholder="Person or organisation receiving the money"
+                value={formData.recipient}
+                onChange={(e) => setFormData({...formData, recipient: e.target.value})}
+              />
+            </div>
             <div className="md:col-span-4 flex justify-end gap-3 mt-2">
               <button 
                 type="button"
@@ -847,13 +858,14 @@ const BranchExpenseLog: React.FC = () => {
         </div>
       )}
 
-      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-x-auto">
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
               <th className="px-6 py-4">Date</th>
               <th className="px-6 py-4">Category</th>
               <th className="px-6 py-4">Description</th>
+              <th className="px-6 py-4">Issued To</th>
               <th className="px-6 py-4">Amount</th>
               <th className="px-6 py-4">Status</th>
               <th className="px-6 py-4 text-right">Actions</th>
@@ -871,6 +883,7 @@ const BranchExpenseLog: React.FC = () => {
                   </span>
                 </td>
                 <td className="px-6 py-4 text-sm text-zinc-600">{expense.description}</td>
+                <td className="px-6 py-4 text-sm text-zinc-600">{expense.issued_to || 'Not recorded'}</td>
                 <td className="px-6 py-4 font-bold text-zinc-900">UGX {(expense.amount_ugx || 0).toLocaleString()}</td>
                 <td className="px-6 py-4">
                   <span className={cn(
@@ -895,7 +908,7 @@ const BranchExpenseLog: React.FC = () => {
             ))}
             {filteredExpenses.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic">
+                <td colSpan={7} className="px-6 py-12 text-center text-zinc-400 italic">
                   No operational expenses found for the selected date range.
                 </td>
               </tr>

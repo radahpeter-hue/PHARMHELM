@@ -26,3 +26,10 @@ test('Allowances is selectable and report categories remain data-driven', () => 
   const report = fs.readFileSync('src/pages/finance/management/GlobalExpenseLedger.tsx', 'utf8');
   assert.match(report, /new Set\(consolidatedList.map\(e => e.category\)/);
 });
+
+test('Issued To is written on create and edit, restored when editing, and reviewed on the record', () => {
+  const branch = fs.readFileSync('src/pages/Finance.tsx', 'utf8').split('const BranchExpenseLog:')[1].split('const BranchCreditView:')[0];
+  assert.equal((branch.match(/issued_to: formData.recipient.trim\(\)/g) || []).length, 2);
+  assert.match(branch, /recipient: exp.issued_to/);
+  assert.match(branch, /expense.issued_to \|\| 'Not recorded'/);
+});

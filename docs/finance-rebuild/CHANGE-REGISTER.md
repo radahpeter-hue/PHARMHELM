@@ -37,3 +37,12 @@ Accepted means engineering acceptance after the recorded checks. Owner live acce
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 005 — Persist and display issued to on branch expenses
+
+- Modified files: `src/pages/Finance.tsx`, `src/types.ts`, `tests/finance-rebuild-expenses.test.ts`.
+- Targeted checks: Create/edit payload, edit rehydration and historical fallback coverage plus Finance regressions; horizontal table scrolling preserves mobile access.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.

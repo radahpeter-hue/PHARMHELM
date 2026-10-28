@@ -927,6 +927,7 @@ export interface BranchExpense {
   category: string;
   amount_ugx: number;
   description: string;
+  issued_to?: string;
   payment_method?: 'Cash' | 'Petty Cash' | 'Bank' | string;
   logged_by?: string;
   created_at?: string;
