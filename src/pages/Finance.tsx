@@ -97,7 +97,7 @@ const Finance: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold text-zinc-900">Financial Operations</h1>
           <p className="text-zinc-500">Manage branch reconciliations, expenses, and management-level oversight.</p>
@@ -220,13 +220,13 @@ const BranchFinance: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex border-b border-zinc-200">
+      <div className="flex border-b border-zinc-200 overflow-x-auto">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveSubTab(tab.id as any)}
             className={cn(
-              "flex items-center gap-2 px-6 py-3 text-sm font-medium transition-all border-b-2",
+              "flex shrink-0 items-center gap-2 px-6 py-3 text-sm font-medium transition-all border-b-2",
               activeSubTab === tab.id 
                 ? "border-emerald-500 text-emerald-600" 
                 : "border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300"
@@ -753,7 +753,7 @@ const BranchExpenseLog: React.FC = () => {
           <p className="text-xs text-zinc-500">Log of local expenses matching the current date by default.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-zinc-200 text-xs">
+          <div className="flex flex-wrap items-center gap-1.5 bg-white p-1 rounded-xl border border-zinc-200 text-xs">
             <span className="font-bold text-zinc-400 px-1 uppercase tracking-widest">Date:</span>
             <input 
               type="date" 

@@ -118,3 +118,16 @@ Accepted means engineering acceptance after the recorded checks. Owner live acce
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## LEVEL 1 CHECKPOINT
+
+Changes 001–013 complete; Level 2 has not started at this checkpoint.
+
+- `npm test`: **715 passed, 0 failed**.
+- `npm run typecheck`: PASS.
+- `npm run build`: PASS. Existing bundle-size/dynamic-import warnings remain.
+- Actual React Finance and Welfare browser tests: PASS at **360, 390 and 1280px** using isolated in-memory fixtures. Expense create/persist/display, historical salary visibility, allowances, separate incoming/requisition date controls, previous-month/all-history retrieval, Management/Global naming and existing records, separate branch/consolidated P&L, period controls, ordinary employee vs management Welfare visibility, and cashier Finance navigation verified.
+- First responsive cycle found header/tab/date-control overflow at 360px. Fixed with responsive header stacking, horizontally scrollable Branch Ops tabs and wrapping date controls. All three widths now pass body-overflow checks.
+- Screenshots visually reviewed at phone/desktop widths. Harness uses the existing light content surface and local fallback fonts; remote font imports are removed only from test CSS. No backend requests or tenant writes are possible in the isolated harness.
+- `firestore.rules`: byte-identical to base.
+- Level 1 engineering acceptance: **PASS**. Owner live acceptance pending.
