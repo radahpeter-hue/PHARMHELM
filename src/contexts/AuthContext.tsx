@@ -1,3 +1,4 @@
+import { isStaffAlias } from '../utils/staffIdentityAudit';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, User, signInWithPopup, signOut, AuthError, signInAnonymously, signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, setDoc, collection, getDocs, query, where, writeBatch, onSnapshot, addDoc, deleteDoc } from 'firebase/firestore';
@@ -802,29 +803,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 snapStaff = await getDocs(qStaff);
               }
               // Verify tenantId membership client-side
-              const matchedDocs = snapStaff.docs.filter(d => (d.data() as Staff).tenantId === tenant.id);
+              const matchedDocs = snapStaff.docs.filter(d => (d.data() as Staff).tenantId === tenant.id && !isStaffAlias(d.data()));
               if (matchedDocs.length > 0) {
                 const staffDocMatched = matchedDocs[0];
                 const staffData = staffDocMatched.data() as Staff;
                 if (staffData.status === 'active' || staffData.active) {
                   currentProfile = { ...staffData, id: staffDocMatched.id };
-                  // Link Auth UID in Firestore for faster future lookups
-                  try {
-                    // Keep the original immutable staff identity as an inactive alias.
-                    // Number reservations and historical expense references must survive linking.
-                    const linkBatch = writeBatch(db);
-                    linkBatch.set(doc(db, 'staff', incomingUser.uid), {
-                      ...staffData, id: incomingUser.uid, uid: incomingUser.uid,
-                      legacyStaffId: staffDocMatched.id
-                    }, { merge: true });
-                    if (staffDocMatched.id !== incomingUser.uid) {
-                      linkBatch.update(doc(db, 'staff', staffDocMatched.id), {
-                        canonical_staff_id: incomingUser.uid, active: false, status: 'inactive'
-                      });
-                    }
-                    await linkBatch.commit();
-                  } catch (e) {
-                    console.warn("Could not link staff UID:", e);
+                  if (staffDocMatched.id !== incomingUser.uid) {
+                    toast.error('Your existing staff record needs IT account linking. No new staff record was created.');
+                    await signOut(auth); setLoading(false); return;
                   }
                 }
               }

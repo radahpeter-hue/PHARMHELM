@@ -50,7 +50,7 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { deduplicateStaff } from '../utils/deduplicateStaff';
+import { operationalStaff } from '../utils/operationalStaff';
 import { createTenantIdentity, createBranchIdentity, createScopedIdentity } from '../services/systemIdentityService';
 
 function cn(...inputs: ClassValue[]) {
@@ -545,7 +545,7 @@ const PlatformAdmin = () => {
     try {
       const q = query(collection(db, 'staff'), where('tenantId', '==', tenantId));
       const snap = await getDocs(q);
-      const accounts = deduplicateStaff(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const accounts = operationalStaff(snap.docs.map(doc => ({ ...doc.data(), id: doc.id })));
       setStaffAccounts(accounts);
     } catch (err) {
       console.error('Error fetching staff accounts:', err);

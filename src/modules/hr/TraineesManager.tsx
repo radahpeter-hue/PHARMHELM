@@ -189,6 +189,7 @@ export const TraineesManager: React.FC<{ supervisorOnly?: boolean }> = ({ superv
 
       const createdStaff = await createScopedIdentity('staff', profile.tenantId, {
         tenantId: profile.tenantId,
+        source_trainee_id: trainee.id,
         full_name: trainee.full_name,
         username: generatedUsername,
         email: trainee.email,

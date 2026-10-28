@@ -1,3 +1,4 @@
+import { operationalStaff } from '../../../utils/operationalStaff';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
@@ -162,7 +163,7 @@ export const GlobalExpenseLedger: React.FC = () => {
         collection(db, 'staff'),
         where('tenantId', '==', profile.tenantId)
       ));
-      setStaff(staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+      setStaff(operationalStaff(staffSnap.docs.map(doc => ({ ...doc.data() as any, id: doc.id }))));
 
     } catch (e: any) {
       console.error("Error gathering global expenses:", e);

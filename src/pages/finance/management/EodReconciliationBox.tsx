@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../../../utils/operationalStaff';
 import { canCorrectEod } from '../../../utils/eodEditPolicy';
 import { EodCorrectionModal } from '../../../components/finance/EodCorrectionModal';
 import { eodRecordVariance, formatEodAmount, eodVariance, sumEodAmounts } from '../../../utils/eodMoney';
@@ -140,7 +141,7 @@ export const EodReconciliationBox: React.FC = () => {
   // Helper to map logged_by user ID to staff full name
   const getLoggedByName = (loggedByUid: string | undefined) => {
     if (!loggedByUid) return 'Staff Cashier';
-    const match = staffList.find(s => s.uid === loggedByUid || s.id === loggedByUid);
+    const match = staffList.find(s => s.uid === loggedByUid || staffMatchesId(s, loggedByUid));
     return match ? (match.full_name || match.fullName || match.displayName || loggedByUid) : loggedByUid;
   };
 

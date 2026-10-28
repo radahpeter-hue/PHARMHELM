@@ -1,3 +1,4 @@
+import { isStaffAlias } from '../utils/staffIdentityAudit';
 import React, { useState, useEffect } from 'react';
 import { 
   Shield, 
@@ -175,7 +176,7 @@ export const SettingsModule: React.FC = () => {
                     <button 
                       onClick={async () => {
                         const staff = await firestoreService.getDocument<Staff>('staff', activation.staffId);
-                        if (staff) {
+                        if (staff && !isStaffAlias(staff)) {
                           setSelectedStaff(staff);
                           setSelectedActivation(activation);
                           setIsPasswordModalOpen(true);

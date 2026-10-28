@@ -21,7 +21,7 @@ export function pettyCashIssueRows(records: PettyCashIssue[], context: PettyCash
  });
 }
 export function pettyCashRequisitionRows(records: PettyCashRequisition[], context: PettyCashReportContext={tenantId:'',staff:[]}): PettyCashExportRow[] {
- return records.map(r=>({Branch:r.branch_name||'Branch not recorded',Date:pettyCashReportDate(r.requisition_date),Purpose:r.reason,
+ return records.map(r=>({Branch:r.branch_name||'Branch not recorded',Date:pettyCashReportDate(r.requisition_date),Purpose:r.reason||'Not recorded',
   'Amount (UGX)':eodAmountNumber(r.amount_requested),Status:status(r.status),
   'Finance Approved By':staffReportIdentity(r.finance_approval_by,context.staff,context.tenantId),'CEO Approved By':staffReportIdentity(r.ceo_approval_by,context.staff,context.tenantId),
   'Disbursed At (EAT)':pettyCashReportDate(r.disbursed_at,true)}));

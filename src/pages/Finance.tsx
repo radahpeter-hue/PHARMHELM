@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../utils/operationalStaff';
 import { PettyCashExportButtons } from '../components/finance/PettyCashExportButtons';
 import { pettyCashIssueRows, pettyCashRequisitionRows } from '../utils/pettyCashExport';
 import { eodVariance, requiresEodVarianceReason, formatEodAmount, eodAmountNumber, sumEodAmounts } from '../utils/eodMoney';
@@ -926,7 +927,7 @@ const BranchExpenseLog: React.FC = () => {
                 <td className="px-6 py-4 text-sm text-zinc-600">{expense.description}</td>
                 <td className="px-6 py-4 text-sm text-zinc-600">
                   {expense.issued_to || 'Not recorded'}
-                  {expense.recipient_type === 'staff' && <span className="block text-xs text-zinc-500 break-all">Staff ID: {staff.find(s => s.id === expense.recipient_staff_id)?.staff_code || expense.recipient_staff_code || 'Staff number pending'}</span>}
+                  {expense.recipient_type === 'staff' && <span className="block text-xs text-zinc-500 break-all">Staff ID: {staff.find(s => staffMatchesId(s, expense.recipient_staff_id))?.staff_code || expense.recipient_staff_code || 'Staff number pending'}</span>}
                 </td>
                 <td className="px-6 py-4 font-bold text-zinc-900">UGX {(expense.amount_ugx || 0).toLocaleString()}</td>
                 <td className="px-6 py-4">
@@ -1192,8 +1193,8 @@ const BranchPettyCash: React.FC = () => {
     }
   };
 
-  const filteredRequisitions = requisitions.filter(r => inFinanceDateRange(r.requisition_date, requisitionDateRange));
-  const filteredIssues = issues.filter(i => (includeReceived || i.status !== 'received') && inFinanceDateRange(i.issue_date, incomingDateRange));
+  const filteredRequisitions = requisitions.filter(r => r.tenantId === profile?.tenantId && r.branch_id === activeBranchId && inFinanceDateRange(r.requisition_date, requisitionDateRange));
+  const filteredIssues = issues.filter(i => i.tenantId === profile?.tenantId && i.branch_id === activeBranchId && (includeReceived || i.status !== 'received') && inFinanceDateRange(i.issue_date, incomingDateRange));
 
   const totalPettyCashReceived = issues
     .filter(i => i.status === 'received')
@@ -2647,7 +2648,7 @@ const OldTaxManagement: React.FC<{ settings: SystemSettings | null }> = ({ setti
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
                   {filteredPayroll.filter(p => (p.paye || 0) > 0).map((p) => {
-                    const stf = staffList.find(s => s.id === p.staffId || s.id === p.staff_id || s.employeeId === p.staffId);
+                    const stf = staffList.find(s => staffMatchesId(s, p.staffId) || staffMatchesId(s, p.staff_id) || s.employeeId === p.staffId);
                     const br = branchesList.find(b => b.id === (stf?.branch_id || p.branch_id || p.branchId));
                     return (
                       <tr key={p.id} className="hover:bg-zinc-50/50 transition-colors">
@@ -2697,7 +2698,7 @@ const OldTaxManagement: React.FC<{ settings: SystemSettings | null }> = ({ setti
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
                   {filteredPayroll.filter(p => (p.nssf_employee || 0) > 0).map((p) => {
-                    const stf = staffList.find(s => s.id === p.staffId || s.id === p.staff_id || s.employeeId === p.staffId);
+                    const stf = staffList.find(s => staffMatchesId(s, p.staffId) || staffMatchesId(s, p.staff_id) || s.employeeId === p.staffId);
                     const br = branchesList.find(b => b.id === (stf?.branch_id || p.branch_id || p.branchId));
                     return (
                       <tr key={p.id} className="hover:bg-zinc-50/50 transition-colors">

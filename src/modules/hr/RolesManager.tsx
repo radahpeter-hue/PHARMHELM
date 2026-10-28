@@ -1,3 +1,4 @@
+import { operationalStaff } from '../../utils/operationalStaff';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
@@ -123,7 +124,7 @@ export const RolesManager: React.FC = () => {
     const rolesQuery = query(collection(db, 'hr_roles'), where('tenantId', '==', profile.tenantId));
 
     const unsubStaff = onSnapshot(staffQuery, snap => {
-      setStaff(snap.docs.map(d => ({ id: d.id, ...d.data() } as Staff)));
+      setStaff(operationalStaff(snap.docs.map(d => ({ ...d.data(), id: d.id } as Staff))));
     });
     const unsubRoles = onSnapshot(rolesQuery, snap => {
       setCustomRoles(snap.docs.map(d => ({ id: d.id, ...d.data() } as CustomRole)));

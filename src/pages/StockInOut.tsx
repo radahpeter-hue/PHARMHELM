@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../utils/operationalStaff';
 import { StockInRegister } from '../components/stock/StockInRegister';
 import { exportRecordsToExcel } from '../utils/excelExport';
 import { OperationalItemCode } from '../components/inventory/OperationalItemCode';
@@ -1504,7 +1505,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
 
   const getUserName = (uid?: string) => {
     if (!uid) return 'N/A';
-    const found = staff.find(s => s.uid === uid || s.id === uid);
+    const found = staff.find(s => s.uid === uid || staffMatchesId(s, uid));
     return found ? (found.full_name || found.fullName || found.name || found.displayName || found.username || found.email || uid) : uid;
   };
 
@@ -2704,7 +2705,7 @@ const TransferOutTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
 
   const getUserName = (uid?: string) => {
     if (!uid) return 'N/A';
-    const found = staff.find(s => s.uid === uid || s.id === uid);
+    const found = staff.find(s => s.uid === uid || staffMatchesId(s, uid));
     return found ? (found.full_name || found.displayName || found.username || found.email) : uid;
   };
 
@@ -4034,7 +4035,7 @@ export const StockInOutReportsHub: React.FC<{ branches: Branch[] }> = ({ branche
 
   const getUserName = (uid?: string) => {
     if (!uid) return 'N/A';
-    const found = staff.find(s => s.uid === uid || s.id === uid);
+    const found = staff.find(s => s.uid === uid || staffMatchesId(s, uid));
     return found ? (found.full_name || found.displayName || found.username || found.email) : uid;
   };
 

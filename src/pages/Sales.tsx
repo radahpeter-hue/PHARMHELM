@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../utils/operationalStaff';
 import { getDisplayReference } from '../utils/salePresentation';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -3285,8 +3286,8 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                   </td>
                   <td className="px-6 py-4">
                     <span className="text-sm font-medium text-zinc-700">
-                      {staff.find(s => s.uid === sale.servedBy || s.id === sale.servedBy)?.displayName || 
-                       staff.find(s => s.uid === sale.servedBy || s.id === sale.servedBy)?.full_name || 
+                      {staff.find(s => s.uid === sale.servedBy || staffMatchesId(s, sale.servedBy))?.displayName ||
+                       staff.find(s => s.uid === sale.servedBy || staffMatchesId(s, sale.servedBy))?.full_name ||
                        sale.servedBy || 'System / Admin'}
                     </span>
                   </td>
@@ -3529,8 +3530,8 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                   <p className="text-xs text-rose-600 italic">Reason: "{selectedSale.voidReason}"</p>
                   <div className="text-xs text-rose-700 font-medium">
                     Voided by: <span className="font-bold">
-                      {staff.find(s => s.uid === selectedSale.voidedBy || s.id === selectedSale.voidedBy)?.displayName || 
-                       staff.find(s => s.uid === selectedSale.voidedBy || s.id === selectedSale.voidedBy)?.full_name || 
+                      {staff.find(s => s.uid === selectedSale.voidedBy || staffMatchesId(s, selectedSale.voidedBy))?.displayName ||
+                       staff.find(s => s.uid === selectedSale.voidedBy || staffMatchesId(s, selectedSale.voidedBy))?.full_name ||
                        selectedSale.voidedBy || 'System / Admin'}
                     </span>
                   </div>

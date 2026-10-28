@@ -1,4 +1,5 @@
-import { collection, doc, runTransaction, type Firestore, type Transaction } from 'firebase/firestore';
+import { staffRegistrationConflict } from '../utils/staffIdentityAudit';
+import { collection, doc, getDocsFromServer, query, where, runTransaction, type Firestore, type Transaction } from 'firebase/firestore';
 import { db } from '../firebase';
 
 /**
@@ -78,6 +79,16 @@ export async function createScopedIdentity(
     if (existingRecord?.exists()) throw new Error('A record already exists for this staff authentication identity.');
     if (current.exists() && (current.data().tenantId !== tenantId || current.data().kind !== definition.kind)) {
       throw new Error('Identity sequence has a different tenant or record type.');
+    }
+    if (collectionName === 'staff') {
+      // Every registration path locks this tenant counter. If another HR writer
+      // commits first, Firestore retries and this query sees their new employee.
+      const register = await getDocsFromServer(query(collection(connection, 'staff'), where('tenantId', '==', tenantId)));
+      const conflict = staffRegistrationConflict(data, register.docs.map(d => ({ ...d.data(), id: d.id, tenantId })));
+      if (conflict) {
+        const error = new Error(`This employee already has a staff record${conflict.staff_code ? ` (${conflict.staff_code})` : ''}. Open the existing HR record instead.`);
+        error.name = 'StaffAlreadyExistsError'; throw error;
+      }
     }
     const next = Number(current.data()?.lastSequence || 0) + 1;
     const code = formatSystemIdentity(definition.prefix, next);

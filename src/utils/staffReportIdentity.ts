@@ -11,7 +11,7 @@ export function staffReportIdentity(id: string | undefined, staff: IdentityStaff
  if(!id)return 'Not recorded';
  const scoped=staff.filter(s=>s.tenantId===tenantId);
  const direct=scoped.filter(s=>s.id===id);
- const candidates=(direct.length?direct:scoped.filter(s=>s.uid===id)).map(s=>canonicalStaff(s,scoped));
+ const candidates=(direct.length?direct:scoped.filter(s=>s.uid===id || (s.identity_alias_ids||[]).includes(id))).map(s=>canonicalStaff(s,scoped));
  if(!candidates.length)return 'Staff record unavailable';
  if(candidates.some(s=>!s))return 'Staff identity needs review';
  const unique=Array.from(new Map(candidates.map(s=>[s!.id,s!])).values());

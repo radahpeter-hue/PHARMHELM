@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../../utils/operationalStaff';
 import React, { useState, useEffect } from 'react';
 import { 
   Calendar, Clock, CheckCircle2, XCircle, Search, 
@@ -105,7 +106,7 @@ export const AttendanceTracker: React.FC = () => {
     try {
       let count = 0;
       for (const item of selections) {
-        const staffMember = staff.find(s => s.id === item.id);
+        const staffMember = staff.find(s => staffMatchesId(s, item.id));
         if (!staffMember) continue;
 
         const hours = item.details.status === 'present' ? calculateHours(item.details.checkIn, item.details.checkOut) : 0;
@@ -175,7 +176,7 @@ export const AttendanceTracker: React.FC = () => {
     }
     const headers = ['Date', 'Employee ID', 'Name', 'Role', 'Status', 'Check-In', 'Check-Out', 'Hours Worked'];
     const rows = filteredAttendance.map(a => {
-      const s = staff.find(m => m.id === a.staffId);
+      const s = staff.find(m => staffMatchesId(m, a.staffId));
       return [
         selectedDate,
         s?.staff_code || s?.employee_id || a.staffId,
@@ -451,11 +452,11 @@ export const AttendanceTracker: React.FC = () => {
               <tbody className="divide-y divide-slate-100">
                 {filteredAttendance
                   .filter(a => {
-                    const member = staff.find(s => s.id === a.staffId);
+                    const member = staff.find(s => staffMatchesId(s, a.staffId));
                     return (member?.full_name || a.staff_name || '').toLowerCase().includes(searchTerm.toLowerCase());
                   })
                   .map((record) => {
-                    const member = staff.find(s => s.id === record.staffId);
+                    const member = staff.find(s => staffMatchesId(s, record.staffId));
                     const isEditing = editingRowId === record.id;
                     const hours = isEditing ? calculateHours(editingFields?.checkIn || '', editingFields?.checkOut || '') : (record.hours_worked || 0);
 

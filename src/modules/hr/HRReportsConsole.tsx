@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../../utils/operationalStaff';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Download, Calendar, BarChart3, FileSpreadsheet, Clock, CalendarDays, Users, 
@@ -77,7 +78,7 @@ export const HRReportsConsole: React.FC = () => {
 
     const rows = filteredAttendance.map(item => {
       const sId = item.staffId || item.staff_id;
-      const matchStaff = staff.find(s => s.id === sId || s.uid === sId);
+      const matchStaff = staff.find(s => staffMatchesId(s, sId) || s.uid === sId);
       
       const bId = item.branch_id || item.branchId;
       const branchObj = branches.find(b => b.id === bId);
@@ -111,7 +112,7 @@ export const HRReportsConsole: React.FC = () => {
     ];
 
     const rows = leaves.map(l => {
-      const matchStaff = staff.find(s => s.id === l.staffId || s.id === l.staff_id);
+      const matchStaff = staff.find(s => staffMatchesId(s, l.staffId) || staffMatchesId(s, l.staff_id));
       return [
         l.id,
         l.staff_name || matchStaff?.full_name || 'Staff',
@@ -549,7 +550,7 @@ export const HRReportsConsole: React.FC = () => {
 
               <div className="space-y-3 flex-1 overflow-y-auto max-h-64 custom-scrollbar pr-1 mt-2">
                 {leaves.slice(0, 5).map((l, index) => {
-                  const sMatch = staff.find(s => s.id === l.staffId || s.id === l.staff_id);
+                  const sMatch = staff.find(s => staffMatchesId(s, l.staffId) || staffMatchesId(s, l.staff_id));
                   const statusColor = l.status === 'Approved' || l.hr_approval_status === 'Approved' 
                     ? 'text-emerald-700 bg-emerald-50 border-emerald-100'
                     : l.status === 'Rejected' ? 'text-red-700 bg-red-50 border-red-100' : 'text-amber-700 bg-amber-50 border-amber-100';

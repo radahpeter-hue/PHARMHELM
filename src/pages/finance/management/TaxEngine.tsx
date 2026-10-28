@@ -1,3 +1,5 @@
+import { operationalStaff } from '../../../utils/operationalStaff';
+import { staffMatchesId } from '../../../utils/operationalStaff';
 import { isActiveSale } from '../../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -74,7 +76,7 @@ export const TaxEngine: React.FC = () => {
 
       // 5. Fetch Staff List (to get correct labels and tins)
       const staffSnap = await getDocs(query(collection(db, 'staff'), where('tenantId', '==', profile.tenantId)));
-      setStaffList(staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+      setStaffList(operationalStaff(staffSnap.docs.map(doc => ({ ...doc.data() as any, id: doc.id }))));
 
       // 6. Fetch Branches
       const branchSnap = await getDocs(query(collection(db, 'branches'), where('tenantId', '==', profile.tenantId)));
@@ -179,7 +181,7 @@ export const TaxEngine: React.FC = () => {
 
   const handleExportPaye = async () => {
     const data = filteredPayroll.map(p => {
-      const staff = staffList.find(s => s.id === p.staffId || s.id === p.staff_id || s.employeeId === p.staffId);
+      const staff = staffList.find(s => staffMatchesId(s, p.staffId) || staffMatchesId(s, p.staff_id) || s.employeeId === p.staffId);
       return {
         'Staff ID': staff?.employeeId || p.staffId || 'N/A',
         'Staff Name': staff?.full_name || p.staff_name || 'System Staff',
@@ -207,7 +209,7 @@ export const TaxEngine: React.FC = () => {
 
   const handleExportNssf = async () => {
     const data = filteredPayroll.map(p => {
-      const staff = staffList.find(s => s.id === p.staffId || s.id === p.staff_id || s.employeeId === p.staffId);
+      const staff = staffList.find(s => staffMatchesId(s, p.staffId) || staffMatchesId(s, p.staff_id) || s.employeeId === p.staffId);
       return {
         'Staff ID': staff?.employeeId || p.staffId || 'N/A',
         'Staff Name': staff?.full_name || p.staff_name || 'System Staff',
@@ -482,7 +484,7 @@ export const TaxEngine: React.FC = () => {
                     </thead>
                     <tbody className="divide-y divide-zinc-100">
                       {filteredPayroll.filter(p => (p.paye || 0) > 0 || p.gross_salary > 0).map((p) => {
-                        const staff = staffList.find(s => s.id === p.staffId || s.id === p.staff_id || s.employeeId === p.staffId);
+                        const staff = staffList.find(s => staffMatchesId(s, p.staffId) || staffMatchesId(s, p.staff_id) || s.employeeId === p.staffId);
                         const empType = staff?.employmentType || 'Full-Time';
                         return (
                           <tr key={p.id} className="hover:bg-zinc-50/50 transition-colors">
@@ -556,7 +558,7 @@ export const TaxEngine: React.FC = () => {
                     </thead>
                     <tbody className="divide-y divide-zinc-100">
                       {filteredPayroll.filter(p => (p.nssf_employee || 0) > 0).map((p) => {
-                        const staff = staffList.find(s => s.id === p.staffId || s.id === p.staff_id || s.employeeId === p.staffId);
+                        const staff = staffList.find(s => staffMatchesId(s, p.staffId) || staffMatchesId(s, p.staff_id) || s.employeeId === p.staffId);
                         const empType = staff?.employmentType || 'Full-Time';
                         const matchTotal = (p.nssf_employee || 0) + (p.nssf_employer || 0);
                         return (

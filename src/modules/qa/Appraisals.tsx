@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../../utils/operationalStaff';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart3, 
@@ -118,7 +119,7 @@ export const Appraisals: React.FC<{ supervisorOnly?: boolean }> = ({ supervisorO
 
   // Dynamic CME point retriever matching either fullName or full_name (case-insensitive)
   const getStaffCmePoints = (targetStaffId: string) => {
-    const staffMember = staff.find(s => s.id === targetStaffId);
+    const staffMember = staff.find(s => staffMatchesId(s, targetStaffId));
     if (!staffMember) return 0;
     
     const namesToMatch = [
@@ -324,7 +325,7 @@ export const Appraisals: React.FC<{ supervisorOnly?: boolean }> = ({ supervisorO
       return;
     }
 
-    const staffMember = staff.find(s => s.id === staffId);
+    const staffMember = staff.find(s => staffMatchesId(s, staffId));
     if (!staffMember) return;
     const actorId = profile?.uid || profile?.id || user.uid;
     if (supervisorOnly && (staffMember.id === actorId || staffMember.uid === actorId)) {

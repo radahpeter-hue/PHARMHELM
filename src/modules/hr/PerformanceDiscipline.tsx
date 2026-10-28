@@ -1,3 +1,4 @@
+import { staffMatchesId } from '../../utils/operationalStaff';
 import React, { useState, useEffect } from 'react';
 import { 
   AlertTriangle, ShieldAlert, Search, Plus, Filter, 
@@ -47,7 +48,7 @@ export const PerformanceDiscipline: React.FC<{ supervisorOnly?: boolean }> = ({ 
   }) : staff;
 
   const filteredIncidents = incidents.filter(inc => {
-    const staffMember = staff.find(s => s.id === inc.staffId);
+    const staffMember = staff.find(s => staffMatchesId(s, inc.staffId));
     return staffMember?.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
            inc.incident_type.toLowerCase().includes(searchTerm.toLowerCase());
   });
@@ -146,7 +147,7 @@ export const PerformanceDiscipline: React.FC<{ supervisorOnly?: boolean }> = ({ 
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredIncidents.map((inc) => {
-                const member = staff.find(s => s.id === inc.staffId);
+                const member = staff.find(s => staffMatchesId(s, inc.staffId));
                 return (
                   <tr key={inc.id} className="hover:bg-slate-50/50 transition-colors group">
                     <td className="px-6 py-4">
