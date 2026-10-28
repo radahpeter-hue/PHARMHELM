@@ -15,5 +15,5 @@ try {
  const auth=new Map(),list=Array.from(identifiers.values());
  for(let i=0;i<list.length;i+=100){const result=await getAuth(app).getUsers(list.slice(i,i+100));for(const u of result.users)auth.set(u.uid,{uid:u.uid,email:u.email,disabled:u.disabled,tenantId:u.customClaims?.tenantId});}
  const plan=planStaffDuplicateAudit(staff,Array.from(auth.values()));
- console.log(JSON.stringify({mode:'READ_ONLY_STAFF_DUPLICATE_AUDIT',...plan.summary,groups:plan.groups.map((g,i)=>({group:i+1,decision:g.decision,...g.evidence})),writes:0}));
+ console.log(JSON.stringify({mode:'READ_ONLY_STAFF_DUPLICATE_AUDIT',...plan.summary,groups:plan.groups.map((g,i)=>({group:i+1,decision:g.decision,...g.evidence})),duplicatesWithWelfareUsage:staff.filter(s=>plan.groups.some(g=>g.duplicateIds.includes(s.id))&&(Number(s.welfare_spent||0)>0||Number(s.welfare_used_ytd||0)>0)).length,writes:0}));
 }finally{await deleteApp(app);}

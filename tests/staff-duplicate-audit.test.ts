@@ -12,3 +12,7 @@ test('aliases stay out of operational groups and email/phone without login proof
  assert.equal(plan([s('a'),s('b',{canonical_staff_id:'a'})],[]).summary.aliases,1);
  assert.equal(plan([s('a'),s('b')],[]).summary.reviewGroups,1);
 });
+
+test('a second enabled Auth identity hidden behind a legacy document requires review',()=>{
+ const r=plan([s('legacy',{uid:'second-login'}),s('uid')],[{uid:'uid'},{uid:'second-login'}]);assert.equal(r.summary.reviewGroups,1);
+});

@@ -27,7 +27,8 @@ export function planStaffDuplicateAudit(staff: IdentityStaff[], auth: IdentityAu
  const groups=new Map<number,IdentityStaff[]>();records.forEach((r,i)=>groups.set(root(i),[...(groups.get(root(i))||[]),r]));
  const results=Array.from(groups.values()).filter(g=>g.length>1).map(group=>{
   const enabled=group.filter(s=>auth.some(a=>a.uid===s.id&&!a.disabled&&(!a.tenantId||a.tenantId===s.tenantId)));
-  const canonical=enabled.length===1?enabled[0]:undefined;
+  const enabledRefs=auth.filter(a=>!a.disabled&&(!a.tenantId||a.tenantId===group[0].tenantId)&&group.some(s=>[s.id,s.uid].includes(a.uid)));
+  const canonical=enabled.length===1&&enabledRefs.length===1?enabled[0]:undefined;
   const pairs=canonical?group.filter(s=>s.id!==canonical.id).map(s=>({record:s,...evidence(s,canonical)})):[];
   const verified=!!canonical && pairs.every(p=>p.uid||p.link||(p.name&&p.email&&p.phone)
     ||(p.name&&identityText(p.record.authEmail)!==''&&identityText(p.record.authEmail)===identityText(canonical.authEmail)
@@ -35,8 +36,20 @@ export function planStaffDuplicateAudit(staff: IdentityStaff[], auth: IdentityAu
   const allNamed=Array.from(new Set(group.map(identityName).filter(Boolean))).length;
   return {records:group.map(s=>s.id),canonicalId:verified?canonical!.id:null,duplicateIds:verified?pairs.map(p=>p.record.id):[],
     decision:verified?'verified_duplicate':'review_required',evidence:{size:group.length,enabledUidDocuments:enabled.length,
-      distinctNames:allNamed,sameUid:pairs.some(p=>p.uid),explicitLink:pairs.some(p=>p.link),sameEmail:pairs.every(p=>p.email),samePhone:pairs.every(p=>p.phone)}};
+      enabledAuthReferences:enabledRefs.length,distinctNames:allNamed,sameUid:pairs.some(p=>p.uid),explicitLink:pairs.some(p=>p.link),sameEmail:pairs.every(p=>p.email),samePhone:pairs.every(p=>p.phone)}};
  });
  return {groups:results,summary:{records:staff.length,aliases:staff.length-records.length,duplicateGroups:results.length,
    verifiedGroups:results.filter(g=>g.canonicalId).length,verifiedDuplicates:results.reduce((n,g)=>n+g.duplicateIds.length,0),reviewGroups:results.filter(g=>!g.canonicalId).length}};
+}
+/** Registration guard, not an automatic merge: potential matches require HR review. */
+export function staffRegistrationConflict(candidate: Record<string,any>, existing: IdentityStaff[]): IdentityStaff | undefined {
+ return existing.find(s=>!isStaffAlias(s)&&(
+  (!!candidate.uid&&[s.id,s.uid].includes(candidate.uid)) ||
+  (!!candidate.source_application_id&&candidate.source_application_id===s.source_application_id) ||
+  (!!candidate.source_trainee_id&&candidate.source_trainee_id===s.source_trainee_id) ||
+  (!!identityText(candidate.authEmail)&&identityText(candidate.authEmail)===identityText(s.authEmail)) ||
+  (!!identityName(candidate as IdentityStaff)&&identityName(candidate as IdentityStaff)===identityName(s)
+    &&(identityEmails(candidate as IdentityStaff).some(e=>identityEmails(s).includes(e))
+      ||(!!identityPhone(candidate as IdentityStaff)&&identityPhone(candidate as IdentityStaff)===identityPhone(s))))
+ ));
 }
