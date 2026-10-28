@@ -140,3 +140,12 @@ Changes 001–013 complete; Level 2 has not started at this checkpoint.
 - Result: PASS.
 - Regression observed: NO.
 - Accepted: YES (engineering); owner acceptance pending.
+
+## CHANGE 015 — Persist immutable staff recipient identity
+
+- Modified files: `src/pages/Finance.tsx`, `src/types.ts`, `src/utils/branchExpensePolicy.ts`, `tests/finance-rebuild-expenses.test.ts`.
+- Targeted checks: Stable document-ID attribution, display snapshot, duplicate-name/name-change tests and create/edit payload checks; staff ID visible in record review.
+- TypeScript / production build: PASS.
+- Result: PASS.
+- Regression observed: NO.
+- Accepted: YES (engineering); owner acceptance pending.

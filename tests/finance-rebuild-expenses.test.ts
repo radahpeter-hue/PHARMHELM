@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName } from '../src/utils/branchExpensePolicy';
+import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, staffExpenseAttribution } from '../src/utils/branchExpensePolicy';
 
 test('new manual expenses cannot be salaries, including casing/spacing variants', () => {
   for (const category of ['salaries', 'Salaries', ' SALARY ']) {
@@ -45,4 +45,14 @@ test('staff dropdown uses current authoritative tenant staff and distinguishes d
   ] as Staff[];
   assert.deepEqual(eligibleExpenseStaff(rows, 't').map(s => s.id), ['a', 'b']);
   assert.equal(expenseStaffName(rows[0]), 'Alex');
+});
+
+test('staff attribution preserves immutable document identity despite duplicate names or later name changes', () => {
+  const staff = { id: 'staff-immutable-001', full_name: 'Original Name', staff_code: 'MP-001' } as Staff;
+  const saved = { ...staffExpenseAttribution(staff), issued_to: expenseStaffName(staff) };
+  staff.full_name = 'Changed Name';
+  assert.equal(saved.recipient_staff_id, 'staff-immutable-001');
+  assert.equal(saved.recipient_type, 'staff');
+  assert.equal(saved.issued_to, 'Original Name');
+  assert.equal(staffExpenseAttribution(staff).recipient_staff_id, saved.recipient_staff_id);
 });

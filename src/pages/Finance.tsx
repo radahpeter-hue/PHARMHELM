@@ -1,6 +1,6 @@
 import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
 import { inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../utils/financeDateFilters';
-import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName } from '../utils/branchExpensePolicy';
+import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, staffExpenseAttribution } from '../utils/branchExpensePolicy';
 import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect } from 'react';
@@ -706,6 +706,8 @@ const BranchExpenseLog: React.FC = () => {
       toast.error('Select an active employee from the staff register.');
       return;
     }
+    const attribution = recipientType === 'staff' ? staffExpenseAttribution(selectedStaff!)
+      : { recipient_type: 'external' as const, recipient_staff_id: '', recipient_staff_code: '' };
     const issuedTo = recipientType === 'staff' ? expenseStaffName(selectedStaff!) : formData.recipient.trim();
     try {
       if (editingExpense) {
@@ -714,6 +716,7 @@ const BranchExpenseLog: React.FC = () => {
           category: formData.category,
           description: formData.description,
           issued_to: issuedTo,
+          ...attribution,
           amount_ugx: formData.amount,
         });
         toast.success('Expense updated');
@@ -725,6 +728,7 @@ const BranchExpenseLog: React.FC = () => {
           category: formData.category,
           description: formData.description,
           issued_to: issuedTo,
+          ...attribution,
           amount_ugx: formData.amount,
           payment_method: 'Petty Cash',
           logged_by: profile.uid,
@@ -749,8 +753,8 @@ const BranchExpenseLog: React.FC = () => {
       return;
     }
     setEditingExpense(exp);
-    setRecipientType('manual');
-    setSelectedStaffId('');
+    setRecipientType(exp.recipient_type === 'staff' ? 'staff' : 'manual');
+    setSelectedStaffId(exp.recipient_staff_id || '');
     setFormData({
       category: exp.category,
       amount: exp.amount_ugx,
@@ -916,7 +920,10 @@ const BranchExpenseLog: React.FC = () => {
                   </span>
                 </td>
                 <td className="px-6 py-4 text-sm text-zinc-600">{expense.description}</td>
-                <td className="px-6 py-4 text-sm text-zinc-600">{expense.issued_to || 'Not recorded'}</td>
+                <td className="px-6 py-4 text-sm text-zinc-600">
+                  {expense.issued_to || 'Not recorded'}
+                  {expense.recipient_type === 'staff' && <span className="block text-xs text-zinc-500 break-all">Staff ID: {expense.recipient_staff_id}{expense.recipient_staff_code ? ` (${expense.recipient_staff_code})` : ''}</span>}
+                </td>
                 <td className="px-6 py-4 font-bold text-zinc-900">UGX {(expense.amount_ugx || 0).toLocaleString()}</td>
                 <td className="px-6 py-4">
                   <span className={cn(

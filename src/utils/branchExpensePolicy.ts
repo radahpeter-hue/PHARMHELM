@@ -14,3 +14,11 @@ export function eligibleExpenseStaff(staff: Staff[], tenantId: string): Staff[] 
     && (s.active === true || String(s.status || '').toLowerCase() === 'active'))
     .sort((a, b) => expenseStaffName(a).localeCompare(expenseStaffName(b)));
 }
+
+export function staffExpenseAttribution(staff: Staff) {
+  return {
+    recipient_type: 'staff' as const,
+    recipient_staff_id: staff.id, // Authoritative immutable Firestore document identity.
+    recipient_staff_code: staff.staff_code || '' // Human-readable snapshot, never the lookup key.
+  };
+}
