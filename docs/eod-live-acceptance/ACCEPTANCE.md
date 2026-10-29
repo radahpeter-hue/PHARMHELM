@@ -1,29 +1,42 @@
 # EOD live-acceptance repairs
 
-Base production main: 10bc85b918f587feb55190ca3f9a7486945162d1.
+Base production main: `10bc85b918f587feb55190ca3f9a7486945162d1`.
+Fix branch: `fix/eod-live-acceptance`. PR: #97.
 
-- Audit and correction dialogs explicitly set dark text on white panels. Browser checks reproduce inherited production white text and verify headings and Close. View audit is read-only; Correct EOD remains the separate IT Head action inside the original fourteen-day window.
-- The six Masaka receipts from 28 October total 35,600 (8,000 + 5,000 + 6,000 + 1,000 + 1,000 + 14,600). They predate the 29 October shift-capture release. Owner explicitly confirmed all six belong to Day Shift 07:30–17:00. No automatic historical classification or sale rewrite is performed.
-- IT Head reviews/selects receipts, gives a reason and attests the hours that applied on that business date. One deterministic `audit_logs/e_<tenant>~<sale>` entry per receipt preserves the verified date/shift, sale timestamp, actor, server timestamp and reason. Replay is safe; conflicting date/shift assignments are rejected. Existing checkout attribution is never replaced.
-- The evidence projection only accepts matching reserved document IDs, tenant, branch, receipt and original timestamp. Arbitrary audit entries cannot supply shift totals. Receipts/payment/ledger records are unchanged.
-- Shift selection is mandatory before reveal or submission. Incomplete evidence blocks totals/variance and submission, with an explicit unavailable message. Next-day daytime receipts do not block yesterday's day shift; unresolved after-midnight overnight receipts do block that shift.
+## Result
 
-Validation:
-- 766 unit/regression tests, TypeScript and production build PASS on the initial feature; latest evidence projection tests/typecheck/full responsive browser rerun PASS.
-- Full authenticated staff/EOD/system/Martin staging regression passed. Latest actual Level 3 emulator passed again after the final Rules change: IT Head verification 35,600, immutable evidence, replay, conflicting assignment, cashier/foreign-tenant/wrong-branch denial, correction locks, no financial mutation and actual POS V2 checkout/replay.
-- Actual Finance/Welfare/Settings UI passes at 360/390/1280px, including inherited white text, mandatory shift, legacy review of the exact six-value example, expected/declared 35,600, variance zero and no sales writes.
-- Final Rules delta is five additions/two replacements inside existing audit_logs only. Reserved verification entries require primary/secondary IT Head, authenticated actor and server time; updates/deletion are denied. Other audit IDs retain existing behavior. No new collection, generic-fallback change, global permission map or compaction change.
-- Source Rules: 196,869 → 197,337 bytes; generated equivalent: 141,655 bytes. Actual hosted compiler/activation-size certification is mandatory before release.
-- Earlier candidates with a separate permission block measured 258,572 / 257,601 / 257,768 executable bytes and were rejected before release. That approach was removed completely. The final implementation reuses the existing protected audit trail and read boundary.
+- Audit and correction dialogs explicitly set dark text on white panels. Browser checks reproduce inherited production white text and verify readable headings and Close.
+- View audit is read-only. Correct EOD remains the separate IT Head action inside the original fourteen-day window.
+- Shift selection is required before revealing totals or submitting. Unresolved receipt evidence blocks totals/variance and submission instead of showing a false zero Expected.
+- The six Masaka receipts from 28 October total UGX 35,600 (8,000 + 5,000 + 6,000 + 1,000 + 1,000 + 14,600). They predate the 29 October shift-capture release. The owner explicitly confirmed all six belong to Day Shift 07:30–17:00.
+- IT Head selects verified receipts, supplies a reason and attests the historical hours. One deterministic `audit_logs/e_<tenant>~<sale>` record per receipt stores the verified date/shift, original receipt timestamp, actor, server timestamp and reason. Replay is safe; conflicting assignments are rejected.
+- Evidence is applied only when the reserved document ID, tenant, branch, receipt and original timestamp match. Existing checkout attribution remains authoritative. No source sale, payment, revenue or ledger is rewritten.
+- Next-day daytime receipts do not block yesterday's day shift; unresolved after-midnight receipts within an overnight shift do block that shift.
 
-No production finance records were seeded or changed by tests. Only the IT Head's explicit in-app verification writes the selected receipt evidence. The dedicated Finance preview for this correction branch is disabled pending Rules activation; existing other Hosting preview workflows remain unchanged. Standard production ordering must verify Rules before Hosting. No Levels 4–6 work.
+## Validation
 
-Owner retest after release:
-1. IT Head → Masaka → EOD → 28 October → Day Shift.
+- `npm test`: 766 unit/regression tests pass.
+- `npm run typecheck` and `npm run build`: pass.
+- `node scripts/run-staff-eod-emulator.mjs`: full authenticated staff, EOD, system and Martin staging regression passes.
+- `EOD_LEVEL3_ONLY=1 node scripts/run-staff-eod-emulator.mjs`: final Rules pass actual-service verification of 35,600, simultaneous requests, replay, conflict rejection, immutable evidence, denied cashier/foreign tenant/wrong branch operations, anonymous denial, ordinary audit CRUD, correction locks and actual POS V2 checkout.
+- `node scripts/run-pos-v2-spark-emulator.mjs`: final Rules pass quotation, atomic revision, role/branch/tenant authorization and legacy repair regressions.
+- `FINANCE_LEVEL=2 node scripts/finance-rebuild-ui-smoke.mjs`: actual Finance/Welfare/Settings components pass at 360/390/1280px. Includes production inherited white text, mandatory shift, exact six-receipt review, expected/declared 35,600 and variance zero.
+- Controlled exact/shortage EOD scenarios preserve sales, payments, revenue, bank, outbox and ledger snapshots.
+
+## Security and release
+
+The only Rules change is inside the existing audit_logs match. Reserved evidence requires primary/secondary IT Head, the authenticated actor and server timestamp. Reserved updates/deletion are denied. Existing ordinary and protected revision audit behavior is preserved. All other collection policies and global helpers remain unchanged.
+
+Source Rules: 197,108 bytes. Generated equivalent release: 141,359 bytes. The actual Firebase compiled-executable activation-size gate passed on commit `429d081da57eee3aeb4dcffde565f23b1e2b86d9` in run [40844003376](https://github.com/radahpeter-hue/PHARMHELM/actions/runs/40844003376), confirming the executable is below Firebase's 256,000-byte limit. Firebase does not return its exact compiled size on success. Authenticated runtime scenarios pass without expression-limit errors. The temporary validation release was unbound to production and removed.
+
+No new collection, global permission map, compiler rewrite, automatic historical migration or Levels 4–6 work. Earlier size-failing candidates were never merged or activated. Production release must activate and verify these exact Rules before Hosting. No live finance records were seeded or changed by tests.
+
+## Owner retest after release
+
+1. Refresh the app. IT Head → Masaka → EOD → 28 October → Day Shift.
 2. Review legacy receipts for this shift → select exactly the six receipts → enter verification reason → attest historical hours → Save verified shift evidence.
 3. Declare 35,600 → Reveal System Totals → Expected 35,600, Variance 0 → submit once.
-4. View audit is readable. Correct EOD edits declarations only within the original fourteen-day window. The 14 October record shown in the screenshot is already outside that window on 29 October.
-
-The first reserved-audit candidate measured 256,596 executable bytes and was rejected before release. The final revision removes the missing-audit GET permission entirely: verification uses the existing tenant list lookup plus create-only writes and resolves concurrent winners by re-query. It uses the existing audit userId/timestamp fields. Simultaneous IT Head verification, replay, conflicts and denied writes pass against the actual Rules again. No existing sale-revision or other collection rule changed.
-
-The no-missing-get candidate measured 256,419 executable bytes and remained blocked. Final audit-match consolidation caches the same create predicates and combines equivalent update/delete checks. Ordinary audit creation/update/deletion is regression-tested alongside immutable reserved entries; no other collection match or global helper changed. Full POS Spark atomic revision/RBAC/legacy-repair runner passes after this consolidation. The final delta in audit_logs is 14 additions/7 replacements, superseding the earlier line count. Hosted size certification must pass before merge.
+4. Confirm no reveal/submission is possible without a shift.
+5. Open View audit: readable details and Close; this view does not edit.
+6. Use Correct EOD on a permitted recent reconciliation. The 14 October record in the screenshot is outside the fourteen-day window on 29 October and must remain locked.
+7. Retry a completed date/shift and verify no duplicate. Confirm POS receipts and financial balances remain unchanged.
