@@ -717,13 +717,13 @@ const Settings = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-2 p-1 bg-zinc-100 rounded-2xl w-fit">
+      <div className="flex items-center gap-2 p-1 bg-zinc-100 rounded-2xl w-fit max-w-full overflow-x-auto">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all",
+              "flex shrink-0 items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all",
               activeTab === tab.id 
                 ? "bg-white text-zinc-900 shadow-sm" 
                 : "text-zinc-500 hover:text-zinc-700"

@@ -75,3 +75,7 @@ Validation: 44 finance/date/shift/money/correction tests PASS; typecheck PASS; r
 Inspection found Report Hub still using obsolete date/shift/expected fields and substituting expected MoMo for declared zero. It now uses canonical business date, saved shift, expected/declared/normalized variance, reason and actual zero. Legacy date/total shapes remain readable without rewriting records.
 
 Validation: 10 focused money/report tests PASS; typecheck PASS.
+
+### Responsive Settings regression — accepted
+
+Actual Settings-to-EOD browser tests save changed day-shift hours and disable evening shift, then mount EOD against the same saved fixture store. EOD offers only the updated saved choices and records the new hours. Verified at 360px and 1280px. The test exposed existing Settings tab-bar page overflow at phone width; the bar is now horizontally scrollable within its viewport. Complete Finance/Welfare/EOD/Settings browser suite passes with no page overflow or runtime/backend requests.

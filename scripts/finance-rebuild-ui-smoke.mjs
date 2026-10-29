@@ -16,7 +16,7 @@ const value={profile,activeBranchId:'masaka',activeBranch:branches[0],assignedBr
 export const useAuth=()=>value;`;
 const fixture = `const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Kampala',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const old=new Date(day+'T12:00:00Z');old.setUTCDate(1);old.setUTCMonth(old.getUTCMonth()-1);old.setUTCDate(10);const oldDay=old.toISOString().slice(0,10);
 const records={
- system_settings:[{id:'settings',tenantId:'test',taxEngineEnabled:false}],
+ system_settings:[{id:'settings',tenantId:'test',taxEngineEnabled:false,featureToggles:{}}],
  staff:[{id:'staff-one',uid:'staff-one',tenantId:'test',staff_code:'MP-001',full_name:'Alex Example',active:true,status:'active',branch_id:'masaka'}, {id:'staff-two',uid:'staff-two',tenantId:'test',staff_code:'MP-002',full_name:'Alex Example',active:true,status:'active',branch_id:'masaka'}, {id:'inactive',tenantId:'test',full_name:'Inactive Employee',active:false,status:'inactive',branch_id:'masaka'}, {id:'cross-tenant',tenantId:'other-tenant',full_name:'Other Tenant Employee',active:true,status:'active',branch_id:'masaka'}],
  branches:[{id:'masaka',name:'Masaka Branch',tenantId:'test',shifts:{dayShift:{enabled:true,startTime:'07:30',endTime:'17:00'},eveningShift:{enabled:true,startTime:'17:00',endTime:'22:00'}}},{id:'other',name:'Other Branch',tenantId:'test'}],
  sales:[{id:'sale',tenantId:'test',branchId:'masaka',status:'completed',paymentMethod:'cash',total:500000,totalAmount:500000,timestamp:day+'T10:00:00Z',items:[]},{id:'other-sale',tenantId:'test',branchId:'other',status:'completed',paymentMethod:'cash',total:300000,totalAmount:300000,timestamp:day+'T10:00:00Z',items:[]}],
@@ -56,7 +56,7 @@ const stubs = {
  export const runTransaction=async(_db,fn)=>{const pending=[];const result=await fn({get:getDoc,set:(ref,data)=>pending.push({ref,data})});if(new URLSearchParams(location.search).has('slowEod'))await new Promise(r=>setTimeout(r,350));for(const {ref,data} of pending){if(ref.path==='eod_reconciliations'&&rows(ref.path).some(r=>r.id===ref.id))throw new Error('Existing audit cannot be replaced');fixtureWrite(ref.path,ref.id,data);}return result;};`,
  exporter: `export const exportRecordsToExcel=async(...args)=>{window.exported=args;};`
 };
-await build({ stdin: { contents: `import React from 'react';import {createRoot} from 'react-dom/client';import Finance from './src/pages/Finance';import Welfare from './src/pages/Welfare';import {Toaster} from 'sonner';const welfare=new URLSearchParams(location.search).get('surface')==='welfare';createRoot(document.getElementById('root')).render(<main className="p-3 bg-zinc-50 text-zinc-900 min-w-0 min-h-screen"><Toaster mobileOffset={8}/><>{welfare?<Welfare/>:<Finance/>}</></main>);`, loader:'tsx', resolveDir:process.cwd() }, bundle:true, format:'iife', outfile:path.join(output,'app.js'), plugins:[{name:'isolated-finance',setup(b){
+await build({ stdin: { contents: `import React from 'react';import {createRoot} from 'react-dom/client';import Finance from './src/pages/Finance';import Settings from './src/pages/Settings';import Welfare from './src/pages/Welfare';import {Toaster} from 'sonner';const root=createRoot(document.getElementById('root'));window.showFixtureSurface=surface=>root.render(<main className="p-3 bg-zinc-50 text-zinc-900 min-w-0 min-h-screen"><Toaster mobileOffset={8}/>{surface==='welfare'?<Welfare/>:surface==='settings'?<Settings/>:<Finance/>}</main>);window.showFixtureSurface(new URLSearchParams(location.search).get('surface'));`, loader:'tsx', resolveDir:process.cwd() }, bundle:true, format:'iife', outfile:path.join(output,'app.js'), plugins:[{name:'isolated-finance',setup(b){
  b.onResolve({filter:/AuthContext$/},()=>({path:'auth',namespace:'stub'}));
  b.onResolve({filter:/TenantContext$/},()=>({path:'tenant',namespace:'stub'}));
  b.onResolve({filter:/\/firebase$/},()=>({path:'firebase',namespace:'stub'}));
@@ -209,6 +209,27 @@ try {
  assert.equal(await treasury.getByRole('button',{name:'Process to Bank',exact:true}).count(),0);
  await fit(treasury,'Audit-only treasury boundary');await treasury.screenshot({path:path.join(output,'treasury-audit-only-390.png'),fullPage:true});await treasury.close();
  console.log('031 EOD declarations do not fund bank, wallets or spendable welfare reserves');
+ for(const width of [360,1280]){
+  const settingsPage=await open(width,'?role=owner&surface=settings');
+  await settingsPage.getByRole('button',{name:'Shift Management',exact:true}).click();
+  await settingsPage.getByRole('heading',{name:'Shift Configuration',exact:true}).waitFor();
+  const dayCard=settingsPage.getByRole('heading',{name:'Day Shift',exact:true}).locator('../../../..');
+  await dayCard.locator('input[type="time"]').first().fill('09:00');
+  const eveningHeader=settingsPage.getByRole('heading',{name:'Evening Shift',exact:true}).locator('../../..');
+  await eveningHeader.locator('label').click();assert.equal(await eveningHeader.locator('input[type="checkbox"]').isChecked(),false);
+  await settingsPage.getByRole('button',{name:'Save Shifts Configuration',exact:true}).click();
+  await settingsPage.getByText('Branch shifts configuration saved successfully!',{exact:true}).waitFor();
+  await fit(settingsPage,'Settings shift editor '+width);await settingsPage.screenshot({path:path.join(output,'settings-shifts-'+width+'.png'),fullPage:true});
+  await settingsPage.evaluate(()=>window.showFixtureSurface('finance'));
+  const choices=settingsPage.getByLabel('Configured Shift',{exact:true});await choices.locator('option[value="dayShift"]').waitFor({state:'attached'});
+  assert.equal(await choices.locator('option[value="eveningShift"]').count(),0);
+  assert.ok((await choices.locator('option[value="dayShift"]').innerText()).includes('09:00'));
+  await choices.selectOption('dayShift');await settingsPage.locator('input[type="number"]').first().fill('500000');
+  await settingsPage.getByRole('button',{name:'Reveal System Totals',exact:true}).click();await settingsPage.getByRole('button',{name:'Submit EOD Audit Report',exact:true}).click();
+  await settingsPage.waitForFunction(()=>window.financeWrites.some(w=>w.name==='eod_reconciliations'));
+  assert.equal(await settingsPage.evaluate(()=>window.financeWrites.find(w=>w.name==='eod_reconciliations').data.shift_start),'09:00');
+  await settingsPage.close();console.log('Settings-to-EOD saved-shift authority passes at '+width+'px');
+ }
  for (const role of ['IT Head','IT Support Staff','Finance Head','owner']) {
   const page=await open(390,'?role='+encodeURIComponent(role));
   await page.getByRole('button',{name:'Management',exact:true}).click();
