@@ -12,7 +12,7 @@ Validation:
 - 766 unit/regression tests, TypeScript and production build PASS on the initial feature; latest evidence projection tests/typecheck/full responsive browser rerun PASS.
 - Full authenticated staff/EOD/system/Martin staging regression passed. Latest actual Level 3 emulator passed again after the final Rules change: IT Head verification 35,600, immutable evidence, replay, conflicting assignment, cashier/foreign-tenant/wrong-branch denial, correction locks, no financial mutation and actual POS V2 checkout/replay.
 - Actual Finance/Welfare/Settings UI passes at 360/390/1280px, including inherited white text, mandatory shift, legacy review of the exact six-value example, expected/declared 35,600, variance zero and no sales writes.
-- Final Rules delta is six additions/two replacements inside existing audit_logs only. Reserved verification entries require primary/secondary IT Head, authenticated actor and server time; updates/deletion are denied. Other audit IDs retain existing behavior. No new collection, generic-fallback change, global permission map or compaction change.
+- Final Rules delta is five additions/two replacements inside existing audit_logs only. Reserved verification entries require primary/secondary IT Head, authenticated actor and server time; updates/deletion are denied. Other audit IDs retain existing behavior. No new collection, generic-fallback change, global permission map or compaction change.
 - Source Rules: 196,869 → 197,337 bytes; generated equivalent: 141,655 bytes. Actual hosted compiler/activation-size certification is mandatory before release.
 - Earlier candidates with a separate permission block measured 258,572 / 257,601 / 257,768 executable bytes and were rejected before release. That approach was removed completely. The final implementation reuses the existing protected audit trail and read boundary.
 
@@ -23,3 +23,5 @@ Owner retest after release:
 2. Review legacy receipts for this shift → select exactly the six receipts → enter verification reason → attest historical hours → Save verified shift evidence.
 3. Declare 35,600 → Reveal System Totals → Expected 35,600, Variance 0 → submit once.
 4. View audit is readable. Correct EOD edits declarations only within the original fourteen-day window. The 14 October record shown in the screenshot is already outside that window on 29 October.
+
+The first reserved-audit candidate measured 256,596 executable bytes and was rejected before release. The final revision removes the missing-audit GET permission entirely: verification uses the existing tenant list lookup plus create-only writes and resolves concurrent winners by re-query. It uses the existing audit userId/timestamp fields. Simultaneous IT Head verification, replay, conflicts and denied writes pass against the actual Rules again. No existing sale-revision or other collection rule changed.
