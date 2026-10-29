@@ -13,7 +13,7 @@ export function EodCorrectionModal({ record, onClose, onSaved }: {record: any; o
       catch (error) { toast.error(error instanceof Error ? error.message : 'Correction failed.'); }
       finally { setBusy(false); }
     }}>
-      <h3 className="font-bold text-lg">Correct EOD — {record.reconciliation_date}</h3>
+      <h3 className="font-bold text-lg">Correct EOD — {record.reconciliation_date} · {record.shift_name || record.shift_id || 'Historical whole-day'}</h3>
       <p className="text-xs text-zinc-500">IT Head only. Corrections close 14 days after the reconciliation date, at Kampala midnight. Expected amounts and the original date remain fixed.</p>
       {EOD_CHANNELS.map(channel => <label key={channel} className="block text-sm capitalize">{channel.replaceAll('_',' ')} declared (UGX)
         <input required type="number" min="0" step="any" className="block border rounded-lg p-2 w-full" value={values[channel]} onChange={e => setValues({...values,[channel]:Number(e.target.value)})} />

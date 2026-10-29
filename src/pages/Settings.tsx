@@ -1,3 +1,4 @@
+import { BRANCH_SHIFT_NAMES, defaultBranchShifts } from '../utils/branchShifts';
 import { isStaffAlias } from '../utils/staffIdentityAudit';
 import { ensureStaffIdentity } from '../services/staffIdentityService';
 import React, { useState, useEffect } from 'react';
@@ -98,11 +99,7 @@ const Settings = () => {
 
   // Per-branch shifts states
   const [selectedShiftBranchId, setSelectedShiftBranchId] = useState<string>('');
-  const [branchShifts, setBranchShifts] = useState({
-    dayShift: { enabled: true, startTime: '07:30', endTime: '17:00' },
-    eveningShift: { enabled: false, startTime: '17:00', endTime: '22:00' },
-    nightShift: { enabled: false, startTime: '22:00', endTime: '07:30' }
-  });
+  const [branchShifts, setBranchShifts] = useState(defaultBranchShifts);
 
   useEffect(() => {
     if (activeBranchId) {
@@ -150,11 +147,7 @@ const Settings = () => {
         }
       });
     } else if (selectedBranch) {
-      setBranchShifts({
-        dayShift: { enabled: true, startTime: '07:30', endTime: '17:00' },
-        eveningShift: { enabled: false, startTime: '17:00', endTime: '22:00' },
-        nightShift: { enabled: false, startTime: '22:00', endTime: '07:30' }
-      });
+      setBranchShifts(defaultBranchShifts());
     }
   }, [selectedShiftBranchId, branches]);
 
@@ -724,13 +717,13 @@ const Settings = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-2 p-1 bg-zinc-100 rounded-2xl w-fit">
+      <div className="flex items-center gap-2 p-1 bg-zinc-100 rounded-2xl w-fit max-w-full overflow-x-auto">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all",
+              "flex shrink-0 items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all",
               activeTab === tab.id 
                 ? "bg-white text-zinc-900 shadow-sm" 
                 : "text-zinc-500 hover:text-zinc-700"
@@ -1873,7 +1866,7 @@ const Settings = () => {
                   <div className="flex items-center gap-3">
                     <span className="text-xl">☀️</span>
                     <div>
-                      <h4 className="font-bold text-zinc-900 text-sm">Day Shift</h4>
+                      <h4 className="font-bold text-zinc-900 text-sm">{BRANCH_SHIFT_NAMES.dayShift}</h4>
                       <p className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Primary Working Hours</p>
                     </div>
                   </div>
@@ -1930,7 +1923,7 @@ const Settings = () => {
                   <div className="flex items-center gap-3">
                     <span className="text-xl">🌆</span>
                     <div>
-                      <h4 className="font-bold text-zinc-900 text-sm">Evening Shift</h4>
+                      <h4 className="font-bold text-zinc-900 text-sm">{BRANCH_SHIFT_NAMES.eveningShift}</h4>
                       <p className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Late Afternoon & Evening Coverage</p>
                     </div>
                   </div>
@@ -1987,7 +1980,7 @@ const Settings = () => {
                   <div className="flex items-center gap-3">
                     <span className="text-xl">🌙</span>
                     <div>
-                      <h4 className="font-bold text-zinc-900 text-sm">Night Shift</h4>
+                      <h4 className="font-bold text-zinc-900 text-sm">{BRANCH_SHIFT_NAMES.nightShift}</h4>
                       <p className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Overnight / Emergency Hours</p>
                     </div>
                   </div>

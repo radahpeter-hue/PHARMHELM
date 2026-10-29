@@ -1,3 +1,7 @@
+import { submitEod } from '../services/eodSubmissionService';
+import { expectedEodSales } from '../utils/eodExpected';
+import { configuredEodShifts } from '../utils/eodShifts';
+import { isBusinessDate, kampalaBusinessDate, timestampBusinessDate } from '../utils/eodBusinessDate';
 import { staffMatchesId } from '../utils/operationalStaff';
 import { PettyCashExportButtons } from '../components/finance/PettyCashExportButtons';
 import { pettyCashIssueRows, pettyCashRequisitionRows } from '../utils/pettyCashExport';
@@ -254,6 +258,18 @@ const BranchFinance: React.FC = () => {
 
 const EODReconciliationTab: React.FC = () => {
   const { profile, activeBranchId } = useAuth();
+  const [configuredBranch, setConfiguredBranch] = useState<Branch | null>(null);
+  useEffect(() => {
+    setConfiguredBranch(null);
+    if (!profile?.tenantId || !activeBranchId) return;
+    return firestoreService.subscribeToCollection<Branch>('branches', profile.tenantId, rows => {
+      setConfiguredBranch(rows.find(b => b.tenantId === profile.tenantId && b.id === activeBranchId) || null);
+    });
+  }, [profile?.tenantId, activeBranchId]);
+  const shifts = configuredEodShifts(configuredBranch?.tenantId === profile?.tenantId && configuredBranch?.id === activeBranchId ? configuredBranch : null);
+  const [shiftId, setShiftId] = useState('');
+  const selectedShift = shifts.find(s => s.id === shiftId);
+  useEffect(() => { setShiftId(''); setRevealed(false); }, [activeBranchId, profile?.tenantId]);
   const isFinanceHead = hasAnyRole(profile, ['Finance Head']);
   const [revealed, setRevealed] = useState(false);
   const [sales, setSales] = useState<Sale[]>([]);
@@ -265,10 +281,12 @@ const EODReconciliationTab: React.FC = () => {
     insurance: 0,
     institutional_credit: 0,
     staff_welfare: 0,
-    date: new Date().toISOString().split('T')[0]
+    date: kampalaBusinessDate()
   });
 
   const [varianceReason, setVarianceReason] = useState('');
+  const submitInFlight = React.useRef(false);
+  const [submitting, setSubmitting] = useState(false);
 
   // Subscribe to actual sales to fetch the dynamic EOD expectation
   useEffect(() => {
@@ -280,71 +298,9 @@ const EODReconciliationTab: React.FC = () => {
     }
   }, [profile?.tenantId]);
 
-  // Dynamically compute system expected values from actual POS data for this branch & date
-  const { computedExpected, relevantSalesCount } = React.useMemo(() => {
-    const targetDate = formData.date;
-    const filtered = sales.filter(s => {
-      const isCompleted = s.status === 'completed' || s.status === 'active';
-      const isSameBranch = s.branchId === activeBranchId;
-      if (!s.timestamp) return false;
-      const saleDate = s.timestamp.split('T')[0];
-      return isCompleted && isSameBranch && saleDate === targetDate;
-    });
-
-    const cash: number[] = [];
-    const momo: number[] = [];
-    const airtel: number[] = [];
-    const card: number[] = [];
-    const insurance: number[] = [];
-    const instCredit: number[] = [];
-    const staffWelfare: number[] = [];
-
-    filtered.forEach(s => {
-      const totalAmount = eodAmountNumber(s.totalAmount ?? s.total ?? 0);
-      const isSplit = s.paymentMethod === 'staff_welfare' && s.secondaryPaymentMethod;
-      
-      if (isSplit) {
-        const welfareVal = eodAmountNumber(s.welfareAmount ?? 0);
-        const secVal = eodAmountNumber(s.secondaryAmount ?? (totalAmount - welfareVal));
-        
-        // Welfare component
-        staffWelfare.push(welfareVal);
-        
-        // Secondary payment component
-        const secMethod = s.secondaryPaymentMethod;
-        if (secMethod === 'cash') cash.push(secVal);
-        else if (secMethod === 'mtn_momo') momo.push(secVal);
-        else if (secMethod === 'airtel_money') airtel.push(secVal);
-        else if (secMethod === 'card') card.push(secVal);
-        else if (secMethod === 'insurance') insurance.push(secVal);
-        else if (secMethod === 'institutional_credit') instCredit.push(secVal);
-      } else {
-        // Simple direct payment
-        const pMethod = s.paymentMethod;
-        if (pMethod === 'cash') cash.push(totalAmount);
-        else if (pMethod === 'mtn_momo') momo.push(totalAmount);
-        else if (pMethod === 'airtel_money') airtel.push(totalAmount);
-        else if (pMethod === 'card') card.push(totalAmount);
-        else if (pMethod === 'insurance') insurance.push(totalAmount);
-        else if (pMethod === 'institutional_credit') instCredit.push(totalAmount);
-        else if (pMethod === 'staff_welfare') staffWelfare.push(totalAmount);
-      }
-    });
-
-    return {
-      computedExpected: {
-        cash: sumEodAmounts(cash),
-        momo: sumEodAmounts(momo),
-        airtel: sumEodAmounts(airtel),
-        card: sumEodAmounts(card),
-        insurance: sumEodAmounts(insurance),
-        institutional_credit: sumEodAmounts(instCredit),
-        staff_welfare: sumEodAmounts(staffWelfare),
-        total: sumEodAmounts([...cash, ...momo, ...airtel, ...card, ...insurance, ...instCredit, ...staffWelfare])
-      },
-      relevantSalesCount: filtered.length
-    };
-  }, [sales, formData.date, activeBranchId]);
+  const { computedExpected, relevantSalesCount, unattributedSalesCount } = React.useMemo(() =>
+    expectedEodSales(sales, profile?.tenantId || '', activeBranchId || '', formData.date, shiftId),
+    [sales, profile?.tenantId, activeBranchId, formData.date, shiftId]);
 
   const declaredTotals = sumEodAmounts([formData.cash, formData.mtn, formData.airtel, formData.card, formData.insurance, formData.institutional_credit, formData.staff_welfare]);
 
@@ -359,7 +315,11 @@ const EODReconciliationTab: React.FC = () => {
   ]);
 
   const handleSubmit = async () => {
-    if (!profile) return;
+    if (submitInFlight.current || !profile) return;
+    if (!activeBranchId || !selectedShift) { toast.error('Select a configured shift for this branch.'); return; }
+    if (!isBusinessDate(formData.date)) { toast.error('Select a valid business date.'); return; }
+    submitInFlight.current = true;
+    setSubmitting(true);
     try {
       const cash_var = eodVariance(formData.cash, computedExpected.cash);
       const mtn_var = eodVariance(formData.mtn, computedExpected.momo);
@@ -379,9 +339,13 @@ const EODReconciliationTab: React.FC = () => {
         return;
       }
 
-      await firestoreService.addDocument('eod_reconciliations', {
+      const result = await submitEod({
         tenantId: profile.tenantId,
-        branch_id: activeBranchId || 'main',
+        branch_id: activeBranchId,
+        shift_id: selectedShift.id,
+        shift_name: selectedShift.name,
+        shift_start: selectedShift.startTime,
+        shift_end: selectedShift.endTime,
         reconciliation_date: formData.date,
         cashier_id: profile.uid,
         
@@ -421,9 +385,9 @@ const EODReconciliationTab: React.FC = () => {
         status: 'Pending',
         logged_by: profile.uid,
         created_at: new Date().toISOString()
-      });
+      }, profile);
 
-      toast.success('EOD Reconciliation submitted successfully!');
+      toast.success(result.replayed ? 'This shift is already reconciled. Existing audit retained.' : 'EOD Reconciliation submitted successfully!');
       setRevealed(false);
       setFormData({
         cash: 0,
@@ -433,30 +397,34 @@ const EODReconciliationTab: React.FC = () => {
         insurance: 0,
         institutional_credit: 0,
         staff_welfare: 0,
-        date: new Date().toISOString().split('T')[0]
+        date: kampalaBusinessDate()
       });
       setVarianceReason('');
     } catch (error) {
-      toast.error('Failed to submit reconciliation');
+      toast.error(error instanceof Error ? error.message : 'Failed to submit reconciliation');
+    } finally {
+      submitInFlight.current = false;
+      setSubmitting(false);
     }
   };
 
 
   return (
     <div className="max-w-6xl mx-auto bg-white p-6 sm:p-8 rounded-3xl border border-zinc-200 shadow-xl animate-fade-in">
+      <fieldset disabled={submitting} className="min-w-0">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8 pb-6 border-b border-zinc-100">
         <div>
           <h2 className="text-2xl font-black text-zinc-900 tracking-tight">Daily EOD Reconciliation</h2>
-          <p className="text-zinc-500 text-sm mt-1">Reconcile transaction tallies against physical and voucher counts for this branch.</p>
+          <p className="text-zinc-500 text-sm mt-1">Compare the selected shift’s POS totals with declared amounts. Submitting an audit does not bank cash or post revenue.</p>
           <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold border border-emerald-100">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
-            {relevantSalesCount} Transaction{relevantSalesCount === 1 ? '' : 's'} recorded on this date
+            {relevantSalesCount} Transaction{relevantSalesCount === 1 ? '' : 's'} recorded for this shift and business date
           </div>
         </div>
         <div className="text-left sm:text-right">
-          <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Select Operations Date</p>
+          <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Business Date (Kampala)</p>
           <input 
-            type="date"
+            type="date" aria-label="EOD business date"
             className="px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20 font-bold text-sm text-zinc-800"
             value={formData.date}
             onChange={(e) => {
@@ -467,6 +435,16 @@ const EODReconciliationTab: React.FC = () => {
         </div>
       </div>
 
+      <div className="mb-6 space-y-2">
+        <label htmlFor="eod-shift" className="text-xs font-bold text-zinc-600">Configured Shift</label>
+        <select id="eod-shift" value={shiftId} onChange={e => { setShiftId(e.target.value); setRevealed(false); }} className="block w-full rounded-xl border border-zinc-200 p-3">
+          <option value="">Select a shift</option>
+          {shifts.map(shift => <option key={shift.id} value={shift.id}>{shift.name} ({shift.startTime}–{shift.endTime})</option>)}
+        </select>
+        {unattributedSalesCount > 0 && <p role="status" className="text-sm text-amber-800">{unattributedSalesCount} sale(s) in this date window have no saved shift evidence and are excluded from expected totals. Historical sales cannot be assigned using today's Settings. Review POS history before submitting.</p>}
+        <p className="text-xs text-zinc-500">Business date is the date the shift starts in Kampala. An overnight shift includes its after-midnight sales.</p>
+        {!shifts.length && <p className="text-sm text-amber-700">Configure and enable branch shifts in Settings before reconciling.</p>}
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Left column: Inputs */}
         <div className="lg:col-span-7 space-y-6">
@@ -608,10 +586,10 @@ const EODReconciliationTab: React.FC = () => {
                 
                 <button 
                   onClick={handleSubmit}
-                  disabled={needsVarianceReason && !varianceReason.trim()}
+                  disabled={submitting || !selectedShift || (needsVarianceReason && !varianceReason.trim())}
                   className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-lg transition-all shadow-xl shadow-emerald-600/10"
                 >
-                  Submit EOD Audit Report
+                  {submitting ? 'Submitting EOD Audit Report…' : 'Submit EOD Audit Report'}
                 </button>
               </div>
             </div>
@@ -630,6 +608,8 @@ const EODReconciliationTab: React.FC = () => {
           )}
         </div>
       </div>
+      </fieldset>
+      {activeBranchId && <div className="mt-10 border-t border-zinc-200 pt-6"><NewEodReconciliationBox branchId={activeBranchId} /></div>}
     </div>
   );
 };
@@ -640,9 +620,11 @@ const VarianceRow: React.FC<{ label: string, declared: number, expected: number 
     <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100 flex items-center justify-between">
       <div>
         <p className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider">{label}</p>
-        <p className="text-xs text-zinc-500 mt-0.5">Exp: UGX {(expected || 0).toLocaleString()}</p>
+        <p className="text-xs text-zinc-500 mt-0.5">Expected: UGX {formatEodAmount(expected || 0)}</p>
+        <p className="text-xs text-zinc-500">Declared: UGX {formatEodAmount(declared || 0)}</p>
       </div>
       <div className="text-right">
+        <p className="text-[10px] text-zinc-500">Variance · {variance < 0 ? 'Shortage' : variance > 0 ? 'Overage' : 'Balanced'}</p>
         <p className={cn(
           "text-sm font-black",
           variance === 0 ? "text-emerald-600" : "text-red-500"

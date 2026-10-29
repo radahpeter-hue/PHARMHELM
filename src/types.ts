@@ -1,3 +1,4 @@
+import type { PosShiftAttribution } from './utils/posShiftAttribution';
 export type UserRole =
   | 'owner'
   | 'admin'
@@ -676,6 +677,7 @@ export interface OperationalInventoryMaintenance {
 }
 
 export interface Sale {
+  eodShift?: PosShiftAttribution; // Captured from saved branch Settings at checkout. No historical inference.
   id: string;
   tenantId: string;
   branchId: string;
@@ -878,7 +880,11 @@ export interface EODReconciliation {
   id: string;
   tenantId: string;
   branch_id: string;
-  reconciliation_date: string;
+  reconciliation_date: string; // Canonical business date (Africa/Kampala).
+  shift_id?: string; // Absent on historical whole-day reconciliations.
+  shift_name?: string;
+  shift_start?: string;
+  shift_end?: string;
   cashier_id: string;
   
   cash_expected: number;

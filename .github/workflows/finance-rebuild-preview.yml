@@ -1,4 +1,4 @@
-name: Finance Rebuild Levels 1-2 Preview
+name: Finance Rebuild Validation and Preview
 
 on:
   pull_request:
@@ -20,12 +20,19 @@ on:
       - 'src/components/finance/FinanceDateRangeFields.tsx'
       - 'src/utils/branchExpensePolicy.ts'
       - 'src/utils/eodMoney.ts'
+      - 'src/utils/eod*.ts'
+      - 'src/utils/branchShifts.ts'
+      - 'src/utils/posShiftAttribution.ts'
+      - 'src/services/eodSubmissionService.ts'
+      - 'scripts/eod-level3-emulator.mjs'
+      - 'src/components/analytics/ReportHub.tsx'
       - 'src/utils/financeDateFilters.ts'
       - 'src/utils/profitability*.ts'
       - 'src/types.ts'
       - 'tests/finance-rebuild*.test.ts'
       - 'scripts/finance-rebuild-ui-smoke.mjs'
       - 'docs/finance-rebuild/**'
+      - 'docs/finance-rebuild-level3/**'
       - '.github/workflows/finance-rebuild-preview.yml'
 
 permissions:
@@ -37,7 +44,7 @@ concurrency:
 
 jobs:
   validate:
-    if: github.head_ref == 'feature/finance-rebuild-levels-1-2' || github.head_ref == 'feature/staff-identity-petty-cash-followup' || github.head_ref == 'fix/staff-duplicates-readable-reports'
+    if: github.head_ref == 'feature/finance-rebuild-levels-1-2' || github.head_ref == 'feature/staff-identity-petty-cash-followup' || github.head_ref == 'fix/staff-duplicates-readable-reports' || github.head_ref == 'feature/finance-rebuild-level3-eod'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -56,7 +63,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       - run: npm install --prefix /tmp/staff-backfill-runtime --no-save --ignore-scripts firebase-admin@13.6.0
-      - name: Staff number permanence and EOD lock database acceptance
+      - name: Staff identity, shift EOD, concurrency and checkout database acceptance
         run: node scripts/run-staff-eod-emulator.mjs
       - run: npm run build
         env:
@@ -71,7 +78,7 @@ jobs:
           await writeFile('dist/finance-build.json', JSON.stringify({
             commit: process.env.BUILD_SHA,
             base: process.env.BASE_SHA,
-            scope: 'Finance Levels 1-2 and staff identity/EOD follow-up',
+            scope: 'Finance rebuild and Level 3 shift EOD audit',
             production: false
           }, null, 2));
           JS
@@ -98,7 +105,7 @@ jobs:
 
   preview:
     needs: validate
-    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/finance-rebuild-levels-1-2' || github.head_ref == 'feature/staff-identity-petty-cash-followup' || github.head_ref == 'fix/staff-duplicates-readable-reports')
+    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/finance-rebuild-levels-1-2' || github.head_ref == 'feature/staff-identity-petty-cash-followup' || github.head_ref == 'fix/staff-duplicates-readable-reports' || github.head_ref == 'feature/finance-rebuild-level3-eod')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

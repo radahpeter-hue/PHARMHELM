@@ -1,3 +1,4 @@
+import { capturePosShift } from '../../utils/posShiftAttribution';
 import {
   collection,
   doc,
@@ -567,12 +568,15 @@ export async function writeCheckoutV2Transaction(request: CheckoutV2Request, pre
       });
     }
 
+    const saleTimestamp = new Date().toISOString();
+    const eodShift = capturePosShift(liveBranch, saleTimestamp);
     const sale: Sale = {
       id: prepared.saleId,
       tenantId: prepared.authority.tenantId,
       branchId: prepared.authority.branch.id,
       receiptNumber,
-      timestamp: new Date().toISOString(),
+      timestamp: saleTimestamp,
+      eodShift,
       items: tax.items,
       subtotal: calculation.grossTotal,
       tax: 0,

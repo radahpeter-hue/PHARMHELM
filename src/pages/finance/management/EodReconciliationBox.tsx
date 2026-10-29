@@ -1,3 +1,5 @@
+import { EodAuditDialog, eodAuditTime } from '../../../components/finance/EodAuditDialog';
+import { kampalaBusinessDate } from '../../../utils/eodBusinessDate';
 import { staffMatchesId } from '../../../utils/operationalStaff';
 import { canCorrectEod } from '../../../utils/eodEditPolicy';
 import { EodCorrectionModal } from '../../../components/finance/EodCorrectionModal';
@@ -16,6 +18,14 @@ interface EODReconciliation {
   tenantId: string;
   branch_id: string;
   reconciliation_date: string;
+  shift_id?: string;
+  shift_name?: string;
+  shift_start?: string;
+  shift_end?: string;
+  submitted_at?: unknown;
+  corrected_by?: string;
+  corrected_at?: unknown;
+  correction_reason?: string;
   cashier_id: string;
   
   cash_expected: number;
@@ -63,8 +73,9 @@ interface Branch {
   tenantId: string;
 }
 
-export const EodReconciliationBox: React.FC = () => {
+export const EodReconciliationBox: React.FC<{branchId?: string}> = ({branchId}) => {
   const { profile } = useAuth();
+  const [auditRecord, setAuditRecord] = useState<EODReconciliation | null>(null);
   const [editing, setEditing] = useState<EODReconciliation | null>(null);
   const [reconciliations, setReconciliations] = useState<EODReconciliation[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -73,9 +84,8 @@ export const EodReconciliationBox: React.FC = () => {
 
   // Date range filters based on reconciliation date (defaults to current month)
   const [dateRange, setDateRange] = useState(() => {
-    const today = new Date();
-    const start = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-    const end = today.toISOString().split('T')[0];
+    const end = kampalaBusinessDate();
+    const start = end.slice(0, 7) + '-01';
     return { start, end };
   });
 
@@ -148,7 +158,9 @@ export const EodReconciliationBox: React.FC = () => {
   // Client-side filtering
   const filteredReconciliations = useMemo(() => {
     return reconciliations.filter(rec => {
+      if (rec.tenantId !== profile?.tenantId) return false;
       // Branch filter
+      if (branchId && rec.branch_id !== branchId) return false;
       if (selectedBranchId !== 'All' && rec.branch_id !== selectedBranchId) return false;
 
       // Variance Type Filter
@@ -159,7 +171,7 @@ export const EodReconciliationBox: React.FC = () => {
 
       return true;
     });
-  }, [reconciliations, selectedBranchId, selectedVarianceType]);
+  }, [reconciliations, selectedBranchId, selectedVarianceType, branchId, profile?.tenantId]);
 
   // Paginated Reconciliations
   const paginatedReconciliations = useMemo(() => {
@@ -175,7 +187,7 @@ export const EodReconciliationBox: React.FC = () => {
 
   // Calculations for Totals Summary Row across ALL filtered rows
   const totals = useMemo(() => {
-    let cash = 0, card = 0, momo = 0, airtel = 0, credit = 0, welfare = 0, revenue = 0, variance = 0;
+    let cash = 0, card = 0, momo = 0, airtel = 0, credit = 0, welfare = 0, declared = 0, variance = 0;
     filteredReconciliations.forEach(rec => {
       cash += rec.cash_actual || 0;
       card += rec.card_actual || 0;
@@ -183,12 +195,12 @@ export const EodReconciliationBox: React.FC = () => {
       airtel += rec.airtel_actual || 0;
       credit += rec.institutional_credit_actual || 0;
       welfare += rec.staff_welfare_actual || 0;
-      revenue += rec.total_actual || 0;
+      declared += rec.total_actual || 0;
 
     });
     const variances = filteredReconciliations.map(eodRecordVariance);
     variance = eodVariance(sumEodAmounts(variances.filter(v => v >= 0)), sumEodAmounts(variances.filter(v => v < 0).map(v => -v)));
-    return { cash, card, momo, airtel, credit, welfare, revenue, variance };
+    return { cash, card, momo, airtel, credit, welfare, declared, variance, expected: sumEodAmounts(filteredReconciliations.map(rec => rec.total_expected ?? 0)) };
   }, [filteredReconciliations]);
 
   // Export to Excel through the shared hardened exporter
@@ -205,13 +217,16 @@ export const EodReconciliationBox: React.FC = () => {
       return {
         'Date': formattedDate,
         'Branch': branchName,
+        'Shift': rec.shift_name || rec.shift_id || 'Historical whole-day — shift not recorded',
+        'Submitted At (EAT)': eodAuditTime(rec.submitted_at || rec.created_at),
         'Cash (UGX)': rec.cash_actual || 0,
         'Card (UGX)': rec.card_actual || 0,
         'MoMo (UGX)': rec.momo_actual || 0,
         'Airtel (UGX)': rec.airtel_actual || 0,
         'Institution Credits (UGX)': rec.institutional_credit_actual || 0,
         'Welfare (UGX)': rec.staff_welfare_actual || 0,
-        'Total Revenue (UGX)': rec.total_actual || 0,
+        'Expected Total (UGX)': rec.total_expected ?? 0,
+        'Declared Total (UGX)': rec.total_actual ?? 0,
         'Variance (UGX)': eodRecordVariance(rec),
         'Reconciled By': getLoggedByName(rec.logged_by)
       };
@@ -221,13 +236,16 @@ export const EodReconciliationBox: React.FC = () => {
     exportData.push({
       'Date': 'TOTALS',
       'Branch': '',
+      'Shift': '',
+      'Submitted At (EAT)': '',
       'Cash (UGX)': totals.cash,
       'Card (UGX)': totals.card,
       'MoMo (UGX)': totals.momo,
       'Airtel (UGX)': totals.airtel,
       'Institution Credits (UGX)': totals.credit,
       'Welfare (UGX)': totals.welfare,
-      'Total Revenue (UGX)': totals.revenue,
+      'Expected Total (UGX)': totals.expected,
+      'Declared Total (UGX)': totals.declared,
       'Variance (UGX)': totals.variance,
       'Reconciled By': ''
     });
@@ -263,7 +281,7 @@ export const EodReconciliationBox: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-black text-zinc-900 tracking-tight">EOD Reconciliation Log</h2>
-          <p className="text-sm text-zinc-500">All branch end-of-day reconciliations.</p>
+          <p className="text-sm text-zinc-500">Shift audits by business date. Variance = Declared − Expected; a negative amount is a shortage.</p>
         </div>
         <button
           onClick={handleExport}
@@ -281,7 +299,7 @@ export const EodReconciliationBox: React.FC = () => {
             <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Date From:</span>
             <input
               type="date"
-              value={dateRange.start}
+              aria-label="EOD history from" value={dateRange.start}
               onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
               className="border border-zinc-200 px-3 py-1.5 rounded-xl text-sm font-medium outline-none text-zinc-700 focus:border-[#1A5E38]"
             />
@@ -290,7 +308,7 @@ export const EodReconciliationBox: React.FC = () => {
             <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Date To:</span>
             <input
               type="date"
-              value={dateRange.end}
+              aria-label="EOD history to" value={dateRange.end}
               onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
               className="border border-zinc-200 px-3 py-1.5 rounded-xl text-sm font-medium outline-none text-zinc-700 focus:border-[#1A5E38]"
             />
@@ -302,7 +320,8 @@ export const EodReconciliationBox: React.FC = () => {
           <div className="flex items-center gap-2 bg-zinc-50 border border-zinc-200 px-3 py-2 rounded-xl">
             <Filter size={16} className="text-zinc-400" />
             <select
-              value={selectedBranchId}
+              aria-label="EOD history branch" disabled={!!branchId}
+              value={branchId || selectedBranchId}
               onChange={(e) => setSelectedBranchId(e.target.value)}
               className="bg-transparent border-none text-sm outline-none w-full text-zinc-800"
             >
@@ -348,14 +367,15 @@ export const EodReconciliationBox: React.FC = () => {
               <thead>
                 <tr className="bg-zinc-50 border-b border-zinc-200 font-bold text-zinc-500 uppercase tracking-wider">
                   <th className="px-4 py-4">Date</th>
-                  <th className="px-4 py-4">Branch</th>
+                  <th className="px-4 py-4">Branch / Shift</th>
                   <th className="px-4 py-4 text-right">Cash (UGX)</th>
                   <th className="px-4 py-4 text-right">Card (UGX)</th>
                   <th className="px-4 py-4 text-right">MoMo (UGX)</th>
                   <th className="px-4 py-4 text-right">Airtel (UGX)</th>
                   <th className="px-4 py-4 text-right">Credits (UGX)</th>
                   <th className="px-4 py-4 text-right">Welfare (UGX)</th>
-                  <th className="px-4 py-4 text-right">Total Rev (UGX)</th>
+                  <th className="px-4 py-4 text-right">Expected (UGX)</th>
+                  <th className="px-4 py-4 text-right">Declared (UGX)</th>
                   <th className="px-4 py-4 text-right">Variance (UGX)</th>
                   <th className="px-4 py-4">Reconciled By</th><th className="px-4 py-4">Correction access</th>
                 </tr>
@@ -367,14 +387,15 @@ export const EodReconciliationBox: React.FC = () => {
                   return (
                     <tr key={rec.id} className="hover:bg-zinc-50/30 transition-all">
                       <td className="px-4 py-4 text-zinc-500 font-mono">{formattedDate}</td>
-                      <td className="px-4 py-4 font-bold text-zinc-900">{branchName}</td>
+                      <td className="px-4 py-4 font-bold text-zinc-900">{branchName}<p className="text-xs font-normal text-zinc-500">{rec.shift_name || rec.shift_id || 'Historical whole-day — shift not recorded'}</p><button className="underline text-emerald-700 mt-1" onClick={() => setAuditRecord(rec)}>View audit</button></td>
                       <td className="px-4 py-4 text-right font-mono">{rec.cash_actual?.toLocaleString() || 0}</td>
                       <td className="px-4 py-4 text-right font-mono">{rec.card_actual?.toLocaleString() || 0}</td>
                       <td className="px-4 py-4 text-right font-mono">{rec.momo_actual?.toLocaleString() || 0}</td>
                       <td className="px-4 py-4 text-right font-mono">{rec.airtel_actual?.toLocaleString() || 0}</td>
                       <td className="px-4 py-4 text-right font-mono">{rec.institutional_credit_actual?.toLocaleString() || 0}</td>
                       <td className="px-4 py-4 text-right font-mono">{rec.staff_welfare_actual?.toLocaleString() || 0}</td>
-                      <td className="px-4 py-4 text-right font-mono font-bold text-zinc-950">{rec.total_actual?.toLocaleString() || 0}</td>
+                      <td className="px-4 py-4 text-right font-mono">{formatEodAmount(rec.total_expected ?? 0)}</td>
+                      <td className="px-4 py-4 text-right font-mono font-bold text-zinc-950">{formatEodAmount(rec.total_actual ?? 0)}</td>
                       <td className="px-4 py-4 text-right font-mono">{formatVariance(eodRecordVariance(rec))}</td>
                       <td className="px-4 py-4 text-zinc-500 truncate max-w-[120px]">{getLoggedByName(rec.logged_by)}</td>
                       <td className="px-4 py-4">{canCorrectEod(profile, rec) ? <button className="underline text-emerald-700" onClick={() => setEditing(rec)}>Correct EOD</button> : 'Locked'}</td>
@@ -392,7 +413,8 @@ export const EodReconciliationBox: React.FC = () => {
                   <td className="px-4 py-4 text-right font-mono">{totals.airtel.toLocaleString()}</td>
                   <td className="px-4 py-4 text-right font-mono">{totals.credit.toLocaleString()}</td>
                   <td className="px-4 py-4 text-right font-mono">{totals.welfare.toLocaleString()}</td>
-                  <td className="px-4 py-4 text-right font-mono">{totals.revenue.toLocaleString()}</td>
+                  <td className="px-4 py-4 text-right font-mono">{formatEodAmount(totals.expected)}</td>
+                  <td className="px-4 py-4 text-right font-mono">{formatEodAmount(totals.declared)}</td>
                   <td className="px-4 py-4 text-right font-mono">{formatVariance(totals.variance)}</td>
                   <td className="px-4 py-4"></td><td className="px-4 py-4"></td>
                 </tr>
@@ -426,7 +448,8 @@ export const EodReconciliationBox: React.FC = () => {
           </div>
         )}
       </div>
-      {editing && <EodCorrectionModal record={editing} onClose={() => setEditing(null)} onSaved={fetchData} />}
+      {auditRecord?.tenantId === profile?.tenantId && auditRecord && <EodAuditDialog record={auditRecord} staff={staffList} onClose={() => setAuditRecord(null)} />}
+      {editing?.tenantId === profile?.tenantId && editing && <EodCorrectionModal record={editing} onClose={() => setEditing(null)} onSaved={fetchData} />}
     </div>
   );
 };

@@ -1,3 +1,4 @@
+import { eodReportRecord } from '../../utils/eodReport';
 import { isActiveSale } from '../../utils/activeSales';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -118,7 +119,7 @@ export const ReportHub: React.FC = () => {
   });
 
   const filteredEods = eodReconciliations.filter(e => {
-    const d = (e.date || '').split('T')[0];
+    const d = eodReportRecord(e).businessDate;
     return d >= startDate && d <= endDate;
   });
 
@@ -201,17 +202,13 @@ export const ReportHub: React.FC = () => {
         r.status
       ]);
     } else if (reportName.includes('Reconciliation') || reportName.includes('EOD')) {
-      headers = ["Reconciliation Date", "Shift", "Expected Sales (UGX)", "Actual Cash Sales", "Actual MoMo Sales", "Institutional Credit Sale", "Welfare Deductions", "Status"];
-      rows = filteredEods.map(e => [
-        e.date || '',
-        e.shift || 'Full Day',
-        (e.sales_expected || 0).toString(),
-        (e.cash_actual || 0).toString(),
-        (e.momo_actual || e.momo_expected || 0).toString(),
-        (e.institutional_credit_actual || 0).toString(),
-        (e.staff_welfare_actual || 0).toString(),
-        e.status || 'Verified'
-      ]);
+      headers = ["Business Date", "Shift", "Expected (UGX)", "Declared (UGX)", "Variance (UGX)", "Declared Cash", "Declared MoMo", "Declared Institutional Credit", "Declared Welfare", "Variance Reason", "Status"];
+      rows = filteredEods.map(e => {
+        const report = eodReportRecord(e);
+        return [report.businessDate, report.shift, String(report.expected), String(report.declared), String(report.variance),
+          String(e.cash_actual ?? 0), String(e.momo_actual ?? 0), String(e.institutional_credit_actual ?? 0),
+          String(e.staff_welfare_actual ?? 0), e.variance_reason || '', e.status || 'Not recorded'];
+      });
     } else {
       // General fallbacks
       headers = ["Reference ID", "Report Module", "Query Range Start", "Query Range End", "Record Count", "Status"];

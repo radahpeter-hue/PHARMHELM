@@ -19,19 +19,6 @@ import { collection, query, where, getDocs, addDoc, Timestamp } from 'firebase/f
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
 
-interface EODReconciliation {
-  id: string;
-  tenantId: string;
-  reconciliation_date: string;
-  cash_actual: number;
-  card_actual: number;
-  momo_actual: number;
-  airtel_actual: number;
-  staff_welfare_actual: number;
-  created_at?: string;
-  updatedAt?: any;
-}
-
 interface CashTransfer {
   id: string;
   tenantId: string;
@@ -60,7 +47,6 @@ interface WelfareAllocation {
 
 export const CashAndBanking: React.FC = () => {
   const { profile } = useAuth();
-  const [eodList, setEodList] = useState<EODReconciliation[]>([]);
   const [transfers, setTransfers] = useState<CashTransfer[]>([]);
   const [receivables, setReceivables] = useState<CreditReceivable[]>([]);
   const [allocations, setAllocations] = useState<WelfareAllocation[]>([]);
@@ -81,14 +67,6 @@ export const CashAndBanking: React.FC = () => {
     if (!profile?.tenantId) return;
     setLoading(true);
     try {
-      // 1. Fetch all EOD Reconciliations
-      const eodSnap = await getDocs(query(
-        collection(db, 'eod_reconciliations'),
-        where('tenantId', '==', profile.tenantId)
-      ));
-      const eodData = eodSnap.docs.map(doc => ({ ...(doc.data() as any), id: doc.id })) as EODReconciliation[];
-      setEodList(eodData);
-
       // 2. Fetch all Cash Transfers
       const transferSnap = await getDocs(query(
         collection(db, 'cashTransfers'),
@@ -128,16 +106,9 @@ export const CashAndBanking: React.FC = () => {
   const { accounts: paymentAccounts } = useManagementPaymentAccounts();
   // Aggregate sums
   const memoizedCalculations = useMemo(() => {
-    // A. Direct EOD totals
-    const totalEodCash = eodList.reduce((acc, curr) => acc + (curr.cash_actual || 0), 0);
-    const totalEodCard = eodList.reduce((acc, curr) => acc + (curr.card_actual || 0), 0);
-    const totalEodMomo = eodList.reduce((acc, curr) => acc + (curr.momo_actual || 0), 0);
-    const totalEodAirtel = eodList.reduce((acc, curr) => acc + (curr.airtel_actual || 0), 0);
-    const totalEodWelfareUsed = eodList.reduce((acc, curr) => acc + (curr.staff_welfare_actual || 0), 0);
-
+    // Reconciliation declarations are audit evidence, never treasury funding.
+    // No wallet/current welfare balance is established by this view's existing records.
     // B. Transfer deductions
-    const totalTransfersFromMomo = transfers.filter(t => t.fromPortfolio === 'momo').reduce((acc, curr) => acc + (curr.amount || 0), 0);
-    const totalTransfersFromAirtel = transfers.filter(t => t.fromPortfolio === 'airtel').reduce((acc, curr) => acc + (curr.amount || 0), 0);
     const totalTransfersFromWelfare = transfers.filter(t => t.fromPortfolio === 'welfare').reduce((acc, curr) => acc + (curr.amount || 0), 0);
 
     const totalTransferredToBanked = transfers.filter(t => t.toPortfolio === 'banked').reduce((acc, curr) => acc + (curr.amount || 0), 0);
@@ -148,19 +119,19 @@ export const CashAndBanking: React.FC = () => {
 
     // PORTFOLIO 1: BANKED CASH
     const registeredBank = paymentAccounts.find(account=>account.kind==='bank'&&account.initialized);
-    const bankedCash = registeredBank ? registeredBank.balanceUGX : totalEodCash + totalEodCard + totalTransferredToBanked - totalTransferredFromBanked;
+    const bankedCash = registeredBank ? registeredBank.balanceUGX : totalTransferredToBanked - totalTransferredFromBanked;
 
     // PORTFOLIO 2: MTN MOMO
-    const momoBalance = Math.max(0, totalEodMomo - totalTransfersFromMomo);
+    const momoBalance = 0;
 
     // PORTFOLIO 3: AIRTEL MONEY
-    const airtelBalance = Math.max(0, totalEodAirtel - totalTransfersFromAirtel);
+    const airtelBalance = 0;
 
     // PORTFOLIO 4: CREDITS RECEIVABLE
     const creditsReceivable = receivables.reduce((acc, curr) => acc + (curr.outstanding_ugx || 0), 0);
 
     // PORTFOLIO 5: STAFF WELFARE FUND
-    const welfareBalance = Math.max(0, totalWelfareAllocated - totalEodWelfareUsed - totalTransfersFromWelfare);
+    const welfareBalance = 0;
 
     return {
       bankedCash,
@@ -169,9 +140,9 @@ export const CashAndBanking: React.FC = () => {
       creditsReceivable,
       welfareBalance,
       welfareAllocated: totalWelfareAllocated,
-      welfareUsed: totalEodWelfareUsed
+      welfareTransferred: totalTransfersFromWelfare
     };
-  }, [eodList, transfers, receivables, allocations, paymentAccounts]);
+  }, [transfers, receivables, allocations, paymentAccounts]);
 
   // Last update timers
   const lastUpdatedTimestamps = useMemo(() => {
@@ -186,7 +157,6 @@ export const CashAndBanking: React.FC = () => {
 
     // Banked
     const bankedDates = [
-      ...eodList.map(e => e.created_at ? new Date(e.created_at) : null),
       ...transfers.map(t => {
         if (!t.processedAt) return null;
         return t.processedAt.toDate ? t.processedAt.toDate() : new Date(t.processedAt);
@@ -195,7 +165,6 @@ export const CashAndBanking: React.FC = () => {
 
     // MoMo
     const momoDates = [
-      ...eodList.filter(e => (e.momo_actual || 0) > 0).map(e => e.created_at ? new Date(e.created_at) : null),
       ...transfers.filter(t => t.fromPortfolio === 'momo').map(t => {
         if (!t.processedAt) return null;
         return t.processedAt.toDate ? t.processedAt.toDate() : new Date(t.processedAt);
@@ -204,7 +173,6 @@ export const CashAndBanking: React.FC = () => {
 
     // Airtel
     const airtelDates = [
-      ...eodList.filter(e => (e.airtel_actual || 0) > 0).map(e => e.created_at ? new Date(e.created_at) : null),
       ...transfers.filter(t => t.fromPortfolio === 'airtel').map(t => {
         if (!t.processedAt) return null;
         return t.processedAt.toDate ? t.processedAt.toDate() : new Date(t.processedAt);
@@ -220,7 +188,6 @@ export const CashAndBanking: React.FC = () => {
         if (!a.createdAt) return null;
         return a.createdAt.toDate ? a.createdAt.toDate() : new Date(a.createdAt);
       }),
-      ...eodList.filter(e => (e.staff_welfare_actual || 0) > 0).map(e => e.created_at ? new Date(e.created_at) : null),
       ...transfers.filter(t => t.fromPortfolio === 'welfare').map(t => {
         if (!t.processedAt) return null;
         return t.processedAt.toDate ? t.processedAt.toDate() : new Date(t.processedAt);
@@ -234,7 +201,7 @@ export const CashAndBanking: React.FC = () => {
       receivables: getLatestDate(recDates),
       welfare: getLatestDate(welfareDates)
     };
-  }, [eodList, transfers, receivables, allocations, paymentAccounts]);
+  }, [transfers, receivables, allocations, paymentAccounts]);
 
   // Execute processing portfolio balance to Banked Cash
   const handleProcessToBank = async () => {
@@ -335,23 +302,20 @@ export const CashAndBanking: React.FC = () => {
     memoizedCalculations.creditsReceivable + 
     memoizedCalculations.welfareBalance;
 
-  const pendingProcessingTotal = 
-    memoizedCalculations.momoBalance + 
-    memoizedCalculations.airtelBalance + 
-    memoizedCalculations.welfareBalance;
+
 
   return (
     <div className="space-y-6">
       {/* Page Header */}
       <div>
         <h2 className="text-2xl font-black text-zinc-900 tracking-tight">Global Treasury View</h2>
-        <p className="text-sm text-zinc-500">Track aggregate wallets, banked balances, and process transfers to main treasury bank.</p>
+        <p className="text-sm text-zinc-500">Recorded bank balances and treasury activity. EOD audits compare expected and declared amounts; they do not fund accounts or bank cash.</p>
       </div>
 
       {/* PORTFOLIO TOTALS BAR */}
       <div className="bg-zinc-900 text-white p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm border border-zinc-800">
         <div>
-          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest block">Total Cash Under Management</span>
+          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest block">Recorded Bank & Receivables</span>
           <h2 className="text-3xl font-black font-mono mt-0.5">UGX {totalUnderManagement.toLocaleString()}</h2>
         </div>
         <div className="flex flex-wrap items-center gap-6 text-sm">
@@ -360,8 +324,8 @@ export const CashAndBanking: React.FC = () => {
             <span className="font-bold font-mono text-emerald-400">UGX {memoizedCalculations.bankedCash.toLocaleString()}</span>
           </div>
           <div className="bg-zinc-800/60 px-4 py-2.5 rounded-xl border border-zinc-700/50">
-            <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider block">Pending Processing</span>
-            <span className="font-bold font-mono text-amber-400">UGX {pendingProcessingTotal.toLocaleString()}</span>
+            <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider block">Wallet Balances</span>
+            <span className="font-bold font-mono text-amber-400">Not established</span>
           </div>
         </div>
       </div>
@@ -401,11 +365,11 @@ export const CashAndBanking: React.FC = () => {
           <div className="space-y-1">
             <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest block">Portfolio 2</span>
             <h3 className="text-lg font-black text-zinc-950">MTN MoMo</h3>
-            <p className="text-xs text-zinc-400 font-medium">Current unprocessed branch mobile money collections.</p>
+            <p className="text-xs text-zinc-400 font-medium">EOD declarations do not establish a wallet balance.</p>
           </div>
           <div className="my-6">
             <span className="text-2xl font-black font-mono text-zinc-950">
-              UGX {memoizedCalculations.momoBalance.toLocaleString()}
+              Balance unavailable
             </span>
           </div>
           <div className="space-y-3 border-t border-zinc-100 pt-3">
@@ -436,11 +400,11 @@ export const CashAndBanking: React.FC = () => {
           <div className="space-y-1">
             <span className="text-[10px] font-black text-red-700 uppercase tracking-widest block">Portfolio 3</span>
             <h3 className="text-lg font-black text-zinc-950">Airtel Money</h3>
-            <p className="text-xs text-zinc-400 font-medium">Unprocessed Airtel money collections.</p>
+            <p className="text-xs text-zinc-400 font-medium">EOD declarations do not establish a wallet balance.</p>
           </div>
           <div className="my-6">
             <span className="text-2xl font-black font-mono text-zinc-950">
-              UGX {memoizedCalculations.airtelBalance.toLocaleString()}
+              Balance unavailable
             </span>
           </div>
           <div className="space-y-3 border-t border-zinc-100 pt-3">
@@ -495,15 +459,15 @@ export const CashAndBanking: React.FC = () => {
           <div className="space-y-1">
             <span className="text-[10px] font-black text-purple-200 uppercase tracking-widest block">Portfolio 5</span>
             <h3 className="text-lg font-black text-white">Staff Welfare Fund</h3>
-            <p className="text-xs text-purple-100">Welfare pool allocations, disbursements, and reserves.</p>
+            <p className="text-xs text-purple-100">Recorded funding allocations. A spendable reserve cannot be derived from EOD declarations.</p>
           </div>
           <div className="my-5">
             <span className="text-2xl font-black font-mono block">
-              UGX {memoizedCalculations.welfareBalance.toLocaleString()}
+              Balance unavailable
             </span>
             <div className="mt-1 flex items-center gap-3 text-[10px] text-purple-200 font-bold">
               <span>Allocated: {memoizedCalculations.welfareAllocated?.toLocaleString()}</span>
-              <span>Disbursed: {memoizedCalculations.welfareUsed?.toLocaleString()}</span>
+              <span>Transferred: {memoizedCalculations.welfareTransferred?.toLocaleString()}</span>
             </div>
           </div>
           <div className="space-y-3 border-t border-purple-400/30 pt-3">
