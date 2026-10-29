@@ -182,6 +182,19 @@ try {
   await rapid.getByRole('button',{name:'Reveal System Totals',exact:true}).waitFor();
   assert.equal(await rapid.evaluate(()=>window.financeWrites.filter(w=>w.name==='eod_reconciliations').length),1);
   await rapid.close();console.log('027 synchronous rapid clicks produce one write with visible disabled progress');
+  const history=await open(390,'?role=cashier');
+  await history.getByRole('heading',{name:'EOD Reconciliation Log',exact:true}).waitFor();
+  assert.equal(await history.getByLabel('EOD history branch',{exact:true}).isDisabled(),true);
+  await history.getByRole('button',{name:'View audit',exact:true}).first().click();
+  const audit=history.getByRole('dialog',{name:'EOD audit history',exact:true});
+  await audit.getByText('Historical whole-day record — shift not recorded',{exact:true}).waitFor();
+  await audit.getByText('Expected',{exact:true}).waitFor();await audit.getByText('Declared',{exact:true}).waitFor();
+  await fit(history,'EOD audit history');await audit.getByRole('button',{name:'Close',exact:true}).click();
+  await history.getByLabel('EOD history from',{exact:true}).fill((await history.evaluate(()=>window.fixtureDates)).oldDay);
+  await history.getByRole('button',{name:'Download Report',exact:true}).click();
+  const auditExport=await history.evaluate(()=>window.exported);
+  assert.equal(auditExport[0].length,3);assert.equal(auditExport[0][0].Shift,'Historical whole-day — shift not recorded');
+  await history.close();console.log('029 branch-scoped history, historical dates, audit detail and shift export pass');
   const offset=await open(390,'?role=cashier');await offset.getByLabel('Configured Shift',{exact:true}).selectOption('dayShift');await offset.locator('input[type="number"]').nth(0).fill('495000');await offset.locator('input[type="number"]').nth(1).fill('5000');await offset.getByRole('button',{name:'Reveal System Totals',exact:true}).click();await offset.getByLabel('Variance Reason Required',{exact:true}).waitFor();assert.equal(await offset.getByRole('button',{name:'Submit EOD Audit Report',exact:true}).isEnabled(),false);await offset.close();
  }
  for (const role of ['IT Head','IT Support Staff','Finance Head','owner']) {

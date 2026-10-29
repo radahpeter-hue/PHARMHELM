@@ -609,6 +609,7 @@ const EODReconciliationTab: React.FC = () => {
         </div>
       </div>
       </fieldset>
+      {activeBranchId && <div className="mt-10 border-t border-zinc-200 pt-6"><NewEodReconciliationBox branchId={activeBranchId} /></div>}
     </div>
   );
 };

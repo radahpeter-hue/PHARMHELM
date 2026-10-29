@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing';
 import { collection, doc, getDocs, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { compactRuleSymbols } from './build-firestore-release-rules.mjs';
+import { correctEod, EOD_CHANNELS } from '../src/services/eodCorrectionService.ts';
 import { submitEod } from '../src/services/eodSubmissionService.ts';
 import { eodIdentity } from '../src/utils/eodShifts.ts';
 import { EOD_PAYMENT_CHANNELS } from '../src/utils/eodExpected.ts';
@@ -57,4 +58,23 @@ try {
  assert.equal((await all()).find(r=>r.id===normal.id).cash_actual,500000);
  await assert.rejects(submitEod(input({branch_id:'other',reconciliation_date:yesterday,cash_actual:495000}),actor,db),/reason/);
  console.log('PASS 028 existing Rules reject submission replacement even for IT Head; variance reason enforced');
+ const declarations=Object.fromEntries(EOD_CHANNELS.map(c=>[c,c==='cash'?495000:0]));
+ const itProfile={uid:'it',tenantId:'mp',role:'IT Head'};
+ await correctEod(normal.id,itProfile,declarations,'First count reviewed',client('it'));
+ declarations.cash=490000;
+ await correctEod(normal.id,itProfile,declarations,'Second count reviewed',client('it'));
+ let audits=[];await env.withSecurityRulesDisabled(async ctx=>{audits=(await getDocs(collection(ctx.firestore(),'audit_logs'))).docs.map(d=>d.data());});
+ const corrections=audits.filter(e=>e.entity_id===normal.id);
+ assert.equal(corrections.length,2);
+ assert.deepEqual(corrections.map(e=>e.reason).sort(),['First count reviewed','Second count reviewed']);
+ assert.ok(corrections.some(e=>e.before.total_actual===500000&&e.after.total_actual===495000));
+ assert.ok(corrections.some(e=>e.before.total_actual===495000&&e.after.total_actual===490000));
+ assert.ok(corrections.every(e=>e.userId==='it'&&e.timestamp&&e.before.reconciliation_date===day));
+ assert.equal((await all()).length,5);assert.equal((await all()).find(r=>r.id===normal.id).shift_id,'dayShift');
+ await assert.rejects(correctEod(normal.id,{...actor,role:'cashier'},declarations,'Denied',db),/locked/);
+ const cutoff=new Date(Date.parse(`${day}T12:00:00Z`)-14*86400000).toISOString().slice(0,10);
+ const lockedId='historic-lock';await env.withSecurityRulesDisabled(async ctx=>{await setDoc(doc(ctx.firestore(),'eod_reconciliations',lockedId),{...input({reconciliation_date:cutoff}),total_expected:500000,total_actual:500000});});
+ await assert.rejects(correctEod(lockedId,itProfile,declarations,'Too late',client('it')),/locked/);
+ console.log('PASS 029: two corrections preserve before/after/actor/time/reason, original submission identity and independent history; non-IT/14-day lock retained');
+
 } finally {await env.cleanup();}
