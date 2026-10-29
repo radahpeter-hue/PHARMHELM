@@ -44,7 +44,7 @@ concurrency:
 
 jobs:
   validate:
-    if: github.head_ref == 'feature/finance-rebuild-levels-1-2' || github.head_ref == 'feature/staff-identity-petty-cash-followup' || github.head_ref == 'fix/staff-duplicates-readable-reports' || github.head_ref == 'feature/finance-rebuild-level3-eod'
+    if: github.head_ref == 'feature/finance-rebuild-levels-1-2' || github.head_ref == 'feature/staff-identity-petty-cash-followup' || github.head_ref == 'fix/staff-duplicates-readable-reports' || github.head_ref == 'feature/finance-rebuild-level3-eod' || github.head_ref == 'fix/eod-live-acceptance'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -105,7 +105,7 @@ jobs:
 
   preview:
     needs: validate
-    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/finance-rebuild-levels-1-2' || github.head_ref == 'feature/staff-identity-petty-cash-followup' || github.head_ref == 'fix/staff-duplicates-readable-reports' || github.head_ref == 'feature/finance-rebuild-level3-eod')
+    if: github.head_ref != 'fix/eod-live-acceptance' && github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/finance-rebuild-levels-1-2' || github.head_ref == 'feature/staff-identity-petty-cash-followup' || github.head_ref == 'fix/staff-duplicates-readable-reports' || github.head_ref == 'feature/finance-rebuild-level3-eod' || github.head_ref == 'fix/eod-live-acceptance')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

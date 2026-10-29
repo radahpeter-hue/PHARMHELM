@@ -1,3 +1,6 @@
+import { EodLegacyShiftReview } from '../components/finance/EodLegacyShiftReview';
+import { withVerifiedLegacyShifts } from '../utils/eodLegacyEvidence';
+import type { LegacyShiftEvidence } from '../services/eodLegacyShiftService';
 import { submitEod } from '../services/eodSubmissionService';
 import { expectedEodSales } from '../utils/eodExpected';
 import { configuredEodShifts } from '../utils/eodShifts';
@@ -273,6 +276,9 @@ const EODReconciliationTab: React.FC = () => {
   const isFinanceHead = hasAnyRole(profile, ['Finance Head']);
   const [revealed, setRevealed] = useState(false);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [evidence, setEvidence] = useState<LegacyShiftEvidence[]>([]);
+  const [reviewLegacy, setReviewLegacy] = useState(false);
+  useEffect(() => { setEvidence([]); if(!profile?.tenantId)return; return firestoreService.subscribeToCollection<LegacyShiftEvidence>('audit_logs',profile.tenantId,setEvidence); },[profile?.tenantId]);
   const [formData, setFormData] = useState({
     cash: 0,
     mtn: 0,
@@ -298,9 +304,10 @@ const EODReconciliationTab: React.FC = () => {
     }
   }, [profile?.tenantId]);
 
-  const { computedExpected, relevantSalesCount, unattributedSalesCount } = React.useMemo(() =>
-    expectedEodSales(sales, profile?.tenantId || '', activeBranchId || '', formData.date, shiftId),
-    [sales, profile?.tenantId, activeBranchId, formData.date, shiftId]);
+  const attributedSales = React.useMemo(()=>withVerifiedLegacyShifts(sales,evidence),[sales,evidence]);
+  const { computedExpected, relevantSalesCount, unattributedSalesCount, unattributedSales: legacySales } = React.useMemo(() =>
+    expectedEodSales(attributedSales, profile?.tenantId || '', activeBranchId || '', formData.date, shiftId, selectedShift),
+    [attributedSales, profile?.tenantId, activeBranchId, formData.date, shiftId, selectedShift?.startTime, selectedShift?.endTime]);
 
   const declaredTotals = sumEodAmounts([formData.cash, formData.mtn, formData.airtel, formData.card, formData.insurance, formData.institutional_credit, formData.staff_welfare]);
 
@@ -318,6 +325,7 @@ const EODReconciliationTab: React.FC = () => {
     if (submitInFlight.current || !profile) return;
     if (!activeBranchId || !selectedShift) { toast.error('Select a configured shift for this branch.'); return; }
     if (!isBusinessDate(formData.date)) { toast.error('Select a valid business date.'); return; }
+    if (legacySales.length) { toast.error('Verify missing receipt shift evidence before reconciliation.'); return; }
     submitInFlight.current = true;
     setSubmitting(true);
     try {
@@ -443,6 +451,9 @@ const EODReconciliationTab: React.FC = () => {
         </select>
         {unattributedSalesCount > 0 && <p role="status" className="text-sm text-amber-800">{unattributedSalesCount} sale(s) in this date window have no saved shift evidence and are excluded from expected totals. Historical sales cannot be assigned using today's Settings. Review POS history before submitting.</p>}
         <p className="text-xs text-zinc-500">Business date is the date the shift starts in Kampala. An overnight shift includes its after-midnight sales.</p>
+        {!selectedShift && <p role="status" className="text-sm text-amber-800">Select a configured shift before viewing system totals or reconciling.</p>}
+        {!!legacySales.length && <p role="alert" className="text-sm text-amber-800">Expected total is unavailable until missing receipt shift evidence is verified. No variance can be calculated yet.</p>}
+        {!!legacySales.length && selectedShift && hasAnyRole(profile,['IT Head']) && <button type="button" className="underline text-emerald-800 font-bold" onClick={()=>setReviewLegacy(true)}>Review legacy receipts for this shift</button>}
         {!shifts.length && <p className="text-sm text-amber-700">Configure and enable branch shifts in Settings before reconciling.</p>}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -555,7 +566,7 @@ const EODReconciliationTab: React.FC = () => {
         <div className="lg:col-span-5 space-y-6">
           <h3 className="font-bold text-zinc-950 uppercase tracking-wider text-xs border-b border-zinc-100 pb-2">Step 2: System Audit Tally</h3>
           
-          {revealed ? (
+          {revealed && selectedShift && !legacySales.length ? (
             <div className="space-y-4 animate-fade-in">
               <div className="space-y-3 max-h-[440px] overflow-y-auto pr-2 custom-scrollbar">
                 <VarianceRow label="Cash" declared={formData.cash} expected={computedExpected.cash} />
@@ -599,7 +610,8 @@ const EODReconciliationTab: React.FC = () => {
               <p className="font-bold text-zinc-900 text-sm">Blind Count Protocol</p>
               <p className="text-zinc-500 text-xs max-w-xs mt-1 mb-6">Staff must verify physical and record tallies before matching against computer models.</p>
               <button 
-                onClick={() => setRevealed(true)}
+                disabled={!selectedShift || !!legacySales.length}
+                onClick={() => { if(selectedShift && !legacySales.length) setRevealed(true); }}
                 className="bg-zinc-900 hover:bg-zinc-800 text-white px-6 py-3 rounded-2xl font-bold text-xs uppercase tracking-widest transition-all shadow-lg shadow-zinc-900/15"
               >
                 Reveal System Totals
@@ -609,6 +621,7 @@ const EODReconciliationTab: React.FC = () => {
         </div>
       </div>
       </fieldset>
+      {reviewLegacy && selectedShift && activeBranchId && <EodLegacyShiftReview sales={legacySales} branchId={activeBranchId} date={formData.date} shift={selectedShift} onClose={()=>{setReviewLegacy(false);setRevealed(false);}}/>}
       {activeBranchId && <div className="mt-10 border-t border-zinc-200 pt-6"><NewEodReconciliationBox branchId={activeBranchId} /></div>}
     </div>
   );

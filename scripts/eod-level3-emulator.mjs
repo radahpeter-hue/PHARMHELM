@@ -1,8 +1,10 @@
+import { verifyLegacyEodShift } from '../src/services/eodLegacyShiftService.ts';
+import { withVerifiedLegacyShifts } from '../src/utils/eodLegacyEvidence.ts';
 import assert from 'node:assert/strict';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { build } from 'esbuild';
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing';
-import { collection, doc, getDocs, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDocs, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { compactRuleSymbols } from './build-firestore-release-rules.mjs';
 import { correctEod, EOD_CHANNELS } from '../src/services/eodCorrectionService.ts';
 import { submitEod } from '../src/services/eodSubmissionService.ts';
@@ -78,6 +80,25 @@ try {
  const lockedId='historic-lock';await env.withSecurityRulesDisabled(async ctx=>{await setDoc(doc(ctx.firestore(),'eod_reconciliations',lockedId),{...input({reconciliation_date:cutoff}),total_expected:500000,total_actual:500000});});
  await assert.rejects(correctEod(lockedId,itProfile,declarations,'Too late',client('it')),/locked/);
  console.log('PASS 029: two corrections preserve before/after/actor/time/reason, original submission identity and independent history; non-IT/14-day lock retained');
+ const legacyReceipts=[8000,5000,6000,1000,1000,14600].map((amount,i)=>({id:'old-'+i,tenantId:'mp',branchId:'masaka',timestamp:yesterday+'T07:29:00Z',status:'completed',paymentMethod:'cash',totalAmount:amount}));
+ await env.withSecurityRulesDisabled(async ctx=>{for(const sale of legacyReceipts)await setDoc(doc(ctx.firestore(),'sales',sale.id),sale);});
+ const selectedLegacyShift={id:'dayShift',name:'Day Shift',startTime:'07:30',endTime:'17:00'};
+ const verify=profile=>verifyLegacyEodShift(legacyReceipts.map(s=>s.id),'masaka',yesterday,selectedLegacyShift,'Owner verified six receipts',profile,client(profile.uid));
+ await assert.rejects(verify({...actor,role:'cashier'}),/IT Head/);
+ await Promise.all([verify(itProfile),verify(itProfile)]);await verify(itProfile);
+ let legacyEvidence=[];await env.withSecurityRulesDisabled(async ctx=>{legacyEvidence=(await getDocs(collection(ctx.firestore(),'audit_logs'))).docs.filter(d=>d.id.startsWith('e_')).map(d=>({id:d.id,...d.data()}));});
+ assert.equal(legacyEvidence.length,6);
+ assert.equal(expectedEodSales(withVerifiedLegacyShifts(legacyReceipts,legacyEvidence),'mp','masaka',yesterday,'dayShift').computedExpected.total,35600);
+ await assert.rejects(verifyLegacyEodShift(['old-0'],'masaka',day,selectedLegacyShift,'Do not reassign',itProfile,client('it')),/already verified/);
+ await assert.rejects(verifyLegacyEodShift(['old-0'],'foreign-branch',yesterday,selectedLegacyShift,'Wrong branch',itProfile,client('it')),/outside|unavailable/);
+ const assignment=doc(client('it'),'audit_logs','e_mp~old-0');
+ await assertFails(updateDoc(assignment,{shift_id:'eveningShift'}));await assertFails(deleteDoc(assignment));
+ await assertFails(setDoc(doc(db,'audit_logs','e_mp~forged'),{...legacyEvidence[0],sale_id:'forged',userId:actor.uid}));
+ await assertFails(getDoc(doc(client('foreign'),'audit_logs','e_mp~old-0')));
+ const anonymous=env.unauthenticatedContext().firestore();await assertFails(getDoc(doc(anonymous,'audit_logs','e_mp~old-0')));await assertFails(setDoc(doc(anonymous,'audit_logs','anonymous-audit'),{tenantId:'mp',action:'ordinary'}));
+ const ordinaryAudit=doc(db,'audit_logs','ordinary-audit');await setDoc(ordinaryAudit,{tenantId:'mp',action:'ordinary'});await updateDoc(ordinaryAudit,{action:'ordinary update'});await deleteDoc(ordinaryAudit);
+ console.log('PASS legacy receipts: IT Head verification 35,600, replay safe, assignment immutable, cashier/cross-tenant/branch denial, no sale rewrite');
+
  const financialCollections=['sales','pos_payments','pos_transaction_outbox','finance_ledger','banking_records','banking_transactions','cashTransfers','finance_payment_accounts','petty_cash_ledger','credit_receivables','financial_posting_audit'];
  const snapshotFinancial=async()=>{const result={};await env.withSecurityRulesDisabled(async ctx=>{for(const name of financialCollections)result[name]=(await getDocs(collection(ctx.firestore(),name))).docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.id.localeCompare(b.id));});return JSON.stringify(result);};
  const controlledSales=[];

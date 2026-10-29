@@ -30,6 +30,7 @@ records.eod_reconciliations=[{id:'today-eod',tenantId:'test',branch_id:'masaka',
 const eodMode=new URLSearchParams(location.search).get('eod');if(eodMode){const amount=eodMode==='float'?0.1+0.2:0.3001;records.sales[0].total=amount;records.sales[0].totalAmount=amount;}
 records.sales[0].eodShift={version:1,businessDate:day,shiftId:'dayShift',shiftName:'Day Shift',startTime:'07:30',endTime:'17:00',timeZone:'Africa/Kampala'};
 records.staff.push({id:'tester',uid:'tester',tenantId:'test',role:new URLSearchParams(location.search).get('role')||'owner',active:true,status:'active',assigned_branches:['masaka']});
+if(eodMode==='legacy'){const previous=new Date(Date.parse(day+'T12:00:00Z')-86400000).toISOString().slice(0,10);records.sales=[8000,5000,6000,1000,1000,14600].map((amount,i)=>({id:'legacy-'+i,tenantId:'test',branchId:'masaka',status:'completed',timestamp:previous+'T07:29:00Z',paymentMethod:'cash',totalAmount:amount,total:amount,receiptNumber:'OLD-'+i}));window.legacyDate=previous;}
 window.fixtureDates={day,oldDay};window.fixtureRecords=records;window.financeWrites=[];window.subscriptions=[];
 const watchers=[];
 export const rows=name=>(records[name]||[]).filter(r=>r.tenantId==='test');
@@ -187,9 +188,12 @@ try {
   const history=await open(390,'?role=cashier');
   await history.getByRole('heading',{name:'EOD Reconciliation Log',exact:true}).waitFor();
   assert.equal(await history.getByLabel('EOD history branch',{exact:true}).isDisabled(),true);
+  await history.locator('main').evaluate(el=>el.style.color='white');
   await history.getByRole('button',{name:'View audit',exact:true}).first().click();
   const audit=history.getByRole('dialog',{name:'EOD audit history',exact:true});
   await audit.getByText('Historical whole-day record — shift not recorded',{exact:true}).waitFor();
+  assert.match(await audit.getByRole('heading').first().evaluate(el=>getComputedStyle(el).color),/rgb\(24, 24, 27\)|oklch\(0.21 0.006 285.885\)/);
+  assert.match(await audit.getByRole('button',{name:'Close',exact:true}).evaluate(el=>getComputedStyle(el).color),/rgb\(24, 24, 27\)|oklch\(0.21 0.006 285.885\)/);
   await audit.getByText('Expected',{exact:true}).waitFor();await audit.getByText('Declared',{exact:true}).waitFor();
   await fit(history,'EOD audit history');await audit.getByRole('button',{name:'Close',exact:true}).click();
   await history.getByLabel('EOD history from',{exact:true}).fill((await history.evaluate(()=>window.fixtureDates)).oldDay);
@@ -199,6 +203,23 @@ try {
   await history.close();console.log('029 branch-scoped history, historical dates, audit detail and shift export pass');
   const offset=await open(390,'?role=cashier');await offset.getByLabel('Configured Shift',{exact:true}).selectOption('dayShift');await offset.locator('input[type="number"]').nth(0).fill('495000');await offset.locator('input[type="number"]').nth(1).fill('5000');await offset.getByRole('button',{name:'Reveal System Totals',exact:true}).click();await offset.getByLabel('Variance Reason Required',{exact:true}).waitFor();assert.equal(await offset.getByRole('button',{name:'Submit EOD Audit Report',exact:true}).isEnabled(),false);await offset.close();
  }
+ const legacy=await open(1280,'?role=IT%20Head&eod=legacy');
+ const revealLegacy=legacy.getByRole('button',{name:'Reveal System Totals',exact:true});assert.equal(await revealLegacy.isDisabled(),true);
+ await legacy.getByLabel('EOD business date',{exact:true}).fill(await legacy.evaluate(()=>window.legacyDate));
+ await legacy.getByLabel('Configured Shift',{exact:true}).selectOption('dayShift');
+ assert.equal(await revealLegacy.isDisabled(),true);assert.equal(await legacy.getByText('Overage',{exact:false}).count(),0);
+ await legacy.getByRole('button',{name:'Review legacy receipts for this shift',exact:true}).click();
+ const legacyDialog=legacy.getByRole('dialog',{name:'Verify legacy receipt shifts',exact:true});
+ for(const checkbox of await legacyDialog.getByRole('checkbox').all())await checkbox.check();
+ await legacyDialog.getByLabel('Verification reason',{exact:true}).fill('Owner verified the six prior-day receipts and shift hours');
+ await legacyDialog.getByRole('button',{name:'Save verified shift evidence',exact:true}).click();await legacyDialog.waitFor({state:'hidden'});
+ await legacy.locator('input[type="number"]').first().fill('35600');await revealLegacy.click();
+ assert.equal(await legacy.getByLabel('Variance Reason Required',{exact:true}).count(),0);
+ const legacyTotal=await legacy.getByText('Grand Total',{exact:true}).locator('../..').innerText();assert.ok(legacyTotal.includes('Expected: UGX 35,600'),legacyTotal);
+ await legacy.getByRole('button',{name:'Submit EOD Audit Report',exact:true}).click();await legacy.waitForFunction(()=>window.financeWrites.some(w=>w.name==='eod_reconciliations'));
+ assert.equal(await legacy.evaluate(()=>window.financeWrites.find(w=>w.name==='eod_reconciliations').data.total_variance),0);
+ assert.equal(await legacy.evaluate(()=>window.financeWrites.filter(w=>w.name==='sales').length),0);await legacy.close();
+ console.log('Verified yesterday six-receipt 35,600 reconciliation, mandatory shift, no fabricated zero and unchanged sales pass');
  const treasury=await open(390,'?role=owner');
  await treasury.getByRole('button',{name:'Management',exact:true}).click();
  await treasury.getByRole('button',{name:'Cash & Banking',exact:true}).click();
@@ -239,6 +260,7 @@ try {
   if(role==='IT Head') {
    await edit.click();const modal=page.getByRole('dialog',{name:'Correct EOD reconciliation'});
    assert.equal(await modal.getByRole('button',{name:'Save correction',exact:true}).isEnabled(),false);
+   assert.match(await modal.getByRole('heading').evaluate(el=>getComputedStyle(el).color),/rgb\(24, 24, 27\)|oklch\(0.21 0.006 285.885\)/);
    await modal.getByLabel('Correction reason',{exact:true}).fill('Count correction');
    assert.equal(await modal.getByRole('button',{name:'Save correction',exact:true}).isEnabled(),true);
    await fit(page,'EOD correction modal');await page.screenshot({path:path.join(output,'eod-correction-390.png'),fullPage:true});
