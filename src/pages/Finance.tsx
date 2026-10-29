@@ -278,7 +278,7 @@ const EODReconciliationTab: React.FC = () => {
   const [sales, setSales] = useState<Sale[]>([]);
   const [evidence, setEvidence] = useState<LegacyShiftEvidence[]>([]);
   const [reviewLegacy, setReviewLegacy] = useState(false);
-  useEffect(() => { setEvidence([]); if(!profile?.tenantId)return; return firestoreService.subscribeToCollection<LegacyShiftEvidence>('eod_shift_assignments',profile.tenantId,setEvidence); },[profile?.tenantId]);
+  useEffect(() => { setEvidence([]); if(!profile?.tenantId)return; return firestoreService.subscribeToCollection<LegacyShiftEvidence>('audit_logs',profile.tenantId,setEvidence); },[profile?.tenantId]);
   const [formData, setFormData] = useState({
     cash: 0,
     mtn: 0,

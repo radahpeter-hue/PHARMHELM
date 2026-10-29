@@ -1,27 +1,25 @@
-# Level 3 live-acceptance repairs
+# EOD live-acceptance repairs
 
 Base production main: 10bc85b918f587feb55190ca3f9a7486945162d1.
 
-1. Audit/correction dialogs inherit white text from the app body on white panels. Explicit zinc-900 text fixes headings, totals, Close and correction labels. The audit view is read-only; Correct EOD remains a separate IT Head action inside 14 days. Tested against a white-text ancestor, not only the prior light fixture shell.
-2. 28 October's six Masaka receipts total 35,600 (8,000 + 5,000 + 6,000 + 1,000 + 1,000 + 14,600). They predate 29 October deployment and lack saved shift evidence. Owner explicitly confirmed in this session that all six belong to Day Shift 07:30–17:00. No timestamp-based automatic backfill is introduced.
-3. IT Head can select legacy receipts in the EOD review dialog, supply a reason and explicitly attest the historical shift hours. An atomic, immutable eod_shift_assignments record reserves each receipt to one tenant/branch/date/shift. Existing POS evidence cannot be replaced. Sales/payment/ledger documents are never updated. EOD projects the verified evidence to calculate expected totals. Staff cannot guess or silently infer historical assignments.
-4. Missing shift selection blocks Reveal System Totals and submission. Missing receipt evidence blocks variance display and submission, with an explicit unavailable-expected-total message. Verified yesterday/prior dates use their saved business date. A next-day daytime legacy sale does not incorrectly block yesterday's day shift; unresolved early-hours overnight sales do block it.
+- Audit and correction dialogs explicitly set dark text on white panels. Browser checks reproduce inherited production white text and verify headings and Close. View audit is read-only; Correct EOD remains the separate IT Head action inside the original fourteen-day window.
+- The six Masaka receipts from 28 October total 35,600 (8,000 + 5,000 + 6,000 + 1,000 + 1,000 + 14,600). They predate the 29 October shift-capture release. Owner explicitly confirmed all six belong to Day Shift 07:30–17:00. No automatic historical classification or sale rewrite is performed.
+- IT Head reviews/selects receipts, gives a reason and attests the hours that applied on that business date. One deterministic `audit_logs/eod_verify_<tenant>~<sale>` entry per receipt preserves the verified date/shift, sale timestamp, actor, server timestamp and reason. Replay is safe; conflicting date/shift assignments are rejected. Existing checkout attribution is never replaced.
+- The evidence projection only accepts matching reserved document IDs, tenant, branch, receipt and original timestamp. Arbitrary audit entries cannot supply shift totals. Receipts/payment/ledger records are unchanged.
+- Shift selection is mandatory before reveal or submission. Incomplete evidence blocks totals/variance and submission, with an explicit unavailable message. Next-day daytime receipts do not block yesterday's day shift; unresolved after-midnight overnight receipts do block that shift.
 
 Validation:
-- 766 unit/regression tests PASS; typecheck/build PASS.
-- Full actual Finance/Welfare/Settings browser suite PASS at 360/390/1280px, including inherited white text, audit/Close readability, no-shift reveal denied, incomplete evidence denied, and a synthetic copy of the six-receipt prior-day scenario: verified expected 35,600, declared 35,600, variance zero and no sales writes.
-- Full staff/EOD/system identity/Martin synthetic staging emulator runner PASS. New authenticated cases cover IT Head-only verification, immutable assignment, idempotent replay, conflicting date/shift reassignment denied, wrong branch, foreign tenant and cashier writes denied. Original EOD duplicate tests, correction locks and financial-snapshot checks remain green.
-- Narrow Rules addition only: source 196,869 → 198,592 bytes; generated equivalent 142,697 bytes. Existing Rules compiler unchanged; CI must certify actual hosted executable/activation size before release. Existing expression-cap denials in unrelated negative identity tests remain baseline behavior. Allowed EOD legacy/checkout scenarios pass.
-- No production receipt data or financial records modified during tests. Owner confirmation supplies review evidence; the IT Head must save the receipt selection in the live application.
+- 766 unit/regression tests, TypeScript and production build PASS on the initial feature; latest evidence projection tests/typecheck/full responsive browser rerun PASS.
+- Full authenticated staff/EOD/system/Martin staging regression passed. Latest actual Level 3 emulator passed again after the final Rules change: IT Head verification 35,600, immutable evidence, replay, conflicting assignment, cashier/foreign-tenant/wrong-branch denial, correction locks, no financial mutation and actual POS V2 checkout/replay.
+- Actual Finance/Welfare/Settings UI passes at 360/390/1280px, including inherited white text, mandatory shift, legacy review of the exact six-value example, expected/declared 35,600, variance zero and no sales writes.
+- Final Rules delta is six additions/two replacements inside existing audit_logs only. Reserved verification entries require primary/secondary IT Head, authenticated actor and server time; updates/deletion are denied. Other audit IDs retain existing behavior. No new collection, generic-fallback change, global permission map or compaction change.
+- Source Rules: 196,869 → 197,337 bytes; generated equivalent: 141,655 bytes. Actual hosted compiler/activation-size certification is mandatory before release.
+- Earlier candidates with a separate permission block measured 258,572 / 257,601 / 257,768 executable bytes and were rejected before release. That approach was removed completely. The final implementation reuses the existing protected audit trail and read boundary.
 
-This correction branch validates with isolated fixtures. Its automatic Hosting preview is intentionally disabled because the new legacy verification permission must be activated before exposing the feature against the shared production backend. Established release ordering deploys/verifies Rules before Hosting. No Levels 4–6 changes.
+No production finance records were seeded or changed by tests. Only the IT Head's explicit in-app verification writes the selected receipt evidence. The dedicated Finance preview for this correction branch is disabled pending Rules activation; existing other Hosting preview workflows remain unchanged. Standard production ordering must verify Rules before Hosting. No Levels 4–6 work.
 
 Owner retest after release:
-- IT Head → Masaka → EOD → 28 October → Day Shift.
-- Review legacy receipts for this shift → select exactly the six receipts → reason → attest historical hours → Save verified shift evidence.
-- Declare 35,600 → Reveal System Totals → Expected 35,600, Variance 0 → submit once.
-- View audit is readable; Correct EOD edits declarations only inside the original 14-day window.
-
-The first hosted candidate measured 258,572 executable bytes and was rejected by the 256,000-byte gate before release. Repeated reads/checks were consolidated only inside the new assignment match, with sale/data cached locally and equivalent get/list read predicates combined. Authenticated legacy/EOD/checkout scenarios pass again. The existing global compiler and all pre-existing match policies remain unchanged. Hosted certification must be rerun for this exact revised candidate.
-
-Second candidate: 257,601 executable bytes, still rejected before release. Final narrow adjustment gives legacy receipt evidence the same strict tenant read boundary as existing sales/audit evidence and caches the authoritative staff once for IT Head creation. Primary/secondary IT Head is required; token-email cross-tenant bypass is not permitted for assignments. No existing collection permission changed. Authenticated legacy, EOD and checkout scenarios pass again; generated source is 142,294 bytes. Actual hosted certification remains mandatory.
+1. IT Head → Masaka → EOD → 28 October → Day Shift.
+2. Review legacy receipts for this shift → select exactly the six receipts → enter verification reason → attest historical hours → Save verified shift evidence.
+3. Declare 35,600 → Reveal System Totals → Expected 35,600, Variance 0 → submit once.
+4. View audit is readable. Correct EOD edits declarations only within the original fourteen-day window. The 14 October record shown in the screenshot is already outside that window on 29 October.
