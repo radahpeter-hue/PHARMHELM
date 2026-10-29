@@ -163,6 +163,7 @@ try {
    if(scenario.variance===0){assert.equal(await reason.count(),0);assert.equal(await submit.isEnabled(),true);}
    else{await reason.waitFor();assert.equal(await submit.isEnabled(),false);await reason.fill('Controlled acceptance test reason');assert.equal(await submit.isEnabled(),true);}
    await eod.getByText('Grand Total',{exact:true}).scrollIntoViewIfNeeded();const varianceText=await eod.getByText('Grand Total',{exact:true}).locator('../..').innerText();
+   assert.ok(varianceText.includes('Expected: UGX'));assert.ok(varianceText.includes('Declared: UGX'));assert.ok(varianceText.includes('Variance'));
    assert.equal(/(^|\s)-0(?:\s|$)/.test(varianceText),false,varianceText);
    await fit(eod,'EOD '+scenario.name);await eod.screenshot({path:path.join(output,`eod-${scenario.name}-390.png`),fullPage:true});
    await submit.click();await eod.waitForFunction(()=>window.financeWrites.some(w=>w.name==='eod_reconciliations'));
@@ -193,7 +194,7 @@ try {
   await history.getByLabel('EOD history from',{exact:true}).fill((await history.evaluate(()=>window.fixtureDates)).oldDay);
   await history.getByRole('button',{name:'Download Report',exact:true}).click();
   const auditExport=await history.evaluate(()=>window.exported);
-  assert.equal(auditExport[0].length,3);assert.equal(auditExport[0][0].Shift,'Historical whole-day — shift not recorded');
+  assert.equal(auditExport[0].length,3);assert.equal(auditExport[0][0]['Expected Total (UGX)'],500000);assert.equal(auditExport[0][0]['Declared Total (UGX)'],500000);assert.equal(auditExport[0][0].Shift,'Historical whole-day — shift not recorded');
   await history.close();console.log('029 branch-scoped history, historical dates, audit detail and shift export pass');
   const offset=await open(390,'?role=cashier');await offset.getByLabel('Configured Shift',{exact:true}).selectOption('dayShift');await offset.locator('input[type="number"]').nth(0).fill('495000');await offset.locator('input[type="number"]').nth(1).fill('5000');await offset.getByRole('button',{name:'Reveal System Totals',exact:true}).click();await offset.getByLabel('Variance Reason Required',{exact:true}).waitFor();assert.equal(await offset.getByRole('button',{name:'Submit EOD Audit Report',exact:true}).isEnabled(),false);await offset.close();
  }

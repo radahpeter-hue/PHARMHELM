@@ -3,7 +3,7 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { EOD_PAYMENT_CHANNELS } from '../../utils/eodExpected';
-import { eodRecordVariance, formatEodAmount } from '../../utils/eodMoney';
+import { eodRecordVariance, eodVariance, formatEodAmount } from '../../utils/eodMoney';
 import { staffReportIdentity } from '../../utils/staffReportIdentity';
 export function eodAuditTime(value: any): string {
   const date = value?.toDate ? value.toDate() : new Date(value?.seconds ? value.seconds * 1000 : value || '');
@@ -29,7 +29,7 @@ export function EodAuditDialog({ record, staff, onClose }: {record: any; staff: 
     <div className="bg-white rounded-2xl p-5 w-full max-w-3xl max-h-[90vh] overflow-y-auto space-y-4">
       <div className="flex items-start justify-between gap-3"><div><h3 className="font-bold text-lg">EOD audit — {record.reconciliation_date}</h3><p className="text-sm">{record.shift_name || (record.shift_id ? record.shift_id : 'Historical whole-day record — shift not recorded')}{record.shift_start ? ` (${record.shift_start}–${record.shift_end})` : ''}</p></div><button onClick={onClose} className="border rounded-lg px-3 py-2">Close</button></div>
       <p className="text-sm">Submitted by {name(record.logged_by || record.cashier_id)} · {eodAuditTime(record.submitted_at || record.created_at)}</p>
-      <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className="text-left">Channel</th><th className="text-right">Expected</th><th className="text-right">Declared</th></tr></thead><tbody>{EOD_PAYMENT_CHANNELS.map(c=><tr key={c}><td className="capitalize py-1">{c.replaceAll('_',' ')}</td><td className="text-right">{formatEodAmount(record[`${c}_expected`] || 0)}</td><td className="text-right">{formatEodAmount(record[`${c}_actual`] || 0)}</td></tr>)}</tbody></table></div>
+      <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className="text-left">Channel</th><th className="text-right">Expected</th><th className="text-right">Declared</th><th className="text-right">Variance</th></tr></thead><tbody>{EOD_PAYMENT_CHANNELS.map(c=><tr key={c}><td className="capitalize py-1">{c.replaceAll('_',' ')}</td><td className="text-right">{formatEodAmount(record[`${c}_expected`] || 0)}</td><td className="text-right">{formatEodAmount(record[`${c}_actual`] || 0)}</td><td className="text-right">{formatEodAmount(eodVariance(record[`${c}_actual`] || 0,record[`${c}_expected`] || 0))}</td></tr>)}</tbody></table></div>
       <p className="font-bold">Variance: UGX {formatEodAmount(eodRecordVariance(record))}</p><p className="text-sm">Variance reason: {record.variance_reason || 'None required'}</p>
       <h4 className="font-bold">Correction history</h4>
       {record.corrected_by && <p className="text-sm">Latest correction: {name(record.corrected_by)} · {eodAuditTime(record.corrected_at)} · {record.correction_reason}</p>}

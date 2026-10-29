@@ -57,3 +57,9 @@ Validation: EOD_LEVEL3_ONLY=1 node scripts/run-staff-eod-emulator.mjs PASS again
 Branch-scoped date-filtered history is accessible beneath reconciliation; management retains tenant-wide history. Rows/exports include saved shift identity, legacy whole-day records are explicit, and audit details show amounts, submitter/time, reason and correction metadata. Each IT Head correction now atomically creates a fresh `audit_logs` event with complete before/after snapshots, actor, timestamp and reason alongside the original allowed update. Expected amounts/date/shift and original submission metadata remain fixed. Existing historical documents are not migrated. Pre-Level-3 earlier correction versions cannot be reconstructed; latest legacy metadata is retained. Existing audit collection permissions are unchanged; this is an application append workflow, not a new audit-security architecture.
 
 Validation: authenticated Level 3 emulator PASS including two successive corrections, retained before-images and independent reconciliation history, non-IT and fourteen-day lock. Forty-two finance/date/shift/money/correction tests PASS; typecheck PASS; responsive Finance/Welfare harness PASS including branch-locked history, previous dates, audit detail and exported shift labels. No Rules changes.
+
+### 030 — accepted
+
+Each channel/grand-total row now explicitly shows Expected, Declared and Variance with Balanced/Shortage/Overage labels. History and exports present expected and declared totals separately; no EOD declaration is labelled revenue. Audit details include per-channel variances. Existing money normalization, zero and required-reason functions are unchanged.
+
+Validation: 42 finance/date/shift/money/correction tests PASS; typecheck PASS; actual responsive UI suite PASS for exact/shortage/over/floating/tiny amounts, declared/expected/variance text, no negative zero, offsetting discrepancies, history and exported expected/declared values.

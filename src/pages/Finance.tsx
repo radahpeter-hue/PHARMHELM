@@ -620,9 +620,11 @@ const VarianceRow: React.FC<{ label: string, declared: number, expected: number 
     <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100 flex items-center justify-between">
       <div>
         <p className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider">{label}</p>
-        <p className="text-xs text-zinc-500 mt-0.5">Exp: UGX {(expected || 0).toLocaleString()}</p>
+        <p className="text-xs text-zinc-500 mt-0.5">Expected: UGX {formatEodAmount(expected || 0)}</p>
+        <p className="text-xs text-zinc-500">Declared: UGX {formatEodAmount(declared || 0)}</p>
       </div>
       <div className="text-right">
+        <p className="text-[10px] text-zinc-500">Variance · {variance < 0 ? 'Shortage' : variance > 0 ? 'Overage' : 'Balanced'}</p>
         <p className={cn(
           "text-sm font-black",
           variance === 0 ? "text-emerald-600" : "text-red-500"

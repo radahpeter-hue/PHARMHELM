@@ -187,7 +187,7 @@ export const EodReconciliationBox: React.FC<{branchId?: string}> = ({branchId}) 
 
   // Calculations for Totals Summary Row across ALL filtered rows
   const totals = useMemo(() => {
-    let cash = 0, card = 0, momo = 0, airtel = 0, credit = 0, welfare = 0, revenue = 0, variance = 0;
+    let cash = 0, card = 0, momo = 0, airtel = 0, credit = 0, welfare = 0, declared = 0, variance = 0;
     filteredReconciliations.forEach(rec => {
       cash += rec.cash_actual || 0;
       card += rec.card_actual || 0;
@@ -195,12 +195,12 @@ export const EodReconciliationBox: React.FC<{branchId?: string}> = ({branchId}) 
       airtel += rec.airtel_actual || 0;
       credit += rec.institutional_credit_actual || 0;
       welfare += rec.staff_welfare_actual || 0;
-      revenue += rec.total_actual || 0;
+      declared += rec.total_actual || 0;
 
     });
     const variances = filteredReconciliations.map(eodRecordVariance);
     variance = eodVariance(sumEodAmounts(variances.filter(v => v >= 0)), sumEodAmounts(variances.filter(v => v < 0).map(v => -v)));
-    return { cash, card, momo, airtel, credit, welfare, revenue, variance };
+    return { cash, card, momo, airtel, credit, welfare, declared, variance, expected: sumEodAmounts(filteredReconciliations.map(rec => rec.total_expected ?? 0)) };
   }, [filteredReconciliations]);
 
   // Export to Excel through the shared hardened exporter
@@ -225,7 +225,8 @@ export const EodReconciliationBox: React.FC<{branchId?: string}> = ({branchId}) 
         'Airtel (UGX)': rec.airtel_actual || 0,
         'Institution Credits (UGX)': rec.institutional_credit_actual || 0,
         'Welfare (UGX)': rec.staff_welfare_actual || 0,
-        'Total Revenue (UGX)': rec.total_actual || 0,
+        'Expected Total (UGX)': rec.total_expected ?? 0,
+        'Declared Total (UGX)': rec.total_actual ?? 0,
         'Variance (UGX)': eodRecordVariance(rec),
         'Reconciled By': getLoggedByName(rec.logged_by)
       };
@@ -243,7 +244,8 @@ export const EodReconciliationBox: React.FC<{branchId?: string}> = ({branchId}) 
       'Airtel (UGX)': totals.airtel,
       'Institution Credits (UGX)': totals.credit,
       'Welfare (UGX)': totals.welfare,
-      'Total Revenue (UGX)': totals.revenue,
+      'Expected Total (UGX)': totals.expected,
+      'Declared Total (UGX)': totals.declared,
       'Variance (UGX)': totals.variance,
       'Reconciled By': ''
     });
@@ -279,7 +281,7 @@ export const EodReconciliationBox: React.FC<{branchId?: string}> = ({branchId}) 
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-black text-zinc-900 tracking-tight">EOD Reconciliation Log</h2>
-          <p className="text-sm text-zinc-500">All branch end-of-day reconciliations.</p>
+          <p className="text-sm text-zinc-500">Shift audits by business date. Variance = Declared − Expected; a negative amount is a shortage.</p>
         </div>
         <button
           onClick={handleExport}
@@ -372,7 +374,8 @@ export const EodReconciliationBox: React.FC<{branchId?: string}> = ({branchId}) 
                   <th className="px-4 py-4 text-right">Airtel (UGX)</th>
                   <th className="px-4 py-4 text-right">Credits (UGX)</th>
                   <th className="px-4 py-4 text-right">Welfare (UGX)</th>
-                  <th className="px-4 py-4 text-right">Total Rev (UGX)</th>
+                  <th className="px-4 py-4 text-right">Expected (UGX)</th>
+                  <th className="px-4 py-4 text-right">Declared (UGX)</th>
                   <th className="px-4 py-4 text-right">Variance (UGX)</th>
                   <th className="px-4 py-4">Reconciled By</th><th className="px-4 py-4">Correction access</th>
                 </tr>
@@ -391,7 +394,8 @@ export const EodReconciliationBox: React.FC<{branchId?: string}> = ({branchId}) 
                       <td className="px-4 py-4 text-right font-mono">{rec.airtel_actual?.toLocaleString() || 0}</td>
                       <td className="px-4 py-4 text-right font-mono">{rec.institutional_credit_actual?.toLocaleString() || 0}</td>
                       <td className="px-4 py-4 text-right font-mono">{rec.staff_welfare_actual?.toLocaleString() || 0}</td>
-                      <td className="px-4 py-4 text-right font-mono font-bold text-zinc-950">{rec.total_actual?.toLocaleString() || 0}</td>
+                      <td className="px-4 py-4 text-right font-mono">{formatEodAmount(rec.total_expected ?? 0)}</td>
+                      <td className="px-4 py-4 text-right font-mono font-bold text-zinc-950">{formatEodAmount(rec.total_actual ?? 0)}</td>
                       <td className="px-4 py-4 text-right font-mono">{formatVariance(eodRecordVariance(rec))}</td>
                       <td className="px-4 py-4 text-zinc-500 truncate max-w-[120px]">{getLoggedByName(rec.logged_by)}</td>
                       <td className="px-4 py-4">{canCorrectEod(profile, rec) ? <button className="underline text-emerald-700" onClick={() => setEditing(rec)}>Correct EOD</button> : 'Locked'}</td>
@@ -409,7 +413,8 @@ export const EodReconciliationBox: React.FC<{branchId?: string}> = ({branchId}) 
                   <td className="px-4 py-4 text-right font-mono">{totals.airtel.toLocaleString()}</td>
                   <td className="px-4 py-4 text-right font-mono">{totals.credit.toLocaleString()}</td>
                   <td className="px-4 py-4 text-right font-mono">{totals.welfare.toLocaleString()}</td>
-                  <td className="px-4 py-4 text-right font-mono">{totals.revenue.toLocaleString()}</td>
+                  <td className="px-4 py-4 text-right font-mono">{formatEodAmount(totals.expected)}</td>
+                  <td className="px-4 py-4 text-right font-mono">{formatEodAmount(totals.declared)}</td>
                   <td className="px-4 py-4 text-right font-mono">{formatVariance(totals.variance)}</td>
                   <td className="px-4 py-4"></td><td className="px-4 py-4"></td>
                 </tr>
