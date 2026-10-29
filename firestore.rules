@@ -3180,53 +3180,11 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // Level 4 is tenant-scoped and CEO-controlled. Mutations are create-only.
-    match /finance_portfolios_v1/{portfolioDocId} {
-      allow read: if canViewFinance() && isTenantMember(resource.data.tenantId);
-      allow create: if hasAnyRole(['CEO','CEO / MD','owner'])
-        && isTenantMember(request.resource.data.tenantId)
-        && portfolioDocId == request.resource.data.tenantId + '__' + request.resource.data.id
-        && request.resource.data.origin == 'custom'
-        && request.resource.data.status == 'active'
-        && request.resource.data.currency == 'UGX'
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.classification in ['cash_equivalent','bank','mobile_money','petty_cash','restricted_internal_fund','other_financial_asset']
-        && request.resource.data.scope.kind in ['organisation','branch']
-        && request.resource.data.supportsChildAccounts is bool
-        && request.resource.data.allowsTransfersIn is bool
-        && request.resource.data.allowsTransfersOut is bool
-        && !('balanceUGX' in request.resource.data);
-      allow update, delete: if false;
-    }
-    match /finance_portfolio_accounts_v1/{accountDocId} {
-      allow read: if canViewFinance() && isTenantMember(resource.data.tenantId);
-      allow create: if hasAnyRole(['CEO','CEO / MD','owner'])
-        && isTenantMember(request.resource.data.tenantId)
-        && accountDocId == request.resource.data.tenantId + '__' + request.resource.data.id
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.currency == 'UGX'
-        && request.resource.data.status == 'active'
-        && request.resource.data.balanceUGX == 0
-        && request.resource.data.initialized == false
-        && get(/databases/$(database)/documents/finance_portfolios_v1/$(request.resource.data.tenantId + '__' + request.resource.data.portfolioId)).data.supportsChildAccounts == true;
-      allow update, delete: if false;
-    }
-    match /finance_account_identity_v1/{reservationId} {
-      allow get: if hasAnyRole(['CEO','CEO / MD','owner']) && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if false;
-      allow create: if hasAnyRole(['CEO','CEO / MD','owner'])
-        && isTenantMember(request.resource.data.tenantId)
-        && reservationId == request.resource.data.tenantId + '__' + request.resource.data.portfolioId + '__' + request.resource.data.accountReferenceNormalized
-        && request.resource.data.createdBy == request.auth.uid;
-      allow update, delete: if false;
-    }
-
     // Generic tenant fallback. Dedicated collections retain their explicit rules.
     // Share exclusions and dispatch by method instead of compiling five copies.
     match /{collectionName}/{docId} {
       function dedicatedCollection() {
-        return collectionName in ['finance_portfolios_v1','finance_portfolio_accounts_v1','finance_account_identity_v1','staff_identity_claims', 'identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox'];
+        return collectionName in ['staff_identity_claims', 'identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox'];
       }
       function dedicatedWriteCollection() {
         return dedicatedCollection() || collectionName in ['staff', 'staff_identity_claims', 'hr_roles', 'product_batches', 'products', 'role_realms_of_operation', 'sales'];
