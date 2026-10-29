@@ -255,8 +255,16 @@ const BranchFinance: React.FC = () => {
 };
 
 const EODReconciliationTab: React.FC = () => {
-  const { profile, activeBranchId, activeBranch } = useAuth();
-  const shifts = configuredEodShifts(activeBranch?.tenantId === profile?.tenantId && activeBranch?.id === activeBranchId ? activeBranch : null);
+  const { profile, activeBranchId } = useAuth();
+  const [configuredBranch, setConfiguredBranch] = useState<Branch | null>(null);
+  useEffect(() => {
+    setConfiguredBranch(null);
+    if (!profile?.tenantId || !activeBranchId) return;
+    return firestoreService.subscribeToCollection<Branch>('branches', profile.tenantId, rows => {
+      setConfiguredBranch(rows.find(b => b.tenantId === profile.tenantId && b.id === activeBranchId) || null);
+    });
+  }, [profile?.tenantId, activeBranchId]);
+  const shifts = configuredEodShifts(configuredBranch?.tenantId === profile?.tenantId && configuredBranch?.id === activeBranchId ? configuredBranch : null);
   const [shiftId, setShiftId] = useState('');
   const selectedShift = shifts.find(s => s.id === shiftId);
   useEffect(() => { setShiftId(''); setRevealed(false); }, [activeBranchId, profile?.tenantId]);

@@ -1,7 +1,8 @@
+import { BRANCH_SHIFT_NAMES } from './branchShifts';
 import type { Branch } from '../types';
 import { isBusinessDate } from './eodBusinessDate';
 export type EodShift = { id: string; name: string; startTime: string; endTime: string };
-const labels: Record<string, string> = { dayShift: 'Day Shift', eveningShift: 'Evening Shift', nightShift: 'Night Shift' };
+const labels: Record<string, string> = BRANCH_SHIFT_NAMES;
 /** Settings' branch field keys are immutable identifiers, not EOD-specific shifts. */
 export function configuredEodShifts(branch: Pick<Branch, 'shifts'> | null | undefined): EodShift[] {
   return Object.entries(branch?.shifts || {}).filter(([, config]) => config?.enabled === true)

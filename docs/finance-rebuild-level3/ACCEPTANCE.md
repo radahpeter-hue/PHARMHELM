@@ -27,3 +27,9 @@ Validation: node --import tsx --test tests/finance-rebuild-level3-date.test.ts t
 Added configured-shift selection, immutable branch Settings field key and display/hour snapshot to new EOD records. Branch/date/shift/tenant form the conceptual identity; no shift defaults or historical attribution are invented. Missing configuration blocks submission. Actual transactional uniqueness follows in 028.
 
 Validation: targeted date/shift/money/correction tests: 15/15 PASS; typecheck PASS. Same branch/date different shifts, same shift other dates/branches/tenants, disabled and absent configuration covered.
+
+### 025 — accepted
+
+EOD subscribes to saved tenant-scoped branch configuration and uses the same immutable keys and display vocabulary as Settings. Settings editor defaults remain editor-only: unsaved/nonexistent configuration is never substituted into EOD. Live settings updates invalidate disabled choices. Captured name/hours remain historical snapshots.
+
+Validation: targeted date/shift/money/correction tests: 16/16 PASS; typecheck PASS. Toggle and time-change tests confirm future choices update without modifying captured definitions.

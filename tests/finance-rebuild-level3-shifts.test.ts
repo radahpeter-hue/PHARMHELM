@@ -13,3 +13,15 @@ test('024 identity separates shifts/dates/branches/tenants without delimiter col
   assert.throws(() => eodIdentity('mp~masaka','x','2026-10-28','dayShift'));
   assert.throws(() => eodIdentity('mp','','2026-10-28','dayShift'));
 });
+
+test('025 saved Settings changes affect future choices, snapshots retain earlier hours', () => {
+  const branch = { shifts: structuredClone(shifts) };
+  const snapshot = configuredEodShifts(branch)[0];
+  branch.shifts.dayShift.startTime = '09:00';
+  branch.shifts.eveningShift.enabled = false;
+  assert.equal(configuredEodShifts(branch).length, 1);
+  assert.equal(configuredEodShifts(branch)[0].startTime, '09:00');
+  assert.equal(snapshot.startTime, '08:00');
+  branch.shifts.nightShift.enabled = true;
+  assert.deepEqual(configuredEodShifts(branch).map(s => s.id), ['dayShift', 'nightShift']);
+});
