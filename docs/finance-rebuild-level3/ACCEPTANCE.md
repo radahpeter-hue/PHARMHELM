@@ -79,3 +79,42 @@ Validation: 10 focused money/report tests PASS; typecheck PASS.
 ### Responsive Settings regression — accepted
 
 Actual Settings-to-EOD browser tests save changed day-shift hours and disable evening shift, then mount EOD against the same saved fixture store. EOD offers only the updated saved choices and records the new hours. Verified at 360px and 1280px. The test exposed existing Settings tab-bar page overflow at phone width; the bar is now horizontally scrollable within its viewport. Complete Finance/Welfare/EOD/Settings browser suite passes with no page overflow or runtime/backend requests.
+
+## Complete local regression — PASS
+
+- `npm test`: 763/763 PASS (baseline 750 plus Level 3 date, shift, sales and audit/report cases).
+- `npm run typecheck`: PASS.
+- `npm run build`: PASS. Existing large-bundle advisory remains; no dependency/config changes.
+- `node scripts/run-staff-eod-emulator.mjs`: PASS. Level 3 A–H concurrency, retry, live branch Settings, exact/shortage no-financial-mutation snapshots, repeated correction history; actual V2 checkout/replay capturing live shift; existing staff permanence, retired identity, HR/IT, tenant, deadline and Martin Pharma synthetic staging regressions.
+- `node scripts/run-pos-v2-spark-emulator.mjs`: PASS. Quotation, atomic stock/payment revision, RBAC and controlled legacy receipt repair scenarios (run at 026; no later checkout changes).
+- `FIRESTORE_EMULATOR_HOST=127.0.0.1:8089 node scripts/management-cash-settlement-rules-emulator.mjs`: PASS. Registered account control, full/partial payments, insufficient funds, competing writers, bank/cash settlement, tenant/role isolation and rollout gate unchanged.
+- `FINANCE_LEVEL=2 node scripts/finance-rebuild-ui-smoke.mjs`: PASS against actual Finance/Welfare/Settings components, isolated fixtures and local Chromium. Phone 360/390px, desktop 1280px; Settings save→EOD, exact/shortage/over/float/tiny, rapid clicks, history/export, correction roles and audit-only Treasury. Screenshots visually reviewed. No live backend requests/writes.
+- `node scripts/management-cash-settlement-ui-smoke.mjs`: PASS at 360/390/1280px, full/partial supplier payment, account/insufficient-funds guards, retry identity. Local temporary harness selects cached Chromium; the versioned harness remains unchanged and CI uses its standard installed browser.
+- `node --import tsx --test tests/finance-rebuild-preview.test.ts`: PASS. Preview deploys validated PR head only, never production/rules/indexes.
+- `git diff --check`: PASS.
+- Rules, indexes, Firebase config, package manifest/lockfile: byte-for-byte unchanged from base. Source Rules remain 196,869 bytes. No rules-size expansion or new runtime predicates. Existing authenticated success and denial scenarios pass; source compaction compiler remains unchanged. Some pre-existing negative staff/settlement cases log expression-cap denials; no broader rules work undertaken.
+
+## Owner live acceptance — Martin Pharma / Masaka
+
+Preview shares the established Firebase backend and existing tenant permissions. Use authorised test accounts/records; automated verification used isolated fixtures and did not seed or edit Martin Pharma finance data.
+
+1. Confirm current Settings shift IDs/enabled hours and select Masaka. A shift's business day is its starting date in Kampala.
+2. Use new preview POS activity with saved shift attribution. Reconcile a shift expecting 500,000 with declaration 500,000: zero variance, no required reason, one saved audit and correct shift/date.
+3. On a separate test date/shift (or through permitted correction), declare 490,000 against 500,000: shortage 10,000, reason required. A second submission to the same key retains the first audit; it is not a correction mechanism.
+4. Reconcile a different enabled shift on the same date: separate record; verify only that shift's expected sales.
+5. Rapid click/retry from one or two sessions: only one audit per canonical key; existing result is returned on replay.
+6. Check branch/date history and export; view actor/timestamp/reason and saved corrections. IT Head can correct inside 14 days, other roles cannot; existing older records remain locked.
+7. Compare POS sale/payment and treasury records before/after EOD: no added sale, revenue, bank deposit or balancing movement. Registered bank balance remains unchanged.
+8. Verify phone and desktop views, Finance visibility and existing Welfare/expense/petty-cash/P&L behavior.
+
+## Known limits and deferred findings
+
+- Historical POS receipts lack reliable stored shift evidence. They are excluded from shift totals with a visible warning; no retrospective guessing/backfill. Configure non-overlapping enabled shifts; uncovered/overlapping sale times stay unattributed.
+- Earlier correction versions cannot be reconstructed from legacy last-correction fields. Level 3 appends new before/after audit events using the existing audit collection permissions; no new audit-permission architecture is claimed.
+- Removed EOD-inferred wallet/current welfare reserve values are unavailable rather than presented as money. Existing allocation records and registered bank/control balances are preserved. Authoritative channel accounts, transfers/reversals and POS financial funding remain for Levels 4–6.
+- No Branch Cash Sales, bank/MTN/Airtel ledger redesign, Petty Cash redesign, portfolio-transfer/charge implementation, POS BCS funding/reversals, supplier-payables/receivables or P&L accounting redesign performed.
+- Owner authenticated live acceptance is pending; isolated automation is not a claim of owner acceptance.
+
+## Release control
+
+Dedicated branch: feature/finance-rebuild-level3-eod. Preview workflow is limited to the established seven-day Finance PR Hosting channel and reuses its existing service account. CI must validate/deploy the exact head build before recommendation. No production merge/deploy is authorised; stop after preview is available for owner acceptance.

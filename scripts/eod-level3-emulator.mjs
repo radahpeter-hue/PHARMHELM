@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync } from 'node:fs';
+import { build } from 'esbuild';
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing';
 import { collection, doc, getDocs, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { compactRuleSymbols } from './build-firestore-release-rules.mjs';
@@ -101,6 +102,27 @@ try {
   assert.equal(await snapshotFinancial(),financialBefore);
  }
  console.log('PASS 031: controlled POS 500,000 exact and 495,000 shortage produce only audits; sales/payments/outbox/revenue/bank/ledger snapshots unchanged, no balancing movements');
+ // Run the actual checkout repository with only its Firebase connection replaced.
+ await env.withSecurityRulesDisabled(async ctx=>{
+  await setDoc(doc(ctx.firestore(),'staff','seller'),{tenantId:'mp',role:'Dispenser',active:true,status:'active',assigned_branches:['checkout']});
+  await setDoc(doc(ctx.firestore(),'branches','checkout'),{tenantId:'mp',name:'Checkout',branch_code:'MSK',status:'Active',shifts});
+ });
+ globalThis.__eodCheckoutDb=client('seller');
+ mkdirSync('node_modules/.cache/eod-level3',{recursive:true});
+ await build({entryPoints:['src/services/pos-v2/posCheckoutV2Repository.ts'],outfile:'node_modules/.cache/eod-level3/checkout.mjs',bundle:true,platform:'node',format:'esm',packages:'external',plugins:[{name:'isolated-checkout-connection',setup(b){b.onResolve({filter:/\/firebase$/},()=>({path:'firebase',namespace:'stub'}));b.onLoad({filter:/.*/,namespace:'stub'},()=>({contents:'export const db=globalThis.__eodCheckoutDb;export const auth={currentUser:{uid:"seller"}};',loader:'js'}));}}]});
+ const checkout=await import('../node_modules/.cache/eod-level3/checkout.mjs');
+ const request={attemptId:'level3-checkout',branchId:'checkout',items:[{productId:'consultation',name:'Consultation',isService:true,quantity:1,commercialQuantity:1,unitPrice:500000,actualUnitPrice:500000,subtotal:500000,lineTotal:500000}],paymentMethod:'cash'};
+ const prepared=await checkout.prepareCheckoutV2Repository('seller',request);
+ const liveShifts={dayShift:{enabled:true,startTime:'00:00',endTime:'12:00'},eveningShift:{enabled:true,startTime:'12:00',endTime:'00:00'},nightShift:{enabled:false,startTime:'00:00',endTime:'01:00'}};
+ await env.withSecurityRulesDisabled(async ctx=>{await updateDoc(doc(ctx.firestore(),'branches','checkout'),{shifts:liveShifts});});
+ const committed=await checkout.commitCheckoutV2(request,prepared);
+ assert.equal(committed.sale.totalAmount,500000);
+ assert.deepEqual(committed.sale.eodShift,capturePosShift({shifts:liveShifts},committed.sale.timestamp));
+ assert.ok(committed.sale.eodShift);assert.notEqual(committed.sale.eodShift.startTime,shifts[committed.sale.eodShift.shiftId].startTime);
+ const replayed=await checkout.commitCheckoutV2(request,prepared);
+ assert.equal(replayed.replayed,true);assert.equal(replayed.saleId,committed.saleId);assert.deepEqual(replayed.sale.eodShift,committed.sale.eodShift);
+ console.log('PASS actual V2 checkout: atomic sale stores live Settings shift snapshot, canonical 500,000 payment, idempotent replay preserves attribution');
+
 
 
 } finally {await env.cleanup();}
