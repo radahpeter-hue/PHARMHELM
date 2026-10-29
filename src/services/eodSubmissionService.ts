@@ -54,7 +54,7 @@ export async function submitEod(input: EodSubmission, actor: { uid: string; tena
       // correction fields. Concurrent sets after the first cannot overwrite it.
       tx.set(ref, { ...input, ...amounts, shift_name: shift.name, variance_reason: requiresEodVarianceReason(channels) ? reason : '',
         cashier_id: actor.uid, logged_by: actor.uid, created_at: new Date().toISOString(),
-        reconciliation_key: id, submission_attempt_id: attemptId, submitted_at: serverTimestamp(), status: 'submitted' });
+        audit_only: true, financial_posting: 'none', reconciliation_key: id, submission_attempt_id: attemptId, submitted_at: serverTimestamp(), status: 'submitted' });
     });
     return { id, replayed: false };
   } catch (error) {

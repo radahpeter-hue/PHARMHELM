@@ -6,7 +6,8 @@ import { compactRuleSymbols } from './build-firestore-release-rules.mjs';
 import { correctEod, EOD_CHANNELS } from '../src/services/eodCorrectionService.ts';
 import { submitEod } from '../src/services/eodSubmissionService.ts';
 import { eodIdentity } from '../src/utils/eodShifts.ts';
-import { EOD_PAYMENT_CHANNELS } from '../src/utils/eodExpected.ts';
+import { capturePosShift } from '../src/utils/posShiftAttribution.ts';
+import { EOD_PAYMENT_CHANNELS, expectedEodSales } from '../src/utils/eodExpected.ts';
 const env = await initializeTestEnvironment({projectId:'demo-eod-level3',firestore:{rules:compactRuleSymbols(readFileSync('firestore.rules','utf8'))}});
 const day = new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Kampala',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 const yesterday = new Date(Date.parse(`${day}T12:00:00Z`)-86400000).toISOString().slice(0,10);
@@ -76,5 +77,30 @@ try {
  const lockedId='historic-lock';await env.withSecurityRulesDisabled(async ctx=>{await setDoc(doc(ctx.firestore(),'eod_reconciliations',lockedId),{...input({reconciliation_date:cutoff}),total_expected:500000,total_actual:500000});});
  await assert.rejects(correctEod(lockedId,itProfile,declarations,'Too late',client('it')),/locked/);
  console.log('PASS 029: two corrections preserve before/after/actor/time/reason, original submission identity and independent history; non-IT/14-day lock retained');
+ const financialCollections=['sales','pos_payments','pos_transaction_outbox','finance_ledger','banking_records','banking_transactions','cashTransfers','finance_payment_accounts','petty_cash_ledger','credit_receivables','financial_posting_audit'];
+ const snapshotFinancial=async()=>{const result={};await env.withSecurityRulesDisabled(async ctx=>{for(const name of financialCollections)result[name]=(await getDocs(collection(ctx.firestore(),name))).docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.id.localeCompare(b.id));});return JSON.stringify(result);};
+ const controlledSales=[];
+ await env.withSecurityRulesDisabled(async ctx=>{
+  const seedDb=ctx.firestore();
+  await setDoc(doc(seedDb,'branches','controlled'),{tenantId:'mp',name:'Controlled',status:'Active',shifts});
+  await updateDoc(doc(seedDb,'staff','cashier-a'),{assigned_branches:['masaka','other','controlled']});
+  for(const date of [day,yesterday]){
+   const sale={id:'controlled-'+date,tenantId:'mp',branchId:'controlled',timestamp:date+'T10:00:00Z',status:'completed',paymentMethod:'cash',totalAmount:500000,eodShift:capturePosShift({shifts},date+'T10:00:00Z')};
+   controlledSales.push(sale);await setDoc(doc(seedDb,'sales',sale.id),sale);
+  }
+ });
+ const financialBefore=await snapshotFinancial();
+ for(const [date,declared] of [[day,500000],[yesterday,495000]]){
+  const expected=expectedEodSales(controlledSales,'mp','controlled',date,'dayShift');assert.equal(expected.computedExpected.total,500000);
+  const declaration=input({branch_id:'controlled',reconciliation_date:date,cash_expected:expected.computedExpected.cash,cash_actual:declared});
+  if(declared<500000){await assert.rejects(submitEod(declaration,actor,db),/reason/);declaration.variance_reason='Controlled count shortage';}
+  const audit=await submitEod(declaration,actor,db);
+  const record=(await all()).find(r=>r.id===audit.id);
+  assert.equal(record.total_variance,declared-500000);assert.equal(record.audit_only,true);assert.equal(record.financial_posting,'none');
+  assert.equal((await all()).filter(r=>r.id===audit.id).length,1);
+  assert.equal(await snapshotFinancial(),financialBefore);
+ }
+ console.log('PASS 031: controlled POS 500,000 exact and 495,000 shortage produce only audits; sales/payments/outbox/revenue/bank/ledger snapshots unchanged, no balancing movements');
+
 
 } finally {await env.cleanup();}

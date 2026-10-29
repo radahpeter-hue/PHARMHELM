@@ -415,7 +415,7 @@ const EODReconciliationTab: React.FC = () => {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8 pb-6 border-b border-zinc-100">
         <div>
           <h2 className="text-2xl font-black text-zinc-900 tracking-tight">Daily EOD Reconciliation</h2>
-          <p className="text-zinc-500 text-sm mt-1">Reconcile transaction tallies against physical and voucher counts for this branch.</p>
+          <p className="text-zinc-500 text-sm mt-1">Compare the selected shift’s POS totals with declared amounts. Submitting an audit does not bank cash or post revenue.</p>
           <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold border border-emerald-100">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
             {relevantSalesCount} Transaction{relevantSalesCount === 1 ? '' : 's'} recorded for this shift and business date

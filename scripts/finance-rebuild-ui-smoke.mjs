@@ -169,6 +169,7 @@ try {
    await submit.click();await eod.waitForFunction(()=>window.financeWrites.some(w=>w.name==='eod_reconciliations'));
    const record=await eod.evaluate(()=>window.financeWrites.find(w=>w.name==='eod_reconciliations').data);
    if(scenario.variance!==null)assert.equal(record.total_variance,scenario.variance);else assert.ok(record.total_variance<0&&record.total_variance!==0);
+   assert.equal(record.audit_only,true);assert.equal(record.financial_posting,'none');assert.equal(await eod.evaluate(()=>window.financeWrites.filter(w=>w.name!=='eod_reconciliations').length),0);
    assert.equal(Object.is(record.total_variance,-0),false);await eod.close();console.log(`EOD ${scenario.name} passes UI, reason validation and saved-value checks`);
   }
   const rapid=await open(390,'?role=cashier&slowEod=1');
@@ -198,6 +199,16 @@ try {
   await history.close();console.log('029 branch-scoped history, historical dates, audit detail and shift export pass');
   const offset=await open(390,'?role=cashier');await offset.getByLabel('Configured Shift',{exact:true}).selectOption('dayShift');await offset.locator('input[type="number"]').nth(0).fill('495000');await offset.locator('input[type="number"]').nth(1).fill('5000');await offset.getByRole('button',{name:'Reveal System Totals',exact:true}).click();await offset.getByLabel('Variance Reason Required',{exact:true}).waitFor();assert.equal(await offset.getByRole('button',{name:'Submit EOD Audit Report',exact:true}).isEnabled(),false);await offset.close();
  }
+ const treasury=await open(390,'?role=owner');
+ await treasury.getByRole('button',{name:'Management',exact:true}).click();
+ await treasury.getByRole('button',{name:'Cash & Banking',exact:true}).click();
+ await treasury.getByRole('heading',{name:'Global Treasury View',exact:true}).waitFor();
+ const bankedText=await treasury.getByRole('heading',{name:'Banked Cash',exact:true}).locator('../..').innerText();
+ assert.ok(bankedText.includes('UGX 0'),bankedText);assert.ok(!bankedText.includes('500,000'),bankedText);
+ assert.equal(await treasury.getByText('Balance unavailable',{exact:true}).count(),3);
+ assert.equal(await treasury.getByRole('button',{name:'Process to Bank',exact:true}).count(),0);
+ await fit(treasury,'Audit-only treasury boundary');await treasury.screenshot({path:path.join(output,'treasury-audit-only-390.png'),fullPage:true});await treasury.close();
+ console.log('031 EOD declarations do not fund bank, wallets or spendable welfare reserves');
  for (const role of ['IT Head','IT Support Staff','Finance Head','owner']) {
   const page=await open(390,'?role='+encodeURIComponent(role));
   await page.getByRole('button',{name:'Management',exact:true}).click();
