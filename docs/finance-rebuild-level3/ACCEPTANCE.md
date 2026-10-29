@@ -118,3 +118,7 @@ Preview shares the established Firebase backend and existing tenant permissions.
 ## Release control
 
 Dedicated branch: feature/finance-rebuild-level3-eod. Preview workflow is limited to the established seven-day Finance PR Hosting channel and reuses its existing service account. CI must validate/deploy the exact head build before recommendation. No production merge/deploy is authorised; stop after preview is available for owner acceptance.
+
+### CI security maintenance
+
+The first POS CI audit detected newly published GHSA-gg6h-894w-4m9c in baseline re2js 2.8.6. Updated only its lockfile entry to 2.9.1 (four lines); no manifest or other dependency changes. Fresh npm ci, production dependency audit (zero vulnerabilities), all 763 tests and TypeScript pass. Production build revalidated. Audit gates remain enabled. Earlier statements that the lockfile was unchanged describe the Level 3 feature checkpoints before this narrow CI repair.
