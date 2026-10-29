@@ -284,6 +284,8 @@ const EODReconciliationTab: React.FC = () => {
   });
 
   const [varianceReason, setVarianceReason] = useState('');
+  const submitInFlight = React.useRef(false);
+  const [submitting, setSubmitting] = useState(false);
 
   // Subscribe to actual sales to fetch the dynamic EOD expectation
   useEffect(() => {
@@ -312,9 +314,11 @@ const EODReconciliationTab: React.FC = () => {
   ]);
 
   const handleSubmit = async () => {
-    if (!profile) return;
+    if (submitInFlight.current || !profile) return;
     if (!activeBranchId || !selectedShift) { toast.error('Select a configured shift for this branch.'); return; }
     if (!isBusinessDate(formData.date)) { toast.error('Select a valid business date.'); return; }
+    submitInFlight.current = true;
+    setSubmitting(true);
     try {
       const cash_var = eodVariance(formData.cash, computedExpected.cash);
       const mtn_var = eodVariance(formData.mtn, computedExpected.momo);
@@ -397,12 +401,16 @@ const EODReconciliationTab: React.FC = () => {
       setVarianceReason('');
     } catch (error) {
       toast.error('Failed to submit reconciliation');
+    } finally {
+      submitInFlight.current = false;
+      setSubmitting(false);
     }
   };
 
 
   return (
     <div className="max-w-6xl mx-auto bg-white p-6 sm:p-8 rounded-3xl border border-zinc-200 shadow-xl animate-fade-in">
+      <fieldset disabled={submitting} className="min-w-0">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8 pb-6 border-b border-zinc-100">
         <div>
           <h2 className="text-2xl font-black text-zinc-900 tracking-tight">Daily EOD Reconciliation</h2>
@@ -577,10 +585,10 @@ const EODReconciliationTab: React.FC = () => {
                 
                 <button 
                   onClick={handleSubmit}
-                  disabled={!selectedShift || (needsVarianceReason && !varianceReason.trim())}
+                  disabled={submitting || !selectedShift || (needsVarianceReason && !varianceReason.trim())}
                   className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-lg transition-all shadow-xl shadow-emerald-600/10"
                 >
-                  Submit EOD Audit Report
+                  {submitting ? 'Submitting EOD Audit Report…' : 'Submit EOD Audit Report'}
                 </button>
               </div>
             </div>
@@ -599,6 +607,7 @@ const EODReconciliationTab: React.FC = () => {
           )}
         </div>
       </div>
+      </fieldset>
     </div>
   );
 };

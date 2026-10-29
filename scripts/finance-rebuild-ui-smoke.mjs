@@ -36,7 +36,7 @@ const refresh=name=>watchers.filter(w=>w.name===name).forEach(w=>w.cb(rows(name)
 export const firestoreService={
  getCollection:async(name)=>rows(name),
  subscribeToCollection:(name,tenant,cb)=>{window.subscriptions.push({name,tenant});const w={name,cb};watchers.push(w);cb(rows(name));return()=>{const i=watchers.indexOf(w);if(i>=0)watchers.splice(i,1);};},
- addDocument:async(name,data)=>{const id='write-'+window.financeWrites.length;window.financeWrites.push({name,data});(records[name]||=[]).push({id,...data});refresh(name);return id;},
+ addDocument:async(name,data)=>{if(name==='eod_reconciliations'&&new URLSearchParams(location.search).has('slowEod'))await new Promise(r=>setTimeout(r,350));const id='write-'+window.financeWrites.length;window.financeWrites.push({name,data});(records[name]||=[]).push({id,...data});refresh(name);return id;},
  updateDocument:async(name,id,data)=>{window.financeWrites.push({name,id,data});Object.assign((records[name]||[]).find(r=>r.id===id),data);refresh(name);},
  deleteDocument:()=>{throw new Error('Unexpected deletion');}
 };`;
@@ -167,6 +167,18 @@ try {
    if(scenario.variance!==null)assert.equal(record.total_variance,scenario.variance);else assert.ok(record.total_variance<0&&record.total_variance!==0);
    assert.equal(Object.is(record.total_variance,-0),false);await eod.close();console.log(`EOD ${scenario.name} passes UI, reason validation and saved-value checks`);
   }
+  const rapid=await open(390,'?role=cashier&slowEod=1');
+  await rapid.getByLabel('Configured Shift',{exact:true}).selectOption('dayShift');
+  await rapid.locator('input[type="number"]').first().fill('500000');
+  await rapid.getByRole('button',{name:'Reveal System Totals',exact:true}).click();
+  await rapid.getByRole('button',{name:'Submit EOD Audit Report',exact:true}).evaluate(el=>{el.click();el.click();el.dispatchEvent(new MouseEvent('click',{bubbles:true}));});
+  const progress=rapid.getByRole('button',{name:'Submitting EOD Audit Report…',exact:true});
+  assert.equal(await progress.isDisabled(),true);
+  assert.equal(await rapid.getByLabel('Configured Shift',{exact:true}).isDisabled(),true);
+  await rapid.waitForFunction(()=>window.financeWrites.filter(w=>w.name==='eod_reconciliations').length===1);
+  await rapid.getByRole('button',{name:'Reveal System Totals',exact:true}).waitFor();
+  assert.equal(await rapid.evaluate(()=>window.financeWrites.filter(w=>w.name==='eod_reconciliations').length),1);
+  await rapid.close();console.log('027 synchronous rapid clicks produce one write with visible disabled progress');
   const offset=await open(390,'?role=cashier');await offset.getByLabel('Configured Shift',{exact:true}).selectOption('dayShift');await offset.locator('input[type="number"]').nth(0).fill('495000');await offset.locator('input[type="number"]').nth(1).fill('5000');await offset.getByRole('button',{name:'Reveal System Totals',exact:true}).click();await offset.getByLabel('Variance Reason Required',{exact:true}).waitFor();assert.equal(await offset.getByRole('button',{name:'Submit EOD Audit Report',exact:true}).isEnabled(),false);await offset.close();
  }
  for (const role of ['IT Head','IT Support Staff','Finance Head','owner']) {

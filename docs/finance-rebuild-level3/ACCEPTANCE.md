@@ -39,3 +39,9 @@ Validation: targeted date/shift/money/correction tests: 16/16 PASS; typecheck PA
 Legacy and V2 checkout capture `eodShift` from the live branch configuration read inside their inventory transaction. The starting Kampala date owns overnight shifts; end time is exclusive. Missing/gap/overlapping configuration leaves explicit absence of attribution and never blocks unrelated POS sales. EOD expected totals strictly filter tenant, branch, saved business date and saved shift ID; voided/superseded receipts remain excluded. Historical sales are not backfilled or classified from today's settings; the form displays excluded unattributed-sales counts for the business-day window.
 
 Validation: date/shift/sales/money/correction/POS checkout tests: 96/96 PASS; typecheck/build PASS; actual Finance/Welfare UI checks at 360/390/1280px PASS (including match, shortage, over, float, tiny, correction roles); existing POS Spark emulator suite PASS (quotation lifecycle, atomic revision/stock/payment, revision RBAC, legacy repair). Runtime-only cached firebase-admin and Chromium supplied to existing harnesses; no dependency/lockfile changes. A first strict float assertion was corrected to use the accepted Level 2 normalized variance contract; no money behavior changed. Initial harness environment failures (absent browser/admin module) resolved before acceptance.
+
+### 027 — accepted
+
+A synchronous ref guard locks before the first async operation; fieldset/button disable immediately with visible submitting text. Finally releases on success/error, retaining failure input. This is interaction protection only; server-atomic uniqueness follows in 028.
+
+Validation: targeted date/shift/sales/money tests: 17/17 PASS; typecheck PASS; complete actual Finance/Welfare responsive harness PASS including synchronous double-click plus synthetic click during a delayed write: exactly one write, disabled shift selector and visible progress, normal completion.
