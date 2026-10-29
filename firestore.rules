@@ -3022,17 +3022,21 @@ service cloud.firestore {
     }
 
     match /audit_logs/{auditId} {
-      // Reserved, immutable IT Head evidence for owner-verified legacy receipts.
+      function validAuditCreate() {
+        let user = getUserData();
+        let data = request.resource.data;
+        return data.tenantId == user.tenantId
+          && (!auditId.matches('^eod_verify_.*') || (
+            (user.role == 'IT Head' || user.get('secondaryRoles', []).hasAny(['IT Head']))
+            && data.userId == request.auth.uid && data.timestamp == request.time))
+          && (!('revisionRequestId' in data) ||
+            (isFreshAtomicRevision(data.revisionRequestId) && data.userId == request.auth.uid));
+      }
       allow read: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId;
-      allow create: if isAuthenticated() && request.resource.data.tenantId == getUserData().tenantId
-        && (!auditId.matches('^eod_verify_.*') || (hasAnyRole(['IT Head'])
-          && request.resource.data.userId == request.auth.uid && request.resource.data.timestamp == request.time))
-        && (!('revisionRequestId' in request.resource.data) ||
-          (isFreshAtomicRevision(request.resource.data.revisionRequestId)
-          && request.resource.data.userId == request.auth.uid));
-      allow update: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId
-        && !auditId.matches('^eod_verify_.*') && !('revisionRequestId' in resource.data) && !('revisionRequestId' in request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId && !auditId.matches('^eod_verify_.*') && !('revisionRequestId' in resource.data);
+      allow create: if isAuthenticated() && validAuditCreate();
+      allow update, delete: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId
+        && !auditId.matches('^eod_verify_.*') && !('revisionRequestId' in resource.data)
+        && (request.method == 'delete' || !('revisionRequestId' in request.resource.data));
     }
     match /sale_revisions/{revisionId} {
       allow get: if isAuthenticated() && (resource == null || resource.data.tenantId == getUserData().tenantId);
