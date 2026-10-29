@@ -1290,8 +1290,10 @@ service cloud.firestore {
     match /eod_shift_assignments/{assignmentId} {
       function validLegacyVerification() {
         let data = request.resource.data;
+        let user = getUserData();
         let sale = get(/databases/$(database)/documents/sales/$(data.sale_id)).data;
-        return hasAnyRole(['IT Head']) && isTenantMember(data.tenantId)
+        return (user.role == 'IT Head' || user.get('secondaryRoles', []).hasAny(['IT Head']))
+          && user.tenantId == data.tenantId
           && assignmentId == data.tenantId + '~' + data.sale_id
           && data.verified_by == request.auth.uid && data.verified_at == request.time
           && data.source == 'IT_HEAD_VERIFIED_LEGACY'
@@ -1301,8 +1303,9 @@ service cloud.firestore {
           && sale.tenantId == data.tenantId && sale.branchId == data.branch_id
           && sale.timestamp == data.sale_timestamp && !('eodShift' in sale);
       }
-      allow read: if isAuthenticated() && canViewBranchFinance()
-        && (resource == null || isTenantMember(resource.data.tenantId));
+      // Same tenant-scoped evidence read boundary as sales/audit history.
+      allow read: if isAuthenticated()
+        && (resource == null || resource.data.tenantId == getUserData().tenantId);
       allow create: if isAuthenticated() && validLegacyVerification();
       allow update, delete: if false;
     }

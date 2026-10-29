@@ -23,3 +23,5 @@ Owner retest after release:
 - View audit is readable; Correct EOD edits declarations only inside the original 14-day window.
 
 The first hosted candidate measured 258,572 executable bytes and was rejected by the 256,000-byte gate before release. Repeated reads/checks were consolidated only inside the new assignment match, with sale/data cached locally and equivalent get/list read predicates combined. Authenticated legacy/EOD/checkout scenarios pass again. The existing global compiler and all pre-existing match policies remain unchanged. Hosted certification must be rerun for this exact revised candidate.
+
+Second candidate: 257,601 executable bytes, still rejected before release. Final narrow adjustment gives legacy receipt evidence the same strict tenant read boundary as existing sales/audit evidence and caches the authoritative staff once for IT Head creation. Primary/secondary IT Head is required; token-email cross-tenant bypass is not permitted for assignments. No existing collection permission changed. Authenticated legacy, EOD and checkout scenarios pass again; generated source is 142,294 bytes. Actual hosted certification remains mandatory.
