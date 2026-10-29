@@ -21,3 +21,5 @@ Owner retest after release:
 - Review legacy receipts for this shift → select exactly the six receipts → reason → attest historical hours → Save verified shift evidence.
 - Declare 35,600 → Reveal System Totals → Expected 35,600, Variance 0 → submit once.
 - View audit is readable; Correct EOD edits declarations only inside the original 14-day window.
+
+The first hosted candidate measured 258,572 executable bytes and was rejected by the 256,000-byte gate before release. Repeated reads/checks were consolidated only inside the new assignment match, with sale/data cached locally and equivalent get/list read predicates combined. Authenticated legacy/EOD/checkout scenarios pass again. The existing global compiler and all pre-existing match policies remain unchanged. Hosted certification must be rerun for this exact revised candidate.

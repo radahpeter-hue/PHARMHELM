@@ -1288,23 +1288,22 @@ service cloud.firestore {
 
     // IT Head verifies legacy receipts explicitly. One immutable assignment per sale.
     match /eod_shift_assignments/{assignmentId} {
-      allow get: if isAuthenticated() && canViewBranchFinance()
+      function validLegacyVerification() {
+        let data = request.resource.data;
+        let sale = get(/databases/$(database)/documents/sales/$(data.sale_id)).data;
+        return hasAnyRole(['IT Head']) && isTenantMember(data.tenantId)
+          && assignmentId == data.tenantId + '~' + data.sale_id
+          && data.verified_by == request.auth.uid && data.verified_at == request.time
+          && data.source == 'IT_HEAD_VERIFIED_LEGACY'
+          && data.businessDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && data.reason is string && data.reason.trim().size() > 0 && data.reason.size() <= 1000
+          && data.shift_id in ['dayShift','eveningShift','nightShift']
+          && sale.tenantId == data.tenantId && sale.branchId == data.branch_id
+          && sale.timestamp == data.sale_timestamp && !('eodShift' in sale);
+      }
+      allow read: if isAuthenticated() && canViewBranchFinance()
         && (resource == null || isTenantMember(resource.data.tenantId));
-      allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId) && canViewBranchFinance();
-      allow create: if isAuthenticated() && hasAnyRole(['IT Head'])
-        && isTenantMember(request.resource.data.tenantId)
-        && assignmentId == request.resource.data.tenantId + '~' + request.resource.data.sale_id
-        && request.resource.data.verified_by == request.auth.uid
-        && request.resource.data.verified_at == request.time
-        && request.resource.data.source == 'IT_HEAD_VERIFIED_LEGACY'
-        && request.resource.data.businessDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
-        && request.resource.data.reason is string && request.resource.data.reason.trim().size() > 0
-        && request.resource.data.reason.size() <= 1000
-        && request.resource.data.shift_id in ['dayShift','eveningShift','nightShift']
-        && get(/databases/$(database)/documents/sales/$(request.resource.data.sale_id)).data.tenantId == request.resource.data.tenantId
-        && get(/databases/$(database)/documents/sales/$(request.resource.data.sale_id)).data.branchId == request.resource.data.branch_id
-        && get(/databases/$(database)/documents/sales/$(request.resource.data.sale_id)).data.timestamp == request.resource.data.sale_timestamp
-        && !('eodShift' in get(/databases/$(database)/documents/sales/$(request.resource.data.sale_id)).data);
+      allow create: if isAuthenticated() && validLegacyVerification();
       allow update, delete: if false;
     }
 
