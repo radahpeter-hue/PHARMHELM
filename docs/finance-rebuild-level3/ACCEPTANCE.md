@@ -69,3 +69,9 @@ Validation: 42 finance/date/shift/money/correction tests PASS; typecheck PASS; a
 Submission is marked audit-only/no-financial-posting and writes only the EOD reconciliation. Removed Cash & Banking's EOD query and use of declarations as bank/wallet funding or welfare spending. Registered bank balances, recorded transfers, receivables and recorded welfare allocations remain intact. No substitute account/ledger architecture is introduced. Wallet/current welfare reserve values that were only inferred from EOD are explicitly unavailable, and cannot fund a Process-to-Bank action. This is a necessary consequence of removing fictitious EOD funding, not a new wallet implementation. Existing staff Welfare Portal behavior/balances and manual allocation service are unchanged.
 
 Validation: 44 finance/date/shift/money/correction tests PASS; typecheck PASS; responsive Finance/Welfare UI harness PASS, including EOD-only writes and no declaration-funded bank/wallet/reserve values. Authenticated Level 3 emulator PASS: controlled POS 500,000 exact and 495,000 shortage; reason required, variances 0/-5,000, one reconciliation each. Byte-for-byte collection snapshots show sales, canonical payments/outbox, revenue/finance ledgers, bank records, registered balances, petty-cash/credit and transfer records unchanged. No invented balancing movements.
+
+### Regression follow-up — canonical EOD report fields
+
+Inspection found Report Hub still using obsolete date/shift/expected fields and substituting expected MoMo for declared zero. It now uses canonical business date, saved shift, expected/declared/normalized variance, reason and actual zero. Legacy date/total shapes remain readable without rewriting records.
+
+Validation: 10 focused money/report tests PASS; typecheck PASS.
