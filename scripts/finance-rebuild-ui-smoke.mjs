@@ -29,9 +29,11 @@ const records={
 records.eod_reconciliations=[{id:'today-eod',tenantId:'test',branch_id:'masaka',reconciliation_date:day,cash_actual:500000,cash_expected:500000,total_actual:500000,total_expected:500000,total_variance:0,logged_by:'staff-one',status:'submitted'},{id:'old-eod',tenantId:'test',branch_id:'masaka',reconciliation_date:oldDay,total_actual:500000,total_expected:500000}];
 const eodMode=new URLSearchParams(location.search).get('eod');if(eodMode){const amount=eodMode==='float'?0.1+0.2:0.3001;records.sales[0].total=amount;records.sales[0].totalAmount=amount;}
 records.sales[0].eodShift={version:1,businessDate:day,shiftId:'dayShift',shiftName:'Day Shift',startTime:'07:30',endTime:'17:00',timeZone:'Africa/Kampala'};
+records.staff.push({id:'tester',uid:'tester',tenantId:'test',role:new URLSearchParams(location.search).get('role')||'owner',active:true,status:'active',assigned_branches:['masaka']});
 window.fixtureDates={day,oldDay};window.fixtureRecords=records;window.financeWrites=[];window.subscriptions=[];
 const watchers=[];
 export const rows=name=>(records[name]||[]).filter(r=>r.tenantId==='test');
+export const fixtureWrite=(name,id,data)=>{window.financeWrites.push({name,id,data});(records[name]||=[]).push({id,...data});refresh(name);};
 const refresh=name=>watchers.filter(w=>w.name===name).forEach(w=>w.cb(rows(name)));
 export const firestoreService={
  getCollection:async(name)=>rows(name),
@@ -45,12 +47,13 @@ const stubs = {
  auth, fixture,
  tenant: `export const useTenant=()=>({tenant:{id:'test',name:'Fixture Pharma',plan:'enterprise',subscriptionStatus:'active'},hasFeature:()=>true,hasModule:()=>true});`,
  firebase: `export const db={},auth={},storage={},googleProvider={};export const registerAuthUser=()=>{};`,
- sdk: `export * from ${JSON.stringify(actualSdk)};import {rows} from 'fixture-data';
+ sdk: `export * from ${JSON.stringify(actualSdk)};import {rows,fixtureWrite} from 'fixture-data';
  export const collection=(_db,path)=>({path});export const doc=(_db,path,id)=>({path,id});export const query=(ref,...constraints)=>({...ref,constraints});export const where=(...args)=>args;export const orderBy=(...args)=>args;
- const snap=(r)=>({id:r.id,exists:()=>!!r,data:()=>r});
- export const getDocs=async(ref)=>({docs:rows(ref.path).map(snap),size:rows(ref.path).length});export const getDoc=async(ref)=>snap(rows(ref.path).find(r=>r.id===ref.id)||{});
+ const snap=(r)=>({id:r?.id,exists:()=>!!r?.id,data:()=>r});
+ export const getDocs=async(ref)=>{const found=rows(ref.path).filter(r=>(ref.constraints||[]).every(([key,op,v])=>op==='=='?r[key]===v:op==='>='?r[key]>=v:op==='<='?r[key]<=v:true));return {docs:found.map(snap),size:found.length,empty:!found.length};};export const getDoc=async(ref)=>snap(rows(ref.path).find(r=>r.id===ref.id));
  export const onSnapshot=(ref,cb)=>{cb({docs:rows(ref.path).map(snap)});return()=>{};};
- export const addDoc=()=>{throw new Error('Live SDK write blocked');};export const updateDoc=addDoc,deleteDoc=addDoc,runTransaction=addDoc,writeBatch=addDoc;`,
+ export const addDoc=()=>{throw new Error('Live SDK write blocked');};export const updateDoc=addDoc,deleteDoc=addDoc,writeBatch=addDoc;
+ export const runTransaction=async(_db,fn)=>{const pending=[];const result=await fn({get:getDoc,set:(ref,data)=>pending.push({ref,data})});if(new URLSearchParams(location.search).has('slowEod'))await new Promise(r=>setTimeout(r,350));for(const {ref,data} of pending){if(ref.path==='eod_reconciliations'&&rows(ref.path).some(r=>r.id===ref.id))throw new Error('Existing audit cannot be replaced');fixtureWrite(ref.path,ref.id,data);}return result;};`,
  exporter: `export const exportRecordsToExcel=async(...args)=>{window.exported=args;};`
 };
 await build({ stdin: { contents: `import React from 'react';import {createRoot} from 'react-dom/client';import Finance from './src/pages/Finance';import Welfare from './src/pages/Welfare';import {Toaster} from 'sonner';const welfare=new URLSearchParams(location.search).get('surface')==='welfare';createRoot(document.getElementById('root')).render(<main className="p-3 bg-zinc-50 text-zinc-900 min-w-0 min-h-screen"><Toaster mobileOffset={8}/><>{welfare?<Welfare/>:<Finance/>}</></main>);`, loader:'tsx', resolveDir:process.cwd() }, bundle:true, format:'iife', outfile:path.join(output,'app.js'), plugins:[{name:'isolated-finance',setup(b){

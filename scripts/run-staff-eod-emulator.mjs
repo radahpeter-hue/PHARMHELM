@@ -33,7 +33,7 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   if (!ready) throw new Error('Firestore emulator did not start.');
-  for (const script of ['scripts/staff-identity-eod-rules-emulator.mjs', 'scripts/system-identity-rules-emulator.mjs', 'scripts/martin-pharma-identity-staging-emulator.mjs']) {
+  for (const script of process.env.EOD_LEVEL3_ONLY ? ['scripts/eod-level3-emulator.mjs'] : ['scripts/eod-level3-emulator.mjs', 'scripts/staff-identity-eod-rules-emulator.mjs', 'scripts/system-identity-rules-emulator.mjs', 'scripts/martin-pharma-identity-staging-emulator.mjs']) {
     const code = await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', script], { stdio: 'inherit',
         env: { ...process.env, FIRESTORE_EMULATOR_HOST: `127.0.0.1:${port}` } });

@@ -1,3 +1,4 @@
+import { submitEod } from '../services/eodSubmissionService';
 import { expectedEodSales } from '../utils/eodExpected';
 import { configuredEodShifts } from '../utils/eodShifts';
 import { isBusinessDate, kampalaBusinessDate, timestampBusinessDate } from '../utils/eodBusinessDate';
@@ -338,7 +339,7 @@ const EODReconciliationTab: React.FC = () => {
         return;
       }
 
-      await firestoreService.addDocument('eod_reconciliations', {
+      const result = await submitEod({
         tenantId: profile.tenantId,
         branch_id: activeBranchId,
         shift_id: selectedShift.id,
@@ -384,9 +385,9 @@ const EODReconciliationTab: React.FC = () => {
         status: 'Pending',
         logged_by: profile.uid,
         created_at: new Date().toISOString()
-      });
+      }, profile);
 
-      toast.success('EOD Reconciliation submitted successfully!');
+      toast.success(result.replayed ? 'This shift is already reconciled. Existing audit retained.' : 'EOD Reconciliation submitted successfully!');
       setRevealed(false);
       setFormData({
         cash: 0,
@@ -400,7 +401,7 @@ const EODReconciliationTab: React.FC = () => {
       });
       setVarianceReason('');
     } catch (error) {
-      toast.error('Failed to submit reconciliation');
+      toast.error(error instanceof Error ? error.message : 'Failed to submit reconciliation');
     } finally {
       submitInFlight.current = false;
       setSubmitting(false);
@@ -417,7 +418,7 @@ const EODReconciliationTab: React.FC = () => {
           <p className="text-zinc-500 text-sm mt-1">Reconcile transaction tallies against physical and voucher counts for this branch.</p>
           <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold border border-emerald-100">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
-            {relevantSalesCount} Transaction{relevantSalesCount === 1 ? '' : 's'} recorded on this date
+            {relevantSalesCount} Transaction{relevantSalesCount === 1 ? '' : 's'} recorded for this shift and business date
           </div>
         </div>
         <div className="text-left sm:text-right">
