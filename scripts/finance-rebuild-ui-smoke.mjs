@@ -187,9 +187,12 @@ try {
   const history=await open(390,'?role=cashier');
   await history.getByRole('heading',{name:'EOD Reconciliation Log',exact:true}).waitFor();
   assert.equal(await history.getByLabel('EOD history branch',{exact:true}).isDisabled(),true);
+  await history.locator('main').evaluate(el=>el.style.color='white');
   await history.getByRole('button',{name:'View audit',exact:true}).first().click();
   const audit=history.getByRole('dialog',{name:'EOD audit history',exact:true});
   await audit.getByText('Historical whole-day record — shift not recorded',{exact:true}).waitFor();
+  assert.match(await audit.getByRole('heading').first().evaluate(el=>getComputedStyle(el).color),/rgb\(24, 24, 27\)|oklch\(0.21 0.006 285.885\)/);
+  assert.match(await audit.getByRole('button',{name:'Close',exact:true}).evaluate(el=>getComputedStyle(el).color),/rgb\(24, 24, 27\)|oklch\(0.21 0.006 285.885\)/);
   await audit.getByText('Expected',{exact:true}).waitFor();await audit.getByText('Declared',{exact:true}).waitFor();
   await fit(history,'EOD audit history');await audit.getByRole('button',{name:'Close',exact:true}).click();
   await history.getByLabel('EOD history from',{exact:true}).fill((await history.evaluate(()=>window.fixtureDates)).oldDay);
@@ -239,6 +242,7 @@ try {
   if(role==='IT Head') {
    await edit.click();const modal=page.getByRole('dialog',{name:'Correct EOD reconciliation'});
    assert.equal(await modal.getByRole('button',{name:'Save correction',exact:true}).isEnabled(),false);
+   assert.match(await modal.getByRole('heading').evaluate(el=>getComputedStyle(el).color),/rgb\(24, 24, 27\)|oklch\(0.21 0.006 285.885\)/);
    await modal.getByLabel('Correction reason',{exact:true}).fill('Count correction');
    assert.equal(await modal.getByRole('button',{name:'Save correction',exact:true}).isEnabled(),true);
    await fit(page,'EOD correction modal');await page.screenshot({path:path.join(output,'eod-correction-390.png'),fullPage:true});

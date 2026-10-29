@@ -7,7 +7,7 @@ export function EodCorrectionModal({ record, onClose, onSaved }: {record: any; o
   const [values, setValues] = useState<Record<string, number>>(() => Object.fromEntries(EOD_CHANNELS.map(c => [c, record[`${c}_actual`] || 0])));
   const [reason, setReason] = useState(''); const [busy, setBusy] = useState(false);
   return <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Correct EOD reconciliation">
-    <form className="bg-white rounded-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto space-y-3" onSubmit={async e => {
+    <form className="bg-white text-zinc-900 rounded-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto space-y-3" onSubmit={async e => {
       e.preventDefault(); if (!profile || busy) return; setBusy(true);
       try { await correctEod(record.id, profile, values, reason); toast.success('EOD correction saved.'); onSaved(); onClose(); }
       catch (error) { toast.error(error instanceof Error ? error.message : 'Correction failed.'); }
