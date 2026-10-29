@@ -3023,14 +3023,13 @@ service cloud.firestore {
 
     match /audit_logs/{auditId} {
       function validAuditCreate() {
-        let user = getUserData();
         let data = request.resource.data;
-        return data.tenantId == user.tenantId
-          && (!auditId.matches('^eod_verify_.*') || (
-            (user.role == 'IT Head' || user.get('secondaryRoles', []).hasAny(['IT Head']))
-            && data.userId == request.auth.uid && data.timestamp == request.time))
-          && (!('revisionRequestId' in data) ||
-            (isFreshAtomicRevision(data.revisionRequestId) && data.userId == request.auth.uid));
+        return data.tenantId == getUserData().tenantId
+          && (auditId.matches('^eod_verify_.*')
+            ? (hasAnyRole(['IT Head']) && data.userId == request.auth.uid
+              && data.timestamp == request.time && !('revisionRequestId' in data))
+            : (!('revisionRequestId' in data) ||
+              (isFreshAtomicRevision(data.revisionRequestId) && data.userId == request.auth.uid)));
       }
       allow create: if isAuthenticated() && validAuditCreate();
       allow read, update, delete: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId
