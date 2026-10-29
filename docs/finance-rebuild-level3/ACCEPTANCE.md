@@ -33,3 +33,9 @@ Validation: targeted date/shift/money/correction tests: 15/15 PASS; typecheck PA
 EOD subscribes to saved tenant-scoped branch configuration and uses the same immutable keys and display vocabulary as Settings. Settings editor defaults remain editor-only: unsaved/nonexistent configuration is never substituted into EOD. Live settings updates invalidate disabled choices. Captured name/hours remain historical snapshots.
 
 Validation: targeted date/shift/money/correction tests: 16/16 PASS; typecheck PASS. Toggle and time-change tests confirm future choices update without modifying captured definitions.
+
+### 026 — accepted
+
+Legacy and V2 checkout capture `eodShift` from the live branch configuration read inside their inventory transaction. The starting Kampala date owns overnight shifts; end time is exclusive. Missing/gap/overlapping configuration leaves explicit absence of attribution and never blocks unrelated POS sales. EOD expected totals strictly filter tenant, branch, saved business date and saved shift ID; voided/superseded receipts remain excluded. Historical sales are not backfilled or classified from today's settings; the form displays excluded unattributed-sales counts for the business-day window.
+
+Validation: date/shift/sales/money/correction/POS checkout tests: 96/96 PASS; typecheck/build PASS; actual Finance/Welfare UI checks at 360/390/1280px PASS (including match, shortage, over, float, tiny, correction roles); existing POS Spark emulator suite PASS (quotation lifecycle, atomic revision/stock/payment, revision RBAC, legacy repair). Runtime-only cached firebase-admin and Chromium supplied to existing harnesses; no dependency/lockfile changes. A first strict float assertion was corrected to use the accepted Level 2 normalized variance contract; no money behavior changed. Initial harness environment failures (absent browser/admin module) resolved before acceptance.

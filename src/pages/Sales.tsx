@@ -1,3 +1,4 @@
+import { capturePosShift } from '../utils/posShiftAttribution';
 import { staffMatchesId } from '../utils/operationalStaff';
 import { getDisplayReference } from '../utils/salePresentation';
 import React, { useState, useEffect } from 'react';
@@ -983,6 +984,10 @@ const Sales: React.FC = () => {
             finalizedSaleItems = ((existingSale.data() as Sale).items || saleData.items);
             return;
           }
+
+          const branchSnapshot = await transaction.get(doc(db, 'branches', activeBranchId!));
+          if (!branchSnapshot.exists() || branchSnapshot.data().tenantId !== profile.tenantId) throw new Error('Branch configuration is unavailable.');
+          saleData.eodShift = capturePosShift(branchSnapshot.data() as Branch, saleData.timestamp);
 
           const quotationRef = resumedQuotationId ? doc(db, 'pos_quotations', resumedQuotationId) : null;
           const quotationSnap = quotationRef ? await transaction.get(quotationRef) : null;

@@ -1,3 +1,4 @@
+import { expectedEodSales } from '../utils/eodExpected';
 import { configuredEodShifts } from '../utils/eodShifts';
 import { isBusinessDate, kampalaBusinessDate, timestampBusinessDate } from '../utils/eodBusinessDate';
 import { staffMatchesId } from '../utils/operationalStaff';
@@ -294,71 +295,9 @@ const EODReconciliationTab: React.FC = () => {
     }
   }, [profile?.tenantId]);
 
-  // Dynamically compute system expected values from actual POS data for this branch & date
-  const { computedExpected, relevantSalesCount } = React.useMemo(() => {
-    const targetDate = formData.date;
-    const filtered = sales.filter(s => {
-      const isCompleted = s.status === 'completed' || s.status === 'active';
-      const isSameBranch = s.branchId === activeBranchId;
-      if (!s.timestamp) return false;
-      const saleDate = timestampBusinessDate(s.timestamp);
-      return isCompleted && isSameBranch && saleDate === targetDate;
-    });
-
-    const cash: number[] = [];
-    const momo: number[] = [];
-    const airtel: number[] = [];
-    const card: number[] = [];
-    const insurance: number[] = [];
-    const instCredit: number[] = [];
-    const staffWelfare: number[] = [];
-
-    filtered.forEach(s => {
-      const totalAmount = eodAmountNumber(s.totalAmount ?? s.total ?? 0);
-      const isSplit = s.paymentMethod === 'staff_welfare' && s.secondaryPaymentMethod;
-      
-      if (isSplit) {
-        const welfareVal = eodAmountNumber(s.welfareAmount ?? 0);
-        const secVal = eodAmountNumber(s.secondaryAmount ?? (totalAmount - welfareVal));
-        
-        // Welfare component
-        staffWelfare.push(welfareVal);
-        
-        // Secondary payment component
-        const secMethod = s.secondaryPaymentMethod;
-        if (secMethod === 'cash') cash.push(secVal);
-        else if (secMethod === 'mtn_momo') momo.push(secVal);
-        else if (secMethod === 'airtel_money') airtel.push(secVal);
-        else if (secMethod === 'card') card.push(secVal);
-        else if (secMethod === 'insurance') insurance.push(secVal);
-        else if (secMethod === 'institutional_credit') instCredit.push(secVal);
-      } else {
-        // Simple direct payment
-        const pMethod = s.paymentMethod;
-        if (pMethod === 'cash') cash.push(totalAmount);
-        else if (pMethod === 'mtn_momo') momo.push(totalAmount);
-        else if (pMethod === 'airtel_money') airtel.push(totalAmount);
-        else if (pMethod === 'card') card.push(totalAmount);
-        else if (pMethod === 'insurance') insurance.push(totalAmount);
-        else if (pMethod === 'institutional_credit') instCredit.push(totalAmount);
-        else if (pMethod === 'staff_welfare') staffWelfare.push(totalAmount);
-      }
-    });
-
-    return {
-      computedExpected: {
-        cash: sumEodAmounts(cash),
-        momo: sumEodAmounts(momo),
-        airtel: sumEodAmounts(airtel),
-        card: sumEodAmounts(card),
-        insurance: sumEodAmounts(insurance),
-        institutional_credit: sumEodAmounts(instCredit),
-        staff_welfare: sumEodAmounts(staffWelfare),
-        total: sumEodAmounts([...cash, ...momo, ...airtel, ...card, ...insurance, ...instCredit, ...staffWelfare])
-      },
-      relevantSalesCount: filtered.length
-    };
-  }, [sales, formData.date, activeBranchId]);
+  const { computedExpected, relevantSalesCount, unattributedSalesCount } = React.useMemo(() =>
+    expectedEodSales(sales, profile?.tenantId || '', activeBranchId || '', formData.date, shiftId),
+    [sales, profile?.tenantId, activeBranchId, formData.date, shiftId]);
 
   const declaredTotals = sumEodAmounts([formData.cash, formData.mtn, formData.airtel, formData.card, formData.insurance, formData.institutional_credit, formData.staff_welfare]);
 
@@ -493,6 +432,8 @@ const EODReconciliationTab: React.FC = () => {
           <option value="">Select a shift</option>
           {shifts.map(shift => <option key={shift.id} value={shift.id}>{shift.name} ({shift.startTime}–{shift.endTime})</option>)}
         </select>
+        {unattributedSalesCount > 0 && <p role="status" className="text-sm text-amber-800">{unattributedSalesCount} sale(s) in this date window have no saved shift evidence and are excluded from expected totals. Historical sales cannot be assigned using today's Settings. Review POS history before submitting.</p>}
+        <p className="text-xs text-zinc-500">Business date is the date the shift starts in Kampala. An overnight shift includes its after-midnight sales.</p>
         {!shifts.length && <p className="text-sm text-amber-700">Configure and enable branch shifts in Settings before reconciling.</p>}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">

@@ -14,11 +14,11 @@ const branches=[{id:'masaka',name:'Masaka Branch',tenantId:'test'},{id:'other',n
 const profile={id:'tester',uid:'tester',tenantId:'test',role,full_name:'Finance Tester',assigned_branches:['masaka'],active:true};
 const value={profile,activeBranchId:'masaka',activeBranch:branches[0],assignedBranches:role==='cashier'?[branches[0]]:branches,hasPermission:()=>role!=='dispenser'};
 export const useAuth=()=>value;`;
-const fixture = `const day=new Date().toISOString().slice(0,10);const old=new Date(day+'T12:00:00Z');old.setUTCDate(1);old.setUTCMonth(old.getUTCMonth()-1);old.setUTCDate(10);const oldDay=old.toISOString().slice(0,10);
+const fixture = `const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Kampala',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const old=new Date(day+'T12:00:00Z');old.setUTCDate(1);old.setUTCMonth(old.getUTCMonth()-1);old.setUTCDate(10);const oldDay=old.toISOString().slice(0,10);
 const records={
  system_settings:[{id:'settings',tenantId:'test',taxEngineEnabled:false}],
  staff:[{id:'staff-one',uid:'staff-one',tenantId:'test',staff_code:'MP-001',full_name:'Alex Example',active:true,status:'active',branch_id:'masaka'}, {id:'staff-two',uid:'staff-two',tenantId:'test',staff_code:'MP-002',full_name:'Alex Example',active:true,status:'active',branch_id:'masaka'}, {id:'inactive',tenantId:'test',full_name:'Inactive Employee',active:false,status:'inactive',branch_id:'masaka'}, {id:'cross-tenant',tenantId:'other-tenant',full_name:'Other Tenant Employee',active:true,status:'active',branch_id:'masaka'}],
- branches:[{id:'masaka',name:'Masaka Branch',tenantId:'test'},{id:'other',name:'Other Branch',tenantId:'test'}],
+ branches:[{id:'masaka',name:'Masaka Branch',tenantId:'test',shifts:{dayShift:{enabled:true,startTime:'07:30',endTime:'17:00'},eveningShift:{enabled:true,startTime:'17:00',endTime:'22:00'}}},{id:'other',name:'Other Branch',tenantId:'test'}],
  sales:[{id:'sale',tenantId:'test',branchId:'masaka',status:'completed',paymentMethod:'cash',total:500000,totalAmount:500000,timestamp:day+'T10:00:00Z',items:[]},{id:'other-sale',tenantId:'test',branchId:'other',status:'completed',paymentMethod:'cash',total:300000,totalAmount:300000,timestamp:day+'T10:00:00Z',items:[]}],
  branch_expenses:[{id:'historic-salary',tenantId:'test',branch_id:'masaka',expense_date:day,category:'salaries',description:'Historical salary fixture',amount_ugx:1000,payment_method:'Petty Cash',status:'approved'},{id:'older-allowance',tenantId:'test',branch_id:'masaka',expense_date:oldDay,category:'allowances',description:'Historic allowance fixture',amount_ugx:1200,status:'approved',issued_to:'Historical Recipient'}],
  petty_cash_issues:[{id:'incoming',tenantId:'test',branch_id:'masaka',issue_date:day,amount:10000,reference_number:'CURRENT-INCOMING',status:'issued'},{id:'old-issue',tenantId:'test',branch_id:'masaka',issue_date:oldDay,amount:7000,reference_number:'PREVIOUS-INCOMING',status:'issued'},{id:'received',tenantId:'test',branch_id:'masaka',issue_date:oldDay,amount:3000,reference_number:'RECEIVED-HISTORY',status:'received'}],
@@ -28,6 +28,7 @@ const records={
 };
 records.eod_reconciliations=[{id:'today-eod',tenantId:'test',branch_id:'masaka',reconciliation_date:day,cash_actual:500000,cash_expected:500000,total_actual:500000,total_expected:500000,total_variance:0,logged_by:'staff-one',status:'submitted'},{id:'old-eod',tenantId:'test',branch_id:'masaka',reconciliation_date:oldDay,total_actual:500000,total_expected:500000}];
 const eodMode=new URLSearchParams(location.search).get('eod');if(eodMode){const amount=eodMode==='float'?0.1+0.2:0.3001;records.sales[0].total=amount;records.sales[0].totalAmount=amount;}
+records.sales[0].eodShift={version:1,businessDate:day,shiftId:'dayShift',shiftName:'Day Shift',startTime:'07:30',endTime:'17:00',timeZone:'Africa/Kampala'};
 window.fixtureDates={day,oldDay};window.fixtureRecords=records;window.financeWrites=[];window.subscriptions=[];
 const watchers=[];
 export const rows=name=>(records[name]||[]).filter(r=>r.tenantId==='test');
@@ -152,7 +153,7 @@ try {
   console.log('Staff ID/name persistence, duplicate names, edit restore and forged/missing Allowance recipient guards passed');
   for(const scenario of [{name:'match',actual:'500000',variance:0},{name:'shortage',actual:'495000',variance:-5000},{name:'over',actual:'505000',variance:5000},{name:'float',actual:'0.3',variance:0},{name:'tiny',actual:'0.3',variance:null}]){
    const query='?role=cashier'+(['float','tiny'].includes(scenario.name)?'&eod='+scenario.name:'');
-   const eod=await open(390,query);await eod.locator('input[type="number"]').first().fill(scenario.actual);
+   const eod=await open(390,query);await eod.getByLabel('Configured Shift',{exact:true}).selectOption('dayShift');await eod.locator('input[type="number"]').first().fill(scenario.actual);
    await eod.getByRole('button',{name:'Reveal System Totals',exact:true}).click();
    const submit=eod.getByRole('button',{name:'Submit EOD Audit Report',exact:true});
    const reason=eod.getByLabel('Variance Reason Required',{exact:true});
@@ -166,7 +167,7 @@ try {
    if(scenario.variance!==null)assert.equal(record.total_variance,scenario.variance);else assert.ok(record.total_variance<0&&record.total_variance!==0);
    assert.equal(Object.is(record.total_variance,-0),false);await eod.close();console.log(`EOD ${scenario.name} passes UI, reason validation and saved-value checks`);
   }
-  const offset=await open(390,'?role=cashier');await offset.locator('input[type="number"]').nth(0).fill('495000');await offset.locator('input[type="number"]').nth(1).fill('5000');await offset.getByRole('button',{name:'Reveal System Totals',exact:true}).click();await offset.getByLabel('Variance Reason Required',{exact:true}).waitFor();assert.equal(await offset.getByRole('button',{name:'Submit EOD Audit Report',exact:true}).isEnabled(),false);await offset.close();
+  const offset=await open(390,'?role=cashier');await offset.getByLabel('Configured Shift',{exact:true}).selectOption('dayShift');await offset.locator('input[type="number"]').nth(0).fill('495000');await offset.locator('input[type="number"]').nth(1).fill('5000');await offset.getByRole('button',{name:'Reveal System Totals',exact:true}).click();await offset.getByLabel('Variance Reason Required',{exact:true}).waitFor();assert.equal(await offset.getByRole('button',{name:'Submit EOD Audit Report',exact:true}).isEnabled(),false);await offset.close();
  }
  for (const role of ['IT Head','IT Support Staff','Finance Head','owner']) {
   const page=await open(390,'?role='+encodeURIComponent(role));

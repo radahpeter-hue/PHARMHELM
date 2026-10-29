@@ -1,3 +1,4 @@
+import type { PosShiftAttribution } from './utils/posShiftAttribution';
 export type UserRole =
   | 'owner'
   | 'admin'
@@ -676,6 +677,7 @@ export interface OperationalInventoryMaintenance {
 }
 
 export interface Sale {
+  eodShift?: PosShiftAttribution; // Captured from saved branch Settings at checkout. No historical inference.
   id: string;
   tenantId: string;
   branchId: string;
