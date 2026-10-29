@@ -50,7 +50,7 @@ const identifier = /^[A-Za-z0-9_-]{1,150}$/;
 const allowedClassification: ReadonlySet<string> = new Set(FINANCIAL_PORTFOLIO_CLASSIFICATIONS);
 
 function validIsoDate(value: string): boolean {
-  return typeof value === 'string' && /^\\d{4}-\\d{2}-\\d{2}T/.test(value) && Number.isFinite(Date.parse(value));
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value));
 }
 
 /** Validate all identity and configuration fields before accepting a portfolio. */
