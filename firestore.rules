@@ -3025,7 +3025,7 @@ service cloud.firestore {
       function validAuditCreate() {
         let data = request.resource.data;
         return data.tenantId == getUserData().tenantId
-          && (auditId.matches('eod_verify_.*')
+          && (auditId.matches('e_.*')
             ? (hasAnyRole(['IT Head']) && data.userId == request.auth.uid
               && data.timestamp == request.time && !('revisionRequestId' in data))
             : (!('revisionRequestId' in data) ||
@@ -3034,9 +3034,8 @@ service cloud.firestore {
       // getUserData requires auth.uid; anonymous requests fail closed in both predicates.
       allow create: if validAuditCreate();
       allow read, update, delete: if resource.data.tenantId == getUserData().tenantId
-        && (request.method in ['get', 'list'] || (!auditId.matches('eod_verify_.*')
-          && !('revisionRequestId' in resource.data)
-          && (request.method == 'delete' || !('revisionRequestId' in request.resource.data))));
+        && (request.method in ['get', 'list'] || (!auditId.matches('e_.*') && !('revisionRequestId' in resource.data)))
+        && (request.method != 'update' || !('revisionRequestId' in request.resource.data));
     }
     match /sale_revisions/{revisionId} {
       allow get: if isAuthenticated() && (resource == null || resource.data.tenantId == getUserData().tenantId);

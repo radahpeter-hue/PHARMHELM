@@ -86,16 +86,16 @@ try {
  const verify=profile=>verifyLegacyEodShift(legacyReceipts.map(s=>s.id),'masaka',yesterday,selectedLegacyShift,'Owner verified six receipts',profile,client(profile.uid));
  await assert.rejects(verify({...actor,role:'cashier'}),/IT Head/);
  await Promise.all([verify(itProfile),verify(itProfile)]);await verify(itProfile);
- let legacyEvidence=[];await env.withSecurityRulesDisabled(async ctx=>{legacyEvidence=(await getDocs(collection(ctx.firestore(),'audit_logs'))).docs.filter(d=>d.id.startsWith('eod_verify_')).map(d=>({id:d.id,...d.data()}));});
+ let legacyEvidence=[];await env.withSecurityRulesDisabled(async ctx=>{legacyEvidence=(await getDocs(collection(ctx.firestore(),'audit_logs'))).docs.filter(d=>d.id.startsWith('e_')).map(d=>({id:d.id,...d.data()}));});
  assert.equal(legacyEvidence.length,6);
  assert.equal(expectedEodSales(withVerifiedLegacyShifts(legacyReceipts,legacyEvidence),'mp','masaka',yesterday,'dayShift').computedExpected.total,35600);
  await assert.rejects(verifyLegacyEodShift(['old-0'],'masaka',day,selectedLegacyShift,'Do not reassign',itProfile,client('it')),/already verified/);
  await assert.rejects(verifyLegacyEodShift(['old-0'],'foreign-branch',yesterday,selectedLegacyShift,'Wrong branch',itProfile,client('it')),/outside|unavailable/);
- const assignment=doc(client('it'),'audit_logs','eod_verify_mp~old-0');
+ const assignment=doc(client('it'),'audit_logs','e_mp~old-0');
  await assertFails(updateDoc(assignment,{shift_id:'eveningShift'}));await assertFails(deleteDoc(assignment));
- await assertFails(setDoc(doc(db,'audit_logs','eod_verify_mp~forged'),{...legacyEvidence[0],sale_id:'forged',userId:actor.uid}));
- await assertFails(getDoc(doc(client('foreign'),'audit_logs','eod_verify_mp~old-0')));
- const anonymous=env.unauthenticatedContext().firestore();await assertFails(getDoc(doc(anonymous,'audit_logs','eod_verify_mp~old-0')));await assertFails(setDoc(doc(anonymous,'audit_logs','anonymous-audit'),{tenantId:'mp',action:'ordinary'}));
+ await assertFails(setDoc(doc(db,'audit_logs','e_mp~forged'),{...legacyEvidence[0],sale_id:'forged',userId:actor.uid}));
+ await assertFails(getDoc(doc(client('foreign'),'audit_logs','e_mp~old-0')));
+ const anonymous=env.unauthenticatedContext().firestore();await assertFails(getDoc(doc(anonymous,'audit_logs','e_mp~old-0')));await assertFails(setDoc(doc(anonymous,'audit_logs','anonymous-audit'),{tenantId:'mp',action:'ordinary'}));
  const ordinaryAudit=doc(db,'audit_logs','ordinary-audit');await setDoc(ordinaryAudit,{tenantId:'mp',action:'ordinary'});await updateDoc(ordinaryAudit,{action:'ordinary update'});await deleteDoc(ordinaryAudit);
  console.log('PASS legacy receipts: IT Head verification 35,600, replay safe, assignment immutable, cashier/cross-tenant/branch denial, no sale rewrite');
 
