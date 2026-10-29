@@ -95,6 +95,7 @@ try {
  await assertFails(updateDoc(assignment,{shift_id:'eveningShift'}));await assertFails(deleteDoc(assignment));
  await assertFails(setDoc(doc(db,'audit_logs','eod_verify_mp~forged'),{...legacyEvidence[0],sale_id:'forged',userId:actor.uid}));
  await assertFails(getDoc(doc(client('foreign'),'audit_logs','eod_verify_mp~old-0')));
+ const anonymous=env.unauthenticatedContext().firestore();await assertFails(getDoc(doc(anonymous,'audit_logs','eod_verify_mp~old-0')));await assertFails(setDoc(doc(anonymous,'audit_logs','anonymous-audit'),{tenantId:'mp',action:'ordinary'}));
  const ordinaryAudit=doc(db,'audit_logs','ordinary-audit');await setDoc(ordinaryAudit,{tenantId:'mp',action:'ordinary'});await updateDoc(ordinaryAudit,{action:'ordinary update'});await deleteDoc(ordinaryAudit);
  console.log('PASS legacy receipts: IT Head verification 35,600, replay safe, assignment immutable, cashier/cross-tenant/branch denial, no sale rewrite');
 
