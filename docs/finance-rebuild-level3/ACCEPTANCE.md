@@ -21,3 +21,9 @@
 Use existing reconciliation_date as the canonical business date; validate actual YYYY-MM-DD values. Default and POS day comparison use Africa/Kampala, independent of browser timezone/UTC midnight. History's month range uses the same date. Previous dates remain supported. No historical document migration or rewrite.
 
 Validation: node --import tsx --test tests/finance-rebuild-level3-date.test.ts tests/finance-rebuild-eod.test.ts tests/eod-edit-policy.test.ts: 13/13 PASS. npm run typecheck: PASS. Covers ordinary/previous/invalid dates, midnight boundary, equivalent offsets, ambiguous timestamp exclusion, legacy history and correction deadline; Level 2 monetary tests retained.
+
+### 024 — accepted
+
+Added configured-shift selection, immutable branch Settings field key and display/hour snapshot to new EOD records. Branch/date/shift/tenant form the conceptual identity; no shift defaults or historical attribution are invented. Missing configuration blocks submission. Actual transactional uniqueness follows in 028.
+
+Validation: targeted date/shift/money/correction tests: 15/15 PASS; typecheck PASS. Same branch/date different shifts, same shift other dates/branches/tenants, disabled and absent configuration covered.

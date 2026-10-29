@@ -34,7 +34,7 @@ test('reason prompt, submit disable and persistence guard share the same normali
   const eod = fs.readFileSync('src/pages/Finance.tsx', 'utf8').split('const EODReconciliationTab:')[1].split('const VarianceRow:')[0];
   assert.match(eod, /if \(needsVarianceReason && !varianceReason.trim\(\)\)/);
   assert.match(eod, /\{needsVarianceReason && \(/);
-  assert.match(eod, /disabled=\{needsVarianceReason && !varianceReason.trim\(\)\}/);
+  assert.match(eod, /disabled=\{[^\n]*needsVarianceReason && !varianceReason.trim\(\)/);
 });
 
 test('negative zero and round-off display as zero, while a genuine fractional variance stays visible', () => {

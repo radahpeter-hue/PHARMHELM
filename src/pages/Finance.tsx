@@ -1,3 +1,4 @@
+import { configuredEodShifts } from '../utils/eodShifts';
 import { isBusinessDate, kampalaBusinessDate, timestampBusinessDate } from '../utils/eodBusinessDate';
 import { staffMatchesId } from '../utils/operationalStaff';
 import { PettyCashExportButtons } from '../components/finance/PettyCashExportButtons';
@@ -254,7 +255,11 @@ const BranchFinance: React.FC = () => {
 };
 
 const EODReconciliationTab: React.FC = () => {
-  const { profile, activeBranchId } = useAuth();
+  const { profile, activeBranchId, activeBranch } = useAuth();
+  const shifts = configuredEodShifts(activeBranch?.tenantId === profile?.tenantId && activeBranch?.id === activeBranchId ? activeBranch : null);
+  const [shiftId, setShiftId] = useState('');
+  const selectedShift = shifts.find(s => s.id === shiftId);
+  useEffect(() => { setShiftId(''); setRevealed(false); }, [activeBranchId, profile?.tenantId]);
   const isFinanceHead = hasAnyRole(profile, ['Finance Head']);
   const [revealed, setRevealed] = useState(false);
   const [sales, setSales] = useState<Sale[]>([]);
@@ -361,6 +366,7 @@ const EODReconciliationTab: React.FC = () => {
 
   const handleSubmit = async () => {
     if (!profile) return;
+    if (!activeBranchId || !selectedShift) { toast.error('Select a configured shift for this branch.'); return; }
     if (!isBusinessDate(formData.date)) { toast.error('Select a valid business date.'); return; }
     try {
       const cash_var = eodVariance(formData.cash, computedExpected.cash);
@@ -383,7 +389,11 @@ const EODReconciliationTab: React.FC = () => {
 
       await firestoreService.addDocument('eod_reconciliations', {
         tenantId: profile.tenantId,
-        branch_id: activeBranchId || 'main',
+        branch_id: activeBranchId,
+        shift_id: selectedShift.id,
+        shift_name: selectedShift.name,
+        shift_start: selectedShift.startTime,
+        shift_end: selectedShift.endTime,
         reconciliation_date: formData.date,
         cashier_id: profile.uid,
         
@@ -469,6 +479,14 @@ const EODReconciliationTab: React.FC = () => {
         </div>
       </div>
 
+      <div className="mb-6 space-y-2">
+        <label htmlFor="eod-shift" className="text-xs font-bold text-zinc-600">Configured Shift</label>
+        <select id="eod-shift" value={shiftId} onChange={e => { setShiftId(e.target.value); setRevealed(false); }} className="block w-full rounded-xl border border-zinc-200 p-3">
+          <option value="">Select a shift</option>
+          {shifts.map(shift => <option key={shift.id} value={shift.id}>{shift.name} ({shift.startTime}–{shift.endTime})</option>)}
+        </select>
+        {!shifts.length && <p className="text-sm text-amber-700">Configure and enable branch shifts in Settings before reconciling.</p>}
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Left column: Inputs */}
         <div className="lg:col-span-7 space-y-6">
@@ -610,7 +628,7 @@ const EODReconciliationTab: React.FC = () => {
                 
                 <button 
                   onClick={handleSubmit}
-                  disabled={needsVarianceReason && !varianceReason.trim()}
+                  disabled={!selectedShift || (needsVarianceReason && !varianceReason.trim())}
                   className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-lg transition-all shadow-xl shadow-emerald-600/10"
                 >
                   Submit EOD Audit Report
