@@ -3032,11 +3032,11 @@ service cloud.firestore {
           && (!('revisionRequestId' in data) ||
             (isFreshAtomicRevision(data.revisionRequestId) && data.userId == request.auth.uid));
       }
-      allow read: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId;
       allow create: if isAuthenticated() && validAuditCreate();
-      allow update, delete: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId
-        && !auditId.matches('^eod_verify_.*') && !('revisionRequestId' in resource.data)
-        && (request.method == 'delete' || !('revisionRequestId' in request.resource.data));
+      allow read, update, delete: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId
+        && (request.method in ['get', 'list'] || (!auditId.matches('^eod_verify_.*')
+          && !('revisionRequestId' in resource.data)
+          && (request.method == 'delete' || !('revisionRequestId' in request.resource.data))));
     }
     match /sale_revisions/{revisionId} {
       allow get: if isAuthenticated() && (resource == null || resource.data.tenantId == getUserData().tenantId);
