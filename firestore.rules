@@ -3022,20 +3022,21 @@ service cloud.firestore {
     }
 
     match /audit_logs/{auditId} {
+      function hasAuditRevision(data) { return 'revisionRequestId' in data; }
       function validAuditCreate() {
         let data = request.resource.data;
         return data.tenantId == getUserData().tenantId
           && (auditId.matches('e_.*')
             ? (hasAnyRole(['IT Head']) && data.userId == request.auth.uid
-              && data.timestamp == request.time && !('revisionRequestId' in data))
-            : (!('revisionRequestId' in data) ||
+              && data.timestamp == request.time && !hasAuditRevision(data))
+            : (!hasAuditRevision(data) ||
               (isFreshAtomicRevision(data.revisionRequestId) && data.userId == request.auth.uid)));
       }
       // getUserData requires auth.uid; anonymous requests fail closed in both predicates.
       allow create: if validAuditCreate();
       allow read, update, delete: if resource.data.tenantId == getUserData().tenantId
-        && (request.method.matches('get|list') || !(auditId.matches('e_.*') || ('revisionRequestId' in resource.data)))
-        && !(request.method == 'update' && ('revisionRequestId' in request.resource.data));
+        && (request.method.matches('get|list') || !(auditId.matches('e_.*') || hasAuditRevision(resource.data)))
+        && !(request.method == 'update' && hasAuditRevision(request.resource.data));
     }
     match /sale_revisions/{revisionId} {
       allow get: if isAuthenticated() && (resource == null || resource.data.tenantId == getUserData().tenantId);
