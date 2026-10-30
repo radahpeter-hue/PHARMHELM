@@ -8,7 +8,7 @@ const accounts='finance_portfolio_accounts_v1';
 export const portfolioRef=(database:Firestore,tenantId:string,id:string)=>doc(database,portfolios,tenantId+'__'+id);
 export const accountRef=(database:Firestore,tenantId:string,id:string)=>doc(database,accounts,tenantId+'__'+id);
 export async function listFinancialPortfolios(tenantId:string,database:Firestore=db):Promise<FinancialPortfolio[]>{
- const snapshot=await getDocs(query(collection(database,portfolios),where('tenantId','==',tenantId)));
+ const snapshot=await getDocs(query(collection(database,portfolios),where('tenantId','==',tenantId),where('scope.kind','==','organisation')));
  return snapshot.docs.map(d=>validateFinancialPortfolio(d.data() as FinancialPortfolio));
 }
 export async function listPortfolioAccounts(tenantId:string,database:Firestore=db):Promise<PortfolioChildAccount[]>{
