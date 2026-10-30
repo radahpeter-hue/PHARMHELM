@@ -27,3 +27,14 @@ test('bank parent consolidation is unavailable while registered child identities
  assert.equal(view[0].balanceUGX,null);
  assert.equal(view[1].balanceUGX,null);
 });
+
+test('consolidated bank includes every separately funded child exactly once',()=>{
+ const child={...bank,id:'bank_identity_one',origin:'custom' as const,bankParentId:'system_bank',
+  bankInstitution:'EQUITY',bankAccountReference:'123456',supportsChildAccounts:false,
+  allowsTransfersIn:false,allowsTransfersOut:false};
+ const separate={...funding,id:'mp_bank_identity_one',accountId:child.id,portfolioId:child.id,
+  portfolioClassification:'bank',scope:{kind:'organisation' as const},balanceUGX:700000};
+ const result=projectPortfolioBalances([bank,child],[funding,separate]);
+ assert.equal(result[0].balanceUGX,1150000);
+ assert.equal(result[1].balanceUGX,700000);
+});
