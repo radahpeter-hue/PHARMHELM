@@ -16,7 +16,7 @@ try{
  await env.withSecurityRulesDisabled(async ctx=>{
   await Promise.all([
    setDoc(doc(ctx.firestore(),'staff','ceo_a'),{tenantId:tenant,role:'CEO',secondaryRoles:[],assigned_branches:[]}),
-   setDoc(doc(ctx.firestore(),'staff','finance_a'),{tenantId:tenant,role:'Finance Head',secondaryRoles:[],assigned_branches:[]}),
+   setDoc(doc(ctx.firestore(),'staff','finance_a'),{tenantId:tenant,role:'Finance Head',secondaryRoles:[],assigned_branches:['masaka']}),
    setDoc(doc(ctx.firestore(),'staff','ceo_b'),{tenantId:other,role:'CEO',secondaryRoles:[],assigned_branches:[]})
   ]);
  });
@@ -26,6 +26,8 @@ try{
  await assertSucceeds(setDoc(ref(ceo),row('ceo_a')));
  await assertSucceeds(getDoc(ref(finance)));
  await assertSucceeds(getDocs(query(collection(finance,'finance_portfolios_v1'),where('tenantId','==',tenant),where('scope.kind','==','organisation'))));
+ await assertSucceeds(setDoc(ref(ceo,tenant,'masaka_fund'),{...row('ceo_a','masaka_fund'),scope:{kind:'branch',branchId:'masaka'}}));
+ await assertSucceeds(getDoc(ref(finance,tenant,'masaka_fund')));
  await assertFails(setDoc(ref(finance,tenant,'custom_denied'),row('finance_a','custom_denied')));
  await assertFails(setDoc(ref(otherDb),row('ceo_b')));
  await assertFails(getDoc(ref(otherDb)));
