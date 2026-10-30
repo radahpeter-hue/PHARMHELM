@@ -2,7 +2,7 @@ import {useManagementPaymentAccounts} from './ManagementPaymentAccounts';
 import React,{useEffect,useState} from 'react';
 import {useAuth} from '../../contexts/AuthContext';
 import {
- listFinancialPortfolios,createCustomFinancialPortfolio,listPortfolioAccounts,createPortfolioBankAccount
+ listFinancialPortfolios,createCustomFinancialPortfolio,registerPortfolioBankIdentity,registeredBankAccounts
 } from '../../domain/finance/portfolioFirestore';
 import {defaultLedgerQuery} from '../../domain/finance/portfolioLedger';
 import type {FinancialPortfolio,FinancialPortfolioClassification} from '../../domain/finance/financialPortfolio';
@@ -58,23 +58,22 @@ export function FinancialPortfoliosPanel(){
  }
  const selectedPortfolio=items.find(p=>p.id===selected);
  const childAccounts=accounts.filter(a=>a.portfolioId===selectedPortfolio?.id);
- const bankRegistrationReady=false; // Requires separately certified Firestore Rules.
+
  async function registerBankAccount(event:React.FormEvent){
    event.preventDefault();
-   if(!tenantId||!profile?.uid||!canRegister||busy||!selectedPortfolio?.supportsChildAccounts||selectedPortfolio.classification!=='bank')return;
+   if(!tenantId||!profile?.uid||!canRegister||busy)return;
    setBusy(true);setMessage('');
    try{
-     const created=await createPortfolioBankAccount({
-       tenantId,portfolioId:selectedPortfolio.id,
-       displayName:bankAccountName,institution:bankInstitution,accountReference:bankReference,
-       currency:'UGX',scope:selectedPortfolio.scope,status:'active',
-       createdBy:profile.uid,createdAt:new Date().toISOString()
+     const bank=await registerPortfolioBankIdentity({
+       tenantId,actorId:profile.uid,institution:bankInstitution,
+       accountReference:bankReference,displayName:bankAccountName,createdAt:new Date().toISOString()
      });
-     setAccounts(old=>[...old,created]);setBankInstitution('');setBankAccountName('');setBankReference('');
-     setMessage('Bank account identity registered. No reconciled opening balance has been established.');
-   }catch(error){setMessage(error instanceof Error?error.message:'Bank account registration failed.');}
+     setItems(old=>[...old,bank]);setBankInstitution('');setBankAccountName('');setBankReference('');
+     setMessage('Bank account identity registered. Reconciled balance and posting are not yet enabled.');
+   }catch(error){setMessage(error instanceof Error?error.message:'Bank registration failed.');}
    finally{setBusy(false);}
  }
+ const bankIdentities=registeredBankAccounts(items);
  return <section className="rounded-2xl border border-zinc-200 bg-white p-4 space-y-4">
   <div><h3 className="text-lg font-bold text-zinc-950">Financial Portfolio Registry</h3>
    <p className="text-sm text-zinc-600">New portfolios are tenant scoped. Legacy treasury balances are not silently migrated and unavailable financial balances are never displayed as zero.</p></div>
@@ -82,7 +81,20 @@ export function FinancialPortfoliosPanel(){
     <h4 className="font-semibold text-zinc-900">Existing reconciled Management portfolios</h4>
     {treasury.loading?<p className="text-sm">Loading reconciled payment accounts…</p>:
      treasury.error?<p role="alert" className="text-sm">{treasury.error}</p>:
-     <div className="grid gap-2 sm:grid-cols-2">
+     <div className="space-y-2">
+   <h4 className="font-semibold text-zinc-900">Registered bank accounts ({bankIdentities.length})</h4>
+   {bankIdentities.map(bank=><div key={bank.id} className="rounded-lg border border-zinc-200 p-3 text-sm">
+    <strong>{bank.name}</strong> · {bank.bankInstitution} · {bank.status}
+    <p>Account reference: {bank.bankAccountReference}. Balance not yet reconciled.</p>
+   </div>)}
+   {canRegister&&<form onSubmit={registerBankAccount} className="grid gap-2 sm:grid-cols-4">
+     <input required maxLength={100} aria-label="Bank institution" placeholder="Bank name" value={bankInstitution} onChange={e=>setBankInstitution(e.target.value)} className="border p-2 rounded"/>
+     <input required maxLength={120} aria-label="Bank account display name" placeholder="Account name" value={bankAccountName} onChange={e=>setBankAccountName(e.target.value)} className="border p-2 rounded"/>
+     <input required maxLength={60} aria-label="Bank account reference" placeholder="Account number" value={bankReference} onChange={e=>setBankReference(e.target.value)} className="border p-2 rounded"/>
+     <button disabled={busy} className="rounded bg-emerald-800 text-white p-2">Register bank account</button>
+   </form>}
+  </div>
+  <div className="grid gap-2 sm:grid-cols-2">
       {treasury.accounts.filter(a=>a.initialized&&a.currency==='UGX'&&Number.isSafeInteger(a.balanceUGX)).map(a=>
        <div key={a.id} className="rounded-lg border border-zinc-200 p-3">
         <strong>{a.name}</strong><p className="text-xs">{a.kind==='bank'?'Management Bank':'Management Petty Cash'} · Reconciled</p>
@@ -112,13 +124,6 @@ export function FinancialPortfoliosPanel(){
      <input aria-label="To date" type="date" value={period.to} onChange={e=>setPeriod(p=>({...p,to:e.target.value}))} className="border p-2"/>
    </div>
    <p>Ledger unavailable pending authoritative financial posting integration; no synthetic transactions shown.</p>
-   {canRegister&&bankRegistrationReady&&selectedPortfolio.status==='active'&&selectedPortfolio.classification==='bank'&&selectedPortfolio.supportsChildAccounts&&
-    <form onSubmit={registerBankAccount} className="grid gap-2 sm:grid-cols-4">
-      <input required aria-label="Bank institution" placeholder="Institution" value={bankInstitution} onChange={e=>setBankInstitution(e.target.value)} className="border p-2 rounded"/>
-      <input required aria-label="Bank account display name" placeholder="Display name" value={bankAccountName} onChange={e=>setBankAccountName(e.target.value)} className="border p-2 rounded"/>
-      <input required aria-label="Bank account reference" placeholder="Account number" value={bankReference} onChange={e=>setBankReference(e.target.value)} className="border p-2 rounded"/>
-      <button disabled={busy} className="rounded bg-emerald-800 text-white p-2">Register bank account</button>
-    </form>}
   </div>}
   {canRegister&&<form onSubmit={create} className="grid gap-2 sm:grid-cols-3">
     <input required maxLength={120} aria-label="Portfolio name" value={name} onChange={e=>setName(e.target.value)} placeholder="Portfolio name" className="border p-2 rounded"/>
