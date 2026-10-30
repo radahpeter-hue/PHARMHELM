@@ -1,3 +1,4 @@
+import {loadPosChannelEvidence,type PosChannelEvidence} from '../../domain/finance/portfolioPosEvidence';
 import {loadEodChannelEvidence,type ReconciliationEvidence,type EodChannel} from '../../domain/finance/portfolioEodEvidence';
 import {projectPortfolioBalances} from '../../domain/finance/portfolioWideView';
 import {defineBuiltInPortfolio} from '../../domain/finance/builtInPortfolios';
@@ -34,6 +35,8 @@ export function FinancialPortfoliosPanel(){
  const [managementSelected,setManagementSelected]=useState('');
  const [eodEvidence,setEodEvidence]=useState<ReconciliationEvidence[]|null>(null);
  const [eodError,setEodError]=useState('');
+ const [posEvidence,setPosEvidence]=useState<PosChannelEvidence[]|null>(null);
+ const [posError,setPosError]=useState('');
  const [managementLedger,setManagementLedger]=useState<AuthoritativePortfolioLedger|null>(null);
  const [managementError,setManagementError]=useState('');
  const [managementLoading,setManagementLoading]=useState(false);
@@ -130,6 +133,16 @@ export function FinancialPortfoliosPanel(){
   return ()=>{live=false;};
  },[tenantId,activeBranchId,evidenceChannel,period.from,period.to]);
 
+
+ useEffect(()=>{
+  let live=true;
+  setPosEvidence(null);setPosError('');
+  if(!tenantId||!activeBranchId||!evidenceChannel)return;
+  loadPosChannelEvidence({tenantId,branchId:activeBranchId,channel:evidenceChannel,period})
+   .then(v=>{if(live)setPosEvidence(v);})
+   .catch(e=>{if(live)setPosError(e instanceof Error?e.message:'POS payment evidence unavailable.');});
+  return ()=>{live=false;};
+ },[tenantId,activeBranchId,evidenceChannel,period.from,period.to]);
  return <section className="rounded-2xl border border-zinc-200 bg-white p-4 space-y-4">
   <div><h3 className="text-lg font-bold text-zinc-950">Financial Portfolio Registry</h3>
    <p className="text-sm text-zinc-600">New portfolios are tenant scoped. Legacy treasury balances are not silently migrated and unavailable financial balances are never displayed as zero.</p></div>
@@ -147,6 +160,15 @@ export function FinancialPortfoliosPanel(){
    </div>
   </div>
 
+
+  {evidenceChannel&&<div className="rounded border border-zinc-200 p-3 text-sm">
+   <h4 className="font-semibold">Canonical POS V2 settled-payment evidence</h4>
+   <p>Receipt components only. This does not include legacy POS or revisions and is not the available wallet/cash balance.</p>
+   {posError?<p role="alert">{posError}</p>:posEvidence===null?<p>Loading receipts…</p>:
+    <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>Date</th><th>Receipt</th><th>Settled UGX</th></tr></thead><tbody>
+     {posEvidence.map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.receiptNumber}</td><td>{e.settledUGX.toLocaleString()}</td></tr>)}
+    </tbody></table></div>}
+  </div>}
   {evidenceChannel&&<div className="rounded border border-zinc-200 p-3 text-sm">
    <h4 className="font-semibold">Branch EOD reconciliation evidence</h4>
    <p>These are declared amounts, not bank deposits or verified current portfolio balances.</p>
