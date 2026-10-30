@@ -1191,10 +1191,11 @@ service cloud.firestore {
     // remain tenant-scoped by the second clause and by the collection rules.
     match /grn_records/{recordId} {
       function hasOperationalSourceOrder(data) {
-        return ('order_id' in data)
-          && exists(/databases/$(database)/documents/stock_orders/$(data.order_id))
-          && get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.tenantId == data.tenantId
-          && isOperationalOrderData(get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data);
+        let hasOrder = 'order_id' in data;
+        let orderPath = /databases/$(database)/documents/stock_orders/$(data.get('order_id','__missing__'));
+        let orderPresent = hasOrder && exists(orderPath);
+        let order = orderPresent ? get(orderPath).data : {};
+        return orderPresent && order.tenantId == data.tenantId && isOperationalOrderData(order);
       }
       function validGrnInventoryClass(data) {
         return (('inventoryClass' in data)
@@ -2568,14 +2569,17 @@ service cloud.firestore {
             && isOperationalOrderData(get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data));
       }
       function hasValidTransferClass(data, requireExplicitClass) {
+        let hasOrder = 'order_id' in data;
+        let orderPath = /databases/$(database)/documents/stock_orders/$(data.get('order_id', '__missing__'));
+        let orderPresent = hasOrder && exists(orderPath);
+        let order = orderPresent ? get(orderPath).data : {};
         return (!requireExplicitClass || ('inventoryClass' in data))
-          && (!('order_id' in data)
-            || (exists(/databases/$(database)/documents/stock_orders/$(data.order_id))
-              && get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.tenantId == data.tenantId
-              && (!('inventoryClass' in data)
-                || data.inventoryClass == (('inventoryClass' in get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data)
-                  ? get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.inventoryClass
-                  : (get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data.category == 'non_sellable' ? 'OPERATIONAL' : 'SELLABLE')))))
+          && (!hasOrder || (orderPresent
+            && order.tenantId == data.tenantId
+            && (!('inventoryClass' in data)
+              || data.inventoryClass == (('inventoryClass' in order)
+                ? order.inventoryClass
+                : (order.category == 'non_sellable' ? 'OPERATIONAL' : 'SELLABLE')))))
           && (!('inventoryClass' in data)
             || data.inventoryClass == 'SELLABLE'
             || (data.inventoryClass == 'OPERATIONAL' && isOperationalInventoryEnabled(data.tenantId)));
