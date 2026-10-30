@@ -45,6 +45,16 @@ export async function registerPortfolioFunding(input:{
  });
  return account;
 }
+/** Stable reference key prevents double-posting when operators repeat a request. */
+export async function portfolioPostingIdentity(
+ tenantId:string,accountId:string,direction:'inflow'|'outflow',reference:string
+):Promise<string>{
+ const value=[tenantId,accountId,direction,reference.trim().toUpperCase()].join('|');
+ if(!tenantId||!accountId||reference.trim().length<3||!globalThis.crypto?.subtle)
+  throw new Error('Secure posting identity and external reference required.');
+ const digest=await globalThis.crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));
+ return 'finance_'+Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,'0')).join('');
+}
 /** Existing same-transaction balance and ledger rules provide posting uniqueness.
  * Each request ID is immutable; no unscoped synthetic balance is ever written.
  */
