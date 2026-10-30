@@ -5,11 +5,11 @@ export const MANAGEMENT_CASH_ACCOUNT = 'management_petty_cash';
 export const MANAGEMENT_BANK_ACCOUNT = 'management_bank';
 export type ManagementPaymentAccount = {
   id: string; tenantId: string; accountId: string; name: string;
-  kind: 'petty_cash' | 'bank'; currency: 'UGX'; initialized: boolean;
+  kind: 'petty_cash' | 'bank'; portfolioId?:string; portfolioClassification?:string; scope?:{kind:'organisation'}|{kind:'branch';branchId:string}; currency: 'UGX'; initialized: boolean;
   balanceUGX: number; openingBalanceUGX: number; reconciliationReference: string;
 };
 export function managementAccountDocumentId(tenantId: string, accountId = MANAGEMENT_CASH_ACCOUNT) {
-  if (!/^[a-zA-Z0-9_-]{1,150}$/.test(tenantId) || ![MANAGEMENT_CASH_ACCOUNT, MANAGEMENT_BANK_ACCOUNT].includes(accountId)) throw new Error('Invalid Management payment account.');
+  if (!/^[a-zA-Z0-9_-]{1,150}$/.test(tenantId) || !/^(management_petty_cash|management_bank|system_[a-zA-Z0-9_-]+|bank_[0-9a-f]{64}|custom_[a-zA-Z0-9_-]+)$/.test(accountId)) throw new Error('Invalid Management payment account.');
   return `${tenantId}_${accountId}`;
 }
 function cleanRecord(value: any): any {
@@ -37,7 +37,7 @@ export function stageManagementCashEntry(
   if (!actorId || !data.tenantId) throw new Error('Authenticated cash posting identity is required.');
   const accountDocumentId = managementAccountDocumentId(data.tenantId, accountId);
   const delta = cashEntryDelta(data);
-  const ledgerCollection = accountId === MANAGEMENT_BANK_ACCOUNT ? 'banking_records' : 'petty_cash_ledger';
+  const ledgerCollection = accountId === MANAGEMENT_BANK_ACCOUNT || accountId === 'system_mtn_mobile_money' || accountId === 'system_airtel_mobile_money' || accountId.startsWith('bank_') ? 'banking_records' : 'petty_cash_ledger';
   const now = Timestamp.now();
   const payload = cleanRecord(data);
   writer.set(doc(connection, ledgerCollection, ledgerId), {
