@@ -17,3 +17,13 @@ test('portfolio projection rejects duplicated accounts and isolates tenants',()=
  assert.throws(()=>projectPortfolioBalances([bank,bank],[funding]),/Duplicate portfolio/);
  assert.equal(projectPortfolioBalances([bank],[{...funding,tenantId:'other'}])[0].balanceUGX,null);
 });
+
+test('bank parent consolidation is unavailable while registered child identities lack account mappings',()=>{
+ const child={...bank,id:'bank_identity_one',origin:'custom' as const,
+  bankParentId:'system_bank',bankInstitution:'EQUITY',bankAccountReference:'123456',
+  supportsChildAccounts:false,allowsTransfersIn:false,allowsTransfersOut:false};
+ const view=projectPortfolioBalances([bank,child],[funding]);
+ assert.equal(view[0].status,'unavailable');
+ assert.equal(view[0].balanceUGX,null);
+ assert.equal(view[1].balanceUGX,null);
+});
