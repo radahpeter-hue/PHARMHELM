@@ -46,3 +46,15 @@ export function assertAuthoritativeLedgerCoverage(
  }
  throw new Error('Portfolio has no certified authoritative posting integration.');
 }
+
+/** Tenant-wide Management Cash is a distinct portfolio and must never be
+ * inferred from branch Petty Cash, POS cash or EOD reconciliations. */
+export function projectManagementCashBalance(accounts:readonly ManagementPaymentAccount[],tenantId:string):PortfolioBalanceView{
+ const candidates=accounts.filter(x=>x.tenantId===tenantId&&x.accountId===MANAGEMENT_CASH_ACCOUNT);
+ if(candidates.length>1)throw new Error('Duplicate Management Cash account.');
+ const account=candidates[0];
+ if(!account||account.kind!=='petty_cash'||account.currency!=='UGX'||!account.initialized
+   ||!Number.isSafeInteger(account.balanceUGX)||!account.reconciliationReference)
+  return {portfolioId:'management_petty_cash',tenantId,status:'unavailable',balanceUGX:null,source:null};
+ return {portfolioId:'management_petty_cash',tenantId,status:'reconciled',balanceUGX:account.balanceUGX,source:'finance_payment_accounts'};
+}
