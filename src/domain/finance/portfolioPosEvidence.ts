@@ -1,3 +1,4 @@
+import {timestampBusinessDate} from '../../utils/eodBusinessDate';
 import {collection,getDocs,query,where,type Firestore} from 'firebase/firestore';
 import {db} from '../../firebase';
 import type {FinancialLedgerQuery} from './portfolioLedger';
@@ -38,7 +39,7 @@ export function projectPosChannelEvidence(
  const createdAt=stamp&&typeof stamp==='object'&&'toDate' in stamp&&typeof stamp.toDate==='function'
   ?stamp.toDate().toISOString():typeof stamp==='string'?stamp:'';
  if(!/^\d{4}-\d{2}-\d{2}T/.test(createdAt))throw new Error('POS payment timestamp missing.');
- return {id,tenantId,branchId,businessDate:createdAt.slice(0,10),paymentId:id,saleId:raw.saleId,
+ return {id,tenantId,branchId,businessDate,paymentId:id,saleId:raw.saleId,
   receiptNumber:raw.receiptNumber,channel,settledUGX:amount,source:'pos_payments',fundingPosted:false};
 }
 export async function loadPosChannelEvidence(input:{
