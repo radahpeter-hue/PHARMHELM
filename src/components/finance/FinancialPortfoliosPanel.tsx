@@ -12,6 +12,7 @@ import {hasAnyRole} from '../../utils/roles';
 export function FinancialPortfoliosPanel(){
  const {profile,activeBranchId}=useAuth();
  const tenantId=profile?.tenantId||'';
+ const treasury=useManagementPaymentAccounts();
  const canRegister=hasAnyRole(profile,['owner','CEO','CEO / MD']);
  const [items,setItems]=useState<FinancialPortfolio[]>([]);
  const [accounts,setAccounts]=useState<PortfolioChildAccount[]>([]);
@@ -76,6 +77,21 @@ export function FinancialPortfoliosPanel(){
  return <section className="rounded-2xl border border-zinc-200 bg-white p-4 space-y-4">
   <div><h3 className="text-lg font-bold text-zinc-950">Financial Portfolio Registry</h3>
    <p className="text-sm text-zinc-600">New portfolios are tenant scoped. Legacy treasury balances are not silently migrated and unavailable financial balances are never displayed as zero.</p></div>
+  <div className="space-y-2">
+    <h4 className="font-semibold text-zinc-900">Existing reconciled Management portfolios</h4>
+    {treasury.loading?<p className="text-sm">Loading reconciled payment accounts…</p>:
+     treasury.error?<p role="alert" className="text-sm">{treasury.error}</p>:
+     <div className="grid gap-2 sm:grid-cols-2">
+      {treasury.accounts.filter(a=>a.initialized&&a.currency==='UGX'&&Number.isSafeInteger(a.balanceUGX)).map(a=>
+       <div key={a.id} className="rounded-lg border border-zinc-200 p-3">
+        <strong>{a.name}</strong><p className="text-xs">{a.kind==='bank'?'Management Bank':'Management Petty Cash'} · Reconciled</p>
+        <p className="font-semibold">UGX {a.balanceUGX.toLocaleString()}</p>
+        <p className="text-xs">Opening reconciliation: {a.reconciliationReference}</p>
+       </div>)}
+      {!treasury.accounts.length&&<p className="text-sm">No Management payment account has been reconciled.</p>}
+     </div>}
+    <p className="text-xs text-zinc-600">Read directly from existing authoritative finance_payment_accounts. Not added to or double-counted with the new registry.</p>
+  </div>
   <div className="grid gap-2 sm:grid-cols-2">
    {items.map(p=><button key={p.id} type="button" onClick={()=>setSelected(p.id)}
      className="rounded-lg border border-zinc-300 text-left p-3 text-zinc-900" aria-pressed={selected===p.id}>
