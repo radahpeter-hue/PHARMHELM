@@ -22,14 +22,11 @@ export function projectPortfolioBalances(
     other.bankParentId==='system_bank'&&other.origin==='custom'))
    return {portfolioId:portfolio.id,tenantId:portfolio.tenantId,status:'unavailable' as const,
     balanceUGX:null,source:null,reason:'Unmapped bank child accounts prevent safe consolidation'};
-  const accountId=portfolio.id==='system_bank'?MANAGEMENT_BANK_ACCOUNT:
-   portfolio.id.startsWith('system_petty_cash_')?MANAGEMENT_CASH_ACCOUNT:null;
-  // Branch petty cash cannot be inferred from the tenant-wide Management cash account.
-  const scopedAccountId=portfolio.scope.kind==='organisation'?accountId:null;
-  const candidates=managementAccounts.filter(account=>account.tenantId===portfolio.tenantId&&account.accountId===scopedAccountId);
+  const accountId=portfolio.id==='system_bank'?MANAGEMENT_BANK_ACCOUNT:portfolio.id;
+  const candidates=managementAccounts.filter(account=>account.tenantId===portfolio.tenantId&&account.accountId===accountId);
   if(candidates.length>1)throw new Error('Duplicate authoritative funding account.');
   const account=candidates[0];
-  if(!account||!account.initialized||account.currency!=='UGX'||!Number.isSafeInteger(account.balanceUGX))
+  if(!account||!account.initialized||account.currency!=='UGX'||!Number.isSafeInteger(account.balanceUGX)||!account.reconciliationReference)
    return {portfolioId:portfolio.id,tenantId:portfolio.tenantId,status:'unavailable' as const,balanceUGX:null,source:null,reason:'No reconciled authoritative account mapping'};
   return {portfolioId:portfolio.id,tenantId:portfolio.tenantId,status:'reconciled' as const,
    balanceUGX:account.balanceUGX,source:'finance_payment_accounts'};
@@ -40,10 +37,7 @@ export function assertAuthoritativeLedgerCoverage(
  ledger:AuthoritativePortfolioLedger,portfolio:FinancialPortfolio
 ):void{
  if(ledger.account.tenantId!==portfolio.tenantId)throw new Error('Cross-tenant ledger mapping.');
- if(portfolio.id==='system_bank'){
-  if(ledger.account.accountId!==MANAGEMENT_BANK_ACCOUNT)throw new Error('Bank ledger mismatch.');
-  return;
- }
+ if(portfolio.id==='system_bank' ? ledger.account.accountId===MANAGEMENT_BANK_ACCOUNT : ledger.account.accountId===portfolio.id)return;
  throw new Error('Portfolio has no certified authoritative posting integration.');
 }
 
