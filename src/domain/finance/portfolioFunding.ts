@@ -56,17 +56,22 @@ export async function postPortfolioFundingMovement(input:{
  if(!actorId||!a.initialized||!Number.isSafeInteger(amountUGX)||amountUGX<=0||
    !/^[A-Za-z0-9_-]{8,150}$/.test(requestId)||reference.trim().length<3)
   throw new Error('Invalid ledger posting evidence.');
+ if(!globalThis.crypto?.subtle)throw new Error('Secure financial posting cryptography required.');
+ const seed=new TextEncoder().encode([a.tenantId,a.accountId,reference.trim().toUpperCase()].join('|'));
+ const hash=await crypto.subtle.digest('SHA-256',seed);
+ const ledgerId='pf_'+Array.from(new Uint8Array(hash)).map(v=>v.toString(16).padStart(2,'0')).join('');
  const ledgerPath=a.kind==='bank'?'banking_records':'petty_cash_ledger';
- const ledgerRef=doc(database,ledgerPath,requestId);
+ const ledgerRef=doc(database,ledgerPath,ledgerId);
  await runTransaction(database,async tx=>{
   const prior=await tx.get(ledgerRef);
   if(prior.exists()){
    if(prior.data().tenantId!==a.tenantId||prior.data().accountDocumentId!==a.id||
-      prior.data().amount!==amountUGX||prior.data().postedBy!==actorId)
+      prior.data().amount!==amountUGX||prior.data().postedBy!==actorId||
+      prior.data().type!==(direction==='inflow'?'incoming':'outgoing')||prior.data().reference_number!==reference.trim())
     throw new Error('Posting reference conflict.');
    return;
   }
-  stageManagementCashEntry(tx,requestId,{
+  stageManagementCashEntry(tx,ledgerId,{
    tenantId:a.tenantId,amount:amountUGX,type:direction==='inflow'?'incoming':'outgoing',
    source:'Verified portfolio movement',reference_number:reference.trim()
   },database,a.accountId,actorId);
