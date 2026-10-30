@@ -3196,23 +3196,6 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    match /finance_portfolio_accounts_v1/{accountDocId} {
-      allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId)
-        && resource.data.scope.kind == 'organisation';
-      allow create: if isCEO()
-        && isTenantMember(request.resource.data.tenantId)
-        && accountDocId == request.resource.data.tenantId + '__' + request.resource.data.id
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.scope.kind == 'organisation'
-        && request.resource.data.status == 'active'
-        && request.resource.data.currency == 'UGX'
-        && request.resource.data.balanceUGX == 0
-        && request.resource.data.openingBalanceUGX == 0
-        && request.resource.data.initialized == false
-        && get(/databases/$(database)/documents/finance_portfolios_v1/$(request.resource.data.tenantId + '__' + request.resource.data.portfolioId)).data.supportsChildAccounts == true;
-      allow update, delete: if false;
-    }
-
     // Generic tenant fallback. Dedicated collections retain their explicit rules.
     // Share exclusions and dispatch by method instead of compiling five copies.
     match /{collectionName}/{docId} {
