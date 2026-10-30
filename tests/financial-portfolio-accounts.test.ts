@@ -1,3 +1,4 @@
+import {registeredBankAccounts} from '../src/domain/finance/portfolioFirestore';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {defineBuiltInPortfolio} from '../src/domain/finance/builtInPortfolios';
@@ -21,4 +22,10 @@ test('Change 047 bank identity stays opaque, deterministic and prevents same-ban
  assert.equal(one,again);
  assert.notEqual(one,different);
  assert.doesNotThrow(()=>assertUniqueBankAccount({...a,id:'other',institution:'Stanbic Bank'},[a]));
+});
+
+test('individual bank identities are grouped under one virtual parent without inventing balances',()=>{
+ const eq={...p,id:'bank_eq',origin:'custom' as const,supportsChildAccounts:false,bankInstitution:'EQUITY',bankAccountReference:'123456',bankParentId:'system_bank'};
+ const st={...eq,id:'bank_st',bankInstitution:'STANBIC',bankAccountReference:'987654'};
+ assert.deepEqual(registeredBankAccounts([p,eq,st]).map(v=>v.id),['bank_eq','bank_st']);
 });
