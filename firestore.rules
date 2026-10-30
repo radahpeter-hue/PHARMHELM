@@ -1611,17 +1611,19 @@ service cloud.firestore {
       function hasOpeningOperationalMovement() {
         let movementId = request.resource.data.lastMovementId;
         let movementPath = /databases/$(database)/documents/operational_inventory_movements/$(movementId);
+        let validMovement = request.resource.data.quantityInStock != 0
+          && movementId is string && existsAfter(movementPath);
+        let m = validMovement ? getAfter(movementPath).data : {};
         return request.resource.data.quantityInStock == 0
-          || (movementId is string
-            && existsAfter(movementPath)
-            && getAfter(movementPath).data.tenantId == request.resource.data.tenantId
-            && getAfter(movementPath).data.inventoryClass == 'OPERATIONAL'
-            && getAfter(movementPath).data.itemId == itemId
-            && getAfter(movementPath).data.movementType == 'ADJUSTMENT'
-            && getAfter(movementPath).data.balanceBefore == 0
-            && getAfter(movementPath).data.balanceAfter == request.resource.data.quantityInStock
-            && getAfter(movementPath).data.quantityDelta == request.resource.data.quantityInStock
-            && getAfter(movementPath).data.actorId == request.auth.uid);
+          || (validMovement
+            && m.tenantId == request.resource.data.tenantId
+            && m.inventoryClass == 'OPERATIONAL'
+            && m.itemId == itemId
+            && m.movementType == 'ADJUSTMENT'
+            && m.balanceBefore == 0
+            && m.balanceAfter == request.resource.data.quantityInStock
+            && m.quantityDelta == request.resource.data.quantityInStock
+            && m.actorId == request.auth.uid);
       }
       allow get: if isAuthenticated()
         && (resource == null || (isTenantMember(resource.data.tenantId)
