@@ -7,9 +7,21 @@ const portfolios='finance_portfolios_v1';
 const accounts='finance_portfolio_accounts_v1';
 export const portfolioRef=(database:Firestore,tenantId:string,id:string)=>doc(database,portfolios,tenantId+'__'+id);
 export const accountRef=(database:Firestore,tenantId:string,id:string)=>doc(database,accounts,tenantId+'__'+id);
-export async function listFinancialPortfolios(tenantId:string,database:Firestore=db):Promise<FinancialPortfolio[]>{
- const snapshot=await getDocs(query(collection(database,portfolios),where('tenantId','==',tenantId),where('scope.kind','==','organisation')));
- return snapshot.docs.map(d=>validateFinancialPortfolio(d.data() as FinancialPortfolio));
+export async function listFinancialPortfolios(
+ tenantId:string,branchId?:string,database:Firestore=db
+):Promise<FinancialPortfolio[]>{
+ const base=collection(database,portfolios);
+ const requests=[getDocs(query(base,where('tenantId','==',tenantId),where('scope.kind','==','organisation')))];
+ if(branchId)requests.push(getDocs(query(base,where('tenantId','==',tenantId),where('scope.kind','==','branch'),where('scope.branchId','==',branchId))));
+ const snapshots=await Promise.all(requests);
+ const seen=new Set<string>();
+ const result:FinancialPortfolio[]=[];
+ for(const snapshot of snapshots)for(const d of snapshot.docs){
+   const p=validateFinancialPortfolio(d.data() as FinancialPortfolio);
+   if(seen.has(p.id))throw new Error('Duplicate portfolio registry identity.');
+   seen.add(p.id);result.push(p);
+ }
+ return result;
 }
 export async function listPortfolioAccounts(tenantId:string,database:Firestore=db):Promise<PortfolioChildAccount[]>{
  const snapshot=await getDocs(query(collection(database,accounts),where('tenantId','==',tenantId)));
