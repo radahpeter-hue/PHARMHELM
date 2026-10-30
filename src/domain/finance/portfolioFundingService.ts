@@ -3,7 +3,7 @@ import {db} from '../../firebase';
 import type {FinancialPortfolio,FinancialPortfolioClassification,FinancialPortfolioScope} from './financialPortfolio';
 import {portfolioRef} from './portfolioFirestore';
 export type PortfolioFundingAccount={
- tenantId:string;accountId:string;portfolioId:string;
+ id:string;tenantId:string;accountId:string;portfolioId:string;
  kind:'bank'|'petty_cash';portfolioClassification:FinancialPortfolioClassification;scope:FinancialPortfolioScope;
  name:string;currency:'UGX';initialized:true;
  openingBalanceUGX:number;balanceUGX:number;reconciliationReference:string;
@@ -39,7 +39,7 @@ export async function registerPortfolioFundingAccount(input:{
  const ref=doc(database,'finance_payment_accounts',fundingDocumentId(portfolio.tenantId,portfolio.id));
  const settingsRef=doc(database,'system_settings',portfolio.tenantId);
  const result:PortfolioFundingAccount={
-  tenantId:portfolio.tenantId,accountId:portfolio.id,portfolioId:portfolio.id,kind:portfolio.classification==='bank'||portfolio.classification==='mobile_money'?'bank':'petty_cash',
+  id:fundingDocumentId(portfolio.tenantId,portfolio.id),tenantId:portfolio.tenantId,accountId:portfolio.id,portfolioId:portfolio.id,kind:portfolio.classification==='bank'||portfolio.classification==='mobile_money'?'bank':'petty_cash',
   portfolioClassification:portfolio.classification,scope:portfolio.scope,name:portfolio.name,currency:'UGX',initialized:true,
   openingBalanceUGX,balanceUGX:openingBalanceUGX,reconciliationReference:reference,
   registeredBy:actorId,lastPostingId:null,controlVersion:1
@@ -70,21 +70,26 @@ export async function listPortfolioFundingAccounts(tenantId:string,database:Fire
  if(!validId.test(tenantId))throw new Error('Invalid finance tenant.');
  const snapshot=await getDocs(query(collection(database,'finance_payment_accounts'),where('tenantId','==',tenantId)));
  return snapshot.docs.map(d=>d.data()).filter(d=>d.portfolioId&&d.accountId===d.portfolioId)
-  .map(d=>d as PortfolioFundingAccount);
+  .map(d=>({ ...d,id:fundingDocumentId(d.tenantId,d.accountId) }) as PortfolioFundingAccount);
+}
+/** Immutable per-account external references are idempotent across browsers and retries. */
+export async function portfolioMovementId(account:PortfolioFundingAccount,externalReference:string):Promise<string>{
+ if(externalReference.trim().length<5||externalReference.length>150)throw new Error('Unique external transaction reference required.');
+ if(!globalThis.crypto?.subtle)throw new Error('Secure financial posting cryptography required.');
+ const encoded=new TextEncoder().encode([account.tenantId,account.accountId,externalReference.trim().toUpperCase()].join('|'));
+ const hash=await crypto.subtle.digest('SHA-256',encoded);
+ return 'pf_'+Array.from(new Uint8Array(hash)).map(x=>x.toString(16).padStart(2,'0')).join('');
 }
 /** Account movement, immutable journal and balance increment commit atomically. */
 export async function postPortfolioFundingMovement(input:{
- account:PortfolioFundingAccount;actorId:string;requestId:string;
+ account:PortfolioFundingAccount;actorId:string;
  amountUGX:number;type:'incoming'|'outgoing';externalReference:string;reason:string
 },database:Firestore=db):Promise<{ledgerId:string;replayed:boolean}>{
- const {account,actorId,requestId,amountUGX,type}=input;
- if(!Number.isSafeInteger(amountUGX)||amountUGX<=0||!validId.test(actorId)
-  ||!validId.test(requestId)||!validId.test(account.accountId))
+ const {account,actorId,amountUGX,type}=input;
+ if(!Number.isSafeInteger(amountUGX)||amountUGX<=0||!validId.test(actorId)||!validId.test(account.accountId))
   throw new Error('Invalid monetary movement or identity.');
- if(input.externalReference.trim().length<5||input.reason.trim().length<5)
-  throw new Error('Movement requires verified external reference and purpose.');
- const ledgerId='portfolio_'+account.accountId+'_'+requestId;
- if(ledgerId.length>300)throw new Error('Posting reference too long.');
+ if(input.reason.trim().length<5)throw new Error('Movement purpose required.');
+ const ledgerId=await portfolioMovementId(account,input.externalReference);
  const accountRef=doc(database,'finance_payment_accounts',fundingDocumentId(account.tenantId,account.accountId));
  const journalRef=doc(database,ledgerCollectionForPortfolioKind(account.kind),ledgerId);
  return runTransaction(database,async tx=>{
