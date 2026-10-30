@@ -17,7 +17,9 @@ try{
   await Promise.all([
    setDoc(doc(ctx.firestore(),'staff','ceo_a'),{tenantId:tenant,role:'CEO',secondaryRoles:[],assigned_branches:[]}),
    setDoc(doc(ctx.firestore(),'staff','finance_a'),{tenantId:tenant,role:'Finance Head',secondaryRoles:[],assigned_branches:['masaka']}),
-   setDoc(doc(ctx.firestore(),'staff','ceo_b'),{tenantId:other,role:'CEO',secondaryRoles:[],assigned_branches:[]})
+   setDoc(doc(ctx.firestore(),'staff','ceo_b'),{tenantId:other,role:'CEO',secondaryRoles:[],assigned_branches:[]}),
+   setDoc(doc(ctx.firestore(),'system_settings',tenant),{tenantId:tenant,managementCashAccountControlV1:true}),
+   setDoc(doc(ctx.firestore(),'branches','masaka'),{tenantId:tenant,name:'Masaka'})
   ]);
  });
  const ceo=env.authenticatedContext('ceo_a',{tenantId:tenant}).firestore();
@@ -65,5 +67,27 @@ try{
  await assertSucceeds(updateDoc(ref(ceo,tenant,bank.id),{status:'active',updatedBy:'ceo_a',
  updatedAt:'2026-10-30T10:00:00Z',deactivatedBy:deleteField(),deactivatedAt:deleteField(),deactivationReason:deleteField()}));
  await assertFails(deleteDoc(ref(ceo,tenant,bank.id)));
+
+ const id='bank_'+ 'a'.repeat(64);
+ const ar=doc(ceo,'finance_payment_accounts',tenant+'_'+id);
+ const funding={tenantId:tenant,accountId:id,portfolioId:id,kind:'bank',
+  portfolioClassification:'bank',scope:{kind:'organisation'},name:'Equity Operating',
+  currency:'UGX',initialized:true,openingBalanceUGX:100,balanceUGX:100,
+  reconciliationReference:'EQ-STATEMENT-001',registeredBy:'ceo_a',
+  lastPostingId:null,controlVersion:1};
+ await assertSucceeds(setDoc(ar,funding));
+ await assertSucceeds(getDoc(doc(finance,'finance_payment_accounts',tenant+'_'+id)));
+ await assertFails(setDoc(doc(finance,'finance_payment_accounts',tenant+'_bank_'+'b'.repeat(64)),{...funding,accountId:'bank_'+'b'.repeat(64),portfolioId:'bank_'+'b'.repeat(64),registeredBy:'finance_a'}));
+ const movementId='portfolio_bank_test_payment';
+ const entry={tenantId:tenant,portfolioId:id,accountDocumentId:ar.id,
+  accountDeltaUGX:50,amount:50,type:'incoming',source:'Portfolio reconciled movement',
+  postedBy:'finance_a',reference_number:'BANK-STMT-POST-01',createdAt:'2026-10-30',updatedAt:'2026-10-30'};
+ const fbatch=writeBatch(finance);
+ fbatch.set(doc(finance,'banking_records',movementId),entry);
+ fbatch.update(doc(finance,'finance_payment_accounts',tenant+'_'+id),{balanceUGX:increment(50),lastPostingId:movementId,updatedAt:'2026-10-30'});
+ await assertSucceeds(fbatch.commit());
+ await assertFails(setDoc(doc(finance,'banking_records','forged_deposit'),{...entry,accountDeltaUGX:999,amount:999}));
+ await assertFails(updateDoc(doc(finance,'finance_payment_accounts',tenant+'_'+id),{balanceUGX:1000000}));
+ await assertFails(getDoc(doc(otherDb,'finance_payment_accounts',tenant+'_'+id)));
  console.log('Finance Level 4 custom portfolio role/isolation PASSED; built-in and bank registrations remain fail-closed');
 }finally{await env.cleanup();}
