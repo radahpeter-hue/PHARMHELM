@@ -1,3 +1,4 @@
+import {loadAuthoritativePortfolioLedger,type AuthoritativePortfolioLedger} from '../../domain/finance/authoritativePortfolioLedger';
 import {useManagementPaymentAccounts} from './ManagementPaymentAccounts';
 import React,{useEffect,useState} from 'react';
 import {useAuth} from '../../contexts/AuthContext';
@@ -27,6 +28,10 @@ export function FinancialPortfoliosPanel(){
  const [message,setMessage]=useState('');
  const [busy,setBusy]=useState(false);
  const [selected,setSelected]=useState('');
+ const [managementSelected,setManagementSelected]=useState('');
+ const [managementLedger,setManagementLedger]=useState<AuthoritativePortfolioLedger|null>(null);
+ const [managementError,setManagementError]=useState('');
+ const [managementLoading,setManagementLoading]=useState(false);
  const [direction,setDirection]=useState<'all'|'inflow'|'outflow'>('all');
  const [period,setPeriod]=useState(()=>defaultLedgerQuery(new Date().toISOString().slice(0,10)));
  useEffect(()=>{
@@ -85,6 +90,18 @@ export function FinancialPortfoliosPanel(){
    }catch(e){setMessage(e instanceof Error?e.message:'Unable to update bank status.');}
    finally{setBusy(false);}
  }
+ useEffect(()=>{
+  let live=true;
+  setManagementLedger(null);setManagementError('');
+  const account=treasury.accounts.find(a=>a.id===managementSelected);
+  if(!account)return;
+  setManagementLoading(true);
+  loadAuthoritativePortfolioLedger(account,{...period,direction})
+   .then(result=>{if(live)setManagementLedger(result);})
+   .catch(error=>{if(live)setManagementError(error instanceof Error?error.message:'Ledger unavailable.');})
+   .finally(()=>{if(live)setManagementLoading(false);});
+  return ()=>{live=false;};
+ },[managementSelected,treasury.accounts,period,direction]);
  const bankIdentities=registeredBankAccounts(items);
  return <section className="rounded-2xl border border-zinc-200 bg-white p-4 space-y-4">
   <div><h3 className="text-lg font-bold text-zinc-950">Financial Portfolio Registry</h3>
@@ -96,11 +113,28 @@ export function FinancialPortfoliosPanel(){
      <div className="grid gap-2 sm:grid-cols-2">
       {treasury.accounts.filter(a=>a.initialized&&a.currency==='UGX'&&Number.isSafeInteger(a.balanceUGX)).map(a=>
        <div key={a.id} className="rounded-lg border border-zinc-200 p-3">
-        <strong>{a.name}</strong><p className="text-xs">{a.kind==='bank'?'Management Bank':'Management Petty Cash'} · Reconciled</p>
+        <button type="button" onClick={()=>setManagementSelected(a.id)} className="font-semibold underline">{a.name}</button><p className="text-xs">{a.kind==='bank'?'Management Bank':'Management Petty Cash'} · Reconciled</p>
         <p className="font-semibold">UGX {a.balanceUGX.toLocaleString()}</p>
         <p className="text-xs">Opening reconciliation: {a.reconciliationReference}</p>
        </div>)}
       {!treasury.accounts.length&&<p className="text-sm">No Management payment account has been reconciled.</p>}
+     </div>}
+    {managementSelected&&<div className="rounded border border-zinc-200 p-3 text-sm">
+      <h5 className="font-semibold">Authoritative Management ledger</h5>
+      <div className="flex flex-wrap gap-2">
+       <select aria-label="Ledger direction" value={direction} onChange={e=>setDirection(e.target.value as typeof direction)} className="border p-2"><option value="all">All movements</option><option value="inflow">Inflows</option><option value="outflow">Outflows</option></select>
+       <input aria-label="Ledger from" type="date" value={period.from} onChange={e=>setPeriod(p=>({...p,from:e.target.value}))} className="border p-2"/>
+       <input aria-label="Ledger to" type="date" value={period.to} onChange={e=>setPeriod(p=>({...p,to:e.target.value}))} className="border p-2"/>
+      </div>
+      {managementLoading?<p>Loading posted movements…</p>:managementError?<p role="alert">{managementError}</p>:managementLedger&&<>
+       <p>Current reconciled balance: UGX {managementLedger.currentBalanceUGX.toLocaleString()}</p>
+       <p>Opening balance: UGX {managementLedger.openingBalanceUGX.toLocaleString()}</p>
+       <p>Reconciliation reference: {managementLedger.reconciliationReference}</p>
+       <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>Date</th><th>Reference</th><th>Direction</th><th>Amount UGX</th></tr></thead><tbody>
+        {managementLedger.entries.map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.reference}</td><td>{e.direction}</td><td>{e.amountUGX.toLocaleString()}</td></tr>)}
+       </tbody></table></div>
+       {!managementLedger.entries.length&&<p>No movements in the selected period.</p>}
+      </>}
      </div>}
     <p className="text-xs text-zinc-600">Read directly from existing authoritative finance_payment_accounts. Not added to or double-counted with the new registry.</p>
   </div>
