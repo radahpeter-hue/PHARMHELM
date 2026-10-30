@@ -2,6 +2,7 @@ import {collection, doc, getDocs, query, where, runTransaction, serverTimestamp,
 import {db} from '../../firebase';
 import {defineFinancialPortfolio,validateFinancialPortfolio,type FinancialPortfolio,type NewFinancialPortfolio} from './financialPortfolio';
 import {validatePortfolioChildAccount,bankAccountIdentity,type PortfolioChildAccount} from './portfolioAccounts';
+import {defineBuiltInPortfolio,type BuiltInPortfolioKey} from './builtInPortfolios';
 
 const portfolios='finance_portfolios_v1';
 const accounts='finance_portfolio_accounts_v1';
@@ -60,4 +61,27 @@ export async function createPortfolioBankAccount(
     tx.set(account,{...value,balanceUGX:0,openingBalanceUGX:0,initialized:false});
   });
   return value;
+}
+
+/** CEO-confirmed, idempotent registration of canonical built-ins. Never mints balances. */
+export async function registerBuiltInPortfolio(input:{
+  tenantId:string;key:BuiltInPortfolioKey;branchId?:string;
+  actorId:string;createdAt:string
+},database:Firestore=db):Promise<FinancialPortfolio>{
+  const value=defineBuiltInPortfolio({
+    tenantId:input.tenantId,key:input.key,branchId:input.branchId,
+    createdBy:input.actorId,createdAt:input.createdAt
+  });
+  const ref=portfolioRef(database,value.tenantId,value.id);
+  return runTransaction(database,async tx=>{
+    const old=await tx.get(ref);
+    if(old.exists()){
+      const existing=validateFinancialPortfolio(old.data() as FinancialPortfolio);
+      if(existing.origin!=='system'||existing.id!==value.id||existing.tenantId!==input.tenantId)
+        throw new Error('System portfolio identity conflicts with an existing record.');
+      return existing;
+    }
+    tx.set(ref,value);
+    return value;
+  });
 }
