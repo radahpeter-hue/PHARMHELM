@@ -1,6 +1,6 @@
 import {readFileSync} from 'node:fs';
 import {initializeTestEnvironment,assertFails,assertSucceeds} from '@firebase/rules-unit-testing';
-import {doc,setDoc,updateDoc,deleteDoc,deleteField,getDoc,getDocs,query,collection,where} from 'firebase/firestore';
+import {doc,setDoc,updateDoc,deleteDoc,deleteField,getDoc,getDocs,query,collection,where,writeBatch,increment} from 'firebase/firestore';
 const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-l4-portfolio-test',firestore:{rules:readFileSync('firestore.rules','utf8')}});
 const tenant='tenant_a',other='tenant_b';
 const row=(uid,id='custom_emergency',tenantId=tenant)=>({
