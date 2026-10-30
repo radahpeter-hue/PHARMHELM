@@ -34,5 +34,19 @@ try{
  await assertFails(getDoc(ref(otherDb)));
  await assertFails(setDoc(ref(ceo,tenant,'custom_invalid'),{...row('ceo_a','custom_invalid'),origin:'system'}));
  await assertFails(setDoc(ref(ceo,tenant,'custom_invalid_balance'),{...row('ceo_a','custom_invalid_balance'),balanceUGX:100}));
+ await assertSucceeds(setDoc(ref(ceo,tenant,'bank_enabled'),{...row('ceo_a','bank_enabled'),supportsChildAccounts:true,classification:'bank'}));
+ const account=(actor,tenantId=tenant)=>({
+   id:'bank_test123',tenantId,portfolioId:'bank_enabled',displayName:'Equity Operating',
+   institution:'Equity Bank',accountReference:'123456',currency:'UGX',
+   scope:{kind:'organisation'},status:'active',createdBy:actor,createdAt:'2026-10-30T08:00:00Z',
+   balanceUGX:0,openingBalanceUGX:0,initialized:false
+ });
+ const aref=(db,t=tenant)=>doc(db,'finance_portfolio_accounts_v1',t+'__bank_test123');
+ await assertSucceeds(setDoc(aref(ceo),account('ceo_a')));
+ await assertSucceeds(getDoc(aref(finance)));
+ await assertFails(setDoc(doc(finance,'finance_portfolio_accounts_v1',tenant+'__bank_staff'),{...account('finance_a'),id:'bank_staff'}));
+ await assertFails(setDoc(aref(otherDb),account('ceo_b')));
+ await assertFails(setDoc(doc(ceo,'finance_portfolio_accounts_v1',tenant+'__bank_fake'),{...account('ceo_a'),id:'bank_fake',balanceUGX:100}));
+
  console.log('Finance Level 4 portfolio isolation and CEO-only create rules PASSED');
 }finally{await env.cleanup();}
