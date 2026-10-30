@@ -1,3 +1,5 @@
+import {projectPortfolioBalances} from '../../domain/finance/portfolioWideView';
+import {defineBuiltInPortfolio} from '../../domain/finance/builtInPortfolios';
 import {loadAuthoritativePortfolioLedger,type AuthoritativePortfolioLedger} from '../../domain/finance/authoritativePortfolioLedger';
 import {useManagementPaymentAccounts} from './ManagementPaymentAccounts';
 import React,{useEffect,useState} from 'react';
@@ -103,9 +105,32 @@ export function FinancialPortfoliosPanel(){
   return ()=>{live=false;};
  },[managementSelected,treasury.accounts,period,direction]);
  const bankIdentities=registeredBankAccounts(items);
+ const builtInViews=tenantId&&profile?.uid?[
+  defineBuiltInPortfolio({tenantId,key:'bank',createdBy:profile.uid,createdAt:'2026-10-30T00:00:00Z'}),
+  defineBuiltInPortfolio({tenantId,key:'mtn_mobile_money',createdBy:profile.uid,createdAt:'2026-10-30T00:00:00Z'}),
+  defineBuiltInPortfolio({tenantId,key:'airtel_mobile_money',createdBy:profile.uid,createdAt:'2026-10-30T00:00:00Z'}),
+  ...(activeBranchId?[
+   defineBuiltInPortfolio({tenantId,key:'branch_cash_sales',branchId:activeBranchId,createdBy:profile.uid,createdAt:'2026-10-30T00:00:00Z'}),
+   defineBuiltInPortfolio({tenantId,key:'petty_cash',branchId:activeBranchId,createdBy:profile.uid,createdAt:'2026-10-30T00:00:00Z'})
+  ]:[])
+ ]:[];
+ const balanceViews=projectPortfolioBalances([...builtInViews,...items],treasury.accounts);
  return <section className="rounded-2xl border border-zinc-200 bg-white p-4 space-y-4">
   <div><h3 className="text-lg font-bold text-zinc-950">Financial Portfolio Registry</h3>
    <p className="text-sm text-zinc-600">New portfolios are tenant scoped. Legacy treasury balances are not silently migrated and unavailable financial balances are never displayed as zero.</p></div>
+  <div className="space-y-2">
+   <h4 className="font-semibold text-zinc-900">Portfolio-wide funding coverage</h4>
+   <p className="text-xs text-zinc-600">System categories shown as a read-only projection. Unavailable is not zero. Branch cash and mobile money require separately reconciled posting evidence.</p>
+   <div className="grid gap-2 sm:grid-cols-2">
+    {[...builtInViews,...items].map(portfolio=>{
+      const view=balanceViews.find(x=>x.portfolioId===portfolio.id);
+      return <div key={portfolio.id} className="rounded border border-zinc-200 p-3 text-sm">
+       <strong>{portfolio.name}</strong> · {portfolio.scope.kind==='branch'?'Branch':'Organisation'}
+       <p>{view?.status==='reconciled'?'UGX '+view.balanceUGX!.toLocaleString():'Balance unavailable: not reconciled'}</p>
+      </div>;
+    })}
+   </div>
+  </div>
   <div className="space-y-2">
     <h4 className="font-semibold text-zinc-900">Existing reconciled Management portfolios</h4>
     {treasury.loading?<p className="text-sm">Loading reconciled payment accounts…</p>:
