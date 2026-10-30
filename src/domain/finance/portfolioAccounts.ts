@@ -29,3 +29,16 @@ export function assertUniqueBankAccount(candidate:PortfolioChildAccount,existing
  x.id!==candidate.id&&normalizeBankInstitution(x.institution||'')===normalizeBankInstitution(candidate.institution||'')&&normalizeBankReference(x.accountReference)===number))
   throw new Error('Duplicate bank account reference.');
 }
+
+/** Deterministic, opaque bank identity for concurrent duplicate prevention. */
+export async function bankAccountIdentity(
+  tenantId:string,portfolioId:string,institution:string,reference:string
+):Promise<string>{
+  const issuer=normalizeBankInstitution(institution);
+  const number=normalizeBankReference(reference);
+  if(!issuer||!number)throw new Error('Bank institution and account reference are required.');
+  if(!globalThis.crypto?.subtle)throw new Error('Secure browser cryptography is required.');
+  const content=new TextEncoder().encode([tenantId,portfolioId,issuer,number].join('|'));
+  const digest=await globalThis.crypto.subtle.digest('SHA-256',content);
+  return 'bank_'+Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,'0')).join('');
+}
