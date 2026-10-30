@@ -1,6 +1,6 @@
 import React,{useEffect,useState} from 'react';
 import {useAuth} from '../../contexts/AuthContext';
-import {listFinancialPortfolios,createCustomFinancialPortfolio,listPortfolioAccounts} from '../../domain/finance/portfolioFirestore';
+import {listFinancialPortfolios,createCustomFinancialPortfolio} from '../../domain/finance/portfolioFirestore';
 import {defaultLedgerQuery} from '../../domain/finance/portfolioLedger';
 import type {FinancialPortfolio,FinancialPortfolioClassification} from '../../domain/finance/financialPortfolio';
 import type {PortfolioChildAccount} from '../../domain/finance/portfolioAccounts';
@@ -24,8 +24,8 @@ export function FinancialPortfoliosPanel(){
  useEffect(()=>{
   let active=true;
   if(!tenantId)return;
-  Promise.all([listFinancialPortfolios(tenantId),listPortfolioAccounts(tenantId)])
-   .then(([p,a])=>{if(active){setItems(p);setAccounts(a);}})
+  listFinancialPortfolios(tenantId)
+   .then(p=>{if(active){setItems(p);setAccounts([]);}})
    .catch(()=>{if(active)setMessage('Portfolio records unavailable.');});
   return ()=>{active=false;};
  },[tenantId]);
