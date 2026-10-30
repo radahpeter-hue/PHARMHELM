@@ -20,3 +20,7 @@ test('Changes 048-055 reactivate same portfolio identity and ledger association'
  assert.equal(active.status,'active');
  assert.equal(active.deactivatedAt,undefined);
 });
+
+test('Built-in system portfolios cannot be disabled through custom lifecycle',()=>{
+ assert.throws(()=>deactivatePortfolio(p,'ceo','2026-10-29T10:00:00Z','closure',zero),/System portfolios/);
+});
