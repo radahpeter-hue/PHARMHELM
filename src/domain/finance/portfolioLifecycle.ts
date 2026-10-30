@@ -41,3 +41,24 @@ export function reactivateChildAccount(a:PortfolioChildAccount):PortfolioChildAc
  const {deactivatedBy,deactivatedAt,...rest}=a;
  return {...rest,status:'active'};
 }
+
+/**
+ * Changes 051 and 055. A hard-delete decision is only valid when the caller
+ * has gathered complete authoritative evidence. This pure gate never deletes
+ * Firestore records and must not be used with guessed zeros.
+ */
+export function assertUnusedPortfolioCanBeDeleted(
+ p:FinancialPortfolio,e:LifecycleEvidence
+):void {
+ if(p.origin==='system')throw new Error('Built-in portfolios cannot be deleted.');
+ if(!canDeleteUnusedFinancialObject(e))
+  throw new Error('Portfolio has financial history or dependencies; deactivate instead.');
+}
+export function assertUnusedChildAccountCanBeDeleted(
+ account:PortfolioChildAccount,e:LifecycleEvidence
+):void {
+ if(!account.id||!account.portfolioId||!account.tenantId)
+  throw new Error('Bank account identity is incomplete.');
+ if(!canDeleteUnusedFinancialObject(e))
+  throw new Error('Bank account has financial history or dependencies; deactivate instead.');
+}
