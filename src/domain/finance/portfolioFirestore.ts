@@ -1,7 +1,7 @@
 import {collection, doc, getDocs, query, where, runTransaction, serverTimestamp, type Firestore} from 'firebase/firestore';
 import {db} from '../../firebase';
 import {defineFinancialPortfolio,validateFinancialPortfolio,type FinancialPortfolio,type NewFinancialPortfolio} from './financialPortfolio';
-import {validatePortfolioChildAccount,normalizeBankInstitution,normalizeBankReference,type PortfolioChildAccount} from './portfolioAccounts';
+import {validatePortfolioChildAccount,bankAccountIdentity,type PortfolioChildAccount} from './portfolioAccounts';
 
 const portfolios='finance_portfolios_v1';
 const accounts='finance_portfolio_accounts_v1';
@@ -37,18 +37,6 @@ export async function createCustomFinancialPortfolio(input:NewFinancialPortfolio
   transaction.set(ref,value);
  });
  return value;
-}
-/** Deterministic, opaque account identity protects simultaneous bank registration. */
-export async function bankAccountIdentity(
-  tenantId:string,portfolioId:string,institution:string,reference:string
-):Promise<string>{
-  const issuer=normalizeBankInstitution(institution);
-  const number=normalizeBankReference(reference);
-  if(!issuer||!number)throw new Error('Bank institution and account reference are required.');
-  if(!globalThis.crypto?.subtle)throw new Error('Secure browser cryptography is required.');
-  const content=new TextEncoder().encode([tenantId,portfolioId,issuer,number].join('|'));
-  const digest=await globalThis.crypto.subtle.digest('SHA-256',content);
-  return 'bank_'+Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,'0')).join('');
 }
 export async function createPortfolioBankAccount(
   input:Omit<PortfolioChildAccount,'id'>,database:Firestore=db
