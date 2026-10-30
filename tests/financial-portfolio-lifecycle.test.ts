@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {defineBuiltInPortfolio} from '../src/domain/finance/builtInPortfolios';
 import {canDeleteUnusedFinancialObject,canDeactivateFinancialObject,deactivatePortfolio,reactivatePortfolio,assertUnusedPortfolioCanBeDeleted,assertUnusedChildAccountCanBeDeleted,type LifecycleEvidence} from '../src/domain/finance/portfolioLifecycle';
@@ -35,4 +36,11 @@ test('Changes 051 and 055 hard deletion is forbidden for system objects and hist
  assert.throws(()=>assertUnusedChildAccountCanBeDeleted(account,{...zero,transferCount:1}),/history/);
  assert.throws(()=>assertUnusedChildAccountCanBeDeleted(account,{...zero,currentBalanceUGX:-1}),/history/);
  assert.throws(()=>assertUnusedChildAccountCanBeDeleted(account,{...zero,ledgerEntryCount:NaN}),/Incomplete/);
+});
+
+test('Level 4 custom creation uses write-on-create rather than a denied missing-document read',()=>{
+ const source=readFileSync('src/domain/finance/portfolioFirestore.ts','utf8');
+ const create=source.split('export async function createCustomFinancialPortfolio')[1]?.split('export async function createPortfolioBankAccount')[0]||'';
+ assert.match(create,/await setDoc\(portfolioRef\(/);
+ assert.doesNotMatch(create,/transaction\.get|runTransaction/);
 });
