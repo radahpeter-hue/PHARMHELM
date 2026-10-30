@@ -13,8 +13,8 @@ export interface AuthoritativePortfolioLedger {
   reconciliationReference:string;
 }
 export function managementLedgerCollection(account:ManagementPaymentAccount):string {
- if(account.accountId===MANAGEMENT_BANK_ACCOUNT && account.kind==='bank')return 'banking_records';
- if(account.accountId===MANAGEMENT_CASH_ACCOUNT && account.kind==='petty_cash')return 'petty_cash_ledger';
+ if(account.kind==='bank' && (account.accountId===MANAGEMENT_BANK_ACCOUNT||account.portfolioId))return 'banking_records';
+ if(account.kind==='petty_cash' && (account.accountId===MANAGEMENT_CASH_ACCOUNT||account.portfolioId))return 'petty_cash_ledger';
  throw new Error('No authoritative posting ledger for this account.');
 }
 function isoDate(value:unknown):string {
