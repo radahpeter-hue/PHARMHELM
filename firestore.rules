@@ -73,7 +73,7 @@ service cloud.firestore {
     }
 
     function isCEO() {
-      return isAuthenticated() && (isAdmin() || hasAnyRole(['CEO', 'CEO / MD', 'owner']));
+      return isAdmin();
     }
 
     function isHR() {
