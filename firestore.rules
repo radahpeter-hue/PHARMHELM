@@ -593,7 +593,7 @@ service cloud.firestore {
       function eligiblePortfolioAccount(data) {
         return isCEO() && data.portfolioId == data.accountId
           && data.accountId.matches('^(system_(mtn_mobile_money|airtel_mobile_money|branch_cash_sales_[A-Za-z0-9_-]+|petty_cash_[A-Za-z0-9_-]+)|bank_[0-9a-f]{64}|custom_[A-Za-z0-9_-]+)$')
-          && data.kind == (data.portfolioClassification in ['bank','mobile_money'] ? 'bank' : 'petty_cash');
+          && data.kind in ['bank','petty_cash'];
       }
       allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
