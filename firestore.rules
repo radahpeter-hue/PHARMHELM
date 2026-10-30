@@ -541,8 +541,7 @@ service cloud.firestore {
         && (data.accountDeltaUGX <= 0 || isFinance() || isHR())
         && before.kind == kind
         && after.lastPostingId == id
-        && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX
-        && after.balanceUGX >= 0;
+        && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX;
     }
     function validManagementAccountUpdate(accountId, before, after) {
       let movementPath = managementMovementPath(before.kind, after.lastPostingId);
