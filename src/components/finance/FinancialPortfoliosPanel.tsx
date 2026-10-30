@@ -1,3 +1,4 @@
+import {registerPortfolioFunding,postPortfolioFundingMovement,type PortfolioFundingAccount} from '../../domain/finance/portfolioFunding';
 import {loadPosChannelEvidence,type PosChannelEvidence} from '../../domain/finance/portfolioPosEvidence';
 import {loadEodChannelEvidence,type ReconciliationEvidence,type EodChannel} from '../../domain/finance/portfolioEodEvidence';
 import {projectPortfolioBalances} from '../../domain/finance/portfolioWideView';
@@ -23,6 +24,12 @@ export function FinancialPortfoliosPanel(){
  const [items,setItems]=useState<FinancialPortfolio[]>([]);
  const [accounts,setAccounts]=useState<PortfolioChildAccount[]>([]);
  const [name,setName]=useState('');
+ const [fundingName,setFundingName]=useState('');
+ const [fundingOpening,setFundingOpening]=useState('');
+ const [fundingReference,setFundingReference]=useState('');
+ const [movementAmount,setMovementAmount]=useState('');
+ const [movementReference,setMovementReference]=useState('');
+ const [movementDirection,setMovementDirection]=useState<'inflow'|'outflow'>('inflow');
  const [classification,setClassification]=useState<FinancialPortfolioClassification>('restricted_internal_fund');
  const [scopeKind,setScopeKind]=useState<'organisation'|'branch'>('organisation');
  const [supportsChildren,setSupportsChildren]=useState(false);
@@ -121,6 +128,32 @@ export function FinancialPortfoliosPanel(){
   ]:[])
  ]:[];
  const balanceViews=projectPortfolioBalances([...builtInViews,...items],treasury.accounts);
+ const activePortfolio=[...builtInViews,...items].find(p=>p.id===selected);
+ const activeFunding=treasury.accounts.find(a=>a.accountId===selected&&a.portfolioId===selected) as PortfolioFundingAccount|undefined;
+ async function initializeFunding(e:React.FormEvent){
+  e.preventDefault();if(!activePortfolio||!profile?.uid||busy||!canRegister)return;
+  setBusy(true);setMessage('');
+  try{
+   const opening=Number(fundingOpening);
+   await registerPortfolioFunding({portfolio:activePortfolio,actorId:profile.uid,name:fundingName,
+    openingBalanceUGX:opening,reconciliationReference:fundingReference});
+   setMessage('Funding account registered. Reload to retrieve its authoritative balance.');
+   setFundingOpening('');setFundingReference('');
+  }catch(e){setMessage(e instanceof Error?e.message:'Funding registration failed.');}
+  finally{setBusy(false);}
+ }
+ async function postMovement(e:React.FormEvent){
+  e.preventDefault();if(!activeFunding||!profile?.uid||busy||!canRegister)return;
+  setBusy(true);setMessage('');
+  try{
+   await postPortfolioFundingMovement({account:activeFunding,actorId:profile.uid,
+    amountUGX:Number(movementAmount),direction:movementDirection,
+    requestId:'finance_'+crypto.randomUUID().replace(/-/g,''),reference:movementReference});
+   setMessage('Movement posted to the authoritative ledger. Refresh to see updated balance.');
+   setMovementAmount('');setMovementReference('');
+  }catch(e){setMessage(e instanceof Error?e.message:'Portfolio movement failed.');}
+  finally{setBusy(false);}
+ }
  const evidenceChannel:EodChannel|null=selected.startsWith('system_branch_cash_sales_')?'cash':
   selected==='system_mtn_mobile_money'?'momo':selected==='system_airtel_mobile_money'?'airtel':null;
  useEffect(()=>{
@@ -161,6 +194,23 @@ export function FinancialPortfoliosPanel(){
   </div>
 
 
+  {activePortfolio&&activePortfolio.id!=='system_bank'&&<div className="rounded border border-zinc-200 p-3 text-sm">
+   <h4 className="font-semibold">{activePortfolio.name}: Authoritative funding</h4>
+   {!activeFunding?<p>Not reconciled. CEO must register a verified opening balance before transactions can be posted.</p>:
+    <p>Reconciled balance: UGX {activeFunding.balanceUGX.toLocaleString()}. Ref: {activeFunding.reconciliationReference}</p>}
+   {canRegister&&!activeFunding&&<form onSubmit={initializeFunding} className="grid gap-2 sm:grid-cols-4">
+     <input required aria-label="Funding name" placeholder="Account name" value={fundingName} onChange={e=>setFundingName(e.target.value)} className="border p-2"/>
+     <input required aria-label="Opening UGX" type="number" min="0" step="1" value={fundingOpening} onChange={e=>setFundingOpening(e.target.value)} className="border p-2"/>
+     <input required minLength={5} aria-label="Reconciliation reference" placeholder="Verified statement reference" value={fundingReference} onChange={e=>setFundingReference(e.target.value)} className="border p-2"/>
+     <button disabled={busy} className="rounded border p-2">Confirm opening reconciliation</button>
+   </form>}
+   {canRegister&&activeFunding&&<form onSubmit={postMovement} className="grid gap-2 sm:grid-cols-4">
+    <select aria-label="Movement direction" value={movementDirection} onChange={e=>setMovementDirection(e.target.value as 'inflow'|'outflow')} className="border p-2"><option value="inflow">Inflow</option><option value="outflow">Outflow</option></select>
+    <input required aria-label="Movement amount" type="number" min="1" step="1" value={movementAmount} onChange={e=>setMovementAmount(e.target.value)} className="border p-2"/>
+    <input required minLength={3} aria-label="Movement external reference" placeholder="External transaction reference" value={movementReference} onChange={e=>setMovementReference(e.target.value)} className="border p-2"/>
+    <button disabled={busy} className="rounded border p-2">Record verified movement</button>
+   </form>}
+  </div>}
   {evidenceChannel&&<div className="rounded border border-zinc-200 p-3 text-sm">
    <h4 className="font-semibold">Canonical POS V2 settled-payment evidence</h4>
    <p>Receipt components only. This does not include legacy POS or revisions and is not the available wallet/cash balance.</p>
