@@ -595,15 +595,9 @@ service cloud.firestore {
     match /finance_payment_accounts/{accountId} {
       function eligiblePortfolioAccount(data) {
         return isCEO() && data.portfolioId == data.accountId
-          && ((data.kind == 'mobile_money' && data.scope.kind == 'organisation'
-                && data.accountId in ['system_mtn_mobile_money','system_airtel_mobile_money'])
-           || (data.kind == 'bank' && data.scope.kind == 'organisation'
-                && data.accountId.matches('^bank_[0-9a-f]{64}$'))
-           || (data.scope.kind == 'branch'
-                && ((data.kind == 'cash_equivalent' && data.accountId == 'system_branch_cash_sales_' + data.scope.branchId)
-                 || (data.kind == 'petty_cash' && data.accountId == 'system_petty_cash_' + data.scope.branchId)))
-           || (data.scope.kind == 'organisation' && data.accountId.matches('^custom_[A-Za-z0-9_-]+$')
-                && data.kind in ['restricted_internal_fund','other_financial_asset','cash_equivalent']));
+          && data.accountId.matches('^(system_(mtn_mobile_money|airtel_mobile_money|branch_cash_sales_[A-Za-z0-9_-]+|petty_cash_[A-Za-z0-9_-]+)|bank_[0-9a-f]{64}|custom_[A-Za-z0-9_-]+)$')
+          && data.kind in ['bank','mobile_money','cash_equivalent','petty_cash','restricted_internal_fund','other_financial_asset']
+          && data.scope.kind in ['organisation','branch'];
       }
       allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
