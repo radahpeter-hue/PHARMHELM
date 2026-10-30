@@ -523,9 +523,6 @@ service cloud.firestore {
         || hasCustomModuleFunctional('finance') || hasCustomModuleFunctional('hr')
         || hasCustomModuleFunctional('logistics') || hasCustomModuleFunctional('procurement') || isAdmin());
     }
-    function managementAccountPath(tenantId, kind) {
-      return /databases/$(database)/documents/finance_payment_accounts/$(tenantId + (kind == 'bank' ? '_management_bank' : '_management_petty_cash'));
-    }
     function managementMovementPath(kind, id) {
       return kind == 'bank'
         ? /databases/$(database)/documents/banking_records/$(id)
@@ -536,7 +533,7 @@ service cloud.firestore {
       let before = get(accountPath).data;
       let after = getAfter(accountPath).data;
       return isTenantMember(data.tenantId)
-        && (kind == 'bank' || data.accountDocumentId != data.tenantId + '_management_petty_cash' ? isFinance() : canPostManagementCash())
+        && (kind == 'bank' ? isFinance() : canPostManagementCash())
         && data.postedBy == request.auth.uid
         && data.amount is int && data.amount > 0
         && data.type in ['incoming','deposit','topup','outgoing','withdrawal']
@@ -554,7 +551,7 @@ service cloud.firestore {
       let movementPath = managementMovementPath(before.kind, after.lastPostingId);
       let movement = getAfter(movementPath).data;
       return isTenantMember(before.tenantId)
-        && (before.kind == 'bank' || before.accountId != 'management_petty_cash' ? isFinance() : canPostManagementCash())
+        && (isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash()))
         && after.diff(before).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
         && before.initialized == true && before.currency == 'UGX' && before.controlVersion == 1
         && after.balanceUGX is int && after.balanceUGX >= 0 && after.balanceUGX <= 9007199254740991
