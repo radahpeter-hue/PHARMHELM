@@ -2,7 +2,7 @@ import {useManagementPaymentAccounts} from './ManagementPaymentAccounts';
 import React,{useEffect,useState} from 'react';
 import {useAuth} from '../../contexts/AuthContext';
 import {
- listFinancialPortfolios,createCustomFinancialPortfolio,registerPortfolioBankIdentity,registeredBankAccounts
+ listFinancialPortfolios,createCustomFinancialPortfolio,registerPortfolioBankIdentity,registeredBankAccounts,setRegisteredBankAccountActive
 } from '../../domain/finance/portfolioFirestore';
 import {defaultLedgerQuery} from '../../domain/finance/portfolioLedger';
 import type {FinancialPortfolio,FinancialPortfolioClassification} from '../../domain/finance/financialPortfolio';
@@ -73,6 +73,18 @@ export function FinancialPortfoliosPanel(){
    }catch(error){setMessage(error instanceof Error?error.message:'Bank registration failed.');}
    finally{setBusy(false);}
  }
+ async function changeBankStatus(bank:FinancialPortfolio){
+   if(!canRegister||busy)return;
+   const deactivate=bank.status==='active';
+   const reason=deactivate?'Bank account deactivated by CEO':'';
+   setBusy(true);setMessage('');
+   try{
+     const updated=await setRegisteredBankAccountActive(bank,!deactivate,profile!.uid,reason);
+     setItems(old=>old.map(p=>p.id===updated.id?updated:p));
+     setMessage(deactivate?'Account deactivated; identity retained.':'Account reactivated with original identity.');
+   }catch(e){setMessage(e instanceof Error?e.message:'Unable to update bank status.');}
+   finally{setBusy(false);}
+ }
  const bankIdentities=registeredBankAccounts(items);
  return <section className="rounded-2xl border border-zinc-200 bg-white p-4 space-y-4">
   <div><h3 className="text-lg font-bold text-zinc-950">Financial Portfolio Registry</h3>
@@ -96,7 +108,7 @@ export function FinancialPortfoliosPanel(){
    <h4 className="font-semibold text-zinc-900">Registered bank accounts ({bankIdentities.length})</h4>
    {bankIdentities.map(bank=><div key={bank.id} className="rounded-lg border border-zinc-200 p-3 text-sm">
     <strong>{bank.name}</strong> · {bank.bankInstitution} · {bank.status}
-    <p>Account reference: {bank.bankAccountReference}. Balance not yet reconciled.</p>
+    <p>Account reference: {bank.bankAccountReference}. Balance not yet reconciled.</p>{canRegister&&<button type="button" disabled={busy} onClick={()=>changeBankStatus(bank)} className="mt-2 rounded border border-zinc-400 px-3 py-1">{bank.status==='active'?'Deactivate':'Reactivate'}</button>}
    </div>)}
    {canRegister&&<form onSubmit={registerBankAccount} className="grid gap-2 sm:grid-cols-4">
      <input required maxLength={100} aria-label="Bank institution" placeholder="Bank name" value={bankInstitution} onChange={e=>setBankInstitution(e.target.value)} className="border p-2 rounded"/>
