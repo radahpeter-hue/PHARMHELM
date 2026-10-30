@@ -84,3 +84,35 @@ export async function registerBuiltInPortfolio(input:{
     return value;
   });
 }
+
+/**
+ * Spark-safe bank account registry: each account is a first-class portfolio
+ * with a canonical parent link, not a new writeable financial ledger.
+ * The existing CEO-only create rules enforce immutable, tenant-scoped IDs.
+ */
+export async function registerPortfolioBankIdentity(input:{
+ tenantId:string;actorId:string;institution:string;accountReference:string;
+ displayName:string;createdAt:string
+},database:Firestore=db):Promise<FinancialPortfolio>{
+ const {normalizeBankInstitution,normalizeBankReference}=await import('./portfolioAccounts');
+ const institution=normalizeBankInstitution(input.institution);
+ const accountReference=normalizeBankReference(input.accountReference);
+ if(!institution||!accountReference||!input.displayName.trim())throw new Error('Bank and account details are required.');
+ if(institution.length>100||accountReference.length>60||!/^[A-Z0-9]+$/.test(accountReference))
+  throw new Error('Invalid bank account reference.');
+ const id=await bankAccountIdentity(input.tenantId,'system_bank',institution,accountReference);
+ const value=defineFinancialPortfolio({
+  id,tenantId:input.tenantId,name:input.displayName,
+  classification:'bank',description:'Bank account identity; no financial balance initialized',
+  scope:{kind:'organisation'},currency:'UGX',origin:'custom',
+  supportsChildAccounts:false,allowsTransfersIn:false,allowsTransfersOut:false,
+  createdBy:input.actorId,createdAt:input.createdAt,
+  bankInstitution:institution,bankAccountReference:accountReference,bankParentId:'system_bank'
+ });
+ await setDoc(portfolioRef(database,input.tenantId,id),value);
+ return value;
+}
+export function registeredBankAccounts(portfolios:readonly FinancialPortfolio[]):FinancialPortfolio[]{
+ return portfolios.filter(p=>p.origin==='custom'&&p.classification==='bank'
+   &&p.bankParentId==='system_bank'&&!!p.bankAccountReference&&!!p.bankInstitution);
+}
