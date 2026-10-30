@@ -514,7 +514,7 @@ service cloud.firestore {
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
         'petty_cash_ledger', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
         'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
-      ];
+      ] || collectionName.matches('finance_.*_v1');
     }
 
     function canPostManagementCash() {
@@ -3202,10 +3202,10 @@ service cloud.firestore {
         && (collectionName != 'institutions' || !('institution_code' in resource.data)
           || request.resource.data.institution_code == resource.data.institution_code);
       }
-      allow read: if !collectionName.matches('finance_(portfolios|portfolio_accounts|account_identity)_v1') && !dedicatedCollection() && !isProtectedFinanceCollection(collectionName)
+      allow read: if !dedicatedCollection() && !isProtectedFinanceCollection(collectionName)
         && isAuthenticated()
         && ((request.method == 'get' && resource == null) || isTenantMember(resource.data.tenantId));
-      allow write: if !collectionName.matches('finance_(portfolios|portfolio_accounts|account_identity)_v1') && !dedicatedWriteCollection() && !isProtectedFinanceCollection(collectionName)
+      allow write: if !dedicatedWriteCollection() && !isProtectedFinanceCollection(collectionName)
         && (request.method == 'delete'
           ? (isAdmin() && isTenantMember(resource.data.tenantId))
           : (isAuthenticated() && isTenantMember(request.resource.data.tenantId)
