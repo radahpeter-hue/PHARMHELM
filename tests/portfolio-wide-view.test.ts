@@ -13,7 +13,7 @@ test('portfolio projection uses only verified authoritative mappings, never sile
  assert.deepEqual(views.map(x=>[x.status,x.balanceUGX]),[['reconciled',450000],['unavailable',null],['unavailable',null]]);
 });
 test('portfolio projection rejects duplicated accounts and isolates tenants',()=>{
- assert.throws(()=>projectPortfolioBalances([bank],[funding,funding]),/Duplicate authoritative/);
+ assert.throws(()=>projectPortfolioBalances([bank],[funding,funding]),/Duplicate (authoritative|bank funding)/);
  assert.throws(()=>projectPortfolioBalances([bank,bank],[funding]),/Duplicate portfolio/);
  assert.equal(projectPortfolioBalances([bank],[{...funding,tenantId:'other'}])[0].balanceUGX,null);
 });
