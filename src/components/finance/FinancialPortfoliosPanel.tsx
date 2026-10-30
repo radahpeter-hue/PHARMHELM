@@ -31,9 +31,8 @@ export function FinancialPortfoliosPanel(){
    let live=true;
    setItems([]);setAccounts([]);
    if(!tenantId)return;
-   Promise.all([listFinancialPortfolios(tenantId,activeBranchId||undefined),
-     listPortfolioAccounts(tenantId,activeBranchId||undefined)])
-     .then(([p,a])=>{if(live){setItems(p);setAccounts(a);setMessage('');}})
+   listFinancialPortfolios(tenantId,activeBranchId||undefined)
+     .then(p=>{if(live){setItems(p);setAccounts([]);setMessage('');}})
      .catch(()=>{if(live)setMessage('Portfolio registry is currently unavailable.');});
    return ()=>{live=false;};
  },[tenantId,activeBranchId]);
@@ -57,6 +56,7 @@ export function FinancialPortfoliosPanel(){
  }
  const selectedPortfolio=items.find(p=>p.id===selected);
  const childAccounts=accounts.filter(a=>a.portfolioId===selectedPortfolio?.id);
+ const bankRegistrationReady=false; // Requires separately certified Firestore Rules.
  async function registerBankAccount(event:React.FormEvent){
    event.preventDefault();
    if(!tenantId||!profile?.uid||!canRegister||busy||!selectedPortfolio?.supportsChildAccounts||selectedPortfolio.classification!=='bank')return;
@@ -85,7 +85,7 @@ export function FinancialPortfoliosPanel(){
   </div>
   {selectedPortfolio&&<div className="rounded-lg border border-zinc-300 p-3 space-y-3 text-sm text-zinc-800">
    <strong>{selectedPortfolio.name} — Account overview</strong>
-   <p>{childAccounts.length} child accounts. Authoritative ledger posting is not yet enabled.</p>
+   <p>{childAccounts.length} child accounts. Authoritative ledger posting and child-account registration are not yet enabled.</p>
    {childAccounts.map(a=><div key={a.id} className="rounded-md border border-zinc-200 p-2">
      <strong>{a.displayName}</strong> · {a.institution||'Financial account'} · {a.status}
      <p>Account reference: {a.accountReference} · Opening balance not reconciled</p></div>)}
@@ -95,7 +95,7 @@ export function FinancialPortfoliosPanel(){
      <input aria-label="To date" type="date" value={period.to} onChange={e=>setPeriod(p=>({...p,to:e.target.value}))} className="border p-2"/>
    </div>
    <p>Ledger unavailable pending authoritative financial posting integration; no synthetic transactions shown.</p>
-   {canRegister&&selectedPortfolio.status==='active'&&selectedPortfolio.classification==='bank'&&selectedPortfolio.supportsChildAccounts&&
+   {canRegister&&bankRegistrationReady&&selectedPortfolio.status==='active'&&selectedPortfolio.classification==='bank'&&selectedPortfolio.supportsChildAccounts&&
     <form onSubmit={registerBankAccount} className="grid gap-2 sm:grid-cols-4">
       <input required aria-label="Bank institution" placeholder="Institution" value={bankInstitution} onChange={e=>setBankInstitution(e.target.value)} className="border p-2 rounded"/>
       <input required aria-label="Bank account display name" placeholder="Display name" value={bankAccountName} onChange={e=>setBankAccountName(e.target.value)} className="border p-2 rounded"/>
