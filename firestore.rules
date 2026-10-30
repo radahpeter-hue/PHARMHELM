@@ -590,29 +590,10 @@ service cloud.firestore {
         && after.payment_status == (payment.remainingUGX == 0 ? 'paid' : 'partial');
     }
     match /finance_payment_accounts/{accountId} {
-      function matchesStoredPortfolio(data) {
-        let p = get(/databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId)).data;
-        return p.id == data.accountId && p.tenantId == data.tenantId
-          && p.status == 'active' && p.classification == data.portfolioClassification
-          && p.scope == data.scope;
-      }
-      function matchesRegisteredPortfolio(data) {
-        let p = get(/databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId)).data;
-        return p.id == data.accountId && p.tenantId == data.tenantId
-          && p.status == 'active' && p.classification == data.portfolioClassification
-          && p.scope == data.scope;
-      }
       function eligiblePortfolioAccount(data) {
-        let portfolioPath = /databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId);
         return isCEO() && data.portfolioId == data.accountId
-          && data.kind == (data.portfolioClassification in ['bank','mobile_money'] ? 'bank' : 'petty_cash')
-          && ((data.accountId.matches('^system_(mtn_mobile_money|airtel_mobile_money)$')
-               && data.scope.kind == 'organisation' && data.portfolioClassification == 'mobile_money')
-             || (data.accountId.matches('^system_(branch_cash_sales|petty_cash)_[A-Za-z0-9_-]+$')
-               && data.scope.kind == 'branch'
-               && data.accountId == 'system_' + (data.portfolioClassification == 'petty_cash' ? 'petty_cash' : 'branch_cash_sales') + '_' + data.scope.branchId
-               && data.portfolioClassification in ['cash_equivalent','petty_cash'])
-             || (exists(portfolioPath) && matchesRegisteredPortfolio(data)));
+          && data.accountId.matches('^(system_(mtn_mobile_money|airtel_mobile_money|branch_cash_sales_[A-Za-z0-9_-]+|petty_cash_[A-Za-z0-9_-]+)|bank_[0-9a-f]{64}|custom_[A-Za-z0-9_-]+)$')
+          && data.kind == (data.portfolioClassification in ['bank','mobile_money'] ? 'bank' : 'petty_cash');
       }
       allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
