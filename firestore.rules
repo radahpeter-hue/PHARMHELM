@@ -3194,15 +3194,12 @@ service cloud.firestore {
         && request.resource.data.scope.kind == 'organisation'
         && !('balanceUGX' in request.resource.data);
       allow update: if isCEO() && isTenantMember(resource.data.tenantId)
-        && resource.data.origin == 'custom' && resource.data.classification == 'bank'
         && resource.data.bankParentId == 'system_bank'
+        && resource.data.allowsTransfersIn == false
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status','updatedBy','updatedAt','deactivatedBy','deactivatedAt','deactivationReason'])
         && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.status in ['active','inactive']
-        && (request.resource.data.status == 'inactive'
-          ? request.resource.data.deactivatedBy == request.auth.uid
-          : !('deactivatedBy' in request.resource.data));
+        && request.resource.data.status in ['active','inactive'];
       allow delete: if false;
     }
 
