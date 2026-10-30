@@ -10,8 +10,8 @@ export function FinancialPortfoliosPanel(){
  const {profile,activeBranchId}=useAuth();
  const tenantId=profile?.tenantId||'';
  const canCreate=hasAnyRole(profile,['owner','CEO','CEO / MD']);
- // Portfolio registration remains disabled until dedicated CEO-only rules are certified.
- const registrationEnabled=false;
+ // Dedicated creation and tenant-isolation rules are emulator-tested.
+ const registrationEnabled=true;
  const [items,setItems]=useState<FinancialPortfolio[]>([]);
  const [accounts,setAccounts]=useState<PortfolioChildAccount[]>([]);
  const [name,setName]=useState('');
@@ -48,7 +48,7 @@ export function FinancialPortfoliosPanel(){
  const visible=items.filter(p=>p.scope.kind==='organisation'||p.scope.branchId===activeBranchId);
  const selectedPortfolio=visible.find(p=>p.id===selected);
  return <section className="rounded-2xl border border-zinc-200 bg-white p-4 space-y-4">
-  <div><h3 className="text-lg font-bold text-zinc-950">Financial Portfolios (Level 4)</h3><p className="text-sm text-zinc-600">New portfolio registry. Historical treasury accounts are not migrated. Registration is currently disabled pending validated finance security rules. Unverified balances are not displayed as zero.</p></div>
+  <div><h3 className="text-lg font-bold text-zinc-950">Financial Portfolios (Level 4)</h3><p className="text-sm text-zinc-600">New portfolio registry. Historical treasury accounts are not migrated. Unverified balances are not displayed as zero.</p></div>
   <div className="grid gap-2 sm:grid-cols-2">{visible.map(p=><button key={p.id} onClick={()=>setSelected(p.id)} className="rounded-lg border border-zinc-300 text-left p-3 text-zinc-900"><strong>{p.name}</strong><p className="text-xs">{p.classification} · {p.status} · Balance not established</p></button>)}</div>
   {selectedPortfolio&&<div className="rounded-lg border p-3 space-y-2 text-sm text-zinc-800">
    <strong>{selectedPortfolio.name} · Account overview</strong>
