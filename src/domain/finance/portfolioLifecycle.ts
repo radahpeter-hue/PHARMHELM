@@ -21,6 +21,7 @@ export function canDeactivateFinancialObject(e:LifecycleEvidence):boolean {
 export function deactivatePortfolio(p:FinancialPortfolio, actorId:string, at:string, reason:string, e:LifecycleEvidence):FinancialPortfolio {
  if(!canDeactivateFinancialObject(e))throw new Error('Resolve non-zero balance before deactivation.');
  if(p.status!=='active')throw new Error('Portfolio already inactive.');
+ if(p.origin==='system')throw new Error('System portfolios cannot be deactivated through custom lifecycle.');
  if(!actorId||!reason.trim()||!at)throw new Error('Deactivation audit metadata required.');
  return {...p,status:'inactive',updatedBy:actorId,updatedAt:at,deactivatedBy:actorId,deactivatedAt:at,deactivationReason:reason};
 }
