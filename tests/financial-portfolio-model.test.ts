@@ -42,3 +42,8 @@ test('Change 032 requires identity, audit timestamps and deactivation metadata',
   assert.equal(inactive.status,'inactive');
   assert.throws(()=>validateFinancialPortfolio({...active,deactivatedBy:'ceo_1'}),/Active portfolio/);
 });
+
+test('Change 032 refuses missing actor and branch identifiers',()=>{
+  assert.throws(()=>defineFinancialPortfolio({...base,createdBy:undefined as any}),/identifiers/);
+  assert.throws(()=>defineFinancialPortfolio({...base,scope:{kind:'branch',branchId:undefined as any}}),/branch ID/);
+});
