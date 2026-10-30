@@ -51,7 +51,7 @@ export async function loadAuthoritativePortfolioLedger(
  if(!/^\d{4}-\d{2}-\d{2}$/.test(period.from)||!/^\d{4}-\d{2}-\d{2}$/.test(period.to)||period.from>period.to)
   throw new Error('Invalid ledger date range.');
  const collectionName=managementLedgerCollection(account);
- const snapshot=await getDocs(query(collection(database,collectionName),where('tenantId','==',account.tenantId)));
+ const snapshot=await getDocs(query(collection(database,collectionName),where('tenantId','==',account.tenantId),where('accountDocumentId','==',managementAccountDocumentId(account.tenantId,account.accountId))));
  const all=snapshot.docs.map(row=>mapAuthoritativeMovement(row.id,row.data(),account));
  const ids=new Set(all.map(e=>e.id));
  if(ids.size!==all.length)throw new Error('Duplicate posting identities.');
