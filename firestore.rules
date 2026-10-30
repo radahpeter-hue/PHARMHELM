@@ -3190,9 +3190,10 @@ service cloud.firestore {
         && request.resource.data.updatedBy == request.auth.uid
         && (request.resource.data.origin == 'custom'
           || (request.resource.data.origin == 'system'
-            && (request.resource.data.id in ['system_bank','system_mtn_mobile_money','system_airtel_mobile_money',
-                'system_branch_cash_sales_' + request.resource.data.scope.get('branchId',''),
-                'system_petty_cash_' + request.resource.data.scope.get('branchId','')])))
+            && (request.resource.data.scope.kind == 'organisation'
+              ? request.resource.data.id in ['system_bank','system_mtn_mobile_money','system_airtel_mobile_money']
+              : request.resource.data.id in ['system_branch_cash_sales_' + request.resource.data.scope.branchId,
+                   'system_petty_cash_' + request.resource.data.scope.branchId])))
         && request.resource.data.status == 'active'
         && request.resource.data.currency == 'UGX'
         && request.resource.data.scope.kind in ['organisation','branch']
