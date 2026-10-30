@@ -3191,7 +3191,10 @@ service cloud.firestore {
         && request.resource.data.origin == 'custom'
         && request.resource.data.status == 'active'
         && request.resource.data.currency == 'UGX'
-        && request.resource.data.scope.kind == 'organisation'
+        && request.resource.data.scope.kind in ['organisation','branch']
+        && (request.resource.data.scope.kind == 'organisation'
+          ? !('branchId' in request.resource.data.scope)
+          : isAssignedToBranch(request.resource.data.scope.branchId))
         && !('balanceUGX' in request.resource.data);
       allow update, delete: if false;
     }
