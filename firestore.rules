@@ -41,13 +41,12 @@ service cloud.firestore {
     // The tenant-scoped settings document is the authoritative operational
     // inventory feature gate. Missing or malformed settings fail closed.
     function isOperationalInventoryEnabled(tenantId) {
-      let settingsPath = /databases/$(database)/documents/system_settings/$(tenantId);
-      return exists(settingsPath)
-        && get(settingsPath).data.tenantId == tenantId
-        && ('featureToggles' in get(settingsPath).data)
-        && get(settingsPath).data.featureToggles is map
-        && ('enableOperationalInventory' in get(settingsPath).data.featureToggles)
-        && get(settingsPath).data.featureToggles.enableOperationalInventory == true;
+      let path = /databases/$(database)/documents/system_settings/$(tenantId);
+      let present = exists(path);
+      let settings = present ? get(path).data : {};
+      let flags = settings.get('featureToggles', {});
+      return present && settings.get('tenantId', '') == tenantId
+        && flags is map && flags.get('enableOperationalInventory', false) == true;
     }
 
     function isOperationalInventoryClass(data) {
