@@ -1586,13 +1586,15 @@ service cloud.firestore {
     match /operational_inventory/{itemId} {
       function hasOperationalMaster() {
         let masterPath = /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.masterItemId);
-        return request.resource.data.masterItemId is string
+        let ready = request.resource.data.masterItemId is string
           && operationalIdentityReady(request.resource.data.tenantId)
-          && existsAfter(masterPath)
-          && getAfter(masterPath).data.tenantId == request.resource.data.tenantId
-          && getAfter(masterPath).data.inventoryClass == 'OPERATIONAL'
-          && getAfter(masterPath).data.operationalType == request.resource.data.operationalType
-          && operationalIdentityFingerprint(getAfter(masterPath).data) == operationalIdentityFingerprint(request.resource.data);
+          && existsAfter(masterPath);
+        let master = ready ? getAfter(masterPath).data : {};
+        return ready
+          && master.tenantId == request.resource.data.tenantId
+          && master.inventoryClass == 'OPERATIONAL'
+          && master.operationalType == request.resource.data.operationalType
+          && operationalIdentityFingerprint(master) == operationalIdentityFingerprint(request.resource.data);
       }
       function hasMatchingOperationalMovement() {
         let movementId = request.resource.data.lastMovementId;
