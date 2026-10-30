@@ -3195,7 +3195,7 @@ service cloud.firestore {
         && !('balanceUGX' in request.resource.data);
       allow update: if isCEO() && isTenantMember(resource.data.tenantId)
         && resource.data.bankParentId == 'system_bank'
-        && resource.data.allowsTransfersIn == false
+        && !resource.data.allowsTransfersIn
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status','updatedBy','updatedAt','deactivatedBy','deactivatedAt','deactivationReason'])
         && request.resource.data.updatedBy == request.auth.uid
