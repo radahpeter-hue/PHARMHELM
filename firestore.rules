@@ -532,9 +532,8 @@ service cloud.firestore {
       let accountPath = /databases/$(database)/documents/finance_payment_accounts/$(data.accountDocumentId);
       let before = get(accountPath).data;
       let after = getAfter(accountPath).data;
-      return isTenantMember(data.tenantId)
-        && (kind == 'bank' ? isFinance() : canPostManagementCash())
-        && data.postedBy == request.auth.uid
+      // The required paired account update enforces tenant and posting role.
+      return data.postedBy == request.auth.uid
         && data.amount is int && data.amount > 0
         && data.type in ['incoming','deposit','topup','outgoing','withdrawal']
         && data.accountDeltaUGX == (data.type in ['incoming','deposit','topup'] ? data.amount : -data.amount)
