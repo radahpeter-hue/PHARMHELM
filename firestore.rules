@@ -2468,11 +2468,13 @@ service cloud.firestore {
         let operationalItemPath = /databases/$(database)/documents/operational_inventory/$(request.resource.data.product_id);
         let operationalMasterPath = /databases/$(database)/documents/operational_inventory_masters/$(request.resource.data.get('masterItemId', ''));
         let sellableItemPath = /databases/$(database)/documents/products/$(request.resource.data.product_id);
-        return existsAfter(orderPath)
-          && getAfter(orderPath).data.tenantId == request.resource.data.tenantId
+        let hasOrder = existsAfter(orderPath);
+        let order = hasOrder ? getAfter(orderPath).data : {};
+        return hasOrder
+          && order.tenantId == request.resource.data.tenantId
           && (
             (
-              isOperationalOrderData(getAfter(orderPath).data)
+              isOperationalOrderData(order)
               && isOperationalInventoryEnabled(request.resource.data.tenantId)
               && (!requireExplicitClass || request.resource.data.inventoryClass == 'OPERATIONAL')
               && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'OPERATIONAL')
@@ -2483,7 +2485,7 @@ service cloud.firestore {
                 || hasOperationalMasterLink(orderPath, operationalItemPath, operationalMasterPath))
             )
             || (
-              !isOperationalOrderData(getAfter(orderPath).data)
+              !isOperationalOrderData(order)
               && (!requireExplicitClass || request.resource.data.inventoryClass == 'SELLABLE')
               && (!('inventoryClass' in request.resource.data) || request.resource.data.inventoryClass == 'SELLABLE')
               && exists(sellableItemPath)
