@@ -69,12 +69,18 @@ try{
  await assertFails(deleteDoc(ref(ceo,tenant,bank.id)));
 
  const id='bank_'+ 'a'.repeat(64);
+ const bankRegistry={...row('ceo_a',id),classification:'bank',name:'Registered Equity',
+  description:'Registered bank',bankInstitution:'EQUITY',bankAccountReference:'987655123',
+  bankParentId:'system_bank',allowsTransfersIn:false,allowsTransfersOut:false};
+ await assertSucceeds(setDoc(ref(ceo,tenant,id),bankRegistry));
  const ar=doc(ceo,'finance_payment_accounts',tenant+'_'+id);
  const funding={tenantId:tenant,accountId:id,portfolioId:id,kind:'bank',
   portfolioClassification:'bank',scope:{kind:'organisation'},name:'Equity Operating',
   currency:'UGX',initialized:true,openingBalanceUGX:100,balanceUGX:100,
   reconciliationReference:'EQ-STATEMENT-001',registeredBy:'ceo_a',
   lastPostingId:null,controlVersion:1};
+ await assertFails(setDoc(doc(ceo,'finance_payment_accounts',tenant+'_bank_'+'b'.repeat(64)),
+  {...funding,accountId:'bank_'+'b'.repeat(64),portfolioId:'bank_'+'b'.repeat(64)}));
  await assertSucceeds(setDoc(ar,funding));
  await assertSucceeds(getDoc(doc(finance,'finance_payment_accounts',tenant+'_'+id)));
  await assertFails(setDoc(doc(finance,'finance_payment_accounts',tenant+'_bank_'+'b'.repeat(64)),{...funding,accountId:'bank_'+'b'.repeat(64),portfolioId:'bank_'+'b'.repeat(64),registeredBy:'finance_a'}));
