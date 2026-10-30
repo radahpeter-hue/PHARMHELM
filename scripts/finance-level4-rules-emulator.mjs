@@ -1,6 +1,6 @@
 import {readFileSync} from 'node:fs';
 import {initializeTestEnvironment,assertFails,assertSucceeds} from '@firebase/rules-unit-testing';
-import {doc,setDoc,getDoc,getDocs,query,collection,where} from 'firebase/firestore';
+import {doc,setDoc,updateDoc,getDoc,getDocs,query,collection,where} from 'firebase/firestore';
 const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-l4-portfolio-test',firestore:{rules:readFileSync('firestore.rules','utf8')}});
 const tenant='tenant_a',other='tenant_b';
 const row=(uid,id='custom_emergency',tenantId=tenant)=>({
@@ -50,5 +50,16 @@ try{
  await assertFails(setDoc(aref(otherDb),account('ceo_b')));
  await assertFails(setDoc(doc(ceo,'finance_portfolio_accounts_v1',tenant+'__bank_fake'),{...account('ceo_a'),id:'bank_fake',balanceUGX:100}));
 
+ const bank={...row('ceo_a','bank_opaque_1'),classification:'bank',name:'Equity Operating',
+  description:'Bank identity',bankInstitution:'EQUITY',bankAccountReference:'123456',
+  bankParentId:'system_bank',allowsTransfersIn:false,allowsTransfersOut:false};
+ await assertSucceeds(setDoc(ref(ceo,tenant,bank.id),bank));
+ await assertSucceeds(getDoc(ref(finance,tenant,bank.id)));
+ await assertFails(setDoc(ref(ceo,tenant,bank.id),bank));
+ await assertFails(updateDoc(ref(finance,tenant,bank.id),{status:'inactive',updatedBy:'finance_a'}));
+ await assertFails(updateDoc(ref(ceo,tenant,bank.id),{bankAccountReference:'9999'}));
+ await assertSucceeds(updateDoc(ref(ceo,tenant,bank.id),{status:'inactive',updatedBy:'ceo_a',
+ updatedAt:'2026-10-30T09:00:00Z',deactivatedBy:'ceo_a',deactivatedAt:'2026-10-30T09:00:00Z',deactivationReason:'closed'}));
+ await assertFails(updateDoc(ref(otherDb,tenant,bank.id),{status:'active',updatedBy:'ceo_b'}));
  console.log('Finance Level 4 custom portfolio role/isolation PASSED; built-in and bank registrations remain fail-closed');
 }finally{await env.cleanup();}
