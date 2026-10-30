@@ -95,5 +95,17 @@ try{
  await assertFails(setDoc(doc(finance,'banking_records','forged_deposit'),{...entry,accountDeltaUGX:999,amount:999}));
  await assertFails(updateDoc(doc(finance,'finance_payment_accounts',tenant+'_'+id),{balanceUGX:1000000}));
  await assertFails(getDoc(doc(otherDb,'finance_payment_accounts',tenant+'_'+id)));
+ const momoId='system_mtn_mobile_money';
+ const momoRef=doc(ceo,'finance_payment_accounts',tenant+'_'+momoId);
+ await assertSucceeds(setDoc(momoRef,{...funding,accountId:momoId,portfolioId:momoId,
+  portfolioClassification:'mobile_money',kind:'bank',scope:{kind:'organisation'},openingBalanceUGX:0,balanceUGX:0}));
+ await assertFails(setDoc(doc(finance,'finance_payment_accounts',tenant+'_system_airtel_mobile_money'),{
+  ...funding,accountId:'system_airtel_mobile_money',portfolioId:'system_airtel_mobile_money',
+  kind:'bank',portfolioClassification:'mobile_money',registeredBy:'finance_a'}));
+ const pettyId='system_petty_cash_masaka';
+ await assertSucceeds(setDoc(doc(ceo,'finance_payment_accounts',tenant+'_'+pettyId),{
+  ...funding,accountId:pettyId,portfolioId:pettyId,kind:'petty_cash',
+  portfolioClassification:'petty_cash',scope:{kind:'branch',branchId:'masaka'},openingBalanceUGX:0,balanceUGX:0}));
+
  console.log('Finance Level 4 custom portfolio role/isolation PASSED; built-in and bank registrations remain fail-closed');
 }finally{await env.cleanup();}
