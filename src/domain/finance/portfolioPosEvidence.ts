@@ -38,7 +38,8 @@ export function projectPosChannelEvidence(
  const stamp=raw.createdAt;
  const createdAt=stamp&&typeof stamp==='object'&&'toDate' in stamp&&typeof stamp.toDate==='function'
   ?stamp.toDate().toISOString():typeof stamp==='string'?stamp:'';
- if(!/^\d{4}-\d{2}-\d{2}T/.test(createdAt))throw new Error('POS payment timestamp missing.');
+ const businessDate=timestampBusinessDate(createdAt);
+ if(!businessDate)throw new Error('POS payment timestamp missing or timezone-ambiguous.');
  return {id,tenantId,branchId,businessDate,paymentId:id,saleId:raw.saleId,
   receiptNumber:raw.receiptNumber,channel,settledUGX:amount,source:'pos_payments',fundingPosted:false};
 }
