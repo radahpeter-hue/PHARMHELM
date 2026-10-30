@@ -23,9 +23,14 @@ export async function listFinancialPortfolios(
  }
  return result;
 }
-export async function listPortfolioAccounts(tenantId:string,database:Firestore=db):Promise<PortfolioChildAccount[]>{
- const snapshot=await getDocs(query(collection(database,accounts),where('tenantId','==',tenantId)));
- return snapshot.docs.map(d=>d.data() as PortfolioChildAccount);
+export async function listPortfolioAccounts(
+ tenantId:string,branchId?:string,database:Firestore=db
+):Promise<PortfolioChildAccount[]>{
+ const base=collection(database,accounts);
+ const requests=[getDocs(query(base,where('tenantId','==',tenantId),where('scope.kind','==','organisation')))];
+ if(branchId)requests.push(getDocs(query(base,where('tenantId','==',tenantId),where('scope.kind','==','branch'),where('scope.branchId','==',branchId))));
+ const snapshots=await Promise.all(requests);
+ return snapshots.flatMap(snapshot=>snapshot.docs.map(d=>d.data() as PortfolioChildAccount));
 }
 /** CEO authorization is independently mandatory in firestore.rules. */
 export async function createCustomFinancialPortfolio(input:NewFinancialPortfolio,database:Firestore=db){
