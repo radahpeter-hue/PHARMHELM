@@ -31,3 +31,43 @@ export function consolidatedAccountBalance(balances:readonly {accountId:string;p
  if(!Number.isSafeInteger(sum))throw new Error('Balance overflow.');
  return sum;
 }
+
+/**
+ * Validated projection over an authoritative, complete posting history.
+ * Reversals are represented only by their own compensating entries; a reversed
+ * marker on an original entry is NOT a second debit/credit.
+ * Never use the filtered 3-day view to derive an opening or current balance.
+ */
+export function projectLedgerWithRunningBalances(
+ entries:readonly FinancialLedgerEntry[],openingBalanceUGX:number
+):Array<FinancialLedgerEntry&{runningBalanceUGX:number}>{
+ if(!Number.isSafeInteger(openingBalanceUGX))
+  throw new Error('Unverified ledger opening balance.');
+ const seen=new Set<string>();
+ let balance=openingBalanceUGX;
+ return [...entries].sort((a,b)=>a.occurredAt.localeCompare(b.occurredAt)||a.id.localeCompare(b.id))
+ .map(entry=>{
+  if(!entry.id||seen.has(entry.id)||!Number.isSafeInteger(entry.amountUGX)||entry.amountUGX<=0
+     ||!['inflow','outflow'].includes(entry.direction)||!['posted','reversed'].includes(entry.status))
+   throw new Error('Invalid or duplicate ledger posting.');
+  seen.add(entry.id);
+  if(entry.status==='posted'){
+   balance+=entry.direction==='inflow'?entry.amountUGX:-entry.amountUGX;
+   if(!Number.isSafeInteger(balance))throw new Error('Ledger balance overflow.');
+  }
+  return {...entry,runningBalanceUGX:balance};
+ });
+}
+/** Consolidate independent child account balances without fabricating a zero. */
+export function assertPortfolioAccountCoverage(
+ expectedAccountIds:readonly string[],
+ balances:readonly {accountId:string;portfolioId:string;tenantId:string;balanceUGX:number}[],
+ portfolio:FinancialPortfolio
+):number{
+ const expected=new Set(expectedAccountIds);
+ if(expected.size!==expectedAccountIds.length)throw new Error('Duplicate expected account identity.');
+ const relevant=balances.filter(x=>x.portfolioId===portfolio.id&&x.tenantId===portfolio.tenantId);
+ if(relevant.length!==expected.size||relevant.some(x=>!expected.has(x.accountId)))
+  throw new Error('Portfolio balance is unavailable: child account coverage incomplete.');
+ return consolidatedAccountBalance(relevant,portfolio);
+}
