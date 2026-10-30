@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import type { ManagementPaymentAccount } from '../../services/managementCashPosting';
+import {MANAGEMENT_BANK_ACCOUNT,MANAGEMENT_CASH_ACCOUNT,type ManagementPaymentAccount} from '../../services/managementCashPosting';
 import { registerManagementPaymentAccount } from '../../services/managementPaymentAccountService';
 
 export function useManagementPaymentAccounts() {
@@ -12,7 +12,7 @@ export function useManagementPaymentAccounts() {
   useEffect(()=>{
     setState({tenantId,accounts:[],error:'',loading:true});
     if(!tenantId||!canView){setState({tenantId,accounts:[],error:'Finance access is required.',loading:false});return;}
-    return onSnapshot(query(collection(db,'finance_payment_accounts'),where('tenantId','==',tenantId)),snapshot=>setState({tenantId,accounts:snapshot.docs.map(d=>({...d.data(),id:d.id}) as ManagementPaymentAccount),error:'',loading:false}),()=>setState({tenantId,accounts:[],error:'Unable to load payment accounts.',loading:false}));
+    return onSnapshot(query(collection(db,'finance_payment_accounts'),where('tenantId','==',tenantId)),snapshot=>setState({tenantId,accounts:snapshot.docs.map(d=>({...d.data(),id:d.id}) as ManagementPaymentAccount).filter(a=>a.accountId===MANAGEMENT_BANK_ACCOUNT||a.accountId===MANAGEMENT_CASH_ACCOUNT),error:'',loading:false}),()=>setState({tenantId,accounts:[],error:'Unable to load payment accounts.',loading:false}));
   },[tenantId,canView]);
   return state.tenantId===tenantId?state:{tenantId,accounts:[],error:'',loading:true};
 }
