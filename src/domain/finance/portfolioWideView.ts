@@ -16,12 +16,24 @@ export function projectPortfolioBalances(
   const identity=portfolio.tenantId+'|'+portfolio.id;
   if(seen.has(identity))throw new Error('Duplicate portfolio identity.');
   seen.add(identity);
-  // Never publish a parent-bank total as complete while separately registered
-  // bank identities have no certified mapping to individual authoritative accounts.
-  if(portfolio.id==='system_bank'&&portfolios.some(other=>other.tenantId===portfolio.tenantId&&
-    other.bankParentId==='system_bank'&&other.origin==='custom'))
-   return {portfolioId:portfolio.id,tenantId:portfolio.tenantId,status:'unavailable' as const,
-    balanceUGX:null,source:null,reason:'Unmapped bank child accounts prevent safe consolidation'};
+  if(portfolio.id==='system_bank'){
+    const children=portfolios.filter(p=>p.tenantId===portfolio.tenantId&&p.bankParentId==='system_bank');
+    const expected=new Set(children.map(p=>p.id));
+    if(expected.size!==children.length)throw new Error('Duplicate bank portfolio identity.');
+    const ids=[...expected,MANAGEMENT_BANK_ACCOUNT];
+    const relevant=managementAccounts.filter(a=>a.tenantId===portfolio.tenantId&&ids.includes(a.accountId));
+    if(!relevant.length || children.some(child=>relevant.filter(a=>a.accountId===child.id).length!==1))
+     return {portfolioId:portfolio.id,tenantId:portfolio.tenantId,status:'unavailable' as const,balanceUGX:null,source:null,reason:'Consolidated bank account coverage is incomplete'};
+    const identifiers=new Set(relevant.map(a=>a.accountId));
+    if(identifiers.size!==relevant.length)throw new Error('Duplicate bank funding accounts.');
+    if(relevant.some(a=>!a.initialized||a.kind!=='bank'||a.currency!=='UGX'||
+      !Number.isSafeInteger(a.balanceUGX)||!a.reconciliationReference))
+     return {portfolioId:portfolio.id,tenantId:portfolio.tenantId,status:'unavailable' as const,balanceUGX:null,source:null,reason:'Unreconciled bank account'};
+    const balance=relevant.reduce((sum,a)=>sum+a.balanceUGX,0);
+    if(!Number.isSafeInteger(balance))throw new Error('Bank consolidation overflow.');
+    return {portfolioId:portfolio.id,tenantId:portfolio.tenantId,status:'reconciled' as const,
+      balanceUGX:balance,source:'finance_payment_accounts'};
+  }
   const accountId=portfolio.id==='system_bank'?MANAGEMENT_BANK_ACCOUNT:portfolio.id;
   const candidates=managementAccounts.filter(account=>account.tenantId===portfolio.tenantId&&account.accountId===accountId);
   if(candidates.length>1)throw new Error('Duplicate authoritative funding account.');
