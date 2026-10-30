@@ -35,6 +35,8 @@ test('consolidated bank includes every separately funded child exactly once',()=
  const separate={...funding,id:'mp_bank_identity_one',accountId:child.id,portfolioId:child.id,
   portfolioClassification:'bank',scope:{kind:'organisation' as const},balanceUGX:700000};
  const result=projectPortfolioBalances([bank,child],[funding,separate]);
- assert.equal(result[0].balanceUGX,1150000);
+ assert.equal(result[0].balanceUGX,null); // Legacy funds might overlap with child bank balances.
  assert.equal(result[1].balanceUGX,700000);
+ const proved=projectPortfolioBalances([bank,child],[{...funding,balanceUGX:0},separate]);
+ assert.equal(proved[0].balanceUGX,700000);
 });
