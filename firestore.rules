@@ -597,10 +597,10 @@ service cloud.firestore {
       }
       allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
-      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
+      allow create: if isTenantMember(request.resource.data.tenantId)
         && get(/databases/$(database)/documents/system_settings/$(request.resource.data.tenantId)).data.managementCashAccountControlV1 == true
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
-        && ((request.resource.data.accountId in ['management_petty_cash','management_bank']
+        && (((isFinance() && request.resource.data.accountId in ['management_petty_cash','management_bank'])
           && request.resource.data.kind == (request.resource.data.accountId == 'management_bank' ? 'bank' : 'petty_cash'))
           || eligiblePortfolioAccount(request.resource.data))
         && request.resource.data.currency == 'UGX' && request.resource.data.controlVersion == 1
