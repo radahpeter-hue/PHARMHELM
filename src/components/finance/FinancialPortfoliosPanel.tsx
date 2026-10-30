@@ -47,7 +47,7 @@ export function FinancialPortfoliosPanel(){
        tenantId,name,classification,description:'CEO-registered financial portfolio',
        scope:scopeKind==='branch'?{kind:'branch',branchId:activeBranchId!}:{kind:'organisation'},
        currency:'UGX',origin:'custom',
-       supportsChildAccounts:supportsChildren,allowsTransfersIn:true,allowsTransfersOut:true,
+       supportsChildAccounts:false,allowsTransfersIn:true,allowsTransfersOut:true,
        createdBy:profile.uid,createdAt:new Date().toISOString()
      });
      setItems(old=>[...old,created]);setName('');setMessage('Portfolio registered; no balance has been reconciled.');
@@ -106,13 +106,13 @@ export function FinancialPortfoliosPanel(){
   {canRegister&&<form onSubmit={create} className="grid gap-2 sm:grid-cols-3">
     <input required maxLength={120} aria-label="Portfolio name" value={name} onChange={e=>setName(e.target.value)} placeholder="Portfolio name" className="border p-2 rounded"/>
     <select aria-label="Portfolio classification" value={classification} onChange={e=>setClassification(e.target.value as FinancialPortfolioClassification)} className="border p-2 rounded">
-      <option value="restricted_internal_fund">Internal fund</option><option value="bank">Bank</option>
+      <option value="restricted_internal_fund">Internal fund</option>
       <option value="other_financial_asset">Other financial asset</option><option value="cash_equivalent">Cash equivalent</option>
     </select>
     <select aria-label="Portfolio scope" value={scopeKind} onChange={e=>setScopeKind(e.target.value as typeof scopeKind)} className="border p-2 rounded">
-      <option value="organisation">Organisation / HQ</option>{activeBranchId&&<option value="branch">Selected branch ({activeBranchId})</option>}
+      <option value="organisation">Organisation / HQ</option>
     </select>
-    <label className="flex gap-2 items-center text-sm"><input type="checkbox" checked={supportsChildren} onChange={e=>setSupportsChildren(e.target.checked)}/>Allow child accounts</label>
+    <p className="text-xs text-zinc-600">Child-account and branch-specific registration will be enabled after separate security certification.</p>
     <button disabled={busy} className="rounded bg-emerald-800 text-white p-2">{busy?'Processing…':'Create portfolio'}</button>
   </form>}
   {message&&<p role="status" className="text-sm text-zinc-800">{message}</p>}
