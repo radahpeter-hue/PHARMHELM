@@ -1,4 +1,4 @@
-import {collection, doc, getDocs, query, where, runTransaction, serverTimestamp, type Firestore} from 'firebase/firestore';
+import {collection, doc, getDocs, query, where, runTransaction, setDoc, type Firestore} from 'firebase/firestore';
 import {db} from '../../firebase';
 import {defineFinancialPortfolio,validateFinancialPortfolio,type FinancialPortfolio,type NewFinancialPortfolio} from './financialPortfolio';
 import {validatePortfolioChildAccount,bankAccountIdentity,type PortfolioChildAccount} from './portfolioAccounts';
@@ -37,11 +37,10 @@ export async function listPortfolioAccounts(
 export async function createCustomFinancialPortfolio(input:NewFinancialPortfolio,database:Firestore=db){
  if(input.origin!=='custom')throw new Error('Custom portfolio origin required.');
  const value=defineFinancialPortfolio(input);
- await runTransaction(database,async transaction=>{
-  const ref=portfolioRef(database,value.tenantId,value.id);
-  if((await transaction.get(ref)).exists())throw new Error('Portfolio identity already exists.');
-  transaction.set(ref,value);
- });
+ // A transaction GET against a missing registry document is denied by the
+ // fail-closed Firestore rules. Its CREATE predicate is authoritative; an ID
+ // collision becomes an UPDATE and is denied rather than overwriting history.
+ await setDoc(portfolioRef(database,value.tenantId,value.id),value);
  return value;
 }
 export async function createPortfolioBankAccount(
