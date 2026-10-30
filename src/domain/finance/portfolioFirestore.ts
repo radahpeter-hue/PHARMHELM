@@ -1,4 +1,4 @@
-import {collection, doc, getDocs, query, where, runTransaction, setDoc, type Firestore} from 'firebase/firestore';
+import {collection, doc, getDocs, query, where, runTransaction, setDoc, updateDoc, deleteField, type Firestore} from 'firebase/firestore';
 import {db} from '../../firebase';
 import {defineFinancialPortfolio,validateFinancialPortfolio,type FinancialPortfolio,type NewFinancialPortfolio} from './financialPortfolio';
 import {validatePortfolioChildAccount,bankAccountIdentity,type PortfolioChildAccount} from './portfolioAccounts';
@@ -115,4 +115,25 @@ export async function registerPortfolioBankIdentity(input:{
 export function registeredBankAccounts(portfolios:readonly FinancialPortfolio[]):FinancialPortfolio[]{
  return portfolios.filter(p=>p.origin==='custom'&&p.classification==='bank'
    &&p.bankParentId==='system_bank'&&!!p.bankAccountReference&&!!p.bankInstitution);
+}
+
+/** Lifecycle for unfunded bank identity records only. Posting stays disabled. */
+export async function setRegisteredBankAccountActive(
+ bank:FinancialPortfolio,active:boolean,actorId:string,reason:string,database:Firestore=db
+):Promise<FinancialPortfolio>{
+ if(bank.origin!=='custom'||bank.classification!=='bank'||bank.bankParentId!=='system_bank'
+   ||bank.allowsTransfersIn||bank.allowsTransfersOut)
+   throw new Error('Only unfunded bank identities can be managed here.');
+ if(bank.status===(active?'active':'inactive'))throw new Error('Bank account already in requested state.');
+ if(!actorId||(!active&&!reason.trim()))throw new Error('Account action requires actor and reason.');
+ const now=new Date().toISOString();
+ const changed=active
+  ?{status:'active' as const,updatedBy:actorId,updatedAt:now}
+  :{status:'inactive' as const,updatedBy:actorId,updatedAt:now,deactivatedBy:actorId,deactivatedAt:now,deactivationReason:reason.trim()};
+ await updateDoc(portfolioRef(database,bank.tenantId,bank.id),active
+  ?{...changed,deactivatedBy:deleteField(),deactivatedAt:deleteField(),deactivationReason:deleteField()}
+  :changed);
+ return active
+  ?{...bank,...changed,deactivatedBy:undefined,deactivatedAt:undefined,deactivationReason:undefined}
+  :{...bank,...changed};
 }
