@@ -29,6 +29,10 @@ export function projectPortfolioBalances(
     if(relevant.some(a=>!a.initialized||a.kind!=='bank'||a.currency!=='UGX'||
       !Number.isSafeInteger(a.balanceUGX)||!a.reconciliationReference))
      return {portfolioId:portfolio.id,tenantId:portfolio.tenantId,status:'unavailable' as const,balanceUGX:null,source:null,reason:'Unreconciled bank account'};
+    const legacy=relevant.find(a=>a.accountId===MANAGEMENT_BANK_ACCOUNT);
+    if(legacy && legacy.balanceUGX>0 && children.some(child=>relevant.some(a=>a.accountId===child.id&&a.balanceUGX>0)))
+     return {portfolioId:portfolio.id,tenantId:portfolio.tenantId,status:'unavailable' as const,
+      balanceUGX:null,source:null,reason:'Legacy bank reserve may overlap with separately registered bank accounts; reconcile allocation before consolidation'};
     const balance=relevant.reduce((sum,a)=>sum+a.balanceUGX,0);
     if(!Number.isSafeInteger(balance))throw new Error('Bank consolidation overflow.');
     return {portfolioId:portfolio.id,tenantId:portfolio.tenantId,status:'reconciled' as const,
