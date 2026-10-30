@@ -47,6 +47,7 @@ export type NewFinancialPortfolio = Omit<
 >;
 
 const identifier = /^[A-Za-z0-9_-]{1,150}$/;
+const isIdentifier = (value:unknown):value is string => typeof value === 'string' && identifier.test(value);
 const allowedClassification: ReadonlySet<string> = new Set(FINANCIAL_PORTFOLIO_CLASSIFICATIONS);
 
 function validIsoDate(value: string): boolean {
@@ -56,8 +57,8 @@ function validIsoDate(value: string): boolean {
 /** Validate all identity and configuration fields before accepting a portfolio. */
 export function validateFinancialPortfolio(portfolio: FinancialPortfolio): FinancialPortfolio {
   if (!portfolio || typeof portfolio !== 'object') throw new Error('A portfolio is required.');
-  if (!identifier.test(portfolio.id) || !identifier.test(portfolio.tenantId) ||
-      !identifier.test(portfolio.createdBy) || !identifier.test(portfolio.updatedBy)) {
+  if (!isIdentifier(portfolio.id) || !isIdentifier(portfolio.tenantId) ||
+      !isIdentifier(portfolio.createdBy) || !isIdentifier(portfolio.updatedBy)) {
     throw new Error('Portfolio, tenant and actor identifiers are required.');
   }
   if (typeof portfolio.name !== 'string' || !portfolio.name.trim() ||
@@ -69,7 +70,7 @@ export function validateFinancialPortfolio(portfolio: FinancialPortfolio): Finan
   if (!['system', 'custom'].includes(portfolio.origin)) throw new Error('Invalid portfolio origin.');
   if (!['active', 'inactive'].includes(portfolio.status)) throw new Error('Invalid portfolio status.');
   if (portfolio.scope?.kind === 'branch') {
-    if (!identifier.test(portfolio.scope.branchId)) throw new Error('Branch portfolio requires a valid branch ID.');
+    if (!isIdentifier(portfolio.scope.branchId)) throw new Error('Branch portfolio requires a valid branch ID.');
   } else if (portfolio.scope?.kind === 'organisation') {
     if ('branchId' in portfolio.scope) throw new Error('Organisation portfolio cannot have a branch ID.');
   } else throw new Error('Invalid portfolio scope.');
@@ -79,7 +80,7 @@ export function validateFinancialPortfolio(portfolio: FinancialPortfolio): Finan
   if (!validIsoDate(portfolio.createdAt) || !validIsoDate(portfolio.updatedAt))
     throw new Error('Invalid portfolio timestamps.');
   if (portfolio.status === 'inactive') {
-    if (!portfolio.deactivatedBy || !identifier.test(portfolio.deactivatedBy) ||
+    if (!portfolio.deactivatedBy || !isIdentifier(portfolio.deactivatedBy) ||
         !portfolio.deactivatedAt || !validIsoDate(portfolio.deactivatedAt))
       throw new Error('Inactive portfolio requires deactivation attribution.');
   } else if (portfolio.deactivatedBy || portfolio.deactivatedAt || portfolio.deactivationReason) {
