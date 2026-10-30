@@ -39,6 +39,9 @@ export interface FinancialPortfolio {
   deactivatedBy?: string;
   deactivatedAt?: string;
   deactivationReason?: string;
+  bankInstitution?:string;
+  bankAccountReference?:string;
+  bankParentId?:string;
 }
 
 export type NewFinancialPortfolio = Omit<
@@ -67,6 +70,12 @@ export function validateFinancialPortfolio(portfolio: FinancialPortfolio): Finan
     throw new Error('Invalid portfolio description.');
   if (!allowedClassification.has(portfolio.classification)) throw new Error('Unknown portfolio classification.');
   if (portfolio.currency !== 'UGX') throw new Error('Unsupported portfolio currency.');
+  if (portfolio.bankInstitution !== undefined || portfolio.bankAccountReference !== undefined || portfolio.bankParentId !== undefined) {
+    if(portfolio.classification!=='bank'||portfolio.origin!=='custom'||portfolio.scope?.kind!=='organisation'
+      ||!portfolio.bankInstitution?.trim()||!portfolio.bankAccountReference?.trim()
+      ||portfolio.bankParentId!=='system_bank')
+      throw new Error('Invalid individual bank account portfolio.');
+  }
   if (!['system', 'custom'].includes(portfolio.origin)) throw new Error('Invalid portfolio origin.');
   if (!['active', 'inactive'].includes(portfolio.status)) throw new Error('Invalid portfolio status.');
   if (portfolio.scope?.kind === 'branch') {
