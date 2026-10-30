@@ -16,6 +16,7 @@ export function FinancialPortfoliosPanel(){
  const [accounts,setAccounts]=useState<PortfolioChildAccount[]>([]);
  const [name,setName]=useState('');
  const [classification,setClassification]=useState<FinancialPortfolioClassification>('restricted_internal_fund');
+ const [scopeKind,setScopeKind]=useState<'organisation'|'branch'>('organisation');
  const [message,setMessage]=useState('');
  const [busy,setBusy]=useState(false);
  const [selected,setSelected]=useState<string>('');
@@ -24,11 +25,11 @@ export function FinancialPortfoliosPanel(){
  useEffect(()=>{
   let active=true;
   if(!tenantId)return;
-  listFinancialPortfolios(tenantId)
+  listFinancialPortfolios(tenantId,activeBranchId||undefined)
    .then(p=>{if(active){setItems(p);setAccounts([]);}})
    .catch(()=>{if(active)setMessage('Portfolio records unavailable.');});
   return ()=>{active=false;};
- },[tenantId]);
+ },[tenantId,activeBranchId]);
  async function create(event:React.FormEvent){
   event.preventDefault();
   if(!tenantId||!profile?.uid||!canCreate||busy)return;
@@ -37,7 +38,7 @@ export function FinancialPortfoliosPanel(){
    const created=await createCustomFinancialPortfolio({
     id:'custom_'+crypto.randomUUID().replace(/-/g,''),
     tenantId,name,classification,description:'Custom financial portfolio',
-    scope:{kind:'organisation'},currency:'UGX',origin:'custom',
+    scope:scopeKind==='branch'&&activeBranchId?{kind:'branch',branchId:activeBranchId}:{kind:'organisation'},currency:'UGX',origin:'custom',
     supportsChildAccounts:false,allowsTransfersIn:true,allowsTransfersOut:true,
     createdBy:profile.uid,createdAt:new Date().toISOString()
    });
@@ -56,7 +57,7 @@ export function FinancialPortfoliosPanel(){
    <div className="flex gap-2"><select aria-label="Movement direction" value={direction} onChange={e=>setDirection(e.target.value as typeof direction)} className="border p-2"><option value="all">All</option><option value="inflow">Inflows</option><option value="outflow">Outflows</option></select><input aria-label="From date" type="date" value={period.from} onChange={e=>setPeriod(p=>({...p,from:e.target.value}))} className="border p-2"/><input aria-label="To date" type="date" value={period.to} onChange={e=>setPeriod(p=>({...p,to:e.target.value}))} className="border p-2"/></div>
    <p>Ledger unavailable pending authoritative posting integration; no synthetic transactions shown.</p>
   </div>}
-  {canCreate&&registrationEnabled&&<form onSubmit={create} className="grid gap-2 sm:grid-cols-3"><input required maxLength={120} aria-label="Portfolio name" value={name} onChange={e=>setName(e.target.value)} placeholder="Portfolio name" className="border p-2 rounded"/><select aria-label="Portfolio classification" value={classification} onChange={e=>setClassification(e.target.value as FinancialPortfolioClassification)} className="border p-2 rounded"><option value="restricted_internal_fund">Internal fund</option><option value="other_financial_asset">Other financial asset</option><option value="cash_equivalent">Cash equivalent</option></select><button disabled={busy} className="bg-emerald-800 text-white rounded p-2">Create portfolio</button></form>}
+  {canCreate&&registrationEnabled&&<form onSubmit={create} className="grid gap-2 sm:grid-cols-3"><input required maxLength={120} aria-label="Portfolio name" value={name} onChange={e=>setName(e.target.value)} placeholder="Portfolio name" className="border p-2 rounded"/><select aria-label="Portfolio classification" value={classification} onChange={e=>setClassification(e.target.value as FinancialPortfolioClassification)} className="border p-2 rounded"><option value="restricted_internal_fund">Internal fund</option><option value="other_financial_asset">Other financial asset</option><option value="cash_equivalent">Cash equivalent</option></select><select aria-label="Portfolio scope" value={scopeKind} onChange={e=>setScopeKind(e.target.value as typeof scopeKind)} className="border p-2 rounded"><option value="organisation">Organisation / HQ</option>{activeBranchId&&<option value="branch">Selected branch ({activeBranchId})</option>}</select><button disabled={busy} className="bg-emerald-800 text-white rounded p-2">Create portfolio</button></form>}
   {message&&<p role="status" className="text-sm">{message}</p>}
  </section>;
 }
