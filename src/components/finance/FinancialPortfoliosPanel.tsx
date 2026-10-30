@@ -1,3 +1,4 @@
+import {loadEodChannelEvidence,type ReconciliationEvidence,type EodChannel} from '../../domain/finance/portfolioEodEvidence';
 import {projectPortfolioBalances} from '../../domain/finance/portfolioWideView';
 import {defineBuiltInPortfolio} from '../../domain/finance/builtInPortfolios';
 import {loadAuthoritativePortfolioLedger,type AuthoritativePortfolioLedger} from '../../domain/finance/authoritativePortfolioLedger';
@@ -31,6 +32,8 @@ export function FinancialPortfoliosPanel(){
  const [busy,setBusy]=useState(false);
  const [selected,setSelected]=useState('');
  const [managementSelected,setManagementSelected]=useState('');
+ const [eodEvidence,setEodEvidence]=useState<ReconciliationEvidence[]|null>(null);
+ const [eodError,setEodError]=useState('');
  const [managementLedger,setManagementLedger]=useState<AuthoritativePortfolioLedger|null>(null);
  const [managementError,setManagementError]=useState('');
  const [managementLoading,setManagementLoading]=useState(false);
@@ -115,6 +118,18 @@ export function FinancialPortfoliosPanel(){
   ]:[])
  ]:[];
  const balanceViews=projectPortfolioBalances([...builtInViews,...items],treasury.accounts);
+ const evidenceChannel:EodChannel|null=selected.startsWith('system_branch_cash_sales_')?'cash':
+  selected==='system_mtn_mobile_money'?'momo':selected==='system_airtel_mobile_money'?'airtel':null;
+ useEffect(()=>{
+  let live=true;
+  setEodEvidence(null);setEodError('');
+  if(!tenantId||!activeBranchId||!evidenceChannel)return;
+  loadEodChannelEvidence({tenantId,branchId:activeBranchId,channel:evidenceChannel,period})
+   .then(v=>{if(live)setEodEvidence(v);})
+   .catch(e=>{if(live)setEodError(e instanceof Error?e.message:'Reconciliation evidence unavailable.');});
+  return ()=>{live=false;};
+ },[tenantId,activeBranchId,evidenceChannel,period.from,period.to]);
+
  return <section className="rounded-2xl border border-zinc-200 bg-white p-4 space-y-4">
   <div><h3 className="text-lg font-bold text-zinc-950">Financial Portfolio Registry</h3>
    <p className="text-sm text-zinc-600">New portfolios are tenant scoped. Legacy treasury balances are not silently migrated and unavailable financial balances are never displayed as zero.</p></div>
@@ -125,12 +140,21 @@ export function FinancialPortfoliosPanel(){
     {[...builtInViews,...items].map(portfolio=>{
       const view=balanceViews.find(x=>x.portfolioId===portfolio.id);
       return <div key={portfolio.id} className="rounded border border-zinc-200 p-3 text-sm">
-       <strong>{portfolio.name}</strong> · {portfolio.scope.kind==='branch'?'Branch':'Organisation'}
+       <button type="button" onClick={()=>setSelected(portfolio.id)} className="font-semibold underline">{portfolio.name}</button> · {portfolio.scope.kind==='branch'?'Branch':'Organisation'}
        <p>{view?.status==='reconciled'?'UGX '+view.balanceUGX!.toLocaleString():'Balance unavailable: not reconciled'}</p>
       </div>;
     })}
    </div>
   </div>
+
+  {evidenceChannel&&<div className="rounded border border-zinc-200 p-3 text-sm">
+   <h4 className="font-semibold">Branch EOD reconciliation evidence</h4>
+   <p>These are declared amounts, not bank deposits or verified current portfolio balances.</p>
+   {eodError?<p role="alert">{eodError}</p>:eodEvidence===null?<p>Loading reconciliations…</p>:
+   <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>Date</th><th>Shift</th><th>Declared UGX</th><th>Variance UGX</th></tr></thead><tbody>
+    {eodEvidence.map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.shiftId}</td><td>{e.declaredUGX.toLocaleString()}</td><td>{e.varianceUGX.toLocaleString()}</td></tr>)}
+   </tbody></table></div>}
+  </div>}
   <div className="space-y-2">
     <h4 className="font-semibold text-zinc-900">Existing reconciled Management portfolios</h4>
     {treasury.loading?<p className="text-sm">Loading reconciled payment accounts…</p>:
