@@ -1,6 +1,6 @@
 import {readFileSync} from 'node:fs';
 import {initializeTestEnvironment,assertFails,assertSucceeds} from '@firebase/rules-unit-testing';
-import {doc,setDoc,getDoc} from 'firebase/firestore';
+import {doc,setDoc,getDoc,getDocs,query,collection,where} from 'firebase/firestore';
 const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-l4-portfolio-test',firestore:{rules:readFileSync('firestore.rules','utf8')}});
 const tenant='tenant_a',other='tenant_b';
 const row=(uid,id='custom_emergency',tenantId=tenant)=>({
@@ -25,6 +25,7 @@ try{
  const otherDb=env.authenticatedContext('ceo_b',{tenantId:other}).firestore();
  await assertSucceeds(setDoc(ref(ceo),row('ceo_a')));
  await assertSucceeds(getDoc(ref(finance)));
+ await assertSucceeds(getDocs(query(collection(finance,'finance_portfolios_v1'),where('tenantId','==',tenant),where('scope.kind','==','organisation'))));
  await assertFails(setDoc(ref(finance,tenant,'custom_denied'),row('finance_a','custom_denied')));
  await assertFails(setDoc(ref(otherDb),row('ceo_b')));
  await assertFails(getDoc(ref(otherDb)));
