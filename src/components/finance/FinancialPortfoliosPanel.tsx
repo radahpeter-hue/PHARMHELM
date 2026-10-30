@@ -81,7 +81,18 @@ export function FinancialPortfoliosPanel(){
     <h4 className="font-semibold text-zinc-900">Existing reconciled Management portfolios</h4>
     {treasury.loading?<p className="text-sm">Loading reconciled payment accounts…</p>:
      treasury.error?<p role="alert" className="text-sm">{treasury.error}</p>:
-     <div className="space-y-2">
+     <div className="grid gap-2 sm:grid-cols-2">
+      {treasury.accounts.filter(a=>a.initialized&&a.currency==='UGX'&&Number.isSafeInteger(a.balanceUGX)).map(a=>
+       <div key={a.id} className="rounded-lg border border-zinc-200 p-3">
+        <strong>{a.name}</strong><p className="text-xs">{a.kind==='bank'?'Management Bank':'Management Petty Cash'} · Reconciled</p>
+        <p className="font-semibold">UGX {a.balanceUGX.toLocaleString()}</p>
+        <p className="text-xs">Opening reconciliation: {a.reconciliationReference}</p>
+       </div>)}
+      {!treasury.accounts.length&&<p className="text-sm">No Management payment account has been reconciled.</p>}
+     </div>}
+    <p className="text-xs text-zinc-600">Read directly from existing authoritative finance_payment_accounts. Not added to or double-counted with the new registry.</p>
+  </div>
+<div className="space-y-2">
    <h4 className="font-semibold text-zinc-900">Registered bank accounts ({bankIdentities.length})</h4>
    {bankIdentities.map(bank=><div key={bank.id} className="rounded-lg border border-zinc-200 p-3 text-sm">
     <strong>{bank.name}</strong> · {bank.bankInstitution} · {bank.status}
@@ -94,18 +105,7 @@ export function FinancialPortfoliosPanel(){
      <button disabled={busy} className="rounded bg-emerald-800 text-white p-2">Register bank account</button>
    </form>}
   </div>
-  <div className="grid gap-2 sm:grid-cols-2">
-      {treasury.accounts.filter(a=>a.initialized&&a.currency==='UGX'&&Number.isSafeInteger(a.balanceUGX)).map(a=>
-       <div key={a.id} className="rounded-lg border border-zinc-200 p-3">
-        <strong>{a.name}</strong><p className="text-xs">{a.kind==='bank'?'Management Bank':'Management Petty Cash'} · Reconciled</p>
-        <p className="font-semibold">UGX {a.balanceUGX.toLocaleString()}</p>
-        <p className="text-xs">Opening reconciliation: {a.reconciliationReference}</p>
-       </div>)}
-      {!treasury.accounts.length&&<p className="text-sm">No Management payment account has been reconciled.</p>}
-     </div>}
-    <p className="text-xs text-zinc-600">Read directly from existing authoritative finance_payment_accounts. Not added to or double-counted with the new registry.</p>
-  </div>
-  <div className="grid gap-2 sm:grid-cols-2">
+    <div className="grid gap-2 sm:grid-cols-2">
    {items.map(p=><button key={p.id} type="button" onClick={()=>setSelected(p.id)}
      className="rounded-lg border border-zinc-300 text-left p-3 text-zinc-900" aria-pressed={selected===p.id}>
     <strong>{p.name}</strong><p className="text-xs">{p.classification} · {p.scope.kind==='branch'?p.scope.branchId:'Organisation'} · {p.status}</p>
