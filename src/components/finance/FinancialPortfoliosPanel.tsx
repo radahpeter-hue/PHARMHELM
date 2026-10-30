@@ -1,4 +1,4 @@
-import {registerPortfolioFunding,postPortfolioFundingMovement,type PortfolioFundingAccount} from '../../domain/finance/portfolioFunding';
+import {registerPortfolioFunding,postPortfolioFundingMovement,portfolioPostingIdentity,type PortfolioFundingAccount} from '../../domain/finance/portfolioFunding';
 import {loadPosChannelEvidence,type PosChannelEvidence} from '../../domain/finance/portfolioPosEvidence';
 import {loadEodChannelEvidence,type ReconciliationEvidence,type EodChannel} from '../../domain/finance/portfolioEodEvidence';
 import {projectPortfolioBalances} from '../../domain/finance/portfolioWideView';
@@ -148,7 +148,7 @@ export function FinancialPortfoliosPanel(){
   try{
    await postPortfolioFundingMovement({account:activeFunding,actorId:profile.uid,
     amountUGX:Number(movementAmount),direction:movementDirection,
-    requestId:'finance_'+crypto.randomUUID().replace(/-/g,''),reference:movementReference});
+    requestId:await portfolioPostingIdentity(activeFunding.tenantId,activeFunding.accountId,movementDirection,movementReference),reference:movementReference});
    setMessage('Movement posted to the authoritative ledger. Refresh to see updated balance.');
    setMovementAmount('');setMovementReference('');
   }catch(e){setMessage(e instanceof Error?e.message:'Portfolio movement failed.');}
