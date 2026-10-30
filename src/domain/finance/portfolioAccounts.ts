@@ -9,6 +9,9 @@ export interface PortfolioChildAccount {
 export function normalizeBankReference(value:string):string {
  return value.replace(/[\s-]/g,'').toUpperCase();
 }
+export function normalizeBankInstitution(value:string):string {
+ return value.trim().replace(/\s+/g,' ').toUpperCase();
+}
 export function validatePortfolioChildAccount(account:PortfolioChildAccount,portfolio:FinancialPortfolio):PortfolioChildAccount {
  if(!portfolio.supportsChildAccounts)throw new Error('Portfolio does not permit child accounts.');
  if(account.tenantId!==portfolio.tenantId||account.portfolioId!==portfolio.id)throw new Error('Account portfolio scope mismatch.');
@@ -23,6 +26,6 @@ export function validatePortfolioChildAccount(account:PortfolioChildAccount,port
 export function assertUniqueBankAccount(candidate:PortfolioChildAccount,existing:readonly PortfolioChildAccount[]):void {
  const number=normalizeBankReference(candidate.accountReference);
  if(existing.some(x=>x.tenantId===candidate.tenantId&&x.portfolioId===candidate.portfolioId&&
- x.id!==candidate.id&&normalizeBankReference(x.accountReference)===number))
+ x.id!==candidate.id&&normalizeBankInstitution(x.institution||'')===normalizeBankInstitution(candidate.institution||'')&&normalizeBankReference(x.accountReference)===number))
   throw new Error('Duplicate bank account reference.');
 }
