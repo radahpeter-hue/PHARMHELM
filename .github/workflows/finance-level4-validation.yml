@@ -1,0 +1,32 @@
+name: Finance Level 4 validation
+on:
+  pull_request:
+    paths:
+      - 'src/domain/finance/**'
+      - 'src/components/finance/**'
+      - 'src/services/financePortfolio*'
+      - 'tests/financial-portfolio*.test.ts'
+      - '.github/workflows/finance-level4-validation.yml'
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
+      - name: CEO-only and tenant-isolated portfolio security tests
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-finance-l4-portfolio-test "node scripts/finance-level4-rules-emulator.mjs"

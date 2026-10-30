@@ -140,6 +140,23 @@ export function analyseIdentitySnapshot(records, counters = []) {
   return result;
 }
 
+/**
+ * Read-only Firestore scans can encounter transient gRPC RESOURCE_EXHAUSTED (8).
+ * Retry a bounded number of times; persistent quota/access errors remain fatal.
+ */
+async function auditedRead(query,name) {
+ for(let attempt=1;attempt<=4;attempt++) {
+  try{return await query.get();}
+  catch(error){
+   const code=Number(error?.code);
+   if(![4,8,13,14].includes(code)||attempt===4)throw error;
+   console.error('IDENTITY_AUDIT_RETRY:',name,'gRPC',code,'attempt',attempt,'of 4');
+   await new Promise(resolve=>setTimeout(resolve,Math.min(attempt*4000,12000)));
+  }
+ }
+ throw new Error('Read-only identity audit exhausted retries.');
+}
+
 async function main() {
   if (process.env.FIRESTORE_EMULATOR_HOST) throw new Error('Expected named live Firestore, received an emulator.');
   const { initializeApp, applicationDefault } = await import('firebase-admin/app');
@@ -154,13 +171,13 @@ async function main() {
     if(name==='products')fields.add('sku');
     if(name==='staff')fields.add('employee_id');
     if(name==='branches')fields.add('name');
-    const snaps=await db.collection(name).select(...fields).get();
+    const snaps=await auditedRead(db.collection(name).select(...fields),name);
     records[name]=snaps.docs.map(d=>({id:d.id,...d.data()}));
   }
-  const masters=await db.collection('operational_inventory_masters')
-    .select('tenantId','uniqueId','operationalType','type').get();
+  const masters=await auditedRead(db.collection('operational_inventory_masters')
+    .select('tenantId','uniqueId','operationalType','type'),'operational_inventory_masters');
   records.operational_inventory_masters=masters.docs.map(d=>({id:d.id,...d.data()}));
-  const counters=await db.collection('identity_sequence_counters').select('kind','tenantId','lastSequence').get();
+  const counters=await auditedRead(db.collection('identity_sequence_counters').select('kind','tenantId','lastSequence'),'identity_sequence_counters');
   const report=analyseIdentitySnapshot(records,counters.docs.map(d=>({id:d.id,...d.data()})));
   const out=process.argv[2] || '/tmp/pharmhelm-identity-audit-summary.json';
   writeFileSync(out,JSON.stringify(report,null,2));
