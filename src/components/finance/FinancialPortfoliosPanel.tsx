@@ -31,7 +31,7 @@ export function FinancialPortfoliosPanel(){
    let live=true;
    setItems([]);setAccounts([]);
    if(!tenantId)return;
-   listFinancialPortfolios(tenantId,activeBranchId||undefined)
+   listFinancialPortfolios(tenantId)
      .then(p=>{if(live){setItems(p);setAccounts([]);setMessage('');}})
      .catch(()=>{if(live)setMessage('Portfolio registry is currently unavailable.');});
    return ()=>{live=false;};
