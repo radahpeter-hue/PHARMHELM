@@ -595,14 +595,15 @@ service cloud.firestore {
     match /finance_payment_accounts/{accountId} {
       function eligiblePortfolioAccount(data) {
         return isCEO() && data.portfolioId == data.accountId
-          && ((data.accountId in ['system_mtn_mobile_money','system_airtel_mobile_money']
-               && data.kind == 'mobile_money' && data.scope.kind == 'organisation')
-            || (data.scope.kind == 'branch'
-               && get(/databases/$(database)/documents/branches/$(data.scope.branchId)).data.tenantId == data.tenantId
-               && ((data.kind == 'cash_equivalent' && data.accountId == 'system_branch_cash_sales_' + data.scope.branchId)
+          && ((data.kind == 'mobile_money' && data.scope.kind == 'organisation'
+                && data.accountId in ['system_mtn_mobile_money','system_airtel_mobile_money'])
+           || (data.kind == 'bank' && data.scope.kind == 'organisation'
+                && data.accountId.matches('^bank_[0-9a-f]{64}$'))
+           || (data.scope.kind == 'branch'
+                && ((data.kind == 'cash_equivalent' && data.accountId == 'system_branch_cash_sales_' + data.scope.branchId)
                  || (data.kind == 'petty_cash' && data.accountId == 'system_petty_cash_' + data.scope.branchId)))
-            || (get(/databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId)).data.classification == data.kind
-               && get(/databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId)).data.scope == data.scope));
+           || (data.scope.kind == 'organisation' && data.accountId.matches('^custom_[A-Za-z0-9_-]+$')
+                && data.kind in ['restricted_internal_fund','other_financial_asset','cash_equivalent']));
       }
       allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
