@@ -209,8 +209,7 @@ service cloud.firestore {
     }
 
     function isPOSOperator() {
-      return isAuthenticated()
-        && hasActiveStaffProfile()
+      return hasActiveStaffProfile()
         && getUserData().role != 'cashier'
         && getUserData().role != 'Cashier'
         && (
@@ -697,8 +696,7 @@ service cloud.firestore {
     }
 
     function canViewBranchRevisionLedger(branchId) {
-      return isAuthenticated()
-        && isAssignedToBranch(branchId)
+      return isAssignedToBranch(branchId)
         && (
           isPOSOperator() ||
           isBranchManager() ||
@@ -1005,14 +1003,14 @@ service cloud.firestore {
 
     match /leave_requests/{requestId} {
       allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
-      allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
+      allow create: if isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
       allow update: if isAuthenticated() && (isHR() || (isOwner(resource.data.staffId) && resource.data.status == 'pending'));
       allow delete: if isAdmin() || isHR();
     }
 
     match /advance_requests/{requestId} {
       allow read: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isHR() || isFinance() || isAdmin());
-      allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
+      allow create: if isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
       allow update: if isAuthenticated() && (isHR() || isFinance() || isAdmin());
       allow delete: if isAdmin();
     }
@@ -1094,8 +1092,7 @@ service cloud.firestore {
       }
       allow get: if isAuthenticated() && (isProcurement() || canViewFinance()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow create: if isAuthenticated()
-        && isProcurement()
+      allow create: if isProcurement()
         && isTenantMember(request.resource.data.tenantId)
         && isOperationalInventoryEnabled(request.resource.data.tenantId)
         && request.resource.data.inventoryClass == 'OPERATIONAL'
@@ -1131,8 +1128,7 @@ service cloud.firestore {
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if isTenantMember(resource.data.tenantId)
         && (isInventoryOperator() || isProcurement() || isITPersonnel() || isAdmin());
-      allow create: if isAuthenticated()
-        && isInventoryOperator()
+      allow create: if isInventoryOperator()
         && isTenantMember(request.resource.data.tenantId)
         && isOperationalInventoryEnabled(request.resource.data.tenantId)
         && request.resource.data.inventoryClass == 'OPERATIONAL'
@@ -1181,8 +1177,7 @@ service cloud.firestore {
         && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if isTenantMember(resource.data.tenantId)
         && (isInventoryOperator() || isProcurement() || isITPersonnel() || isAdmin());
-      allow create: if isAuthenticated()
-        && isInventoryOperator()
+      allow create: if isInventoryOperator()
         && isTenantMember(request.resource.data.tenantId)
         && isOperationalInventoryEnabled(request.resource.data.tenantId)
         && request.resource.data.inventoryClass == 'OPERATIONAL'
@@ -1236,14 +1231,12 @@ service cloud.firestore {
       }
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if isTenantMember(resource.data.tenantId);
-      allow create: if isAuthenticated()
-        && isTenantMember(request.resource.data.tenantId)
+      allow create: if isTenantMember(request.resource.data.tenantId)
         && (!('inventoryClass' in request.resource.data)
           || request.resource.data.inventoryClass != 'OPERATIONAL'
           || isProcurement())
         && validGrnInventoryClass(request.resource.data);
-      allow update: if isAuthenticated()
-        && isTenantMember(resource.data.tenantId)
+      allow update: if isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
         && !hasOperationalSourceOrder(resource.data)
@@ -1367,9 +1360,9 @@ service cloud.firestore {
     }
 
     match /creditPayments/{paymentId} {
-      allow get: if isAuthenticated() && isFinance() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if isFinance() && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow create: if isAuthenticated() && isFinance() && isTenantMember(request.resource.data.tenantId);
+      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId);
       allow update, delete: if false;
     }
 
@@ -1572,8 +1565,7 @@ service cloud.firestore {
       allow get: if isAuthenticated()
         && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if isTenantMember(resource.data.tenantId);
-      allow create: if isAuthenticated()
-        && isInventoryOperator()
+      allow create: if isInventoryOperator()
         && isTenantMember(request.resource.data.tenantId)
         && isOperationalInventoryEnabled(request.resource.data.tenantId)
         && hasIdentityClaim()
@@ -1582,8 +1574,7 @@ service cloud.firestore {
         && request.resource.data.type in ['fixed', 'non-fixed']
         && ((request.resource.data.type == 'fixed' && request.resource.data.operationalType == 'FIXED_ASSET')
           || (request.resource.data.type == 'non-fixed' && request.resource.data.operationalType == 'CONSUMABLE_OPERATIONAL'));
-      allow update: if isAuthenticated()
-        && isInventoryOperator()
+      allow update: if isInventoryOperator()
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
@@ -1644,8 +1635,7 @@ service cloud.firestore {
           && (isProcurement() || canOperateOperationalLocation(resource.data.branchId))));
       allow list: if isTenantMember(resource.data.tenantId)
         && (isProcurement() || canOperateOperationalLocation(resource.data.branchId));
-      allow create: if isAuthenticated()
-        && isInventoryOperator()
+      allow create: if isInventoryOperator()
         && isTenantMember(request.resource.data.tenantId)
         && canOperateOperationalLocation(request.resource.data.branchId)
         && isOperationalInventoryEnabled(request.resource.data.tenantId)
@@ -1751,8 +1741,7 @@ service cloud.firestore {
         let data = request.resource.data;
         let item = getAfter(itemPath()).data;
         let master = getAfter(masterPath()).data;
-        return isAuthenticated()
-        && isTenantMember(data.tenantId)
+        return isTenantMember(data.tenantId)
         && isOperationalInventoryEnabled(data.tenantId)
         && data.inventoryClass == 'OPERATIONAL'
         && (isInventoryOperator() || isProcurement())
@@ -1818,7 +1807,7 @@ service cloud.firestore {
       function movementPath() {
         return /databases/$(database)/documents/operational_inventory_movements/$(request.resource.data.movementId);
       }
-      allow get: if isAuthenticated() && isProcurement() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if isProcurement() && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if isTenantMember(resource.data.tenantId) && isProcurement();
       function validGrnLineRoute() {
         let line = request.resource.data;
@@ -1851,8 +1840,7 @@ service cloud.firestore {
         let source = get(sourceLinePath()).data;
         let item = get(itemPath()).data;
         let master = get(masterPath()).data;
-        return isAuthenticated()
-        && isProcurement()
+        return isProcurement()
         && isTenantMember(line.tenantId)
         && isOperationalInventoryEnabled(line.tenantId)
         && line.inventoryClass == 'OPERATIONAL'
@@ -1935,8 +1923,7 @@ service cloud.firestore {
         && ((request.resource.data.get('transferType', '') == 'BRANCH_RETURN' && request.resource.data.status == 'dispatched')
           || (request.resource.data.get('transferType', '') != 'BRANCH_RETURN' && request.resource.data.status == 'draft'))
         && request.resource.data.dispatchedBy == request.auth.uid;
-      allow update: if isAuthenticated()
-        && isTenantMember(resource.data.tenantId)
+      allow update: if isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
         && request.resource.data.inventoryClass == resource.data.inventoryClass
@@ -2127,8 +2114,7 @@ service cloud.firestore {
       function validTransferLineUpdate() {
         let data = request.resource.data;
         let before = resource.data;
-        return isAuthenticated()
-        && isTenantMember(before.tenantId)
+        return isTenantMember(before.tenantId)
         && isTenantMember(data.tenantId)
         && data.tenantId == before.tenantId
         && data.inventoryClass == before.inventoryClass
@@ -2183,8 +2169,7 @@ service cloud.firestore {
           && (isProcurement() || isAssignedToBranch(resource.data.branchId))));
       allow list: if isTenantMember(resource.data.tenantId)
         && (isProcurement() || isAssignedToBranch(resource.data.branchId));
-      allow create: if isAuthenticated()
-        && isInventoryOperator()
+      allow create: if isInventoryOperator()
         && isTenantMember(request.resource.data.tenantId)
         && isOperationalInventoryEnabled(request.resource.data.tenantId)
         && request.resource.data.inventoryClass == 'OPERATIONAL'
@@ -2215,14 +2200,14 @@ service cloud.firestore {
     match /operational_inventory_maintenance/{maintenanceId} {
       allow read: if isTenantMember(resource.data.tenantId)
         && (isProcurement() || isAssignedToBranch(resource.data.branchId));
-      allow create: if isAuthenticated() && isInventoryOperator()
+      allow create: if isInventoryOperator()
         && isTenantMember(request.resource.data.tenantId)
         && isOperationalInventoryEnabled(request.resource.data.tenantId)
         && isAssignedToBranch(request.resource.data.branchId)
         && request.resource.data.inventoryId is string
         && exists(/databases/$(database)/documents/operational_inventory/$(request.resource.data.inventoryId))
         && get(/databases/$(database)/documents/operational_inventory/$(request.resource.data.inventoryId)).data.tenantId == request.resource.data.tenantId;
-      allow update: if isAuthenticated() && isInventoryOperator()
+      allow update: if isInventoryOperator()
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
@@ -2518,8 +2503,7 @@ service cloud.firestore {
           || (resource != null && isTenantMember(resource.data.tenantId)
             && (isBranchManager() || canViewProcurement())));
       allow list: if isTenantMember(resource.data.tenantId) && (isBranchManager() || canViewProcurement());
-      allow create: if isAuthenticated()
-        && isTenantMember(request.resource.data.tenantId)
+      allow create: if isTenantMember(request.resource.data.tenantId)
         && (isBranchManager() || isProcurement())
         && hasValidLineClass(true)
         && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL' || isAssignedToBranch(getAfter(parentOrderPath()).data.requesting_branch_id) || isProcurement())
@@ -2572,8 +2556,7 @@ service cloud.firestore {
         && hasValidLineClass(false);
       // A submitted draft may remove omitted items in the SAME atomic batch.
       // Inspect the pre-commit order, never allow deletion of submitted/sourcing lines.
-      allow delete: if isAuthenticated()
-        && isTenantMember(resource.data.tenantId)
+      allow delete: if isTenantMember(resource.data.tenantId)
         && (isAdmin() || ((isBranchManager() || isProcurement())
           && get(/databases/$(database)/documents/stock_orders/$(resource.data.order_id)).data.tenantId == resource.data.tenantId
           && get(/databases/$(database)/documents/stock_orders/$(resource.data.order_id)).data.status == 'draft'
@@ -2848,8 +2831,7 @@ service cloud.firestore {
       allow get: if isAuthenticated()
         && (resource == null || isTenantMember(resource.data.tenantId))
         && (isPOSOperator() || canViewFinance() || isIT());
-      allow list: if isAuthenticated()
-        && isTenantMember(resource.data.tenantId)
+      allow list: if isTenantMember(resource.data.tenantId)
         && (canViewFinance() || isIT());
       allow create: if isPOSOperator()
         && isTenantMember(request.resource.data.tenantId)
@@ -2985,8 +2967,7 @@ service cloud.firestore {
           )
         )
       );
-      allow list: if isAuthenticated()
-        && isTenantMember(resource.data.tenantId)
+      allow list: if isTenantMember(resource.data.tenantId)
         && (
           canViewGlobalRevisionLedger() ||
           canViewBranchRevisionLedger(resource.data.branchId)
