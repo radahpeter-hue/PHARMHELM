@@ -197,14 +197,8 @@ service cloud.firestore {
       return isAuthenticated()
         && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
         && (
-          (
-            'active' in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data &&
-            get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.active == true
-          ) ||
-          (
-            'status' in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data &&
-            get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.status in ['active', 'Active', 'ACTIVE']
-          )
+          get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.get('active', false) == true ||
+          get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.get('status', '') in ['active', 'Active', 'ACTIVE']
         );
     }
 
