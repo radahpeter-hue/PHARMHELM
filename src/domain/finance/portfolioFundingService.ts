@@ -4,7 +4,7 @@ import type {FinancialPortfolio,FinancialPortfolioClassification,FinancialPortfo
 import {portfolioRef} from './portfolioFirestore';
 export type PortfolioFundingAccount={
  tenantId:string;accountId:string;portfolioId:string;
- kind:FinancialPortfolioClassification;scope:FinancialPortfolioScope;
+ kind:'bank'|'petty_cash';portfolioClassification:FinancialPortfolioClassification;scope:FinancialPortfolioScope;
  name:string;currency:'UGX';initialized:true;
  openingBalanceUGX:number;balanceUGX:number;reconciliationReference:string;
  registeredBy:string;lastPostingId:string|null;controlVersion:1;
@@ -14,8 +14,8 @@ export function fundingDocumentId(tenantId:string,portfolioId:string){
  if(!validId.test(tenantId)||!validId.test(portfolioId))throw new Error('Invalid portfolio funding identity.');
  return tenantId+'_'+portfolioId;
 }
-export function ledgerCollectionForPortfolioKind(kind:FinancialPortfolioClassification){
- return kind==='bank'||kind==='mobile_money'?'banking_records':'petty_cash_ledger';
+export function ledgerCollectionForPortfolioKind(kind:'bank'|'petty_cash'){
+ return kind==='bank'?'banking_records':'petty_cash_ledger';
 }
 /** A funding account is never silently initialized from historical sales or EOD totals. */
 export async function registerPortfolioFundingAccount(input:{
@@ -39,8 +39,8 @@ export async function registerPortfolioFundingAccount(input:{
  const ref=doc(database,'finance_payment_accounts',fundingDocumentId(portfolio.tenantId,portfolio.id));
  const settingsRef=doc(database,'system_settings',portfolio.tenantId);
  const result:PortfolioFundingAccount={
-  tenantId:portfolio.tenantId,accountId:portfolio.id,portfolioId:portfolio.id,kind:portfolio.classification,
-  scope:portfolio.scope,name:portfolio.name,currency:'UGX',initialized:true,
+  tenantId:portfolio.tenantId,accountId:portfolio.id,portfolioId:portfolio.id,kind:portfolio.classification==='bank'||portfolio.classification==='mobile_money'?'bank':'petty_cash',
+  portfolioClassification:portfolio.classification,scope:portfolio.scope,name:portfolio.name,currency:'UGX',initialized:true,
   openingBalanceUGX,balanceUGX:openingBalanceUGX,reconciliationReference:reference,
   registeredBy:actorId,lastPostingId:null,controlVersion:1
  };
@@ -91,7 +91,7 @@ export async function postPortfolioFundingMovement(input:{
   const [live,existing]=await Promise.all([tx.get(accountRef),tx.get(journalRef)]);
   if(!live.exists()||live.data().tenantId!==account.tenantId||
       live.data().portfolioId!==account.portfolioId||
-      live.data().kind!==account.kind||live.data().initialized!==true)
+      live.data().kind!==account.kind||live.data().portfolioClassification!==account.portfolioClassification||live.data().initialized!==true)
     throw new Error('Funding account has changed; refresh before posting.');
   if(existing.exists()){
    const prior=existing.data();
