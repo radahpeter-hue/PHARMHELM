@@ -1,11 +1,15 @@
 name: Refresh Vite security lockfile (draft PR only)
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'package.json'
+      - '.github/workflows/finance-vite-lock-refresh.yml'
 permissions:
   contents: write
 jobs:
   refresh:
-    if: github.ref_name == 'feature/finance-rebuild-levels4-6'
+    if: github.head_ref == 'feature/finance-rebuild-levels4-6' || github.ref_name == 'feature/finance-rebuild-levels4-6'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
