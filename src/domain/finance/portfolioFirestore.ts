@@ -1,7 +1,7 @@
 import {collection, doc, getDocs, query, where, runTransaction, serverTimestamp, type Firestore} from 'firebase/firestore';
 import {db} from '../../firebase';
 import {defineFinancialPortfolio,validateFinancialPortfolio,type FinancialPortfolio,type NewFinancialPortfolio} from './financialPortfolio';
-import {validatePortfolioChildAccount,normalizeBankReference,type PortfolioChildAccount} from './portfolioAccounts';
+import {validatePortfolioChildAccount,normalizeBankInstitution,normalizeBankReference,type PortfolioChildAccount} from './portfolioAccounts';
 
 const portfolios='finance_portfolios_v1';
 const accounts='finance_portfolio_accounts_v1';
@@ -38,20 +38,33 @@ export async function createCustomFinancialPortfolio(input:NewFinancialPortfolio
  });
  return value;
 }
-export async function createPortfolioBankAccount(input:PortfolioChildAccount,database:Firestore=db){
- if(input.status!=='active')throw new Error('Only active accounts can be created.');
- if(!input.accountReference.trim())throw new Error('Bank account reference required.');
- const portfolio=portfolioRef(database,input.tenantId,input.portfolioId);
- // Deterministic reservation prohibits duplicates across concurrent requests.
- const reservationId=input.tenantId+'__'+input.portfolioId+'__'+normalizeBankReference(input.accountReference);
- const reservation=doc(database,'finance_account_identity_v1',reservationId);
- const account=accountRef(database,input.tenantId,input.id);
- await runTransaction(database,async tx=>{
-  const [p,a,res]=await Promise.all([tx.get(portfolio),tx.get(account),tx.get(reservation)]);
-  if(!p.exists()||p.data().status!=='active')throw new Error('Active parent portfolio required.');
-  validatePortfolioChildAccount(input,p.data() as FinancialPortfolio);
-  if(a.exists()||res.exists())throw new Error('Account identity or reference already in use.');
-  tx.set(reservation,{tenantId:input.tenantId,portfolioId:input.portfolioId,accountId:input.id,accountReferenceNormalized:normalizeBankReference(input.accountReference),createdBy:input.createdBy});
-  tx.set(account,{...input,balanceUGX:0,openingBalanceUGX:0,initialized:false});
- });
+/** Deterministic, opaque account identity protects simultaneous bank registration. */
+export async function bankAccountIdentity(
+  tenantId:string,portfolioId:string,institution:string,reference:string
+):Promise<string>{
+  const issuer=normalizeBankInstitution(institution);
+  const number=normalizeBankReference(reference);
+  if(!issuer||!number)throw new Error('Bank institution and account reference are required.');
+  if(!globalThis.crypto?.subtle)throw new Error('Secure browser cryptography is required.');
+  const content=new TextEncoder().encode([tenantId,portfolioId,issuer,number].join('|'));
+  const digest=await globalThis.crypto.subtle.digest('SHA-256',content);
+  return 'bank_'+Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+export async function createPortfolioBankAccount(
+  input:Omit<PortfolioChildAccount,'id'>,database:Firestore=db
+):Promise<PortfolioChildAccount>{
+  if(input.status!=='active')throw new Error('Only active accounts can be created.');
+  if(!input.institution?.trim())throw new Error('Bank institution required.');
+  const id=await bankAccountIdentity(input.tenantId,input.portfolioId,input.institution,input.accountReference);
+  const value:PortfolioChildAccount={...input,id};
+  const portfolio=portfolioRef(database,input.tenantId,input.portfolioId);
+  const account=accountRef(database,input.tenantId,id);
+  await runTransaction(database,async tx=>{
+    const [p,a]=await Promise.all([tx.get(portfolio),tx.get(account)]);
+    if(!p.exists()||p.data().status!=='active')throw new Error('Active parent portfolio required.');
+    validatePortfolioChildAccount(value,p.data() as FinancialPortfolio);
+    if(a.exists())throw new Error('Bank account already exists.');
+    tx.set(account,{...value,balanceUGX:0,openingBalanceUGX:0,initialized:false});
+  });
+  return value;
 }
