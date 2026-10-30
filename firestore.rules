@@ -3159,7 +3159,7 @@ service cloud.firestore {
       allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId)
         && (resource.data.scope.kind == 'organisation' || isAssignedToBranch(resource.data.scope.branchId));
       allow create: if isTenantMember(request.resource.data.tenantId)
-        && hasAnyRole(['CEO','CEO / MD','owner'])
+        && isCEO()
         && portfolioId == request.resource.data.tenantId + '__' + request.resource.data.id
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid
@@ -3183,7 +3183,7 @@ service cloud.firestore {
       allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId)
         && (resource.data.scope.kind == 'organisation' || isAssignedToBranch(resource.data.scope.branchId));
       allow create: if isTenantMember(request.resource.data.tenantId)
-        && hasAnyRole(['CEO','CEO / MD','owner'])
+        && isCEO()
         && accountDocId == request.resource.data.tenantId + '__' + request.resource.data.id
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.status == 'active'
