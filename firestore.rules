@@ -591,7 +591,7 @@ service cloud.firestore {
     }
     match /finance_payment_accounts/{accountId} {
       function eligiblePortfolioAccount(data) {
-        let portfolio = get(/databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId)).data;
+        let portfolioPath = /databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId);
         return isCEO() && data.portfolioId == data.accountId
           && data.kind == (data.portfolioClassification in ['bank','mobile_money'] ? 'bank' : 'petty_cash')
           && ((data.accountId.matches('^system_(mtn_mobile_money|airtel_mobile_money)$')
@@ -600,9 +600,10 @@ service cloud.firestore {
                && data.scope.kind == 'branch'
                && data.accountId == 'system_' + (data.portfolioClassification == 'petty_cash' ? 'petty_cash' : 'branch_cash_sales') + '_' + data.scope.branchId
                && data.portfolioClassification in ['cash_equivalent','petty_cash'])
-             || (portfolio.id == data.accountId && portfolio.tenantId == data.tenantId
-               && portfolio.status == 'active' && portfolio.classification == data.portfolioClassification
-               && portfolio.scope == data.scope));
+             || (exists(portfolioPath) && get(portfolioPath).data.id == data.accountId
+               && get(portfolioPath).data.tenantId == data.tenantId
+               && get(portfolioPath).data.status == 'active' && get(portfolioPath).data.classification == data.portfolioClassification
+               && get(portfolioPath).data.scope == data.scope));
       }
       allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
