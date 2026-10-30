@@ -544,7 +544,7 @@ service cloud.firestore {
         && (data.accountDeltaUGX <= 0 || isFinance() || isHR())
         && data.accountDocumentId == before.tenantId + '_' + before.accountId
         && before.tenantId == data.tenantId
-        && (kind == 'bank' ? before.kind in ['bank','mobile_money'] : before.kind in ['petty_cash','branch_cash'])
+        && (kind == 'bank' ? before.kind in ['bank','mobile_money'] : before.kind in ['petty_cash','cash_equivalent','restricted_internal_fund','other_financial_asset'])
         && before.initialized == true
         && after.lastPostingId == id
         && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX
@@ -594,21 +594,15 @@ service cloud.firestore {
     }
     match /finance_payment_accounts/{accountId} {
       function eligiblePortfolioAccount(data) {
-        let portfolioId = data.accountId;
-        return isCEO() && data.portfolioId == portfolioId
-          && ((portfolioId in ['system_mtn_mobile_money','system_airtel_mobile_money']
-              && data.kind == 'mobile_money' && data.scope.kind == 'organisation')
-            || (portfolioId.matches('^system_branch_cash_sales_[A-Za-z0-9_-]+$')
-              && data.kind == 'branch_cash' && data.scope.kind == 'branch'
-              && portfolioId == 'system_branch_cash_sales_' + data.scope.branchId
-              && get(/databases/$(database)/documents/branches/$(data.scope.branchId)).data.tenantId == data.tenantId)
-            || (portfolioId.matches('^system_petty_cash_[A-Za-z0-9_-]+$')
-              && data.kind == 'petty_cash' && data.scope.kind == 'branch'
-              && portfolioId == 'system_petty_cash_' + data.scope.branchId
-              && get(/databases/$(database)/documents/branches/$(data.scope.branchId)).data.tenantId == data.tenantId)
-            || (portfolioId.matches('^bank_[0-9a-f]{64}$')
-              && data.kind == 'bank' && data.scope.kind == 'organisation'
-              && get(/databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + portfolioId)).data.bankParentId == 'system_bank'));
+        return isCEO() && data.portfolioId == data.accountId
+          && ((data.accountId in ['system_mtn_mobile_money','system_airtel_mobile_money']
+               && data.kind == 'mobile_money' && data.scope.kind == 'organisation')
+            || (data.scope.kind == 'branch'
+               && get(/databases/$(database)/documents/branches/$(data.scope.branchId)).data.tenantId == data.tenantId
+               && ((data.kind == 'cash_equivalent' && data.accountId == 'system_branch_cash_sales_' + data.scope.branchId)
+                 || (data.kind == 'petty_cash' && data.accountId == 'system_petty_cash_' + data.scope.branchId)))
+            || (get(/databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId)).data.classification == data.kind
+               && get(/databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId)).data.scope == data.scope));
       }
       allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
