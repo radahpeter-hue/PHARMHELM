@@ -55,7 +55,8 @@ try{
   bankParentId:'system_bank',allowsTransfersIn:false,allowsTransfersOut:false};
  await assertSucceeds(setDoc(ref(ceo,tenant,bank.id),bank));
  await assertSucceeds(getDoc(ref(finance,tenant,bank.id)));
- await assertFails(setDoc(ref(ceo,tenant,bank.id),bank));
+ await assertSucceeds(setDoc(ref(ceo,tenant,bank.id),bank)); // Idempotent identical identity
+ await assertFails(setDoc(ref(ceo,tenant,bank.id),{...bank,name:'Changed bank'}));
  await assertFails(updateDoc(ref(finance,tenant,bank.id),{status:'inactive',updatedBy:'finance_a'}));
  await assertFails(updateDoc(ref(ceo,tenant,bank.id),{bankAccountReference:'9999'}));
  await assertSucceeds(updateDoc(ref(ceo,tenant,bank.id),{status:'inactive',updatedBy:'ceo_a',
