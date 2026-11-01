@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mapAuthoritativeMovement,managementLedgerCollection} from '../src/domain/finance/authoritativePortfolioLedger';
+import {mapAuthoritativeMovement,managementLedgerCollection,assertAuthoritativePostingBalance} from '../src/domain/finance/authoritativePortfolioLedger';
 import {MANAGEMENT_BANK_ACCOUNT,MANAGEMENT_CASH_ACCOUNT,type ManagementPaymentAccount} from '../src/services/managementCashPosting';
 const account=(id:string,kind:'bank'|'petty_cash'):ManagementPaymentAccount=>({
  id:'tenant_a_'+id,tenantId:'tenant_a',accountId:id,name:'Account',kind,currency:'UGX',
@@ -18,4 +18,18 @@ test('Finance projection rejects cross-tenant and inconsistent ledger amounts',(
  assert.equal(managementLedgerCollection(cash),'petty_cash_ledger');
  assert.throws(()=>mapAuthoritativeMovement('evt',{tenantId:'other',accountDocumentId:cash.id,amount:100,accountDeltaUGX:100,date:'2026-10-29'},cash),/does not belong/);
  assert.throws(()=>mapAuthoritativeMovement('evt',{tenantId:'tenant_a',accountDocumentId:cash.id,amount:150,accountDeltaUGX:100,date:'2026-10-29'},cash),/Unverified/);
+});
+
+test('complete linked posting history reconciles independently funded bank and branch accounts',()=>{
+ const bank={...account('bank_'+'a'.repeat(64),'bank'),portfolioId:'bank_'+'a'.repeat(64),openingBalanceUGX:100,balanceUGX:170};
+ const make=(id:string,amount:number,direction:'inflow'|'outflow')=>({
+  id,tenantId:bank.tenantId,portfolioId:bank.accountId,accountId:bank.accountId,
+  businessDate:'2026-10-30',occurredAt:'2026-10-30T12:00:00Z',
+  reference:id,description:id,source:'banking_records',direction,amountUGX:amount,actorId:'ceo',status:'posted' as const
+ });
+ const entries=[make('deposit',100,'inflow'),make('payment',30,'outflow')];
+ assert.doesNotThrow(()=>assertAuthoritativePostingBalance(bank,entries));
+ assert.throws(()=>assertAuthoritativePostingBalance({...bank,balanceUGX:171},entries),/does not reconcile/);
+ assert.throws(()=>assertAuthoritativePostingBalance(bank,[...entries,entries[0]]),/duplicate/);
+ assert.throws(()=>assertAuthoritativePostingBalance(bank,[{...entries[0],tenantId:'foreign'}]),/Invalid or duplicate/);
 });
