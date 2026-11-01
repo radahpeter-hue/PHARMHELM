@@ -1,4 +1,4 @@
-import {collection,doc,getDocs,query,where,runTransaction,Timestamp,type Firestore} from 'firebase/firestore';
+import {collection,doc,getDoc,getDocs,query,where,runTransaction,Timestamp,type Firestore} from 'firebase/firestore';
 import {db} from '../../firebase';
 import type {FinancialPortfolio} from './financialPortfolio';
 import type {ManagementPaymentAccount} from '../../services/managementCashPosting';
@@ -77,12 +77,11 @@ export async function postPortfolioFundingMovement(input:{
   record.tenantId===a.tenantId&&record.accountDocumentId===managementAccountDocumentId(a.tenantId,a.accountId)
   &&record.amount===amountUGX&&record.postedBy===actorId
   &&record.type===expectedType&&record.reference_number===reference.trim();
- // Use a tenant-scoped query. Firestore Rules intentionally deny reading a
- // nonexistent ledger document, and create-only rules prevent a second posting.
- const existing=await getDocs(query(collection(database,ledgerPath),
-  where('tenantId','==',a.tenantId)));
- const prior=existing.docs.find(d=>d.id===ledgerId&&d.data().accountDocumentId===managementAccountDocumentId(a.tenantId,a.accountId));
- if(prior){if(!matches(prior.data()))throw new Error('Posting reference conflict.');return;}
+ // Both canonical ledger collections permit authenticated point reads on a
+ // missing document. Do this outside the write transaction to avoid a
+ // Firestore missing-document transactional read dependency.
+ const prior=await getDoc(ledgerRef);
+ if(prior.exists()){if(!matches(prior.data()))throw new Error('Posting reference conflict.');return;}
  try{
   await runTransaction(database,async tx=>{
    stageManagementCashEntry(tx,ledgerId,{
@@ -91,12 +90,10 @@ export async function postPortfolioFundingMovement(input:{
    },database,a.accountId,actorId);
   });
  }catch(error){
-  // Concurrent same-reference requests can race. Never retry a financial write
-  // until the existing committed record has been inspected and compared.
-  const after=await getDocs(query(collection(database,ledgerPath),
-   where('tenantId','==',a.tenantId)));
-  const winner=after.docs.find(d=>d.id===ledgerId&&d.data().accountDocumentId===managementAccountDocumentId(a.tenantId,a.accountId));
-  if(winner){if(!matches(winner.data()))throw new Error('Posting reference conflict.');return;}
+  // Concurrent same-reference requests can race. Verify the winner, never
+  // blindly replay a financial write after a failed or lost acknowledgement.
+  const winner=await getDoc(ledgerRef);
+  if(winner.exists()){if(!matches(winner.data()))throw new Error('Posting reference conflict.');return;}
   throw error;
  }
 }
