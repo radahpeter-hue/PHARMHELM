@@ -72,20 +72,33 @@ export async function postPortfolioFundingMovement(input:{
  const ledgerId='pf_'+Array.from(new Uint8Array(hash)).map(v=>v.toString(16).padStart(2,'0')).join('');
  const ledgerPath=a.kind==='bank'?'banking_records':'petty_cash_ledger';
  const ledgerRef=doc(database,ledgerPath,ledgerId);
- await runTransaction(database,async tx=>{
-  const prior=await tx.get(ledgerRef);
-  if(prior.exists()){
-   if(prior.data().tenantId!==a.tenantId||prior.data().accountDocumentId!==a.id||
-      prior.data().amount!==amountUGX||prior.data().postedBy!==actorId||
-      prior.data().type!==(direction==='inflow'?'incoming':'outgoing')||prior.data().reference_number!==reference.trim())
-    throw new Error('Posting reference conflict.');
-   return;
-  }
-  stageManagementCashEntry(tx,ledgerId,{
-   tenantId:a.tenantId,amount:amountUGX,type:direction==='inflow'?'incoming':'outgoing',
-   source:'Verified portfolio movement',reference_number:reference.trim()
-  },database,a.accountId,actorId);
- });
+ const expectedType=direction==='inflow'?'incoming':'outgoing';
+ const matches=(record:Record<string,unknown>)=>
+  record.tenantId===a.tenantId&&record.accountDocumentId===managementAccountDocumentId(a.tenantId,a.accountId)
+  &&record.amount===amountUGX&&record.postedBy===actorId
+  &&record.type===expectedType&&record.reference_number===reference.trim();
+ // Use a tenant-scoped query. Firestore Rules intentionally deny reading a
+ // nonexistent ledger document, and create-only rules prevent a second posting.
+ const existing=await getDocs(query(collection(database,ledgerPath),
+  where('tenantId','==',a.tenantId),where('accountDocumentId','==',managementAccountDocumentId(a.tenantId,a.accountId))));
+ const prior=existing.docs.find(d=>d.id===ledgerId);
+ if(prior){if(!matches(prior.data()))throw new Error('Posting reference conflict.');return;}
+ try{
+  await runTransaction(database,async tx=>{
+   stageManagementCashEntry(tx,ledgerId,{
+    tenantId:a.tenantId,amount:amountUGX,type:expectedType,
+    source:'Verified portfolio movement',reference_number:reference.trim()
+   },database,a.accountId,actorId);
+  });
+ }catch(error){
+  // Concurrent same-reference requests can race. Never retry a financial write
+  // until the existing committed record has been inspected and compared.
+  const after=await getDocs(query(collection(database,ledgerPath),
+   where('tenantId','==',a.tenantId),where('accountDocumentId','==',managementAccountDocumentId(a.tenantId,a.accountId))));
+  const winner=after.docs.find(d=>d.id===ledgerId);
+  if(winner){if(!matches(winner.data()))throw new Error('Posting reference conflict.');return;}
+  throw error;
+ }
 }
 export async function listPortfolioFundingAccounts(tenantId:string,database:Firestore=db):Promise<PortfolioFundingAccount[]>{
  const result=await getDocs(query(collection(database,'finance_payment_accounts'),where('tenantId','==',tenantId)));
