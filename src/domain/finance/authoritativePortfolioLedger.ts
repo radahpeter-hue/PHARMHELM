@@ -55,13 +55,30 @@ export async function loadAuthoritativePortfolioLedger(
  const all=snapshot.docs.map(row=>mapAuthoritativeMovement(row.id,row.data(),account));
  const ids=new Set(all.map(e=>e.id));
  if(ids.size!==all.length)throw new Error('Duplicate posting identities.');
- const movementSum=all.reduce((total,e)=>total+(e.direction==='inflow'?e.amountUGX:-e.amountUGX),0);
- const calculatedBalance=account.openingBalanceUGX+movementSum;
- if(!Number.isSafeInteger(calculatedBalance)||calculatedBalance!==account.balanceUGX)
-  throw new Error('Authoritative balance does not reconcile with immutable postings.');
+ assertAuthoritativePostingBalance(account,all);
  return {account,currentBalanceUGX:account.balanceUGX,openingBalanceUGX:account.openingBalanceUGX,
   reconciliationReference:account.reconciliationReference,
   entries:all.filter(e=>e.businessDate>=period.from&&e.businessDate<=period.to&&
    (period.direction==='all'||e.direction===period.direction))
    .sort((a,b)=>a.occurredAt.localeCompare(b.occurredAt)||a.id.localeCompare(b.id))};
+}
+
+/** Every displayed balance must reconcile to the full linked posting history. */
+export function assertAuthoritativePostingBalance(
+ account:ManagementPaymentAccount,entries:readonly FinancialLedgerEntry[]
+):void{
+ if(!Number.isSafeInteger(account.openingBalanceUGX)||!Number.isSafeInteger(account.balanceUGX))
+  throw new Error('Invalid authoritative balance.');
+ let total=account.openingBalanceUGX;
+ const ids=new Set<string>();
+ for(const entry of entries){
+  if(entry.tenantId!==account.tenantId||entry.accountId!==account.accountId
+    ||!entry.id||ids.has(entry.id)||!Number.isSafeInteger(entry.amountUGX)||entry.amountUGX<=0)
+   throw new Error('Invalid or duplicate account movement.');
+  ids.add(entry.id);
+  total+=entry.direction==='inflow'?entry.amountUGX:entry.direction==='outflow'?-entry.amountUGX:NaN;
+  if(!Number.isSafeInteger(total))throw new Error('Account movement overflow.');
+ }
+ if(total!==account.balanceUGX)
+  throw new Error('Authoritative balance does not reconcile with immutable postings.');
 }
