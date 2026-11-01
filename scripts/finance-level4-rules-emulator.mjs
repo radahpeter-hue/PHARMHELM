@@ -115,20 +115,20 @@ try{
   postedBy:'finance_a',reference_number:'PETTY-OUT-01',createdAt:'2026-10-30',updatedAt:'2026-10-30'};
  const overdraft=writeBatch(finance);
  overdraft.set(doc(finance,'petty_cash_ledger',outId),outEntry);
- overdraft.update(pettyRef,{balanceUGX:increment(-20),lastPostingId:outId,updatedAt:'2026-10-30'});
+ overdraft.update(doc(finance,'finance_payment_accounts',pettyRef.id),{balanceUGX:increment(-20),lastPostingId:outId,updatedAt:'2026-10-30'});
  await assertFails(overdraft.commit());
  const validId='portfolio_petty_in_01';
  const incoming=writeBatch(finance);
  incoming.set(doc(finance,'petty_cash_ledger',validId),{...outEntry,accountDeltaUGX:50,amount:50,type:'incoming',reference_number:'PETTY-IN-01'});
- incoming.update(pettyRef,{balanceUGX:increment(50),lastPostingId:validId,updatedAt:'2026-10-30'});
+ incoming.update(doc(finance,'finance_payment_accounts',pettyRef.id),{balanceUGX:increment(50),lastPostingId:validId,updatedAt:'2026-10-30'});
  await assertSucceeds(incoming.commit());
  const replay=writeBatch(finance);
  replay.set(doc(finance,'petty_cash_ledger',validId),{...outEntry,accountDeltaUGX:50,amount:50,type:'incoming',reference_number:'PETTY-IN-01'});
- replay.update(pettyRef,{balanceUGX:increment(50),lastPostingId:validId,updatedAt:'2026-10-30'});
+ replay.update(doc(finance,'finance_payment_accounts',pettyRef.id),{balanceUGX:increment(50),lastPostingId:validId,updatedAt:'2026-10-30'});
  await assertFails(replay.commit());
  const foreign=writeBatch(finance);
  foreign.set(doc(finance,'petty_cash_ledger','portfolio_foreign_01'),{...outEntry,tenantId:other,accountDeltaUGX:50,amount:50,type:'incoming'});
- foreign.update(pettyRef,{balanceUGX:increment(50),lastPostingId:'portfolio_foreign_01',updatedAt:'2026-10-30'});
+ foreign.update(doc(finance,'finance_payment_accounts',pettyRef.id),{balanceUGX:increment(50),lastPostingId:'portfolio_foreign_01',updatedAt:'2026-10-30'});
  await assertFails(foreign.commit());
 
  const transferDebit='pf_d_pairtest',transferCredit='pf_c_pairtest';
