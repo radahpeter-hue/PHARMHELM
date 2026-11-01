@@ -91,3 +91,61 @@ export async function listPortfolioFundingAccounts(tenantId:string,database:Fire
  const result=await getDocs(query(collection(database,'finance_payment_accounts'),where('tenantId','==',tenantId)));
  return result.docs.filter(x=>x.data().portfolioId).map(x=>({...x.data(),id:x.id}) as PortfolioFundingAccount);
 }
+
+/** Two-sided transfer: both ledgers and both balances commit in one transaction.
+ * A repeated external transfer reference is a replay, never a second movement.
+ */
+export async function transferPortfolioFunding(input:{
+ from:PortfolioFundingAccount;to:PortfolioFundingAccount;actorId:string;
+ amountUGX:number;externalReference:string
+},database:Firestore=db):Promise<{replayed:boolean}>{
+ const {from,to,actorId,amountUGX,externalReference}=input;
+ if(from.tenantId!==to.tenantId||from.accountId===to.accountId
+   ||!from.initialized||!to.initialized||!actorId||!Number.isSafeInteger(amountUGX)
+   ||amountUGX<=0||externalReference.trim().length<5)
+  throw new Error('Invalid or cross-tenant portfolio transfer.');
+ const external=externalReference.trim();
+ if(!globalThis.crypto?.subtle)throw new Error('Secure transfer identity unavailable.');
+ const seed=new TextEncoder().encode([from.tenantId,from.accountId,to.accountId,external.toUpperCase()].join('|'));
+ const hash=await crypto.subtle.digest('SHA-256',seed);
+ const token=Array.from(new Uint8Array(hash)).map(x=>x.toString(16).padStart(2,'0')).join('');
+ const debitId='pf_d_'+token,creditId='pf_c_'+token;
+ const debitCol=from.kind==='bank'?'banking_records':'petty_cash_ledger';
+ const creditCol=to.kind==='bank'?'banking_records':'petty_cash_ledger';
+ const source=doc(database,'finance_payment_accounts',managementAccountDocumentId(from.tenantId,from.accountId));
+ const destination=doc(database,'finance_payment_accounts',managementAccountDocumentId(to.tenantId,to.accountId));
+ const debit=doc(database,debitCol,debitId),credit=doc(database,creditCol,creditId);
+ return runTransaction(database,async tx=>{
+  const [src,dst,d,c]=await Promise.all([tx.get(source),tx.get(destination),tx.get(debit),tx.get(credit)]);
+  if(d.exists()||c.exists()){
+   if(d.exists()&&c.exists()&&d.data().tenantId===from.tenantId
+     &&d.data().accountDocumentId===source.id&&c.data().accountDocumentId===destination.id
+     &&d.data().amount===amountUGX&&c.data().amount===amountUGX
+     &&d.data().postedBy===actorId&&c.data().postedBy===actorId
+     &&d.data().reference_number===external&&c.data().reference_number===external)
+    return {replayed:true};
+   throw new Error('Transfer reference conflict or incomplete paired posting.');
+  }
+  if(!src.exists()||!dst.exists()||src.data().tenantId!==from.tenantId
+    ||dst.data().tenantId!==to.tenantId||src.data().accountId!==from.accountId
+    ||dst.data().accountId!==to.accountId||src.data().kind!==from.kind
+    ||dst.data().kind!==to.kind||src.data().initialized!==true
+    ||dst.data().initialized!==true||src.data().currency!=='UGX'||dst.data().currency!=='UGX')
+   throw new Error('Transfer account identity or reconciliation changed.');
+  if(!Number.isSafeInteger(src.data().balanceUGX)||src.data().balanceUGX<amountUGX
+    ||!Number.isSafeInteger(dst.data().balanceUGX)
+    ||!Number.isSafeInteger(dst.data().balanceUGX+amountUGX))
+   throw new Error('Insufficient funds or balance overflow.');
+  stageManagementCashEntry(tx,debitId,{
+   tenantId:from.tenantId,amount:amountUGX,type:'outgoing',
+   source:'Portfolio transfer debit',reference_number:external,linkedMovementId:creditId,
+   transferCounterparty:destination.id
+  },database,from.accountId,actorId);
+  stageManagementCashEntry(tx,creditId,{
+   tenantId:to.tenantId,amount:amountUGX,type:'incoming',
+   source:'Portfolio transfer credit',reference_number:external,linkedMovementId:debitId,
+   transferCounterparty:source.id
+  },database,to.accountId,actorId);
+  return {replayed:false};
+ });
+}
