@@ -133,6 +133,9 @@ export function FinancialPortfoliosPanel(){
  const balanceViews=projectPortfolioBalances([...builtInViews,...items],treasury.accounts);
  const activePortfolio=[...builtInViews,...items].find(p=>p.id===selected);
  const activeFunding=treasury.accounts.find(a=>a.accountId===selected&&a.portfolioId===selected) as PortfolioFundingAccount|undefined;
+ const transferSource=selected==='system_bank'
+  ?treasury.accounts.find(a=>a.tenantId===tenantId&&a.accountId==='management_bank'&&a.initialized)
+  :activeFunding;
  async function initializeFunding(e:React.FormEvent){
   e.preventDefault();if(!activePortfolio||!profile?.uid||busy||!canRegister)return;
   setBusy(true);setMessage('');
@@ -158,12 +161,12 @@ export function FinancialPortfoliosPanel(){
   finally{setBusy(false);}
  }
  async function submitTransfer(e:React.FormEvent){
-  e.preventDefault();if(!activeFunding||!canRegister||!profile?.uid||busy)return;
-  const target=treasury.accounts.find(a=>a.accountId===transferTo&&a.tenantId===tenantId&&a.portfolioId===transferTo) as PortfolioFundingAccount|undefined;
+  e.preventDefault();if(!transferSource||!canRegister||!profile?.uid||busy)return;
+  const target=treasury.accounts.find(a=>a.accountId===transferTo&&a.tenantId===tenantId&&(a.portfolioId===transferTo||a.accountId==='management_bank'||a.accountId==='management_petty_cash')) as PortfolioFundingAccount|undefined;
   if(!target){setMessage('Select a reconciled destination portfolio.');return;}
   setBusy(true);setMessage('');
   try{
-   const result=await transferPortfolioFunding({from:activeFunding,to:target,actorId:profile.uid,
+   const result=await transferPortfolioFunding({from:transferSource,to:target,actorId:profile.uid,
     amountUGX:Number(transferAmount),externalReference:transferReference});
    setMessage(result.replayed?'Transfer already posted; no duplicate was created.':'Both portfolio ledgers and balances transferred atomically.');
    setTransferAmount('');setTransferReference('');
@@ -227,11 +230,12 @@ export function FinancialPortfoliosPanel(){
     <button disabled={busy} className="rounded border p-2">Record verified movement</button>
    </form>}
   </div>}
-  {canRegister&&activeFunding&&<form onSubmit={submitTransfer} className="rounded border border-zinc-200 p-3 grid gap-2 sm:grid-cols-4">
+  {canRegister&&transferSource&&<form onSubmit={submitTransfer} className="rounded border border-zinc-200 p-3 grid gap-2 sm:grid-cols-4">
     <h4 className="font-semibold sm:col-span-4">Transfer between reconciled portfolios</h4>
+    <p className="text-xs sm:col-span-4">If an existing Management Bank reserve overlaps a newly registered bank account, allocate it with this atomic transfer. Never record the same funds as two opening balances.</p>
     <select required aria-label="Destination portfolio" value={transferTo} onChange={e=>setTransferTo(e.target.value)} className="border p-2">
       <option value="">Select destination account</option>
-      {treasury.accounts.filter(a=>a.tenantId===tenantId&&a.portfolioId===a.accountId&&a.accountId!==activeFunding.accountId&&a.initialized).map(a=>
+      {treasury.accounts.filter(a=>a.tenantId===tenantId&&(a.portfolioId===a.accountId||a.accountId==='management_bank'||a.accountId==='management_petty_cash')&&a.accountId!==transferSource.accountId&&a.initialized).map(a=>
        <option key={a.id} value={a.accountId}>{a.name}</option>)}
     </select>
     <input required aria-label="Transfer UGX" type="number" min="1" step="1" value={transferAmount} onChange={e=>setTransferAmount(e.target.value)} className="border p-2"/>
