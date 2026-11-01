@@ -130,5 +130,21 @@ try{
  foreign.set(doc(finance,'petty_cash_ledger','portfolio_foreign_01'),{...outEntry,tenantId:other,accountDeltaUGX:50,amount:50,type:'incoming'});
  foreign.update(pettyRef,{balanceUGX:increment(50),lastPostingId:'portfolio_foreign_01',updatedAt:'2026-10-30'});
  await assertFails(foreign.commit());
+
+ const transferDebit='pf_d_pairtest',transferCredit='pf_c_pairtest';
+ const transfer=writeBatch(finance);
+ transfer.set(doc(finance,'banking_records',transferDebit),{
+  ...entry,accountDeltaUGX:-20,amount:20,type:'outgoing',
+  reference_number:'TRANSFER-EQUITY-MASAKA',transferCounterparty:pettyRef.id,linkedMovementId:transferCredit});
+ transfer.update(ar,{balanceUGX:increment(-20),lastPostingId:transferDebit,updatedAt:'2026-10-30'});
+ transfer.set(doc(finance,'petty_cash_ledger',transferCredit),{
+  ...outEntry,accountDeltaUGX:20,amount:20,type:'incoming',
+  reference_number:'TRANSFER-EQUITY-MASAKA',transferCounterparty:ar.id,linkedMovementId:transferDebit});
+ transfer.update(pettyRef,{balanceUGX:increment(20),lastPostingId:transferCredit,updatedAt:'2026-10-30'});
+ await assertSucceeds(transfer.commit());
+ const bankAfter=await getDoc(ar),pettyAfter=await getDoc(pettyRef);
+ if(bankAfter.data().balanceUGX!==130||pettyAfter.data().balanceUGX!==70)
+  throw new Error('Atomic portfolio transfer conservation failed.');
+ await assertFails(setDoc(doc(finance,'banking_records',transferDebit),{...entry,amount:20,accountDeltaUGX:-20,type:'outgoing'}));
  console.log('Finance Level 4 custom portfolio role/isolation PASSED; built-in and bank registrations remain fail-closed');
 }finally{await env.cleanup();}
