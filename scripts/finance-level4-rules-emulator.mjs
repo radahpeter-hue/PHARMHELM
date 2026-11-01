@@ -107,5 +107,28 @@ try{
   ...funding,accountId:pettyId,portfolioId:pettyId,kind:'petty_cash',
   portfolioClassification:'petty_cash',scope:{kind:'branch',branchId:'masaka'},openingBalanceUGX:0,balanceUGX:0}));
 
+
+ const pettyRef=doc(ceo,'finance_payment_accounts',tenant+'_'+pettyId);
+ const outId='portfolio_petty_out_01';
+ const outEntry={tenantId:tenant,portfolioId:pettyId,accountDocumentId:pettyRef.id,
+  accountDeltaUGX:-20,amount:20,type:'outgoing',source:'Portfolio reconciled movement',
+  postedBy:'finance_a',reference_number:'PETTY-OUT-01',createdAt:'2026-10-30',updatedAt:'2026-10-30'};
+ const overdraft=writeBatch(finance);
+ overdraft.set(doc(finance,'petty_cash_ledger',outId),outEntry);
+ overdraft.update(pettyRef,{balanceUGX:increment(-20),lastPostingId:outId,updatedAt:'2026-10-30'});
+ await assertFails(overdraft.commit());
+ const validId='portfolio_petty_in_01';
+ const incoming=writeBatch(finance);
+ incoming.set(doc(finance,'petty_cash_ledger',validId),{...outEntry,accountDeltaUGX:50,amount:50,type:'incoming',reference_number:'PETTY-IN-01'});
+ incoming.update(pettyRef,{balanceUGX:increment(50),lastPostingId:validId,updatedAt:'2026-10-30'});
+ await assertSucceeds(incoming.commit());
+ const replay=writeBatch(finance);
+ replay.set(doc(finance,'petty_cash_ledger',validId),{...outEntry,accountDeltaUGX:50,amount:50,type:'incoming',reference_number:'PETTY-IN-01'});
+ replay.update(pettyRef,{balanceUGX:increment(50),lastPostingId:validId,updatedAt:'2026-10-30'});
+ await assertFails(replay.commit());
+ const foreign=writeBatch(finance);
+ foreign.set(doc(finance,'petty_cash_ledger','portfolio_foreign_01'),{...outEntry,tenantId:other,accountDeltaUGX:50,amount:50,type:'incoming'});
+ foreign.update(pettyRef,{balanceUGX:increment(50),lastPostingId:'portfolio_foreign_01',updatedAt:'2026-10-30'});
+ await assertFails(foreign.commit());
  console.log('Finance Level 4 custom portfolio role/isolation PASSED; built-in and bank registrations remain fail-closed');
 }finally{await env.cleanup();}
