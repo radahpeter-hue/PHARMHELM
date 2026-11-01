@@ -197,7 +197,7 @@ export function FinancialPortfoliosPanel(){
   {activePortfolio&&activePortfolio.id!=='system_bank'&&<div className="rounded border border-zinc-200 p-3 text-sm">
    <h4 className="font-semibold">{activePortfolio.name}: Authoritative funding</h4>
    {!activeFunding?<p>Not reconciled. CEO must register a verified opening balance before transactions can be posted.</p>:
-    <p>Reconciled balance: UGX {activeFunding.balanceUGX.toLocaleString()}. Ref: {activeFunding.reconciliationReference}</p>}
+    <div><p>Reconciled balance: UGX {activeFunding.balanceUGX.toLocaleString()}. Ref: {activeFunding.reconciliationReference}</p><button type="button" className="mt-2 rounded border p-2" onClick={()=>setManagementSelected(activeFunding.id)}>View verified account ledger</button></div>}
    {canRegister&&!activeFunding&&<form onSubmit={initializeFunding} className="grid gap-2 sm:grid-cols-4">
      <input required aria-label="Funding name" placeholder="Account name" value={fundingName} onChange={e=>setFundingName(e.target.value)} className="border p-2"/>
      <input required aria-label="Opening UGX" type="number" min="0" step="1" value={fundingOpening} onChange={e=>setFundingOpening(e.target.value)} className="border p-2"/>
@@ -241,7 +241,7 @@ export function FinancialPortfoliosPanel(){
       {!treasury.accounts.length&&<p className="text-sm">No Management payment account has been reconciled.</p>}
      </div>}
     {managementSelected&&<div className="rounded border border-zinc-200 p-3 text-sm">
-      <h5 className="font-semibold">Authoritative Management ledger</h5>
+      <h5 className="font-semibold">Authoritative account ledger</h5>
       <div className="flex flex-wrap gap-2">
        <select aria-label="Ledger direction" value={direction} onChange={e=>setDirection(e.target.value as typeof direction)} className="border p-2"><option value="all">All movements</option><option value="inflow">Inflows</option><option value="outflow">Outflows</option></select>
        <input aria-label="Ledger from" type="date" value={period.from} onChange={e=>setPeriod(p=>({...p,from:e.target.value}))} className="border p-2"/>
