@@ -136,11 +136,11 @@ try{
  transfer.set(doc(finance,'banking_records',transferDebit),{
   ...entry,accountDeltaUGX:-20,amount:20,type:'outgoing',
   reference_number:'TRANSFER-EQUITY-MASAKA',transferCounterparty:pettyRef.id,linkedMovementId:transferCredit});
- transfer.update(ar,{balanceUGX:increment(-20),lastPostingId:transferDebit,updatedAt:'2026-10-30'});
+ transfer.update(doc(finance,'finance_payment_accounts',ar.id),{balanceUGX:increment(-20),lastPostingId:transferDebit,updatedAt:'2026-10-30'});
  transfer.set(doc(finance,'petty_cash_ledger',transferCredit),{
   ...outEntry,accountDeltaUGX:20,amount:20,type:'incoming',
   reference_number:'TRANSFER-EQUITY-MASAKA',transferCounterparty:ar.id,linkedMovementId:transferDebit});
- transfer.update(pettyRef,{balanceUGX:increment(20),lastPostingId:transferCredit,updatedAt:'2026-10-30'});
+ transfer.update(doc(finance,'finance_payment_accounts',pettyRef.id),{balanceUGX:increment(20),lastPostingId:transferCredit,updatedAt:'2026-10-30'});
  await assertSucceeds(transfer.commit());
  const bankAfter=await getDoc(ar),pettyAfter=await getDoc(pettyRef);
  if(bankAfter.data().balanceUGX!==130||pettyAfter.data().balanceUGX!==70)
