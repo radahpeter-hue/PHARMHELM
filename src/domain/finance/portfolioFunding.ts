@@ -127,18 +127,36 @@ export async function transferPortfolioFunding(input:{
  const creditCol=to.kind==='bank'?'banking_records':'petty_cash_ledger';
  const source=doc(database,'finance_payment_accounts',managementAccountDocumentId(from.tenantId,from.accountId));
  const destination=doc(database,'finance_payment_accounts',managementAccountDocumentId(to.tenantId,to.accountId));
- const debit=doc(database,debitCol,debitId),credit=doc(database,creditCol,creditId);
- return runTransaction(database,async tx=>{
-  const [src,dst,d,c]=await Promise.all([tx.get(source),tx.get(destination),tx.get(debit),tx.get(credit)]);
-  if(d.exists()||c.exists()){
-   if(d.exists()&&c.exists()&&d.data().tenantId===from.tenantId
-     &&d.data().accountDocumentId===source.id&&c.data().accountDocumentId===destination.id
-     &&d.data().amount===amountUGX&&c.data().amount===amountUGX
-     &&d.data().postedBy===actorId&&c.data().postedBy===actorId
-     &&d.data().reference_number===external&&c.data().reference_number===external)
-    return {replayed:true};
+ const getPair=async()=>{
+  const [debits,credits]=await Promise.all([
+   getDocs(query(collection(database,debitCol),where('tenantId','==',from.tenantId),
+    where('accountDocumentId','==',source.id))),
+   getDocs(query(collection(database,creditCol),where('tenantId','==',to.tenantId),
+    where('accountDocumentId','==',destination.id)))
+  ]);
+  return [debits.docs.find(d=>d.id===debitId)?.data(),
+   credits.docs.find(d=>d.id===creditId)?.data()] as const;
+ };
+ const inspectPair=(debit:Record<string,unknown>|undefined,credit:Record<string,unknown>|undefined)=>{
+  if(!debit&&!credit)return false;
+  if(!debit||!credit||debit.tenantId!==from.tenantId||credit.tenantId!==to.tenantId
+   ||debit.accountDocumentId!==source.id||credit.accountDocumentId!==destination.id
+   ||debit.amount!==amountUGX||credit.amount!==amountUGX
+   ||debit.accountDeltaUGX!==-amountUGX||credit.accountDeltaUGX!==amountUGX
+   ||debit.type!=='outgoing'||credit.type!=='incoming'
+   ||debit.postedBy!==actorId||credit.postedBy!==actorId
+   ||debit.reference_number!==external||credit.reference_number!==external
+   ||debit.linkedMovementId!==creditId||credit.linkedMovementId!==debitId)
    throw new Error('Transfer reference conflict or incomplete paired posting.');
-  }
+  return true;
+ };
+ // Query by tenant/account because a missing-ledger point read is not
+ // authorized by every legacy collection's Firestore Rules.
+ const [priorDebit,priorCredit]=await getPair();
+ if(inspectPair(priorDebit,priorCredit))return {replayed:true};
+ try{
+  return await runTransaction(database,async tx=>{
+   const [src,dst]=await Promise.all([tx.get(source),tx.get(destination)]);
   if(!src.exists()||!dst.exists()||src.data().tenantId!==from.tenantId
     ||dst.data().tenantId!==to.tenantId||src.data().accountId!==from.accountId
     ||dst.data().accountId!==to.accountId||src.data().kind!==from.kind
@@ -160,5 +178,11 @@ export async function transferPortfolioFunding(input:{
    transferCounterparty:source.id
   },database,to.accountId,actorId);
   return {replayed:false};
- });
+  });
+ }catch(error){
+  // One transaction wins; never post again until checking both immutable sides.
+  const [debit,credit]=await getPair();
+  if(inspectPair(debit,credit))return {replayed:true};
+  throw error;
+ }
 }
