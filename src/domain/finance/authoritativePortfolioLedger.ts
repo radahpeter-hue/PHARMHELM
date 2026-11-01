@@ -55,6 +55,10 @@ export async function loadAuthoritativePortfolioLedger(
  const all=snapshot.docs.map(row=>mapAuthoritativeMovement(row.id,row.data(),account));
  const ids=new Set(all.map(e=>e.id));
  if(ids.size!==all.length)throw new Error('Duplicate posting identities.');
+ const movementSum=all.reduce((total,e)=>total+(e.direction==='inflow'?e.amountUGX:-e.amountUGX),0);
+ const calculatedBalance=account.openingBalanceUGX+movementSum;
+ if(!Number.isSafeInteger(calculatedBalance)||calculatedBalance!==account.balanceUGX)
+  throw new Error('Authoritative balance does not reconcile with immutable postings.');
  return {account,currentBalanceUGX:account.balanceUGX,openingBalanceUGX:account.openingBalanceUGX,
   reconciliationReference:account.reconciliationReference,
   entries:all.filter(e=>e.businessDate>=period.from&&e.businessDate<=period.to&&
