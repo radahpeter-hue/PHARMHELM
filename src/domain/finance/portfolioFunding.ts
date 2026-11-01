@@ -80,8 +80,8 @@ export async function postPortfolioFundingMovement(input:{
  // Use a tenant-scoped query. Firestore Rules intentionally deny reading a
  // nonexistent ledger document, and create-only rules prevent a second posting.
  const existing=await getDocs(query(collection(database,ledgerPath),
-  where('tenantId','==',a.tenantId),where('accountDocumentId','==',managementAccountDocumentId(a.tenantId,a.accountId))));
- const prior=existing.docs.find(d=>d.id===ledgerId);
+  where('tenantId','==',a.tenantId)));
+ const prior=existing.docs.find(d=>d.id===ledgerId&&d.data().accountDocumentId===managementAccountDocumentId(a.tenantId,a.accountId));
  if(prior){if(!matches(prior.data()))throw new Error('Posting reference conflict.');return;}
  try{
   await runTransaction(database,async tx=>{
@@ -94,8 +94,8 @@ export async function postPortfolioFundingMovement(input:{
   // Concurrent same-reference requests can race. Never retry a financial write
   // until the existing committed record has been inspected and compared.
   const after=await getDocs(query(collection(database,ledgerPath),
-   where('tenantId','==',a.tenantId),where('accountDocumentId','==',managementAccountDocumentId(a.tenantId,a.accountId))));
-  const winner=after.docs.find(d=>d.id===ledgerId);
+   where('tenantId','==',a.tenantId)));
+  const winner=after.docs.find(d=>d.id===ledgerId&&d.data().accountDocumentId===managementAccountDocumentId(a.tenantId,a.accountId));
   if(winner){if(!matches(winner.data()))throw new Error('Posting reference conflict.');return;}
   throw error;
  }
