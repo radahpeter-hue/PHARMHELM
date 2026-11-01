@@ -7,7 +7,7 @@ test('portfolio ledger posting does not read nonexistent document in transaction
  const fn=source.split('export async function postPortfolioFundingMovement')[1].split('export async function listPortfolioFundingAccounts')[0];
  assert.doesNotMatch(fn,/tx\.get\(ledgerRef\)/);
  assert.match(fn,/where\('tenantId','==',a\.tenantId\)/);
- assert.match(fn,/where\('accountDocumentId','==',managementAccountDocumentId/);
+ assert.match(fn,/d\.data\(\)\.accountDocumentId===managementAccountDocumentId/);
  assert.match(fn,/if\(!matches\(prior\.data\(\)\)\)/);
  assert.match(fn,/if\(!matches\(winner\.data\(\)\)\)/);
 });
