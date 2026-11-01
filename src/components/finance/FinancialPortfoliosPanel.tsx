@@ -1,4 +1,4 @@
-import {registerPortfolioFunding,postPortfolioFundingMovement,portfolioPostingIdentity,type PortfolioFundingAccount} from '../../domain/finance/portfolioFunding';
+import {registerPortfolioFunding,postPortfolioFundingMovement,portfolioPostingIdentity,transferPortfolioFunding,type PortfolioFundingAccount} from '../../domain/finance/portfolioFunding';
 import {loadPosChannelEvidence,type PosChannelEvidence} from '../../domain/finance/portfolioPosEvidence';
 import {loadEodChannelEvidence,type ReconciliationEvidence,type EodChannel} from '../../domain/finance/portfolioEodEvidence';
 import {projectPortfolioBalances} from '../../domain/finance/portfolioWideView';
@@ -28,6 +28,9 @@ export function FinancialPortfoliosPanel(){
  const [fundingOpening,setFundingOpening]=useState('');
  const [fundingReference,setFundingReference]=useState('');
  const [movementAmount,setMovementAmount]=useState('');
+ const [transferTo,setTransferTo]=useState('');
+ const [transferAmount,setTransferAmount]=useState('');
+ const [transferReference,setTransferReference]=useState('');
  const [movementReference,setMovementReference]=useState('');
  const [movementDirection,setMovementDirection]=useState<'inflow'|'outflow'>('inflow');
  const [classification,setClassification]=useState<FinancialPortfolioClassification>('restricted_internal_fund');
@@ -154,6 +157,19 @@ export function FinancialPortfoliosPanel(){
   }catch(e){setMessage(e instanceof Error?e.message:'Portfolio movement failed.');}
   finally{setBusy(false);}
  }
+ async function submitTransfer(e:React.FormEvent){
+  e.preventDefault();if(!activeFunding||!canRegister||!profile?.uid||busy)return;
+  const target=treasury.accounts.find(a=>a.accountId===transferTo&&a.tenantId===tenantId&&a.portfolioId===transferTo) as PortfolioFundingAccount|undefined;
+  if(!target){setMessage('Select a reconciled destination portfolio.');return;}
+  setBusy(true);setMessage('');
+  try{
+   const result=await transferPortfolioFunding({from:activeFunding,to:target,actorId:profile.uid,
+    amountUGX:Number(transferAmount),externalReference:transferReference});
+   setMessage(result.replayed?'Transfer already posted; no duplicate was created.':'Both portfolio ledgers and balances transferred atomically.');
+   setTransferAmount('');setTransferReference('');
+  }catch(e){setMessage(e instanceof Error?e.message:'Portfolio transfer failed.');}
+  finally{setBusy(false);}
+ }
  const evidenceChannel:EodChannel|null=selected.startsWith('system_branch_cash_sales_')?'cash':
   selected==='system_mtn_mobile_money'?'momo':selected==='system_airtel_mobile_money'?'airtel':null;
  useEffect(()=>{
@@ -211,6 +227,17 @@ export function FinancialPortfoliosPanel(){
     <button disabled={busy} className="rounded border p-2">Record verified movement</button>
    </form>}
   </div>}
+  {canRegister&&activeFunding&&<form onSubmit={submitTransfer} className="rounded border border-zinc-200 p-3 grid gap-2 sm:grid-cols-4">
+    <h4 className="font-semibold sm:col-span-4">Transfer between reconciled portfolios</h4>
+    <select required aria-label="Destination portfolio" value={transferTo} onChange={e=>setTransferTo(e.target.value)} className="border p-2">
+      <option value="">Select destination account</option>
+      {treasury.accounts.filter(a=>a.tenantId===tenantId&&a.portfolioId===a.accountId&&a.accountId!==activeFunding.accountId&&a.initialized).map(a=>
+       <option key={a.id} value={a.accountId}>{a.name}</option>)}
+    </select>
+    <input required aria-label="Transfer UGX" type="number" min="1" step="1" value={transferAmount} onChange={e=>setTransferAmount(e.target.value)} className="border p-2"/>
+    <input required minLength={5} aria-label="Transfer bank reference" value={transferReference} onChange={e=>setTransferReference(e.target.value)} placeholder="External reference" className="border p-2"/>
+    <button disabled={busy} className="rounded border p-2">Transfer atomically</button>
+   </form>}
   {evidenceChannel&&<div className="rounded border border-zinc-200 p-3 text-sm">
    <h4 className="font-semibold">Canonical POS V2 settled-payment evidence</h4>
    <p>Receipt components only. This does not include legacy POS or revisions and is not the available wallet/cash balance.</p>
