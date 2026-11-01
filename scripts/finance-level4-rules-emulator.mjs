@@ -84,6 +84,10 @@ try{
  await assertSucceeds(setDoc(ar,funding));
  await assertSucceeds(getDoc(doc(finance,'finance_payment_accounts',tenant+'_'+id)));
  await assertFails(setDoc(doc(finance,'finance_payment_accounts',tenant+'_bank_'+'b'.repeat(64)),{...funding,accountId:'bank_'+'b'.repeat(64),portfolioId:'bank_'+'b'.repeat(64),registeredBy:'finance_a'}));
+ // Idempotent posting must be able to inspect an absent ledger ID without
+ // granting arbitrary cross-tenant reads of an existing posting.
+ await assertSucceeds(getDoc(doc(finance,'banking_records','portfolio_missing_posting')));
+ await assertSucceeds(getDoc(doc(finance,'petty_cash_ledger','portfolio_missing_cash_posting')));
  const movementId='portfolio_bank_test_payment';
  const entry={tenantId:tenant,portfolioId:id,accountDocumentId:ar.id,
   accountDeltaUGX:50,amount:50,type:'incoming',source:'Portfolio reconciled movement',
