@@ -96,7 +96,7 @@ export async function listPortfolioFundingAccounts(tenantId:string,database:Fire
  * A repeated external transfer reference is a replay, never a second movement.
  */
 export async function transferPortfolioFunding(input:{
- from:PortfolioFundingAccount;to:PortfolioFundingAccount;actorId:string;
+ from:ManagementPaymentAccount;to:ManagementPaymentAccount;actorId:string;
  amountUGX:number;externalReference:string
 },database:Firestore=db):Promise<{replayed:boolean}>{
  const {from,to,actorId,amountUGX,externalReference}=input;
