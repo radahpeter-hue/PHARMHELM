@@ -549,7 +549,7 @@ service cloud.firestore {
         && (isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash()))
         && after.diff(before).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
         && after.balanceUGX is int && after.balanceUGX >= 0 && after.balanceUGX <= 9007199254740991
-        && after.lastPostingId is string && !exists(movementPath)
+        && !exists(movementPath)
         && movement.tenantId == before.tenantId && movement.accountDocumentId == accountId
         && after.balanceUGX == before.balanceUGX + movement.accountDeltaUGX;
     }
