@@ -327,7 +327,7 @@ export function FinancialPortfoliosPanel(){
   </div>
   {canRegister&&selectedPortfolio&&selectedPortfolio.origin==='custom'&&<div className="rounded border p-3 text-sm">
    <h4 className="font-semibold">Custom portfolio lifecycle controls</h4>
-   <p>Deactivate only after settling its reconciled balance. Reactivation retains the original identity and financial history.</p>
+   <p>Only never-funded portfolios may be retired. Funded portfolios and their financial history remain active and immutable. Reactivation restores the original identity.</p>
    <button type="button" disabled={busy} onClick={()=>changeCustomStatus(selectedPortfolio)} className="mt-2 rounded border p-2">{selectedPortfolio.status==='active'?'Deactivate portfolio':'Reactivate portfolio'}</button>
 
   </div>}
