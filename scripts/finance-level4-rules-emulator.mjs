@@ -2,6 +2,9 @@ import {readFileSync} from 'node:fs';
 import {initializeTestEnvironment,assertFails,assertSucceeds} from '@firebase/rules-unit-testing';
 import {doc,setDoc,updateDoc,deleteDoc,deleteField,getDoc,getDocs,query,collection,where,writeBatch,increment} from 'firebase/firestore';
 const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-l4-portfolio-test',firestore:{rules:readFileSync('firestore.rules','utf8')}});
+const originalAssertSucceeds=assertSucceeds;
+let successStep=0;
+const checkedSucceeds=async promise=>{const step=++successStep;try{return await originalAssertSucceeds(promise);}catch(error){console.error('Finance Level 4 emulator unexpected denial at successful-operation step',step);throw error;}};
 const tenant='tenant_a',other='tenant_b';
 const row=(uid,id='custom_emergency',tenantId=tenant)=>({
  id,tenantId,name:'Emergency Fund',classification:'restricted_internal_fund',
@@ -25,9 +28,9 @@ try{
  const ceo=env.authenticatedContext('ceo_a',{tenantId:tenant}).firestore();
  const finance=env.authenticatedContext('finance_a',{tenantId:tenant}).firestore();
  const otherDb=env.authenticatedContext('ceo_b',{tenantId:other}).firestore();
- await assertSucceeds(setDoc(ref(ceo),row('ceo_a')));
- await assertSucceeds(getDoc(ref(finance)));
- await assertSucceeds(getDocs(query(collection(finance,'finance_portfolios_v1'),where('tenantId','==',tenant),where('scope.kind','==','organisation'))));
+ await checkedSucceeds(setDoc(ref(ceo),row('ceo_a')));
+ await checkedSucceeds(getDoc(ref(finance)));
+ await checkedSucceeds(getDocs(query(collection(finance,'finance_portfolios_v1'),where('tenantId','==',tenant),where('scope.kind','==','organisation'))));
  await assertFails(setDoc(ref(ceo,tenant,'masaka_fund'),{...row('ceo_a','masaka_fund'),scope:{kind:'branch',branchId:'masaka'}}));
 
 
@@ -55,16 +58,16 @@ try{
  const bank={...row('ceo_a','bank_opaque_1'),classification:'bank',name:'Equity Operating',
   description:'Bank identity',bankInstitution:'EQUITY',bankAccountReference:'123456',
   bankParentId:'system_bank',allowsTransfersIn:false,allowsTransfersOut:false};
- await assertSucceeds(setDoc(ref(ceo,tenant,bank.id),bank));
- await assertSucceeds(getDoc(ref(finance,tenant,bank.id)));
- await assertSucceeds(setDoc(ref(ceo,tenant,bank.id),bank)); // Idempotent identical identity
+ await checkedSucceeds(setDoc(ref(ceo,tenant,bank.id),bank));
+ await checkedSucceeds(getDoc(ref(finance,tenant,bank.id)));
+ await checkedSucceeds(setDoc(ref(ceo,tenant,bank.id),bank)); // Idempotent identical identity
  await assertFails(setDoc(ref(ceo,tenant,bank.id),{...bank,name:'Changed bank'}));
  await assertFails(updateDoc(ref(finance,tenant,bank.id),{status:'inactive',updatedBy:'finance_a'}));
  await assertFails(updateDoc(ref(ceo,tenant,bank.id),{bankAccountReference:'9999'}));
- await assertSucceeds(updateDoc(ref(ceo,tenant,bank.id),{status:'inactive',updatedBy:'ceo_a',
+ await checkedSucceeds(updateDoc(ref(ceo,tenant,bank.id),{status:'inactive',updatedBy:'ceo_a',
  updatedAt:'2026-10-30T09:00:00Z',deactivatedBy:'ceo_a',deactivatedAt:'2026-10-30T09:00:00Z',deactivationReason:'closed'}));
  await assertFails(updateDoc(ref(otherDb,tenant,bank.id),{status:'active',updatedBy:'ceo_b'}));
- await assertSucceeds(updateDoc(ref(ceo,tenant,bank.id),{status:'active',updatedBy:'ceo_a',
+ await checkedSucceeds(updateDoc(ref(ceo,tenant,bank.id),{status:'active',updatedBy:'ceo_a',
  updatedAt:'2026-10-30T10:00:00Z',deactivatedBy:deleteField(),deactivatedAt:deleteField(),deactivationReason:deleteField()}));
  await assertFails(deleteDoc(ref(ceo,tenant,bank.id)));
 
@@ -72,7 +75,7 @@ try{
  const bankRegistry={...row('ceo_a',id),classification:'bank',name:'Registered Equity',
   description:'Registered bank',bankInstitution:'EQUITY',bankAccountReference:'987655123',
   bankParentId:'system_bank',allowsTransfersIn:false,allowsTransfersOut:false};
- await assertSucceeds(setDoc(ref(ceo,tenant,id),bankRegistry));
+ await checkedSucceeds(setDoc(ref(ceo,tenant,id),bankRegistry));
  const ar=doc(ceo,'finance_payment_accounts',tenant+'_'+id);
  const funding={tenantId:tenant,accountId:id,portfolioId:id,kind:'bank',
   portfolioClassification:'bank',scope:{kind:'organisation'},name:'Equity Operating',
@@ -81,13 +84,13 @@ try{
   lastPostingId:null,controlVersion:1};
  await assertFails(setDoc(doc(ceo,'finance_payment_accounts',tenant+'_bank_'+'b'.repeat(64)),
   {...funding,accountId:'bank_'+'b'.repeat(64),portfolioId:'bank_'+'b'.repeat(64)}));
- await assertSucceeds(setDoc(ar,funding));
- await assertSucceeds(getDoc(doc(finance,'finance_payment_accounts',tenant+'_'+id)));
+ await checkedSucceeds(setDoc(ar,funding));
+ await checkedSucceeds(getDoc(doc(finance,'finance_payment_accounts',tenant+'_'+id)));
  await assertFails(setDoc(doc(finance,'finance_payment_accounts',tenant+'_bank_'+'b'.repeat(64)),{...funding,accountId:'bank_'+'b'.repeat(64),portfolioId:'bank_'+'b'.repeat(64),registeredBy:'finance_a'}));
  // Idempotent posting must be able to inspect an absent ledger ID without
  // granting arbitrary cross-tenant reads of an existing posting.
- await assertSucceeds(getDoc(doc(finance,'banking_records','portfolio_missing_posting')));
- await assertSucceeds(getDoc(doc(finance,'petty_cash_ledger','portfolio_missing_cash_posting')));
+ await checkedSucceeds(getDoc(doc(finance,'banking_records','portfolio_missing_posting')));
+ await checkedSucceeds(getDoc(doc(finance,'petty_cash_ledger','portfolio_missing_cash_posting')));
  const movementId='portfolio_bank_test_payment';
  const entry={tenantId:tenant,portfolioId:id,accountDocumentId:ar.id,
   accountDeltaUGX:50,amount:50,type:'incoming',source:'Portfolio reconciled movement',
@@ -95,19 +98,19 @@ try{
  const fbatch=writeBatch(finance);
  fbatch.set(doc(finance,'banking_records',movementId),entry);
  fbatch.update(doc(finance,'finance_payment_accounts',tenant+'_'+id),{balanceUGX:increment(50),lastPostingId:movementId,updatedAt:'2026-10-30'});
- await assertSucceeds(fbatch.commit());
+ await checkedSucceeds(fbatch.commit());
  await assertFails(setDoc(doc(finance,'banking_records','forged_deposit'),{...entry,accountDeltaUGX:999,amount:999}));
  await assertFails(updateDoc(doc(finance,'finance_payment_accounts',tenant+'_'+id),{balanceUGX:1000000}));
  await assertFails(getDoc(doc(otherDb,'finance_payment_accounts',tenant+'_'+id)));
  const momoId='system_mtn_mobile_money';
  const momoRef=doc(ceo,'finance_payment_accounts',tenant+'_'+momoId);
- await assertSucceeds(setDoc(momoRef,{...funding,accountId:momoId,portfolioId:momoId,
+ await checkedSucceeds(setDoc(momoRef,{...funding,accountId:momoId,portfolioId:momoId,
   portfolioClassification:'mobile_money',kind:'bank',scope:{kind:'organisation'},openingBalanceUGX:0,balanceUGX:0}));
  await assertFails(setDoc(doc(finance,'finance_payment_accounts',tenant+'_system_airtel_mobile_money'),{
   ...funding,accountId:'system_airtel_mobile_money',portfolioId:'system_airtel_mobile_money',
   kind:'bank',portfolioClassification:'mobile_money',registeredBy:'finance_a'}));
  const pettyId='system_petty_cash_masaka';
- await assertSucceeds(setDoc(doc(ceo,'finance_payment_accounts',tenant+'_'+pettyId),{
+ await checkedSucceeds(setDoc(doc(ceo,'finance_payment_accounts',tenant+'_'+pettyId),{
   ...funding,accountId:pettyId,portfolioId:pettyId,kind:'petty_cash',
   portfolioClassification:'petty_cash',scope:{kind:'branch',branchId:'masaka'},openingBalanceUGX:0,balanceUGX:0}));
 
@@ -125,7 +128,7 @@ try{
  const incoming=writeBatch(finance);
  incoming.set(doc(finance,'petty_cash_ledger',validId),{...outEntry,accountDeltaUGX:50,amount:50,type:'incoming',reference_number:'PETTY-IN-01'});
  incoming.update(doc(finance,'finance_payment_accounts',pettyRef.id),{balanceUGX:increment(50),lastPostingId:validId,updatedAt:'2026-10-30'});
- await assertSucceeds(incoming.commit());
+ await checkedSucceeds(incoming.commit());
  const replay=writeBatch(finance);
  replay.set(doc(finance,'petty_cash_ledger',validId),{...outEntry,accountDeltaUGX:50,amount:50,type:'incoming',reference_number:'PETTY-IN-01'});
  replay.update(doc(finance,'finance_payment_accounts',pettyRef.id),{balanceUGX:increment(50),lastPostingId:validId,updatedAt:'2026-10-30'});
@@ -145,7 +148,7 @@ try{
   ...outEntry,accountDeltaUGX:20,amount:20,type:'incoming',
   reference_number:'TRANSFER-EQUITY-MASAKA',transferCounterparty:ar.id,linkedMovementId:transferDebit});
  transfer.update(doc(finance,'finance_payment_accounts',pettyRef.id),{balanceUGX:increment(20),lastPostingId:transferCredit,updatedAt:'2026-10-30'});
- await assertSucceeds(transfer.commit());
+ await checkedSucceeds(transfer.commit());
  const bankAfter=await getDoc(ar),pettyAfter=await getDoc(pettyRef);
  if(bankAfter.data().balanceUGX!==130||pettyAfter.data().balanceUGX!==70)
   throw new Error('Atomic portfolio transfer conservation failed.');
