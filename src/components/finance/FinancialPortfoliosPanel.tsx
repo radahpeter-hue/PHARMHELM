@@ -1,3 +1,5 @@
+import {settleReconciledEod} from '../../domain/finance/eodPortfolioSettlement';
+import {eodIdentity} from '../../utils/eodShifts';
 import {readBranchCardSettlement,saveBranchCardSettlement} from '../../domain/finance/branchCardSettlement';
 import {registerPortfolioFunding,postPortfolioFundingMovement,portfolioPostingIdentity,transferPortfolioFunding,type PortfolioFundingAccount} from '../../domain/finance/portfolioFunding';
 import {loadPosChannelEvidence,type PosChannelEvidence} from '../../domain/finance/portfolioPosEvidence';
@@ -44,6 +46,8 @@ export function FinancialPortfoliosPanel(){
  const [busy,setBusy]=useState(false);
  const [selected,setSelected]=useState('');
  const [managementSelected,setManagementSelected]=useState('');
+ const [settlementDate,setSettlementDate]=useState(new Date().toISOString().slice(0,10));
+ const [settlementShift,setSettlementShift]=useState('dayShift');
  const [cardDestination,setCardDestination]=useState('');
  const [savedCardDestination,setSavedCardDestination]=useState('');
  const [cardConfigError,setCardConfigError]=useState('');
@@ -104,6 +108,17 @@ export function FinancialPortfoliosPanel(){
    setSavedCardDestination(bank.id);
    setMessage('Branch default card account saved. This configuration does not post or move money.');
   }catch(error){setCardConfigError(error instanceof Error?error.message:'Card account configuration failed.');}
+  finally{setBusy(false);}
+ }
+ async function settleEod(event:React.FormEvent){
+  event.preventDefault();
+  if(!activeBranchId||!tenantId||!profile?.uid||busy)return;
+  setBusy(true);setMessage('');
+  try{
+   const reconciliationId=eodIdentity(tenantId,activeBranchId,settlementDate,settlementShift);
+   const result=await settleReconciledEod({tenantId,branchId:activeBranchId,reconciliationId,actorId:profile.uid});
+   setMessage(result.replayed?'EOD settlement already posted. No duplicate movements.':`Posted ${result.postings} verified EOD channel movement(s). Refresh portfolio ledger.`);
+  }catch(error){setMessage(error instanceof Error?error.message:'EOD portfolio settlement was rejected.');}
   finally{setBusy(false);}
  }
  async function registerBankAccount(event:React.FormEvent){
@@ -250,6 +265,17 @@ export function FinancialPortfoliosPanel(){
     <button type="submit" disabled={busy||!cardDestination} className="rounded bg-emerald-800 px-3 py-2 font-semibold text-white">Save branch default</button>
    </form>}
   </div>}
+  {activeBranchId&&hasAnyRole(profile,['Finance Head','Finance Officer','Accountant','CEO','CEO / MD','owner'])&&<form onSubmit={settleEod} className="rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 space-y-2">
+   <h4 className="font-semibold">Post submitted EOD to reconciled portfolios</h4>
+   <p className="text-xs text-zinc-600">Finance-controlled settlement only. All nonzero destinations must first have verified opening balances; repeat submissions cannot double post.</p>
+   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+    <input type="date" aria-label="EOD settlement business date" required value={settlementDate} onChange={e=>setSettlementDate(e.target.value)} className="min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900"/>
+    <select aria-label="EOD settlement shift" value={settlementShift} onChange={e=>setSettlementShift(e.target.value)} className="min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900">
+     <option value="dayShift">Day shift</option><option value="eveningShift">Evening shift</option><option value="nightShift">Night shift</option>
+    </select>
+    <button type="submit" disabled={busy} className="rounded bg-emerald-800 p-2 font-semibold text-white">Post reconciled EOD</button>
+   </div>
+  </form>}
   <div className="space-y-2">
    <h4 className="font-semibold text-zinc-900">Portfolio-wide funding coverage</h4>
    <p className="text-xs text-zinc-600">System categories shown as a read-only projection. Unavailable is not zero. Branch cash and mobile money require separately reconciled posting evidence.</p>
