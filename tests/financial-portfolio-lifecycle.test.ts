@@ -37,7 +37,7 @@ test('Changes 051 and 055 hard deletion is forbidden for system objects and hist
  assert.throws(()=>assertUnusedPortfolioCanBeDeleted(systemPortfolio,zero),/Built-in/);
  assert.throws(()=>assertUnusedPortfolioCanBeDeleted(p,{...zero,childMovementCount:1}),/history/);
  assert.throws(()=>assertUnusedChildAccountCanBeDeleted(account,{...zero,transferCount:1}),/history/);
- assert.throws(()=>assertUnusedChildAccountCanBeDeleted(account,{...zero,currentBalanceUGX:-1}),/history/);
+ assert.throws(()=>assertUnusedChildAccountCanBeDeleted(account,{...zero,currentBalanceUGX:-1}),/Incomplete/);
  assert.throws(()=>assertUnusedChildAccountCanBeDeleted(account,{...zero,ledgerEntryCount:NaN}),/Incomplete/);
 });
 
