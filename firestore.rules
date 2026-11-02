@@ -537,7 +537,7 @@ service cloud.firestore {
       let target = channel == 'cash' ? 'system_branch_cash_sales_' + audit.branch_id
         : channel == 'momo' ? 'system_mtn_mobile_money'
         : channel == 'airtel' ? 'system_airtel_mobile_money' : branch.cardSettlement.bankPortfolioId;
-      return !exists(path) && canOperateBranchFinance() && isTenantMember(audit.tenantId)
+      return !exists(path)
         && (audit.branch_id in operator.get('assigned_branches', []) || operator.get('branch_id', '') == audit.branch_id || isFinance())
         && branch.tenantId == audit.tenantId && operator.tenantId == audit.tenantId
         && audit.financial_posting == 'portfolios_v1' && audit.cashier_id == request.auth.uid
@@ -566,7 +566,7 @@ service cloud.firestore {
         && data.amount is int && data.amount > 0
         && data.type in ['incoming','deposit','topup','outgoing','withdrawal']
         && data.accountDeltaUGX == (data.type in ['incoming','deposit','topup'] ? data.amount : -data.amount)
-        && (data.accountDeltaUGX <= 0 || (data.get('eodChannel', '') != '' && validBranchEodMovement(id, data)) || isFinance() || isHR())
+        && (data.accountDeltaUGX <= 0 || before.accountId != 'management_petty_cash' || isFinance() || isHR())
         && before.kind == kind
         && after.lastPostingId == id
         && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX;
