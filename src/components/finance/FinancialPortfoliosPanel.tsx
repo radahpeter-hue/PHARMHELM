@@ -8,7 +8,7 @@ import {useManagementPaymentAccounts} from './ManagementPaymentAccounts';
 import React,{useEffect,useState} from 'react';
 import {useAuth} from '../../contexts/AuthContext';
 import {
- listFinancialPortfolios,createCustomFinancialPortfolio,registerPortfolioBankIdentity,registeredBankAccounts,setRegisteredBankAccountActive
+ listFinancialPortfolios,createCustomFinancialPortfolio,registerPortfolioBankIdentity,registeredBankAccounts,setRegisteredBankAccountActive,setCustomPortfolioActive
 } from '../../domain/finance/portfolioFirestore';
 import {defaultLedgerQuery} from '../../domain/finance/portfolioLedger';
 import type {FinancialPortfolio,FinancialPortfolioClassification} from '../../domain/finance/financialPortfolio';
@@ -95,6 +95,19 @@ export function FinancialPortfoliosPanel(){
      setMessage('Bank account identity registered. Reconciled balance and posting are not yet enabled.');
    }catch(error){setMessage(error instanceof Error?error.message:'Bank registration failed.');}
    finally{setBusy(false);}
+ }
+ async function changeCustomStatus(portfolio:FinancialPortfolio){
+  if(!canRegister||busy||!profile?.uid)return;
+  const deactivate=portfolio.status==='active';
+  const reason=deactivate?window.prompt('Reason for deactivating this portfolio:'):'';
+  if(deactivate&&!reason?.trim())return;
+  setBusy(true);setMessage('');
+  try{
+   const updated=await setCustomPortfolioActive(portfolio,!deactivate,profile.uid,reason||'');
+   setItems(old=>old.map(p=>p.id===updated.id?updated:p));
+   setMessage(deactivate?'Portfolio deactivated. Historical records retained.':'Portfolio reactivated with original identity.');
+  }catch(error){setMessage(error instanceof Error?error.message:'Portfolio status change failed.');}
+  finally{setBusy(false);}
  }
  async function changeBankStatus(bank:FinancialPortfolio){
    if(!canRegister||busy)return;
@@ -310,6 +323,11 @@ export function FinancialPortfoliosPanel(){
     <p className="text-xs font-semibold">Balance: not established</p></button>)}
    {!items.length&&<p className="text-sm text-zinc-600">No custom portfolios registered for this scope.</p>}
   </div>
+  {canRegister&&selectedPortfolio&&selectedPortfolio.origin==='custom'&&<div className="rounded border p-3 text-sm">
+   <h4 className="font-semibold">Custom portfolio lifecycle controls</h4>
+   <p>Deactivate only after settling its reconciled balance. Reactivation retains the original identity and financial history.</p>
+   <button type="button" disabled={busy} onClick={()=>changeCustomStatus(selectedPortfolio)} className="mt-2 rounded border p-2">{selectedPortfolio.status==='active'?'Deactivate portfolio':'Reactivate portfolio'}</button>
+  </div>}
   {selectedPortfolio&&<div className="rounded-lg border border-zinc-300 p-3 space-y-3 text-sm text-zinc-800">
    <strong>{selectedPortfolio.name} — Account overview</strong>
    <p>{childAccounts.length} child accounts. Authoritative ledger posting and child-account registration are not yet enabled.</p>
