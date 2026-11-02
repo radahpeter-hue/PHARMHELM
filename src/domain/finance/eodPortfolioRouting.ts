@@ -35,6 +35,7 @@ export function planEodPortfolioRouting(input:EodRoutingInput):EodRoutingPlanEnt
  const result:EodRoutingPlanEntry[]=[];
  for(const channel of ['cash','momo','airtel','card'] as const) {
   const amountUGX=eodAmountNumber(actual[channel]);
+  if(!Number.isSafeInteger(amountUGX)||amountUGX<0)throw new Error('Authoritative EOD posting requires nonnegative whole UGX; fractional amounts must be reconciled separately.');
   if(amountUGX===0)continue;
   const accountId=destinations[channel];
   if(!accountId)throw new Error('Card sales have no configured branch settlement bank account.');
