@@ -586,7 +586,10 @@ service cloud.firestore {
       function eligiblePortfolioAccount(data) {
         return isCEO() && data.portfolioId == data.accountId
           && data.kind in ['bank','petty_cash']
-          && (data.accountId.matches('^system_(mtn_mobile_money|airtel_mobile_money|branch_cash_sales_[A-Za-z0-9_-]+|petty_cash_[A-Za-z0-9_-]+)$')
+          && ((data.accountId in ['system_mtn_mobile_money','system_airtel_mobile_money']
+            || (data.scope.kind == 'branch' && data.accountId in [
+              'system_branch_cash_sales_' + data.scope.branchId,
+              'system_petty_cash_' + data.scope.branchId]))
             || exists(/databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId)));
       }
       allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
