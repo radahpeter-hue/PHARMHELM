@@ -21,7 +21,7 @@ export async function settleReconciledEod(input:{
  const initial=auditSnapshot.data();
  if(eodIdentity(initial.tenantId,initial.branch_id,initial.reconciliation_date,initial.shift_id)!==reconciliationId)
   throw Error('EOD identity mismatch.');
- const bankId=initial.card_settlement_account_id as string|undefined;
+ const bankId=(initial.card_settlement_account_id||null) as string|null;
  const plan=planEodPortfolioRouting({tenantId,branchId,reconciliationId,cardBankPortfolioId:bankId,
   actual:{cash:initial.cash_actual,momo:initial.momo_actual,airtel:initial.airtel_actual,card:initial.card_actual}});
  const ids=await Promise.all(plan.map(async p=>{
@@ -39,7 +39,7 @@ export async function settleReconciledEod(input:{
    if(audit.data()[channel+'_actual']!==initial[channel+'_actual'])throw Error('EOD was corrected. Restart settlement.');
   }
   if(!liveBranch.exists()||liveBranch.data().tenantId!==tenantId||
-   audit.data().card_settlement_account_id!==bankId)throw Error('EOD routing evidence changed.');
+   (audit.data().card_settlement_account_id||null)!==bankId)throw Error('EOD routing evidence changed.');
   const ledgerRefs=plan.map((p,i)=>doc(database,accounts[i]?.data()?.kind==='bank'?'banking_records':'petty_cash_ledger',ids[i]));
   const previous=await Promise.all(ledgerRefs.map(ref=>tx.get(ref)));
   const existing=previous.filter(x=>x.exists()).length;
