@@ -1,3 +1,4 @@
+import {readBranchCardSettlement,saveBranchCardSettlement} from '../../domain/finance/branchCardSettlement';
 import {registerPortfolioFunding,postPortfolioFundingMovement,portfolioPostingIdentity,transferPortfolioFunding,type PortfolioFundingAccount} from '../../domain/finance/portfolioFunding';
 import {loadPosChannelEvidence,type PosChannelEvidence} from '../../domain/finance/portfolioPosEvidence';
 import {loadEodChannelEvidence,type ReconciliationEvidence,type EodChannel} from '../../domain/finance/portfolioEodEvidence';
@@ -43,6 +44,9 @@ export function FinancialPortfoliosPanel(){
  const [busy,setBusy]=useState(false);
  const [selected,setSelected]=useState('');
  const [managementSelected,setManagementSelected]=useState('');
+ const [cardDestination,setCardDestination]=useState('');
+ const [savedCardDestination,setSavedCardDestination]=useState('');
+ const [cardConfigError,setCardConfigError]=useState('');
  const [eodEvidence,setEodEvidence]=useState<ReconciliationEvidence[]|null>(null);
  const [eodError,setEodError]=useState('');
  const [posEvidence,setPosEvidence]=useState<PosChannelEvidence[]|null>(null);
@@ -82,6 +86,26 @@ export function FinancialPortfoliosPanel(){
  const selectedPortfolio=items.find(p=>p.id===selected);
  const childAccounts=accounts.filter(a=>a.portfolioId===selectedPortfolio?.id);
 
+ useEffect(()=>{
+  let live=true;setSavedCardDestination('');setCardDestination('');setCardConfigError('');
+  if(!tenantId||!activeBranchId)return;
+  readBranchCardSettlement(tenantId,activeBranchId).then(config=>{
+   if(live){setSavedCardDestination(config?.bankPortfolioId||'');setCardDestination(config?.bankPortfolioId||'');}
+  }).catch(error=>{if(live)setCardConfigError(error instanceof Error?error.message:'Unable to load card configuration.');});
+  return ()=>{live=false;};
+ },[tenantId,activeBranchId]);
+ async function saveCardDestination(event:React.FormEvent){
+  event.preventDefault();if(!canRegister||busy||!profile?.uid||!activeBranchId)return;
+  const bank=items.find(p=>p.id===cardDestination);
+  if(!bank){setCardConfigError('Choose an active registered bank account.');return;}
+  setBusy(true);setCardConfigError('');
+  try{
+   await saveBranchCardSettlement({tenantId,branchId:activeBranchId,bank,actorId:profile.uid});
+   setSavedCardDestination(bank.id);
+   setMessage('Branch default card account saved. This configuration does not post or move money.');
+  }catch(error){setCardConfigError(error instanceof Error?error.message:'Card account configuration failed.');}
+  finally{setBusy(false);}
+ }
  async function registerBankAccount(event:React.FormEvent){
    event.preventDefault();
    if(!tenantId||!profile?.uid||!canRegister||busy)return;
@@ -213,6 +237,19 @@ export function FinancialPortfoliosPanel(){
  return <section className="rounded-2xl border border-zinc-200 bg-white p-3 sm:p-5 space-y-5 text-zinc-900 min-w-0 overflow-hidden">
   <div><h3 className="text-lg font-bold text-zinc-950">Financial Portfolio Registry</h3>
    <p className="text-sm text-zinc-600">New portfolios are tenant scoped. Legacy treasury balances are not silently migrated and unavailable financial balances are never displayed as zero.</p></div>
+  {activeBranchId&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 space-y-2">
+   <h4 className="font-semibold">Branch default card settlement account</h4>
+   <p className="text-sm text-zinc-600">Select the receiving registered bank for card payments made at this branch. This does not post EOD funds or rewrite past payments.</p>
+   <p className="text-xs text-zinc-600">Saved default: {items.find(x=>x.id===savedCardDestination)?.name||'Not configured'}</p>
+   {cardConfigError&&<p role="alert" className="text-sm text-red-700">{cardConfigError}</p>}
+   {canRegister&&<form onSubmit={saveCardDestination} className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+    <select aria-label="Branch default card bank" required value={cardDestination} onChange={e=>setCardDestination(e.target.value)} className="min-w-0 w-full rounded border border-zinc-400 bg-white p-2 text-zinc-900">
+     <option value="">Select bank account</option>
+     {items.filter(p=>p.origin==='custom'&&p.classification==='bank'&&p.bankParentId==='system_bank'&&p.status==='active').map(p=><option key={p.id} value={p.id}>{p.name} · {p.bankInstitution}</option>)}
+    </select>
+    <button type="submit" disabled={busy||!cardDestination} className="rounded bg-emerald-800 px-3 py-2 font-semibold text-white">Save branch default</button>
+   </form>}
+  </div>}
   <div className="space-y-2">
    <h4 className="font-semibold text-zinc-900">Portfolio-wide funding coverage</h4>
    <p className="text-xs text-zinc-600">System categories shown as a read-only projection. Unavailable is not zero. Branch cash and mobile money require separately reconciled posting evidence.</p>
