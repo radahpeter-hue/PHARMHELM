@@ -278,13 +278,13 @@ export function FinancialPortfoliosPanel(){
     {treasury.loading?<p className="text-sm">Loading reconciled payment accounts…</p>:
      treasury.error?<p role="alert" className="text-sm">{treasury.error}</p>:
      <div className="grid gap-2 sm:grid-cols-2">
-      {treasury.accounts.filter(a=>a.initialized&&a.currency==='UGX'&&Number.isSafeInteger(a.balanceUGX)).map(a=>
+      {treasury.accounts.filter(a=>['management_bank','management_petty_cash'].includes(a.accountId)&&a.initialized&&a.currency==='UGX'&&Number.isSafeInteger(a.balanceUGX)).map(a=>
        <div key={a.id} className="rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 min-w-0">
         <button type="button" onClick={()=>setManagementSelected(a.id)} className="font-semibold text-emerald-900 underline underline-offset-2 text-left break-words">{a.name}</button><p className="text-xs text-zinc-600">{a.kind==='bank'?'Management Bank':'Management Petty Cash'} · Reconciled</p>
         <p className="font-semibold tabular-nums text-zinc-950">UGX {a.balanceUGX.toLocaleString()}</p>
         <p className="text-xs text-zinc-600">Opening reconciliation: {a.reconciliationReference}</p>
        </div>)}
-      {!treasury.accounts.length&&<p className="text-sm">No Management payment account has been reconciled.</p>}
+      {!treasury.accounts.some(a=>['management_bank','management_petty_cash'].includes(a.accountId)&&a.initialized)&&<p className="text-sm">No Management payment account has been reconciled.</p>}
      </div>}
     {managementSelected&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
       <h5 className="font-semibold">Authoritative account ledger</h5>
