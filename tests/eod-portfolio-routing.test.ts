@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {planEodPortfolioRouting} from '../src/domain/finance/eodPortfolioRouting';
 
-const base={tenantId:'martin',branchId:'masaka',reconciliationId:'martin_masaka_2026-11-02_day',actual:{cash:1000,momo:2000,airtel:3000,card:4000}};
+const base={tenantId:'martin',branchId:'masaka',reconciliationId:'eod~martin~masaka~2026-11-02~dayShift',actual:{cash:1000,momo:2000,airtel:3000,card:4000}};
 test('EOD routes each channel and retains source branch and deterministic identity',()=>{
  const plan=planEodPortfolioRouting({...base,cardBankPortfolioId:'bank_001'});
  assert.deepEqual(plan.map(x=>x.accountId),['system_branch_cash_sales_masaka','system_mtn_mobile_money','system_airtel_mobile_money','bank_001']);
