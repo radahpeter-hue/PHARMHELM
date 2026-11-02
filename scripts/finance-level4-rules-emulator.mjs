@@ -85,6 +85,12 @@ try{
  await assertFails(setDoc(doc(ceo,'finance_payment_accounts',tenant+'_bank_'+'b'.repeat(64)),
   {...funding,accountId:'bank_'+'b'.repeat(64),portfolioId:'bank_'+'b'.repeat(64)}));
  await checkedSucceeds(setDoc(ar,funding));
+ await assertFails(updateDoc(ref(ceo,tenant,id),{
+  status:'inactive',updatedBy:'ceo_a',updatedAt:'2026-10-30T10:00:00Z',
+  deactivatedBy:'ceo_a',deactivatedAt:'2026-10-30T10:00:00Z',
+  deactivationReason:'Cannot close a funded bank'
+ }));
+
  await checkedSucceeds(getDoc(doc(finance,'finance_payment_accounts',tenant+'_'+id)));
  await assertFails(setDoc(doc(finance,'finance_payment_accounts',tenant+'_bank_'+'b'.repeat(64)),{...funding,accountId:'bank_'+'b'.repeat(64),portfolioId:'bank_'+'b'.repeat(64),registeredBy:'finance_a'}));
  // Idempotent posting must be able to inspect an absent ledger ID without
