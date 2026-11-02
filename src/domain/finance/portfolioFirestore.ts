@@ -137,3 +137,37 @@ export async function setRegisteredBankAccountActive(
   ?{...bank,...changed,deactivatedBy:undefined,deactivatedAt:undefined,deactivationReason:undefined}
   :{...bank,...changed};
 }
+
+/** Persisted CEO lifecycle for custom portfolios. Firestore Rules independently authorize writes.
+ * A funded portfolio cannot be disabled until its authoritative balance is zero.
+ * This transaction also prevents stale-state changes from overwriting a concurrent lifecycle action.
+ */
+export async function setCustomPortfolioActive(
+ portfolio:FinancialPortfolio,active:boolean,actorId:string,reason:string,database:Firestore=db
+):Promise<FinancialPortfolio>{
+ if(portfolio.origin!=='custom'||!actorId||(!active&&!reason.trim()))
+  throw new Error('CEO lifecycle actor and deactivation reason required.');
+ const ref=portfolioRef(database,portfolio.tenantId,portfolio.id);
+ const funding=doc(database,'finance_payment_accounts',portfolio.tenantId+'_'+portfolio.id);
+ const now=new Date().toISOString();
+ return runTransaction(database,async tx=>{
+  const [snapshot,account]=await Promise.all([tx.get(ref),tx.get(funding)]);
+  if(!snapshot.exists())throw new Error('Portfolio no longer exists.');
+  const current=validateFinancialPortfolio(snapshot.data() as FinancialPortfolio);
+  if(current.origin!=='custom'||current.tenantId!==portfolio.tenantId||current.id!==portfolio.id)
+   throw new Error('Portfolio identity mismatch.');
+  if(current.status!==(active?'inactive':'active'))
+   throw new Error('Portfolio status changed; reload before continuing.');
+  if(!active&&account.exists()&&(!Number.isSafeInteger(account.data().balanceUGX)||account.data().balanceUGX!==0))
+   throw new Error('Settle the authoritative balance before deactivation.');
+  const metadata=active
+   ?{status:'active' as const,updatedBy:actorId,updatedAt:now}
+   :{status:'inactive' as const,updatedBy:actorId,updatedAt:now,deactivatedBy:actorId,deactivatedAt:now,deactivationReason:reason.trim()};
+  tx.update(ref,active
+   ?{...metadata,deactivatedBy:deleteField(),deactivatedAt:deleteField(),deactivationReason:deleteField()}
+   :metadata);
+  return active
+   ?{...current,...metadata,deactivatedBy:undefined,deactivatedAt:undefined,deactivationReason:undefined}
+   :{...current,...metadata};
+ });
+}
