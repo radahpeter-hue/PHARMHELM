@@ -121,21 +121,11 @@ export function registeredBankAccounts(portfolios:readonly FinancialPortfolio[])
 export async function setRegisteredBankAccountActive(
  bank:FinancialPortfolio,active:boolean,actorId:string,reason:string,database:Firestore=db
 ):Promise<FinancialPortfolio>{
- if(bank.origin!=='custom'||bank.classification!=='bank'||bank.bankParentId!=='system_bank'
-   ||bank.allowsTransfersIn||bank.allowsTransfersOut)
-   throw new Error('Only unfunded bank identities can be managed here.');
- if(bank.status===(active?'active':'inactive'))throw new Error('Bank account already in requested state.');
- if(!actorId||(!active&&!reason.trim()))throw new Error('Account action requires actor and reason.');
- const now=new Date().toISOString();
- const changed=active
-  ?{status:'active' as const,updatedBy:actorId,updatedAt:now}
-  :{status:'inactive' as const,updatedBy:actorId,updatedAt:now,deactivatedBy:actorId,deactivatedAt:now,deactivationReason:reason.trim()};
- await updateDoc(portfolioRef(database,bank.tenantId,bank.id),active
-  ?{...changed,deactivatedBy:deleteField(),deactivatedAt:deleteField(),deactivationReason:deleteField()}
-  :changed);
- return active
-  ?{...bank,...changed,deactivatedBy:undefined,deactivatedAt:undefined,deactivationReason:undefined}
-  :{...bank,...changed};
+ if(bank.origin!=='custom'||bank.classification!=='bank'||bank.bankParentId!=='system_bank')
+  throw new Error('Only registered individual bank accounts can be managed.');
+ // Use the same transactional zero-balance gate as every other custom portfolio.
+ // A stale cached bank identity cannot bypass its current authoritative balance.
+ return setCustomPortfolioActive(bank,active,actorId,reason,database);
 }
 
 /** Persisted CEO lifecycle for custom portfolios. Firestore Rules independently authorize writes.
