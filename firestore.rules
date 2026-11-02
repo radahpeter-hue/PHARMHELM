@@ -3201,7 +3201,10 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status','updatedBy','updatedAt','deactivatedBy','deactivatedAt','deactivationReason'])
         && request.resource.data.updatedBy == request.auth.uid;
-      allow delete: if false;
+      allow delete: if isCEO() && isTenantMember(resource.data.tenantId)
+        && resource.data.origin == 'custom' && resource.data.status == 'inactive'
+        && resource.data.classification != 'bank'
+        && !exists(/databases/$(database)/documents/finance_payment_accounts/$(resource.data.tenantId + '_' + resource.data.id));
     }
 
     // Generic tenant fallback. Dedicated collections retain their explicit rules.
