@@ -3201,8 +3201,7 @@ service cloud.firestore {
           get(/databases/$(database)/documents/finance_payment_accounts/$(resource.data.tenantId + '_' + resource.data.id)).data.balanceUGX == 0)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status','updatedBy','updatedAt','deactivatedBy','deactivatedAt','deactivationReason'])
-        && request.resource.data.updatedBy == request.auth.uid
-;
+        && request.resource.data.updatedBy == request.auth.uid;
       allow delete: if false;
     }
 
