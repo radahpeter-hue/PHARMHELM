@@ -162,27 +162,3 @@ export async function setCustomPortfolioActive(
  });
 }
 
-/** Irreversible removal is reserved for a never-funded, inactive custom
- * non-bank portfolio. Every bank identity remains as a nonreusable tombstone.
- * Rules independently check this predicate at commit time.
- */
-export async function deleteUnusedCustomPortfolio(
- portfolio:FinancialPortfolio,actorId:string,database:Firestore=db
-):Promise<void>{
- if(!actorId||portfolio.origin!=='custom'||portfolio.classification==='bank'||portfolio.status!=='inactive')
-  throw new Error('Only inactive unused custom non-bank portfolios may be deleted.');
- const identity=portfolioRef(database,portfolio.tenantId,portfolio.id);
- const funding=doc(database,'finance_payment_accounts',portfolio.tenantId+'_'+portfolio.id);
- await runTransaction(database,async tx=>{
-  const [current,account]=await Promise.all([tx.get(identity),tx.get(funding)]);
-  if(!current.exists())throw new Error('Portfolio no longer exists.');
-  const existing=validateFinancialPortfolio(current.data() as FinancialPortfolio);
-  if(existing.tenantId!==portfolio.tenantId||existing.id!==portfolio.id||
-     existing.origin!=='custom'||existing.classification==='bank'||existing.status!=='inactive')
-   throw new Error('Portfolio lifecycle changed; reload before deletion.');
-  // An account, even at zero, proves previous funding/history and therefore
-  // makes deletion permanently ineligible.
-  if(account.exists())throw new Error('Previously funded portfolios retain their history and cannot be deleted.');
-  tx.delete(identity);
- });
-}
