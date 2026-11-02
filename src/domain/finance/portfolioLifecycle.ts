@@ -7,7 +7,7 @@ export interface LifecycleEvidence {
 }
 /** Changes 048-055: fail closed when the existence of money or historical references is unresolved. */
 export function assertEvidenceComplete(e:LifecycleEvidence):void {
- for(const [key,value] of Object.entries(e))if(!Number.isSafeInteger(value)||value<0&&key!=='currentBalanceUGX')
+ for(const [key,value] of Object.entries(e))if(!Number.isSafeInteger(value)||value<0)
   throw new Error('Incomplete or invalid lifecycle evidence: '+key);
 }
 export function canDeleteUnusedFinancialObject(e:LifecycleEvidence):boolean {
