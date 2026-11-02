@@ -86,6 +86,11 @@ try{
   {...funding,accountId:'bank_'+'b'.repeat(64),portfolioId:'bank_'+'b'.repeat(64)}));
  await checkedSucceeds(setDoc(ar,funding));
  await assertFails(updateDoc(ref(ceo,tenant,id),{
+  status:'inactive',updatedBy:'ceo_a',updatedAt:'2026-10-30T09:00:00Z',
+  deactivatedBy:'ceo_a',deactivatedAt:'2026-10-30T09:00:00Z',deactivationReason:'Funded cannot retire'
+ }));
+
+ await assertFails(updateDoc(ref(ceo,tenant,id),{
   status:'inactive',updatedBy:'ceo_a',updatedAt:'2026-10-30T10:00:00Z',
   deactivatedBy:'ceo_a',deactivatedAt:'2026-10-30T10:00:00Z',
   deactivationReason:'Cannot close a funded bank'
