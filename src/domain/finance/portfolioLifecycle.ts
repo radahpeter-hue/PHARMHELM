@@ -27,6 +27,7 @@ export function deactivatePortfolio(p:FinancialPortfolio, actorId:string, at:str
 }
 export function reactivatePortfolio(p:FinancialPortfolio,actorId:string,at:string):FinancialPortfolio {
  if(p.status!=='inactive')throw new Error('Portfolio already active.');
+ if(p.origin==='system')throw new Error('System portfolio lifecycle is immutable.');
  if(!actorId||!at)throw new Error('Reactivation audit metadata required.');
  const {deactivatedBy,deactivatedAt,deactivationReason,...rest}=p;
  return {...rest,status:'active',updatedBy:actorId,updatedAt:at};
@@ -51,12 +52,14 @@ export function assertUnusedPortfolioCanBeDeleted(
  p:FinancialPortfolio,e:LifecycleEvidence
 ):void {
  if(p.origin==='system')throw new Error('Built-in portfolios cannot be deleted.');
+ if(p.status!=='inactive')throw new Error('Deactivate unused portfolio before deletion.');
  if(!canDeleteUnusedFinancialObject(e))
   throw new Error('Portfolio has financial history or dependencies; deactivate instead.');
 }
 export function assertUnusedChildAccountCanBeDeleted(
  account:PortfolioChildAccount,e:LifecycleEvidence
 ):void {
+ if(account.status!=='inactive')throw new Error('Deactivate unused account before deletion.');
  if(!account.id||!account.portfolioId||!account.tenantId)
   throw new Error('Bank account identity is incomplete.');
  if(!canDeleteUnusedFinancialObject(e))
