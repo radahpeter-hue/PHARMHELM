@@ -8,7 +8,7 @@ import {useManagementPaymentAccounts} from './ManagementPaymentAccounts';
 import React,{useEffect,useState} from 'react';
 import {useAuth} from '../../contexts/AuthContext';
 import {
- listFinancialPortfolios,createCustomFinancialPortfolio,registerPortfolioBankIdentity,registeredBankAccounts,setRegisteredBankAccountActive,setCustomPortfolioActive
+ listFinancialPortfolios,createCustomFinancialPortfolio,registerPortfolioBankIdentity,registeredBankAccounts,setRegisteredBankAccountActive,setCustomPortfolioActive,deleteUnusedCustomPortfolio
 } from '../../domain/finance/portfolioFirestore';
 import {defaultLedgerQuery} from '../../domain/finance/portfolioLedger';
 import type {FinancialPortfolio,FinancialPortfolioClassification} from '../../domain/finance/financialPortfolio';
@@ -107,6 +107,17 @@ export function FinancialPortfoliosPanel(){
    setItems(old=>old.map(p=>p.id===updated.id?updated:p));
    setMessage(deactivate?'Portfolio deactivated. Historical records retained.':'Portfolio reactivated with original identity.');
   }catch(error){setMessage(error instanceof Error?error.message:'Portfolio status change failed.');}
+  finally{setBusy(false);}
+ }
+ async function deleteUnused(portfolio:FinancialPortfolio){
+  if(!canRegister||busy||!profile?.uid||portfolio.status!=='inactive'||portfolio.classification==='bank')return;
+  if(!window.confirm('Delete this never-funded portfolio permanently? Any financial history will block deletion.'))return;
+  setBusy(true);setMessage('');
+  try{
+   await deleteUnusedCustomPortfolio(portfolio,profile.uid);
+   setItems(old=>old.filter(p=>p.id!==portfolio.id));setSelected('');
+   setMessage('Unused portfolio deleted. Bank identities and financial history remain protected.');
+  }catch(error){setMessage(error instanceof Error?error.message:'Deletion blocked.');}
   finally{setBusy(false);}
  }
  async function changeBankStatus(bank:FinancialPortfolio){
@@ -329,6 +340,8 @@ export function FinancialPortfoliosPanel(){
    <h4 className="font-semibold">Custom portfolio lifecycle controls</h4>
    <p>Deactivate only after settling its reconciled balance. Reactivation retains the original identity and financial history.</p>
    <button type="button" disabled={busy} onClick={()=>changeCustomStatus(selectedPortfolio)} className="mt-2 rounded border p-2">{selectedPortfolio.status==='active'?'Deactivate portfolio':'Reactivate portfolio'}</button>
+   {selectedPortfolio.status==='inactive'&&selectedPortfolio.classification!=='bank'&&
+    <button type="button" disabled={busy} onClick={()=>deleteUnused(selectedPortfolio)} className="ml-2 mt-2 rounded border border-red-700 p-2 text-red-800">Delete never-funded portfolio</button>}
 
   </div>}
   {selectedPortfolio&&<div className="rounded-lg border border-zinc-300 p-3 space-y-3 text-sm text-zinc-800">
