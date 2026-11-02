@@ -35,3 +35,5 @@ jobs:
         run: npx firebase emulators:exec --only firestore --project pharmhelm-finance-l4-portfolio-test "node scripts/finance-level4-rules-emulator.mjs"
       - name: Authenticated atomic EOD portfolio settlement and replay acceptance
         run: npx firebase emulators:exec --only firestore --project pharmhelm-eod-posting-acceptance "node --import tsx scripts/eod-portfolio-settlement-emulator.mjs"
+      - name: Automatic branch EOD portfolio posting acceptance
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-eod-auto-test "node --import tsx scripts/eod-automatic-posting-emulator.mjs"

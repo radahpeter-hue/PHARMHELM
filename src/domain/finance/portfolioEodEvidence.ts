@@ -6,7 +6,7 @@ export type EodChannel='cash'|'momo'|'airtel';
 export type ReconciliationEvidence={
  id:string;tenantId:string;branchId:string;businessDate:string;shiftId:string;
  channel:EodChannel;declaredUGX:number;expectedUGX:number;varianceUGX:number;
- source:'eod_reconciliations';fundingPosted:false;
+ source:'eod_reconciliations';fundingPosted:boolean;
 };
 /** Verified source amounts are audit evidence, NEVER independently deposited money. */
 export function projectEodChannelEvidence(
@@ -17,14 +17,14 @@ export function projectEodChannelEvidence(
  if(typeof day!=='string'||typeof shift!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(day)
    ||eodIdentity(tenantId,branchId,day,shift)!==id)
   throw new Error('Invalid EOD reconciliation identity.');
- if(raw.audit_only!==true||raw.financial_posting!=='none')throw new Error('EOD must not be counted as a financial posting.');
+ if(!((raw.audit_only===true&&raw.financial_posting==='none')||(raw.audit_only===false&&raw.financial_posting==='portfolios_v1')))throw new Error('EOD must not be counted as a financial posting.');
  const actual=raw[channel+'_actual'],expected=raw[channel+'_expected'],variance=raw[channel+'_variance'];
  if(typeof actual!=='number'||typeof expected!=='number'||typeof variance!=='number'
   ||![actual,expected,variance].every(Number.isSafeInteger)||actual<0||expected<0||actual-expected!==variance)
   throw new Error('Invalid EOD reconciliation totals.');
  return {id,tenantId,branchId,businessDate:day,shiftId:shift,channel,
   declaredUGX:actual,expectedUGX:expected,varianceUGX:variance,
-  source:'eod_reconciliations',fundingPosted:false};
+  source:'eod_reconciliations',fundingPosted:raw.financial_posting==='portfolios_v1'};
 }
 export async function loadEodChannelEvidence(input:{
  tenantId:string;branchId:string;channel:EodChannel;period:FinancialLedgerQuery

@@ -12,6 +12,7 @@ export async function correctEod(id: string, profile: {uid: string; tenantId: st
     const snapshot = await tx.get(ref);
     if (!snapshot.exists() || !canCorrectEod(profile, snapshot.data() as any)) throw new Error('This EOD reconciliation is locked.');
     const original = snapshot.data();
+    if(original.financial_posting==='portfolios_v1')throw new Error('This EOD has posted financial entries. A linked financial adjustment is required before its declared amounts can be corrected.');
     const changes: Record<string, unknown> = {};
     const channels = EOD_CHANNELS.map(channel => {
       const declared = eodAmountNumber(amounts[channel]);
