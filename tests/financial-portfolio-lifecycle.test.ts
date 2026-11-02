@@ -29,8 +29,11 @@ test('Built-in system portfolios cannot be disabled through custom lifecycle',()
 
 test('Changes 051 and 055 hard deletion is forbidden for system objects and historical movements',()=>{
  const account={id:'eq_ops',tenantId:'mp',portfolioId:p.id,displayName:'Equity operating',institution:'Equity',accountReference:'1234',currency:'UGX' as const,scope:{kind:'organisation' as const},status:'active' as const,createdBy:'ceo',createdAt:'2026-10-29T09:00:00Z'};
- assert.doesNotThrow(()=>assertUnusedPortfolioCanBeDeleted(p,zero));
- assert.doesNotThrow(()=>assertUnusedChildAccountCanBeDeleted(account,zero));
+ assert.throws(()=>assertUnusedPortfolioCanBeDeleted(p,zero),/Deactivate unused/);
+ const inactive=deactivatePortfolio(p,'ceo','2026-10-29T10:00:00Z','closure',zero);
+ assert.doesNotThrow(()=>assertUnusedPortfolioCanBeDeleted(inactive,zero));
+ assert.throws(()=>assertUnusedChildAccountCanBeDeleted(account,zero),/Deactivate unused/);
+ assert.doesNotThrow(()=>assertUnusedChildAccountCanBeDeleted({...account,status:'inactive'},zero));
  assert.throws(()=>assertUnusedPortfolioCanBeDeleted(systemPortfolio,zero),/Built-in/);
  assert.throws(()=>assertUnusedPortfolioCanBeDeleted(p,{...zero,childMovementCount:1}),/history/);
  assert.throws(()=>assertUnusedChildAccountCanBeDeleted(account,{...zero,transferCount:1}),/history/);
