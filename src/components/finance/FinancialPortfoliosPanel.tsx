@@ -19,7 +19,7 @@ import {hasAnyRole} from '../../utils/roles';
 export function FinancialPortfoliosPanel(){
  const {profile,activeBranchId}=useAuth();
  const tenantId=profile?.tenantId||'';
- const treasury=useManagementPaymentAccounts();
+ const treasury=useManagementPaymentAccounts(true);
  const canRegister=hasAnyRole(profile,['owner','CEO','CEO / MD']);
  const [items,setItems]=useState<FinancialPortfolio[]>([]);
  const [accounts,setAccounts]=useState<PortfolioChildAccount[]>([]);
@@ -91,8 +91,8 @@ export function FinancialPortfoliosPanel(){
        tenantId,actorId:profile.uid,institution:bankInstitution,
        accountReference:bankReference,displayName:bankAccountName,createdAt:new Date().toISOString()
      });
-     setItems(old=>[...old,bank]);setBankInstitution('');setBankAccountName('');setBankReference('');
-     setMessage('Bank account identity registered. Reconciled balance and posting are not yet enabled.');
+     setItems(old=>old.some(x=>x.id===bank.id)?old:[...old,bank]);setBankInstitution('');setBankAccountName('');setBankReference('');
+     setSelected(bank.id);setFundingName(bank.name);setMessage('Bank account registered. Select a verified opening statement to reconcile its balance.');
    }catch(error){setMessage(error instanceof Error?error.message:'Bank registration failed.');}
    finally{setBusy(false);}
  }
@@ -156,7 +156,7 @@ export function FinancialPortfoliosPanel(){
    const opening=Number(fundingOpening);
    await registerPortfolioFunding({portfolio:activePortfolio,actorId:profile.uid,name:fundingName,
     openingBalanceUGX:opening,reconciliationReference:fundingReference});
-   setMessage('Funding account registered. Reload to retrieve its authoritative balance.');
+   setMessage('Opening reconciliation saved. The account balance and ledger will load automatically.');
    setFundingOpening('');setFundingReference('');
   }catch(e){setMessage(e instanceof Error?e.message:'Funding registration failed.');}
   finally{setBusy(false);}
@@ -231,7 +231,7 @@ export function FinancialPortfoliosPanel(){
   {activePortfolio&&activePortfolio.id!=='system_bank'&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
    <h4 className="font-semibold">{activePortfolio.name}: Authoritative funding</h4>
    {!activeFunding?<p>Not reconciled. CEO must register a verified opening balance before transactions can be posted.</p>:
-    <div><p>Reconciled balance: UGX {activeFunding.balanceUGX.toLocaleString()}. Ref: {activeFunding.reconciliationReference}</p><button type="button" className="mt-2 rounded border border-zinc-400 bg-white p-2 text-zinc-900" onClick={()=>setManagementSelected(activeFunding.id)}>View verified account ledger</button></div>}
+    <div><p>Reconciled balance: UGX {activeFunding.balanceUGX.toLocaleString()}. Ref: {activeFunding.reconciliationReference}</p><button type="button" className="mt-2 rounded border border-emerald-700 bg-white p-2 font-semibold text-emerald-900" onClick={()=>setManagementSelected(activeFunding.id)}>View verified account ledger</button></div>}
    {canRegister&&!activeFunding&&<form onSubmit={initializeFunding} className="grid gap-2 sm:grid-cols-4">
      <input required aria-label="Funding name" placeholder="Account name" value={fundingName} onChange={e=>setFundingName(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
      <input required aria-label="Opening UGX" type="number" min="0" step="1" value={fundingOpening} onChange={e=>setFundingOpening(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
@@ -309,7 +309,9 @@ export function FinancialPortfoliosPanel(){
    <h4 className="font-semibold text-zinc-900">Registered bank accounts ({bankIdentities.length})</h4>
    {bankIdentities.map(bank=><div key={bank.id} className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
     <strong>{bank.name}</strong> · {bank.bankInstitution} · {bank.status}
-    <p>Account reference: {bank.bankAccountReference}. Balance not yet reconciled.</p>{canRegister&&<button type="button" disabled={busy} onClick={()=>changeBankStatus(bank)} className="mt-2 rounded border border-zinc-400 bg-white px-3 py-2 text-zinc-900">{bank.status==='active'?'Deactivate':'Reactivate'}</button>}
+    <p>Account reference: {bank.bankAccountReference}. {treasury.accounts.some(a=>a.accountId===bank.id&&a.initialized)?'Authoritative balance available':'Opening balance not yet reconciled'}</p>
+    <button type="button" onClick={()=>{setSelected(bank.id);setFundingName(bank.name);setManagementSelected('');}} className="mt-2 mr-2 rounded border border-emerald-700 bg-white px-3 py-2 font-semibold text-emerald-900">{treasury.accounts.some(a=>a.accountId===bank.id&&a.initialized)?'Open account and ledger':'Reconcile opening balance'}</button>
+    {canRegister&&<button type="button" disabled={busy} onClick={()=>changeBankStatus(bank)} className="mt-2 rounded border border-zinc-400 bg-white px-3 py-2 text-zinc-900">{bank.status==='active'?'Deactivate':'Reactivate'}</button>}
    </div>)}
    {canRegister&&<form onSubmit={registerBankAccount} className="grid gap-2 sm:grid-cols-4">
      <input required maxLength={100} aria-label="Bank institution" placeholder="Bank name" value={bankInstitution} onChange={e=>setBankInstitution(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
