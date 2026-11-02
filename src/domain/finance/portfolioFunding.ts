@@ -35,7 +35,10 @@ export async function registerPortfolioFunding(input:{
  const ref=doc(database,'finance_payment_accounts',account.id);
  const settings=doc(database,'system_settings',p.tenantId);
  await runTransaction(database,async tx=>{
-  const [setting,existing]=await Promise.all([tx.get(settings),tx.get(ref)]);
+  const portfolioRef=doc(database,'finance_portfolios_v1',p.tenantId+'__'+p.id);
+  const [setting,existing,livePortfolio]=await Promise.all([tx.get(settings),tx.get(ref),tx.get(portfolioRef)]);
+  if(!livePortfolio.exists()||livePortfolio.data().status!=='active'||livePortfolio.data().tenantId!==p.tenantId)
+   throw new Error('Portfolio is inactive or missing; funding is blocked.');
   if(!setting.exists()||setting.data().managementCashAccountControlV1!==true)
    throw new Error('Account control not activated.');
   if(existing.exists())throw new Error('Funding already registered. Reconcile, do not reset an existing balance.');
