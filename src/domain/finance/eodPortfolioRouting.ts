@@ -24,7 +24,7 @@ export interface EodRoutingInput {
  */
 export function planEodPortfolioRouting(input:EodRoutingInput):EodRoutingPlanEntry[] {
  const {tenantId,branchId,reconciliationId,actual,cardBankPortfolioId}=input;
- if(!tenantId||!branchId||!reconciliationId||!/^[-A-Za-z0-9_]+$/.test(reconciliationId))
+ if(!tenantId||!branchId||!reconciliationId||!/^eod~[^~\/]+~[^~\/]+~\d{4}-\d{2}-\d{2}~[^~\/]+$/.test(reconciliationId))
   throw new Error('Tenant, branch and stable EOD identity are required.');
  const destinations:Record<EodPostingChannel,string|undefined>={
   cash:builtInPortfolioId('branch_cash_sales',branchId),
