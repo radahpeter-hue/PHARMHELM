@@ -551,9 +551,7 @@ service cloud.firestore {
         && after.balanceUGX is int && after.balanceUGX >= 0 && after.balanceUGX <= 9007199254740991
         && !exists(movementPath)
         && movement.tenantId == before.tenantId && movement.accountDocumentId == accountId
-        && after.balanceUGX == before.balanceUGX + movement.accountDeltaUGX
-        && (!('portfolioId' in before) ||
-          get(/databases/$(database)/documents/finance_portfolios_v1/$(before.tenantId + '__' + before.portfolioId)).data.status == 'active');
+        && after.balanceUGX == before.balanceUGX + movement.accountDeltaUGX;
     }
     function supplierPaymentPath(id) {
       return /databases/$(database)/documents/cash_grn_payments/$(id);
