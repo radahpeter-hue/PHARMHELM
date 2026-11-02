@@ -148,8 +148,8 @@ export async function setCustomPortfolioActive(
    throw new Error('Portfolio identity mismatch.');
   if(current.status!==(active?'inactive':'active'))
    throw new Error('Portfolio status changed; reload before continuing.');
-  if(!active&&account.exists()&&(!Number.isSafeInteger(account.data().balanceUGX)||account.data().balanceUGX!==0))
-   throw new Error('Settle the authoritative balance before deactivation.');
+  if(!active&&account.exists())
+   throw new Error('Funded portfolios retain their active identity and financial history. Only never-funded portfolios can be retired.');
   const metadata=active
    ?{status:'active' as const,updatedBy:actorId,updatedAt:now}
    :{status:'inactive' as const,updatedBy:actorId,updatedAt:now,deactivatedBy:actorId,deactivatedAt:now,deactivationReason:reason.trim()};
