@@ -1,3 +1,4 @@
+import {summarizeBranchContributions} from '../../domain/finance/portfolioBranchContributions';
 import {settleReconciledEod} from '../../domain/finance/eodPortfolioSettlement';
 import {eodIdentity} from '../../utils/eodShifts';
 import {readBranchCardSettlement,saveBranchCardSettlement} from '../../domain/finance/branchCardSettlement';
@@ -59,6 +60,7 @@ export function FinancialPortfoliosPanel(){
  const [managementError,setManagementError]=useState('');
  const [managementLoading,setManagementLoading]=useState(false);
  const [direction,setDirection]=useState<'all'|'inflow'|'outflow'>('all');
+ const [ledgerBranchFilter,setLedgerBranchFilter]=useState('all');
  const [period,setPeriod]=useState(()=>defaultLedgerQuery(new Date().toISOString().slice(0,10)));
  useEffect(()=>{
    let live=true;
@@ -166,7 +168,7 @@ export function FinancialPortfoliosPanel(){
   const account=treasury.accounts.find(a=>a.id===managementSelected);
   if(!account)return;
   setManagementLoading(true);
-  loadAuthoritativePortfolioLedger(account,{...period,direction})
+  loadAuthoritativePortfolioLedger(account,{...period,direction:'all'})
    .then(result=>{if(live)setManagementLedger(result);})
    .catch(error=>{if(live)setManagementError(error instanceof Error?error.message:'Ledger unavailable.');})
    .finally(()=>{if(live)setManagementLoading(false);});
@@ -360,8 +362,25 @@ export function FinancialPortfoliosPanel(){
        <p>Current reconciled balance: UGX {managementLedger.currentBalanceUGX.toLocaleString()}</p>
        <p>Opening balance: UGX {managementLedger.openingBalanceUGX.toLocaleString()}</p>
        <p>Reconciliation reference: {managementLedger.reconciliationReference}</p>
+       <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 space-y-2">
+        <h6 className="font-semibold text-zinc-900">Branch contributions for selected dates</h6>
+        <p className="text-xs text-zinc-600">Inflow and outflow totals from branch-tagged posted movements, not separate bank balances. The reconciled account balance above always reflects all branches.</p>
+        <select aria-label="Filter ledger by source branch" value={ledgerBranchFilter} onChange={e=>setLedgerBranchFilter(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900">
+         <option value="all">All branches</option>
+         {summarizeBranchContributions(managementLedger.entries).branches.map(b=><option key={b.branchId} value={b.branchId}>{b.branchId}</option>)}
+         {managementLedger.entries.some(e=>!e.branchId)&&<option value="unattributed">Unattributed / legacy</option>}
+        </select>
+        <div className="overflow-x-auto">
+         <table className="w-full text-left text-xs">
+          <thead><tr><th className="p-1">Branch</th><th className="p-1 text-right">Inflows UGX</th><th className="p-1 text-right">Net UGX</th></tr></thead>
+          <tbody>
+           {summarizeBranchContributions(managementLedger.entries).branches.filter(b=>ledgerBranchFilter==='all'||ledgerBranchFilter===b.branchId).map(b=><tr key={b.branchId}><td className="p-1">{b.branchId}</td><td className="p-1 text-right">{b.inflowUGX.toLocaleString()}</td><td className="p-1 text-right">{b.netUGX.toLocaleString()}</td></tr>)}
+          </tbody>
+         </table>
+        </div>
+       </div>
        <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>Date</th><th>Reference</th><th>Direction</th><th>Amount UGX</th></tr></thead><tbody>
-        {managementLedger.entries.map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.reference}</td><td>{e.direction}</td><td>{e.amountUGX.toLocaleString()}</td></tr>)}
+        {managementLedger.entries.filter(e=>(direction==='all'||e.direction===direction)&&(ledgerBranchFilter==='all'||(ledgerBranchFilter==='unattributed'?!e.branchId:e.branchId===ledgerBranchFilter))).map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.reference}</td><td>{e.direction}</td><td>{e.amountUGX.toLocaleString()}</td></tr>)}
        </tbody></table></div>
        {!managementLedger.entries.length&&<p>No movements in the selected period.</p>}
       </>}
