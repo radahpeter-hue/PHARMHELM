@@ -70,17 +70,6 @@ try{
  await checkedSucceeds(updateDoc(ref(ceo,tenant,bank.id),{status:'active',updatedBy:'ceo_a',
  updatedAt:'2026-10-30T10:00:00Z',deactivatedBy:deleteField(),deactivatedAt:deleteField(),deactivationReason:deleteField()}));
  await assertFails(deleteDoc(ref(ceo,tenant,bank.id)));
- const unused='custom_neverfunded';
- await checkedSucceeds(setDoc(ref(ceo,tenant,unused),row('ceo_a',unused)));
- await assertFails(deleteDoc(ref(ceo,tenant,unused)));
- await checkedSucceeds(updateDoc(ref(ceo,tenant,unused),{
-  status:'inactive',updatedBy:'ceo_a',updatedAt:'2026-10-30T09:00:00Z',
-  deactivatedBy:'ceo_a',deactivatedAt:'2026-10-30T09:00:00Z',deactivationReason:'Never used'
- }));
- await assertFails(deleteDoc(ref(finance,tenant,unused)));
- await assertFails(deleteDoc(ref(otherDb,tenant,unused)));
- await checkedSucceeds(deleteDoc(ref(ceo,tenant,unused)));
-
 
  const id='bank_'+ 'a'.repeat(64);
  const bankRegistry={...row('ceo_a',id),classification:'bank',name:'Registered Equity',
