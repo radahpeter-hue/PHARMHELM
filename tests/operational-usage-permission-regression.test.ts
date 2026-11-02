@@ -10,7 +10,8 @@ test('usage idempotency point-get permits missing records but lists remain scope
   const section = rules.split('match /operational_inventory_usage/{usageId} {')[1]?.split('match /operational_inventory_maintenance/')[0];
   assert.ok(section);
   assert.ok(section.includes('allow get: if isAuthenticated() && (resource == null'));
-  assert.ok(section.includes('allow list: if isAuthenticated() && isTenantMember(resource.data.tenantId)'));
+  assert.ok(section.includes('allow list: if isTenantMember(resource.data.tenantId)'));
+  assert.match(rules,/function isTenantMember\(tenantId\) \{\s*return isAuthenticated\(\) &&/);
   assert.ok(section.includes('isAssignedToBranch(resource.data.branchId)'));
   assert.ok(section.includes('allow update, delete: if false'));
 });

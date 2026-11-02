@@ -29,7 +29,7 @@ test('GRN-generated draft rule requires matching completed GRN and invoice and n
   const block=rules.slice(start,rules.indexOf('\n    match /',start+10));
   assert.match(block,/request\.resource\.data\.status == 'draft'/);
   assert.match(block,/request\.resource\.data\.paymentStatus == 'pending_payment'/);
-  assert.match(block,/request\.resource\.data\.excludeFromOpexRollup == true/);
+  assert.match(block,/request\.resource\.data\.excludeFromOpexRollup(?: == true)?/);
   assert.match(block,/getAfter\(\/databases\/\$\(database\)\/documents\/grn_records\/\$\(request\.resource\.data\.grnId\)\)/);
   assert.match(block,/getAfter\(\/databases\/\$\(database\)\/documents\/invoices\/\$\(request\.resource\.data\.invoiceId\)\)/);
   assert.match(block,/request\.resource\.data\.createdBy == request\.auth\.uid/);

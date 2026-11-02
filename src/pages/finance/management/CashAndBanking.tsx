@@ -1,3 +1,4 @@
+import { FinancialPortfoliosPanel } from '../../../components/finance/FinancialPortfoliosPanel';
 import { useManagementPaymentAccounts } from '../../../components/finance/ManagementPaymentAccounts';
 import { createManagementFinanceWriteGroup } from '../../../services/managementCashPosting';
 import React, { useState, useEffect, useMemo } from 'react';
@@ -306,6 +307,7 @@ export const CashAndBanking: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <FinancialPortfoliosPanel />
       {/* Page Header */}
       <div>
         <h2 className="text-2xl font-black text-zinc-900 tracking-tight">Global Treasury View</h2>
