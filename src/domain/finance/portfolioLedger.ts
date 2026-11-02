@@ -5,6 +5,7 @@ export interface FinancialLedgerEntry {
  businessDate:string;occurredAt:string;reference:string;description:string;
  source:string;direction:LedgerDirection;amountUGX:number;actorId:string;
  status:'posted'|'reversed';linkedRecordId?:string;
+ branchId?:string;eodChannel?:string;
 }
 /** Changes 037-041: presentation-only ledger view, no posting or balances invented. */
 export interface FinancialLedgerQuery {from:string;to:string;direction:'all'|LedgerDirection}
