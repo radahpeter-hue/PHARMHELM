@@ -3194,8 +3194,12 @@ service cloud.firestore {
         && request.resource.data.scope.kind == 'organisation'
         && !('balanceUGX' in request.resource.data);
       allow update: if isCEO() && isTenantMember(resource.data.tenantId)
-        && resource.data.bankParentId == 'system_bank'
-        && !resource.data.allowsTransfersIn
+        && resource.data.origin == 'custom'
+        && resource.data.status != request.resource.data.status
+        && (request.resource.data.status == 'active' || (
+          request.resource.data.status == 'inactive'
+          && (!exists(/databases/$(database)/documents/finance_payment_accounts/$(resource.data.tenantId + '_' + resource.data.id))
+            || get(/databases/$(database)/documents/finance_payment_accounts/$(resource.data.tenantId + '_' + resource.data.id)).data.balanceUGX == 0)))
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status','updatedBy','updatedAt','deactivatedBy','deactivatedAt','deactivationReason'])
         && request.resource.data.updatedBy == request.auth.uid
