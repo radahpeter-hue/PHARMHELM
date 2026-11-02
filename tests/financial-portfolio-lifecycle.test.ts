@@ -35,10 +35,10 @@ test('Changes 051 and 055 hard deletion is forbidden for system objects and hist
  assert.throws(()=>assertUnusedChildAccountCanBeDeleted(account,zero),/Deactivate unused/);
  assert.doesNotThrow(()=>assertUnusedChildAccountCanBeDeleted({...account,status:'inactive'},zero));
  assert.throws(()=>assertUnusedPortfolioCanBeDeleted(systemPortfolio,zero),/Built-in/);
- assert.throws(()=>assertUnusedPortfolioCanBeDeleted(p,{...zero,childMovementCount:1}),/history/);
- assert.throws(()=>assertUnusedChildAccountCanBeDeleted(account,{...zero,transferCount:1}),/history/);
- assert.throws(()=>assertUnusedChildAccountCanBeDeleted(account,{...zero,currentBalanceUGX:-1}),/Incomplete/);
- assert.throws(()=>assertUnusedChildAccountCanBeDeleted(account,{...zero,ledgerEntryCount:NaN}),/Incomplete/);
+ assert.throws(()=>assertUnusedPortfolioCanBeDeleted(inactive,{...zero,childMovementCount:1}),/history/);
+ assert.throws(()=>assertUnusedChildAccountCanBeDeleted({...account,status:'inactive'}, {...zero,transferCount:1}),/history/);
+ assert.throws(()=>assertUnusedChildAccountCanBeDeleted({...account,status:'inactive'}, {...zero,currentBalanceUGX:-1}),/Incomplete/);
+ assert.throws(()=>assertUnusedChildAccountCanBeDeleted({...account,status:'inactive'}, {...zero,ledgerEntryCount:NaN}),/Incomplete/);
 });
 
 test('Level 4 custom creation uses write-on-create rather than a denied missing-document read',()=>{
