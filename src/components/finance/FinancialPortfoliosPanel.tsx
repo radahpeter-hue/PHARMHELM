@@ -163,6 +163,7 @@ export function FinancialPortfoliosPanel(){
  }
  async function postMovement(e:React.FormEvent){
   e.preventDefault();if(!activeFunding||!profile?.uid||busy||!canRegister)return;
+  if(!activePortfolio||activePortfolio.status!=='active'){setMessage('Inactive portfolios cannot accept new postings.');return;}
   setBusy(true);setMessage('');
   try{
    await postPortfolioFundingMovement({account:activeFunding,actorId:profile.uid,
@@ -175,6 +176,7 @@ export function FinancialPortfoliosPanel(){
  }
  async function submitTransfer(e:React.FormEvent){
   e.preventDefault();if(!transferSource||!canRegister||!profile?.uid||busy)return;
+  if(activePortfolio&&activePortfolio.status!=='active'){setMessage('Inactive source portfolios cannot transfer funds.');return;}
   const target=treasury.accounts.find(a=>a.accountId===transferTo&&a.tenantId===tenantId&&(a.portfolioId===transferTo||a.accountId==='management_bank'||a.accountId==='management_petty_cash')) as PortfolioFundingAccount|undefined;
   if(!target){setMessage('Select a reconciled destination portfolio.');return;}
   setBusy(true);setMessage('');
