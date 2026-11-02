@@ -47,7 +47,7 @@ service cloud.firestore {
         && ('featureToggles' in get(settingsPath).data)
         && get(settingsPath).data.featureToggles is map
         && ('enableOperationalInventory' in get(settingsPath).data.featureToggles)
-        && get(settingsPath).data.featureToggles.enableOperationalInventory == true;
+        && get(settingsPath).data.featureToggles.enableOperationalInventory;
     }
 
     function isOperationalInventoryClass(data) {
@@ -199,7 +199,7 @@ service cloud.firestore {
         && (
           (
             'active' in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data &&
-            get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.active == true
+            get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.active
           ) ||
           (
             'status' in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data &&
@@ -254,7 +254,7 @@ service cloud.firestore {
         && correction.originalPaymentId == resource.data.canonicalPaymentId
         && correction.originalOutboxEventId == resource.data.transactionOutboxEventId
         && next.revisionId == correction.revisionId
-        && next.revisionLifecycle == 'COMPLETED' && next.revisionLocked == true
+        && next.revisionLifecycle == 'COMPLETED' && next.revisionLocked
         && next.supersededBySaleId == correction.replacementSaleId
         && next.supersededByReceiptNumber == correction.replacementReceiptNumber
         && next.revisionRequestedBy == request.auth.uid
@@ -595,13 +595,13 @@ service cloud.firestore {
       allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
       allow create: if isTenantMember(request.resource.data.tenantId)
-        && get(/databases/$(database)/documents/system_settings/$(request.resource.data.tenantId)).data.managementCashAccountControlV1 == true
+        && get(/databases/$(database)/documents/system_settings/$(request.resource.data.tenantId)).data.managementCashAccountControlV1
         && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
         && (((isFinance() && request.resource.data.accountId in ['management_petty_cash','management_bank'])
           && request.resource.data.kind == (request.resource.data.accountId == 'management_bank' ? 'bank' : 'petty_cash'))
           || eligiblePortfolioAccount(request.resource.data))
         && request.resource.data.currency == 'UGX' && request.resource.data.controlVersion == 1
-        && request.resource.data.initialized == true && request.resource.data.lastPostingId == null
+        && request.resource.data.initialized && request.resource.data.lastPostingId == null
         && request.resource.data.balanceUGX is int && request.resource.data.balanceUGX >= 0 && request.resource.data.balanceUGX <= 9007199254740991
         && request.resource.data.balanceUGX == request.resource.data.openingBalanceUGX
         && request.resource.data.registeredBy == request.auth.uid
@@ -620,7 +620,7 @@ service cloud.firestore {
         let legacy = getAfter(/databases/$(database)/documents/procurement_invoices/$(data.procurementInvoiceId)).data;
         let movement = getAfter(managementMovementPath(data.paymentAccountKind, paymentId)).data;
         return isFinance() && isTenantMember(data.tenantId)
-          && get(/databases/$(database)/documents/system_settings/$(data.tenantId)).data.managementCashSettlementV1 == true
+          && get(/databases/$(database)/documents/system_settings/$(data.tenantId)).data.managementCashSettlementV1
           && data.processedBy == request.auth.uid
           && paymentId == 'procurement_cash_settlement_' + data.tenantId + '_' + data.draftId + '_' + data.requestId
           && data.amountUGX is int && data.amountUGX > 0
@@ -638,7 +638,7 @@ service cloud.firestore {
           && movement.paymentId == paymentId && movement.invoiceId == data.invoiceId && movement.grnId == data.grnId
           && movement.amount == data.amountUGX && movement.type == 'outgoing'
           && movement.accountDocumentId == data.tenantId + '_' + data.paymentAccountId
-          && data.excludeFromOpexRollup == true;
+          && data.excludeFromOpexRollup;
       }
       allow get: if canViewFinance() && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
@@ -1402,7 +1402,7 @@ service cloud.firestore {
         && request.resource.data.source == 'procurement_cash_grn'
         && request.resource.data.status == 'draft'
         && request.resource.data.paymentStatus == 'pending_payment'
-        && request.resource.data.excludeFromOpexRollup == true
+        && request.resource.data.excludeFromOpexRollup
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.amount == request.resource.data.amount_ugx
         && request.resource.data.amount > 0
@@ -1423,7 +1423,7 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','paymentStatus','paidAmountUGX','balanceUGX','excludeFromOpexRollup','updatedAt','issuedAt','issuedBy','lastPaymentId'])
           && request.resource.data.paidAmountUGX == getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.previouslyPaidUGX + getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.amountUGX
           && request.resource.data.balanceUGX == getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.remainingUGX
-          && request.resource.data.excludeFromOpexRollup == true));
+          && request.resource.data.excludeFromOpexRollup));
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 
