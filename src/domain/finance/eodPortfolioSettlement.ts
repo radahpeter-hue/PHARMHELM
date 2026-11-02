@@ -1,4 +1,4 @@
-import {collection,doc,getDocs,query,runTransaction,where,type Firestore} from 'firebase/firestore';
+import {collection,doc,getDoc,getDocs,query,runTransaction,where,type Firestore} from 'firebase/firestore';
 import {db} from '../../firebase';
 import {managementAccountDocumentId,stageManagementCashEntry} from '../../services/managementCashPosting';
 import {planEodPortfolioRouting} from './eodPortfolioRouting';
@@ -11,13 +11,12 @@ export async function settleReconciledEod(input:{
  if(!tenantId||!branchId||!reconciliationId||!actorId)throw Error('EOD settlement identity required.');
  const auditRef=doc(database,'eod_reconciliations',reconciliationId);
  const rows=await getDocs(query(collection(database,'eod_reconciliations'),
-  where('tenantId','==',tenantId),where('branch_id','==',branchId)));
+  where('tenantId','==',tenantId)));
  const auditSnapshot=rows.docs.find(d=>d.id===reconciliationId);
  if(!auditSnapshot)throw Error('Submitted EOD not found.');
  const branchRef=doc(database,'branches',branchId);
- const branchSnapshot=await getDocs(query(collection(database,'branches'),where('tenantId','==',tenantId)));
- const branch=branchSnapshot.docs.find(d=>d.id===branchId);
- if(!branch)throw Error('Branch not found.');
+ const branch=await getDoc(branchRef);
+ if(!branch.exists()||branch.data().tenantId!==tenantId)throw Error('Branch not found.');
  const initial=auditSnapshot.data();
  const bankId=branch.data().cardSettlement?.bankPortfolioId as string|undefined;
  const plan=planEodPortfolioRouting({tenantId,branchId,reconciliationId,cardBankPortfolioId:bankId,
