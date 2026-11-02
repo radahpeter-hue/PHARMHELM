@@ -3196,7 +3196,9 @@ service cloud.firestore {
       allow update: if isCEO() && isTenantMember(resource.data.tenantId)
         && resource.data.origin == 'custom'
         && resource.data.status != request.resource.data.status
-        && request.resource.data.status in ['active','inactive']
+        && (request.resource.data.status == 'active' ||
+          !exists(/databases/$(database)/documents/finance_payment_accounts/$(resource.data.tenantId + '_' + resource.data.id)) ||
+          get(/databases/$(database)/documents/finance_payment_accounts/$(resource.data.tenantId + '_' + resource.data.id)).data.balanceUGX == 0)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status','updatedBy','updatedAt','deactivatedBy','deactivatedAt','deactivationReason'])
         && request.resource.data.updatedBy == request.auth.uid
