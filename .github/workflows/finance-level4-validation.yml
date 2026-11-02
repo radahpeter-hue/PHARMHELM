@@ -6,6 +6,9 @@ on:
       - 'src/components/finance/**'
       - 'src/services/financePortfolio*'
       - 'tests/financial-portfolio*.test.ts'
+      - 'tests/eod-portfolio-routing.test.ts'
+      - 'scripts/eod-portfolio-settlement-emulator.mjs'
+      - 'src/services/eodSubmissionService.ts'
       - '.github/workflows/finance-level4-validation.yml'
   workflow_dispatch:
 jobs:
@@ -30,3 +33,5 @@ jobs:
       - run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
       - name: CEO-only and tenant-isolated portfolio security tests
         run: npx firebase emulators:exec --only firestore --project pharmhelm-finance-l4-portfolio-test "node scripts/finance-level4-rules-emulator.mjs"
+      - name: Authenticated atomic EOD portfolio settlement and replay acceptance
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-eod-posting-acceptance "node --import tsx scripts/eod-portfolio-settlement-emulator.mjs"

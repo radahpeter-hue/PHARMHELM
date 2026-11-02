@@ -40,7 +40,9 @@ export function mapAuthoritativeMovement(id:string,raw:Record<string,unknown>,ac
   businessDate,occurredAt,reference:String(raw.reference_number||raw.transferId||id),
   description:String(raw.source||raw.type||'Posted management transaction'),
   source:managementLedgerCollection(account),direction:delta>0?'inflow':'outflow',
-  amountUGX:Math.abs(delta),actorId:String(raw.postedBy||''),status:'posted'};
+  amountUGX:Math.abs(delta),actorId:String(raw.postedBy||''),status:'posted',
+  ...(typeof raw.branchId==='string'&&raw.branchId?{branchId:raw.branchId}:{}),
+  ...(typeof raw.eodChannel==='string'&&raw.eodChannel?{eodChannel:raw.eodChannel}:{})};
 }
 export async function loadAuthoritativePortfolioLedger(
  account:ManagementPaymentAccount,period:FinancialLedgerQuery,database:Firestore=db

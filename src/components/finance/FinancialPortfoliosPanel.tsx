@@ -1,3 +1,7 @@
+import {summarizeBranchContributions} from '../../domain/finance/portfolioBranchContributions';
+import {settleReconciledEod} from '../../domain/finance/eodPortfolioSettlement';
+import {eodIdentity} from '../../utils/eodShifts';
+import {readBranchCardSettlement,saveBranchCardSettlement} from '../../domain/finance/branchCardSettlement';
 import {registerPortfolioFunding,postPortfolioFundingMovement,portfolioPostingIdentity,transferPortfolioFunding,type PortfolioFundingAccount} from '../../domain/finance/portfolioFunding';
 import {loadPosChannelEvidence,type PosChannelEvidence} from '../../domain/finance/portfolioPosEvidence';
 import {loadEodChannelEvidence,type ReconciliationEvidence,type EodChannel} from '../../domain/finance/portfolioEodEvidence';
@@ -19,7 +23,7 @@ import {hasAnyRole} from '../../utils/roles';
 export function FinancialPortfoliosPanel(){
  const {profile,activeBranchId}=useAuth();
  const tenantId=profile?.tenantId||'';
- const treasury=useManagementPaymentAccounts();
+ const treasury=useManagementPaymentAccounts(true);
  const canRegister=hasAnyRole(profile,['owner','CEO','CEO / MD']);
  const [items,setItems]=useState<FinancialPortfolio[]>([]);
  const [accounts,setAccounts]=useState<PortfolioChildAccount[]>([]);
@@ -43,6 +47,11 @@ export function FinancialPortfoliosPanel(){
  const [busy,setBusy]=useState(false);
  const [selected,setSelected]=useState('');
  const [managementSelected,setManagementSelected]=useState('');
+ const [settlementDate,setSettlementDate]=useState(new Date().toISOString().slice(0,10));
+ const [settlementShift,setSettlementShift]=useState('dayShift');
+ const [cardDestination,setCardDestination]=useState('');
+ const [savedCardDestination,setSavedCardDestination]=useState('');
+ const [cardConfigError,setCardConfigError]=useState('');
  const [eodEvidence,setEodEvidence]=useState<ReconciliationEvidence[]|null>(null);
  const [eodError,setEodError]=useState('');
  const [posEvidence,setPosEvidence]=useState<PosChannelEvidence[]|null>(null);
@@ -51,6 +60,7 @@ export function FinancialPortfoliosPanel(){
  const [managementError,setManagementError]=useState('');
  const [managementLoading,setManagementLoading]=useState(false);
  const [direction,setDirection]=useState<'all'|'inflow'|'outflow'>('all');
+ const [ledgerBranchFilter,setLedgerBranchFilter]=useState('all');
  const [period,setPeriod]=useState(()=>defaultLedgerQuery(new Date().toISOString().slice(0,10)));
  useEffect(()=>{
    let live=true;
@@ -82,6 +92,37 @@ export function FinancialPortfoliosPanel(){
  const selectedPortfolio=items.find(p=>p.id===selected);
  const childAccounts=accounts.filter(a=>a.portfolioId===selectedPortfolio?.id);
 
+ useEffect(()=>{
+  let live=true;setSavedCardDestination('');setCardDestination('');setCardConfigError('');
+  if(!tenantId||!activeBranchId)return;
+  readBranchCardSettlement(tenantId,activeBranchId).then(config=>{
+   if(live){setSavedCardDestination(config?.bankPortfolioId||'');setCardDestination(config?.bankPortfolioId||'');}
+  }).catch(error=>{if(live)setCardConfigError(error instanceof Error?error.message:'Unable to load card configuration.');});
+  return ()=>{live=false;};
+ },[tenantId,activeBranchId]);
+ async function saveCardDestination(event:React.FormEvent){
+  event.preventDefault();if(!canRegister||busy||!profile?.uid||!activeBranchId)return;
+  const bank=items.find(p=>p.id===cardDestination);
+  if(!bank){setCardConfigError('Choose an active registered bank account.');return;}
+  setBusy(true);setCardConfigError('');
+  try{
+   await saveBranchCardSettlement({tenantId,branchId:activeBranchId,bank,actorId:profile.uid});
+   setSavedCardDestination(bank.id);
+   setMessage('Branch default card account saved. This configuration does not post or move money.');
+  }catch(error){setCardConfigError(error instanceof Error?error.message:'Card account configuration failed.');}
+  finally{setBusy(false);}
+ }
+ async function settleEod(event:React.FormEvent){
+  event.preventDefault();
+  if(!activeBranchId||!tenantId||!profile?.uid||busy)return;
+  setBusy(true);setMessage('');
+  try{
+   const reconciliationId=eodIdentity(tenantId,activeBranchId,settlementDate,settlementShift);
+   const result=await settleReconciledEod({tenantId,branchId:activeBranchId,reconciliationId,actorId:profile.uid});
+   setMessage(result.replayed?'EOD settlement already posted. No duplicate movements.':`Posted ${result.postings} verified EOD channel movement(s). Refresh portfolio ledger.`);
+  }catch(error){setMessage(error instanceof Error?error.message:'EOD portfolio settlement was rejected.');}
+  finally{setBusy(false);}
+ }
  async function registerBankAccount(event:React.FormEvent){
    event.preventDefault();
    if(!tenantId||!profile?.uid||!canRegister||busy)return;
@@ -91,8 +132,8 @@ export function FinancialPortfoliosPanel(){
        tenantId,actorId:profile.uid,institution:bankInstitution,
        accountReference:bankReference,displayName:bankAccountName,createdAt:new Date().toISOString()
      });
-     setItems(old=>[...old,bank]);setBankInstitution('');setBankAccountName('');setBankReference('');
-     setMessage('Bank account identity registered. Reconciled balance and posting are not yet enabled.');
+     setItems(old=>old.some(x=>x.id===bank.id)?old:[...old,bank]);setBankInstitution('');setBankAccountName('');setBankReference('');
+     setSelected(bank.id);setFundingName(bank.name);setMessage('Bank account registered. Select a verified opening statement to reconcile its balance.');
    }catch(error){setMessage(error instanceof Error?error.message:'Bank registration failed.');}
    finally{setBusy(false);}
  }
@@ -127,7 +168,7 @@ export function FinancialPortfoliosPanel(){
   const account=treasury.accounts.find(a=>a.id===managementSelected);
   if(!account)return;
   setManagementLoading(true);
-  loadAuthoritativePortfolioLedger(account,{...period,direction})
+  loadAuthoritativePortfolioLedger(account,{...period,direction:'all'})
    .then(result=>{if(live)setManagementLedger(result);})
    .catch(error=>{if(live)setManagementError(error instanceof Error?error.message:'Ledger unavailable.');})
    .finally(()=>{if(live)setManagementLoading(false);});
@@ -156,7 +197,7 @@ export function FinancialPortfoliosPanel(){
    const opening=Number(fundingOpening);
    await registerPortfolioFunding({portfolio:activePortfolio,actorId:profile.uid,name:fundingName,
     openingBalanceUGX:opening,reconciliationReference:fundingReference});
-   setMessage('Funding account registered. Reload to retrieve its authoritative balance.');
+   setMessage('Opening reconciliation saved. The account balance and ledger will load automatically.');
    setFundingOpening('');setFundingReference('');
   }catch(e){setMessage(e instanceof Error?e.message:'Funding registration failed.');}
   finally{setBusy(false);}
@@ -213,6 +254,30 @@ export function FinancialPortfoliosPanel(){
  return <section className="rounded-2xl border border-zinc-200 bg-white p-3 sm:p-5 space-y-5 text-zinc-900 min-w-0 overflow-hidden">
   <div><h3 className="text-lg font-bold text-zinc-950">Financial Portfolio Registry</h3>
    <p className="text-sm text-zinc-600">New portfolios are tenant scoped. Legacy treasury balances are not silently migrated and unavailable financial balances are never displayed as zero.</p></div>
+  {activeBranchId&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 space-y-2">
+   <h4 className="font-semibold">Branch default card settlement account</h4>
+   <p className="text-sm text-zinc-600">Select the receiving registered bank for card payments made at this branch. This does not post EOD funds or rewrite past payments.</p>
+   <p className="text-xs text-zinc-600">Saved default: {items.find(x=>x.id===savedCardDestination)?.name||'Not configured'}</p>
+   {cardConfigError&&<p role="alert" className="text-sm text-red-700">{cardConfigError}</p>}
+   {canRegister&&<form onSubmit={saveCardDestination} className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+    <select aria-label="Branch default card bank" required value={cardDestination} onChange={e=>setCardDestination(e.target.value)} className="min-w-0 w-full rounded border border-zinc-400 bg-white p-2 text-zinc-900">
+     <option value="">Select bank account</option>
+     {items.filter(p=>p.origin==='custom'&&p.classification==='bank'&&p.bankParentId==='system_bank'&&p.status==='active').map(p=><option key={p.id} value={p.id}>{p.name} · {p.bankInstitution}</option>)}
+    </select>
+    <button type="submit" disabled={busy||!cardDestination} className="rounded bg-emerald-800 px-3 py-2 font-semibold text-white">Save branch default</button>
+   </form>}
+  </div>}
+  {activeBranchId&&hasAnyRole(profile,['Finance Head','Finance Officer','Accountant','CEO','CEO / MD','owner'])&&<form onSubmit={settleEod} className="rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 space-y-2">
+   <h4 className="font-semibold">Post submitted EOD to reconciled portfolios</h4>
+   <p className="text-xs text-zinc-600">Finance-controlled settlement only. All nonzero destinations must first have verified opening balances; repeat submissions cannot double post.</p>
+   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+    <input type="date" aria-label="EOD settlement business date" required value={settlementDate} onChange={e=>setSettlementDate(e.target.value)} className="min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900"/>
+    <select aria-label="EOD settlement shift" value={settlementShift} onChange={e=>setSettlementShift(e.target.value)} className="min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900">
+     <option value="dayShift">Day shift</option><option value="eveningShift">Evening shift</option><option value="nightShift">Night shift</option>
+    </select>
+    <button type="submit" disabled={busy} className="rounded bg-emerald-800 p-2 font-semibold text-white">Post reconciled EOD</button>
+   </div>
+  </form>}
   <div className="space-y-2">
    <h4 className="font-semibold text-zinc-900">Portfolio-wide funding coverage</h4>
    <p className="text-xs text-zinc-600">System categories shown as a read-only projection. Unavailable is not zero. Branch cash and mobile money require separately reconciled posting evidence.</p>
@@ -231,7 +296,7 @@ export function FinancialPortfoliosPanel(){
   {activePortfolio&&activePortfolio.id!=='system_bank'&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
    <h4 className="font-semibold">{activePortfolio.name}: Authoritative funding</h4>
    {!activeFunding?<p>Not reconciled. CEO must register a verified opening balance before transactions can be posted.</p>:
-    <div><p>Reconciled balance: UGX {activeFunding.balanceUGX.toLocaleString()}. Ref: {activeFunding.reconciliationReference}</p><button type="button" className="mt-2 rounded border border-zinc-400 bg-white p-2 text-zinc-900" onClick={()=>setManagementSelected(activeFunding.id)}>View verified account ledger</button></div>}
+    <div><p>Reconciled balance: UGX {activeFunding.balanceUGX.toLocaleString()}. Ref: {activeFunding.reconciliationReference}</p><button type="button" className="mt-2 rounded border border-emerald-700 bg-white p-2 font-semibold text-emerald-900" onClick={()=>setManagementSelected(activeFunding.id)}>View verified account ledger</button></div>}
    {canRegister&&!activeFunding&&<form onSubmit={initializeFunding} className="grid gap-2 sm:grid-cols-4">
      <input required aria-label="Funding name" placeholder="Account name" value={fundingName} onChange={e=>setFundingName(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
      <input required aria-label="Opening UGX" type="number" min="0" step="1" value={fundingOpening} onChange={e=>setFundingOpening(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
@@ -278,13 +343,13 @@ export function FinancialPortfoliosPanel(){
     {treasury.loading?<p className="text-sm">Loading reconciled payment accounts…</p>:
      treasury.error?<p role="alert" className="text-sm">{treasury.error}</p>:
      <div className="grid gap-2 sm:grid-cols-2">
-      {treasury.accounts.filter(a=>a.initialized&&a.currency==='UGX'&&Number.isSafeInteger(a.balanceUGX)).map(a=>
+      {treasury.accounts.filter(a=>['management_bank','management_petty_cash'].includes(a.accountId)&&a.initialized&&a.currency==='UGX'&&Number.isSafeInteger(a.balanceUGX)).map(a=>
        <div key={a.id} className="rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 min-w-0">
         <button type="button" onClick={()=>setManagementSelected(a.id)} className="font-semibold text-emerald-900 underline underline-offset-2 text-left break-words">{a.name}</button><p className="text-xs text-zinc-600">{a.kind==='bank'?'Management Bank':'Management Petty Cash'} · Reconciled</p>
         <p className="font-semibold tabular-nums text-zinc-950">UGX {a.balanceUGX.toLocaleString()}</p>
         <p className="text-xs text-zinc-600">Opening reconciliation: {a.reconciliationReference}</p>
        </div>)}
-      {!treasury.accounts.length&&<p className="text-sm">No Management payment account has been reconciled.</p>}
+      {!treasury.accounts.some(a=>['management_bank','management_petty_cash'].includes(a.accountId)&&a.initialized)&&<p className="text-sm">No Management payment account has been reconciled.</p>}
      </div>}
     {managementSelected&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
       <h5 className="font-semibold">Authoritative account ledger</h5>
@@ -297,8 +362,25 @@ export function FinancialPortfoliosPanel(){
        <p>Current reconciled balance: UGX {managementLedger.currentBalanceUGX.toLocaleString()}</p>
        <p>Opening balance: UGX {managementLedger.openingBalanceUGX.toLocaleString()}</p>
        <p>Reconciliation reference: {managementLedger.reconciliationReference}</p>
+       <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 space-y-2">
+        <h6 className="font-semibold text-zinc-900">Branch contributions for selected dates</h6>
+        <p className="text-xs text-zinc-600">Inflow and outflow totals from branch-tagged posted movements, not separate bank balances. The reconciled account balance above always reflects all branches.</p>
+        <select aria-label="Filter ledger by source branch" value={ledgerBranchFilter} onChange={e=>setLedgerBranchFilter(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900">
+         <option value="all">All branches</option>
+         {summarizeBranchContributions(managementLedger.entries).branches.map(b=><option key={b.branchId} value={b.branchId}>{b.branchId}</option>)}
+         {managementLedger.entries.some(e=>!e.branchId)&&<option value="unattributed">Unattributed / legacy</option>}
+        </select>
+        <div className="overflow-x-auto">
+         <table className="w-full text-left text-xs">
+          <thead><tr><th className="p-1">Branch</th><th className="p-1 text-right">Inflows UGX</th><th className="p-1 text-right">Net UGX</th></tr></thead>
+          <tbody>
+           {summarizeBranchContributions(managementLedger.entries).branches.filter(b=>ledgerBranchFilter==='all'||ledgerBranchFilter===b.branchId).map(b=><tr key={b.branchId}><td className="p-1">{b.branchId}</td><td className="p-1 text-right">{b.inflowUGX.toLocaleString()}</td><td className="p-1 text-right">{b.netUGX.toLocaleString()}</td></tr>)}
+          </tbody>
+         </table>
+        </div>
+       </div>
        <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>Date</th><th>Reference</th><th>Direction</th><th>Amount UGX</th></tr></thead><tbody>
-        {managementLedger.entries.map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.reference}</td><td>{e.direction}</td><td>{e.amountUGX.toLocaleString()}</td></tr>)}
+        {managementLedger.entries.filter(e=>(direction==='all'||e.direction===direction)&&(ledgerBranchFilter==='all'||(ledgerBranchFilter==='unattributed'?!e.branchId:e.branchId===ledgerBranchFilter))).map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.reference}</td><td>{e.direction}</td><td>{e.amountUGX.toLocaleString()}</td></tr>)}
        </tbody></table></div>
        {!managementLedger.entries.length&&<p>No movements in the selected period.</p>}
       </>}
@@ -309,7 +391,9 @@ export function FinancialPortfoliosPanel(){
    <h4 className="font-semibold text-zinc-900">Registered bank accounts ({bankIdentities.length})</h4>
    {bankIdentities.map(bank=><div key={bank.id} className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
     <strong>{bank.name}</strong> · {bank.bankInstitution} · {bank.status}
-    <p>Account reference: {bank.bankAccountReference}. Balance not yet reconciled.</p>{canRegister&&<button type="button" disabled={busy} onClick={()=>changeBankStatus(bank)} className="mt-2 rounded border border-zinc-400 bg-white px-3 py-2 text-zinc-900">{bank.status==='active'?'Deactivate':'Reactivate'}</button>}
+    <p>Account reference: {bank.bankAccountReference}. {treasury.accounts.some(a=>a.accountId===bank.id&&a.initialized)?'Authoritative balance available':'Opening balance not yet reconciled'}</p>
+    <button type="button" onClick={()=>{setSelected(bank.id);setFundingName(bank.name);setManagementSelected('');}} className="mt-2 mr-2 rounded border border-emerald-700 bg-white px-3 py-2 font-semibold text-emerald-900">{treasury.accounts.some(a=>a.accountId===bank.id&&a.initialized)?'Open account and ledger':'Reconcile opening balance'}</button>
+    {canRegister&&<button type="button" disabled={busy} onClick={()=>changeBankStatus(bank)} className="mt-2 rounded border border-zinc-400 bg-white px-3 py-2 text-zinc-900">{bank.status==='active'?'Deactivate':'Reactivate'}</button>}
    </div>)}
    {canRegister&&<form onSubmit={registerBankAccount} className="grid gap-2 sm:grid-cols-4">
      <input required maxLength={100} aria-label="Bank institution" placeholder="Bank name" value={bankInstitution} onChange={e=>setBankInstitution(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>

@@ -930,7 +930,8 @@ service cloud.firestore {
       allow create: if isCEO() && isTenantMember(request.resource.data.tenantId) && hasValidBranchShape();
       allow update: if isSettingsAdmin() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
-        && request.resource.data.branch_code == resource.data.branch_code;
+        && request.resource.data.branch_code == resource.data.branch_code
+        && (request.resource.data.get('cardSettlement', null) == resource.data.get('cardSettlement', null) || isCEO());
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
     }
 

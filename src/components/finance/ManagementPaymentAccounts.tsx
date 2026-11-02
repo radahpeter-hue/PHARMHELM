@@ -5,15 +5,15 @@ import { useAuth } from '../../contexts/AuthContext';
 import {MANAGEMENT_BANK_ACCOUNT,MANAGEMENT_CASH_ACCOUNT,type ManagementPaymentAccount} from '../../services/managementCashPosting';
 import { registerManagementPaymentAccount } from '../../services/managementPaymentAccountService';
 
-export function useManagementPaymentAccounts() {
+export function useManagementPaymentAccounts(includePortfolioAccounts=false) {
   const { profile, hasPermission } = useAuth();
   const [state,setState]=useState<{tenantId:string;accounts:ManagementPaymentAccount[];error:string;loading:boolean}>({tenantId:'',accounts:[],error:'',loading:true});
   const tenantId=profile?.tenantId||'',canView=hasPermission('finance','view');
   useEffect(()=>{
     setState({tenantId,accounts:[],error:'',loading:true});
     if(!tenantId||!canView){setState({tenantId,accounts:[],error:'Finance access is required.',loading:false});return;}
-    return onSnapshot(query(collection(db,'finance_payment_accounts'),where('tenantId','==',tenantId)),snapshot=>setState({tenantId,accounts:snapshot.docs.map(d=>({...d.data(),id:d.id}) as ManagementPaymentAccount).filter(a=>a.accountId===MANAGEMENT_BANK_ACCOUNT||a.accountId===MANAGEMENT_CASH_ACCOUNT),error:'',loading:false}),()=>setState({tenantId,accounts:[],error:'Unable to load payment accounts.',loading:false}));
-  },[tenantId,canView]);
+    return onSnapshot(query(collection(db,'finance_payment_accounts'),where('tenantId','==',tenantId)),snapshot=>setState({tenantId,accounts:snapshot.docs.map(d=>({...d.data(),id:d.id}) as ManagementPaymentAccount).filter(a=>includePortfolioAccounts||a.accountId===MANAGEMENT_BANK_ACCOUNT||a.accountId===MANAGEMENT_CASH_ACCOUNT),error:'',loading:false}),()=>setState({tenantId,accounts:[],error:'Unable to load payment accounts.',loading:false}));
+  },[tenantId,canView,includePortfolioAccounts]);
   return state.tenantId===tenantId?state:{tenantId,accounts:[],error:'',loading:true};
 }
 
