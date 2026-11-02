@@ -602,7 +602,7 @@ service cloud.firestore {
         && request.resource.data.balanceUGX is int && request.resource.data.balanceUGX >= 0 && request.resource.data.balanceUGX <= 9007199254740991
         && request.resource.data.balanceUGX == request.resource.data.openingBalanceUGX
         && request.resource.data.registeredBy == request.auth.uid
-        && request.resource.data.name is string && request.resource.data.name.size() > 0
+        && request.resource.data.name is string
         && request.resource.data.reconciliationReference is string && request.resource.data.reconciliationReference.size() >= 5;
       allow update: if validManagementAccountUpdate(accountId, resource.data, request.resource.data);
       allow delete: if false;
