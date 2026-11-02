@@ -61,6 +61,11 @@ try{
  let denied=false;
  try{await settleReconciledEod({...input,actorId:'outsider'},outsider);}catch{denied=true;}
  ok(denied,'Cross-tenant EOD settlement must be denied');
+ const zero=eod('2026-11-04');
+ zero.record={...zero.record,card_settlement_account_id:null,cash_actual:0,momo_actual:0,airtel_actual:0,card_actual:0};
+ await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'eod_reconciliations',zero.id),zero.record));
+ const empty=await settleReconciledEod({...input,reconciliationId:zero.id},finance);
+ ok(empty.postings===0,'Zero-amount EOD must not create phantom movements');
  const second=eod('2026-11-03');
  await env.withSecurityRulesDisabled(async ctx=>{
   const db=ctx.firestore();
