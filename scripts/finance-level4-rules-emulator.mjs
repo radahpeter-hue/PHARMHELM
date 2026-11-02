@@ -70,6 +70,18 @@ try{
  await checkedSucceeds(updateDoc(ref(ceo,tenant,bank.id),{status:'active',updatedBy:'ceo_a',
  updatedAt:'2026-10-30T10:00:00Z',deactivatedBy:deleteField(),deactivatedAt:deleteField(),deactivationReason:deleteField()}));
  await assertFails(deleteDoc(ref(ceo,tenant,bank.id)));
+ // Never-funded custom portfolios can be removed only after deactivation.
+ const disposable='custom_neverfunded';
+ await checkedSucceeds(setDoc(ref(ceo,tenant,disposable),row('ceo_a',disposable)));
+ await assertFails(deleteDoc(ref(ceo,tenant,disposable)));
+ await checkedSucceeds(updateDoc(ref(ceo,tenant,disposable),{
+  status:'inactive',updatedBy:'ceo_a',updatedAt:'2026-10-30T09:00:00Z',
+  deactivatedBy:'ceo_a',deactivatedAt:'2026-10-30T09:00:00Z',deactivationReason:'Never used'
+ }));
+ await assertFails(deleteDoc(ref(finance,tenant,disposable)));
+ await assertFails(deleteDoc(ref(otherDb,tenant,disposable)));
+ await checkedSucceeds(deleteDoc(ref(ceo,tenant,disposable)));
+
 
  const id='bank_'+ 'a'.repeat(64);
  const bankRegistry={...row('ceo_a',id),classification:'bank',name:'Registered Equity',
