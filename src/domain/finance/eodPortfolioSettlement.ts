@@ -1,3 +1,4 @@
+import {eodIdentity} from '../../utils/eodShifts';
 import {collection,doc,getDoc,getDocs,query,runTransaction,where,type Firestore} from 'firebase/firestore';
 import {db} from '../../firebase';
 import {managementAccountDocumentId,stageManagementCashEntry} from '../../services/managementCashPosting';
@@ -18,6 +19,8 @@ export async function settleReconciledEod(input:{
  const branch=await getDoc(branchRef);
  if(!branch.exists()||branch.data().tenantId!==tenantId)throw Error('Branch not found.');
  const initial=auditSnapshot.data();
+ if(eodIdentity(initial.tenantId,initial.branch_id,initial.reconciliation_date,initial.shift_id)!==reconciliationId)
+  throw Error('EOD identity mismatch.');
  const bankId=initial.card_settlement_account_id as string|undefined;
  const plan=planEodPortfolioRouting({tenantId,branchId,reconciliationId,cardBankPortfolioId:bankId,
   actual:{cash:initial.cash_actual,momo:initial.momo_actual,airtel:initial.airtel_actual,card:initial.card_actual}});
