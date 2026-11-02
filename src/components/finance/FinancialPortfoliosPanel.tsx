@@ -210,17 +210,17 @@ export function FinancialPortfoliosPanel(){
    .catch(e=>{if(live)setPosError(e instanceof Error?e.message:'POS payment evidence unavailable.');});
   return ()=>{live=false;};
  },[tenantId,activeBranchId,evidenceChannel,period.from,period.to]);
- return <section className="rounded-2xl border border-zinc-200 bg-white p-4 space-y-4">
+ return <section className="rounded-2xl border border-zinc-200 bg-white p-3 sm:p-5 space-y-5 text-zinc-900 min-w-0 overflow-hidden">
   <div><h3 className="text-lg font-bold text-zinc-950">Financial Portfolio Registry</h3>
    <p className="text-sm text-zinc-600">New portfolios are tenant scoped. Legacy treasury balances are not silently migrated and unavailable financial balances are never displayed as zero.</p></div>
   <div className="space-y-2">
    <h4 className="font-semibold text-zinc-900">Portfolio-wide funding coverage</h4>
    <p className="text-xs text-zinc-600">System categories shown as a read-only projection. Unavailable is not zero. Branch cash and mobile money require separately reconciled posting evidence.</p>
-   <div className="grid gap-2 sm:grid-cols-2">
+   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
     {[...builtInViews,...items].map(portfolio=>{
       const view=balanceViews.find(x=>x.portfolioId===portfolio.id);
-      return <div key={portfolio.id} className="rounded border border-zinc-200 p-3 text-sm">
-       <button type="button" onClick={()=>setSelected(portfolio.id)} className="font-semibold underline">{portfolio.name}</button> · {portfolio.scope.kind==='branch'?'Branch':'Organisation'}
+      return <div key={portfolio.id} className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
+       <button type="button" onClick={()=>setSelected(portfolio.id)} className="font-semibold text-emerald-900 underline underline-offset-2 text-left break-words">{portfolio.name}</button> · {portfolio.scope.kind==='branch'?'Branch':'Organisation'}
        <p>{view?.status==='reconciled'?'UGX '+view.balanceUGX!.toLocaleString():'Balance unavailable: not reconciled'}</p>
       </div>;
     })}
@@ -228,36 +228,36 @@ export function FinancialPortfoliosPanel(){
   </div>
 
 
-  {activePortfolio&&activePortfolio.id!=='system_bank'&&<div className="rounded border border-zinc-200 p-3 text-sm">
+  {activePortfolio&&activePortfolio.id!=='system_bank'&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
    <h4 className="font-semibold">{activePortfolio.name}: Authoritative funding</h4>
    {!activeFunding?<p>Not reconciled. CEO must register a verified opening balance before transactions can be posted.</p>:
-    <div><p>Reconciled balance: UGX {activeFunding.balanceUGX.toLocaleString()}. Ref: {activeFunding.reconciliationReference}</p><button type="button" className="mt-2 rounded border p-2" onClick={()=>setManagementSelected(activeFunding.id)}>View verified account ledger</button></div>}
+    <div><p>Reconciled balance: UGX {activeFunding.balanceUGX.toLocaleString()}. Ref: {activeFunding.reconciliationReference}</p><button type="button" className="mt-2 rounded border border-zinc-400 bg-white p-2 text-zinc-900" onClick={()=>setManagementSelected(activeFunding.id)}>View verified account ledger</button></div>}
    {canRegister&&!activeFunding&&<form onSubmit={initializeFunding} className="grid gap-2 sm:grid-cols-4">
-     <input required aria-label="Funding name" placeholder="Account name" value={fundingName} onChange={e=>setFundingName(e.target.value)} className="border p-2"/>
-     <input required aria-label="Opening UGX" type="number" min="0" step="1" value={fundingOpening} onChange={e=>setFundingOpening(e.target.value)} className="border p-2"/>
-     <input required minLength={5} aria-label="Reconciliation reference" placeholder="Verified statement reference" value={fundingReference} onChange={e=>setFundingReference(e.target.value)} className="border p-2"/>
-     <button disabled={busy} className="rounded border p-2">Confirm opening reconciliation</button>
+     <input required aria-label="Funding name" placeholder="Account name" value={fundingName} onChange={e=>setFundingName(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+     <input required aria-label="Opening UGX" type="number" min="0" step="1" value={fundingOpening} onChange={e=>setFundingOpening(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+     <input required minLength={5} aria-label="Reconciliation reference" placeholder="Verified statement reference" value={fundingReference} onChange={e=>setFundingReference(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+     <button disabled={busy} className="rounded border border-zinc-400 bg-white p-2 text-zinc-900">Confirm opening reconciliation</button>
    </form>}
    {canRegister&&activeFunding&&<form onSubmit={postMovement} className="grid gap-2 sm:grid-cols-4">
-    <select aria-label="Movement direction" value={movementDirection} onChange={e=>setMovementDirection(e.target.value as 'inflow'|'outflow')} className="border p-2"><option value="inflow">Inflow</option><option value="outflow">Outflow</option></select>
-    <input required aria-label="Movement amount" type="number" min="1" step="1" value={movementAmount} onChange={e=>setMovementAmount(e.target.value)} className="border p-2"/>
-    <input required minLength={3} aria-label="Movement external reference" placeholder="External transaction reference" value={movementReference} onChange={e=>setMovementReference(e.target.value)} className="border p-2"/>
-    <button disabled={busy} className="rounded border p-2">Record verified movement</button>
+    <select aria-label="Movement direction" value={movementDirection} onChange={e=>setMovementDirection(e.target.value as 'inflow'|'outflow')} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"><option value="inflow">Inflow</option><option value="outflow">Outflow</option></select>
+    <input required aria-label="Movement amount" type="number" min="1" step="1" value={movementAmount} onChange={e=>setMovementAmount(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+    <input required minLength={3} aria-label="Movement external reference" placeholder="External transaction reference" value={movementReference} onChange={e=>setMovementReference(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+    <button disabled={busy} className="rounded border border-zinc-400 bg-white p-2 text-zinc-900">Record verified movement</button>
    </form>}
   </div>}
-  {canRegister&&transferSource&&<form onSubmit={submitTransfer} className="rounded border border-zinc-200 p-3 grid gap-2 sm:grid-cols-4">
+  {canRegister&&transferSource&&<form onSubmit={submitTransfer} className="rounded-lg border border-zinc-200 bg-white p-3 grid gap-2 sm:grid-cols-4 text-zinc-900 min-w-0">
     <h4 className="font-semibold sm:col-span-4">Transfer between reconciled portfolios</h4>
     <p className="text-xs sm:col-span-4">If an existing Management Bank reserve overlaps a newly registered bank account, allocate it with this atomic transfer. Never record the same funds as two opening balances.</p>
-    <select required aria-label="Destination portfolio" value={transferTo} onChange={e=>setTransferTo(e.target.value)} className="border p-2">
+    <select required aria-label="Destination portfolio" value={transferTo} onChange={e=>setTransferTo(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500">
       <option value="">Select destination account</option>
       {treasury.accounts.filter(a=>a.tenantId===tenantId&&(a.portfolioId===a.accountId||a.accountId==='management_bank'||a.accountId==='management_petty_cash')&&a.accountId!==transferSource.accountId&&a.initialized).map(a=>
        <option key={a.id} value={a.accountId}>{a.name}</option>)}
     </select>
-    <input required aria-label="Transfer UGX" type="number" min="1" step="1" value={transferAmount} onChange={e=>setTransferAmount(e.target.value)} className="border p-2"/>
-    <input required minLength={5} aria-label="Transfer bank reference" value={transferReference} onChange={e=>setTransferReference(e.target.value)} placeholder="External reference" className="border p-2"/>
-    <button disabled={busy} className="rounded border p-2">Transfer atomically</button>
+    <input required aria-label="Transfer UGX" type="number" min="1" step="1" value={transferAmount} onChange={e=>setTransferAmount(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+    <input required minLength={5} aria-label="Transfer bank reference" value={transferReference} onChange={e=>setTransferReference(e.target.value)} placeholder="External reference" className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+    <button disabled={busy} className="rounded border border-zinc-400 bg-white p-2 text-zinc-900">Transfer atomically</button>
    </form>}
-  {evidenceChannel&&<div className="rounded border border-zinc-200 p-3 text-sm">
+  {evidenceChannel&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
    <h4 className="font-semibold">Canonical POS V2 settled-payment evidence</h4>
    <p>Receipt components only. This does not include legacy POS or revisions and is not the available wallet/cash balance.</p>
    {posError?<p role="alert">{posError}</p>:posEvidence===null?<p>Loading receipts…</p>:
@@ -265,7 +265,7 @@ export function FinancialPortfoliosPanel(){
      {posEvidence.map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.receiptNumber}</td><td>{e.settledUGX.toLocaleString()}</td></tr>)}
     </tbody></table></div>}
   </div>}
-  {evidenceChannel&&<div className="rounded border border-zinc-200 p-3 text-sm">
+  {evidenceChannel&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
    <h4 className="font-semibold">Branch EOD reconciliation evidence</h4>
    <p>These are declared amounts, not bank deposits or verified current portfolio balances.</p>
    {eodError?<p role="alert">{eodError}</p>:eodEvidence===null?<p>Loading reconciliations…</p>:
@@ -279,19 +279,19 @@ export function FinancialPortfoliosPanel(){
      treasury.error?<p role="alert" className="text-sm">{treasury.error}</p>:
      <div className="grid gap-2 sm:grid-cols-2">
       {treasury.accounts.filter(a=>a.initialized&&a.currency==='UGX'&&Number.isSafeInteger(a.balanceUGX)).map(a=>
-       <div key={a.id} className="rounded-lg border border-zinc-200 p-3">
-        <button type="button" onClick={()=>setManagementSelected(a.id)} className="font-semibold underline">{a.name}</button><p className="text-xs">{a.kind==='bank'?'Management Bank':'Management Petty Cash'} · Reconciled</p>
-        <p className="font-semibold">UGX {a.balanceUGX.toLocaleString()}</p>
-        <p className="text-xs">Opening reconciliation: {a.reconciliationReference}</p>
+       <div key={a.id} className="rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 min-w-0">
+        <button type="button" onClick={()=>setManagementSelected(a.id)} className="font-semibold text-emerald-900 underline underline-offset-2 text-left break-words">{a.name}</button><p className="text-xs text-zinc-600">{a.kind==='bank'?'Management Bank':'Management Petty Cash'} · Reconciled</p>
+        <p className="font-semibold tabular-nums text-zinc-950">UGX {a.balanceUGX.toLocaleString()}</p>
+        <p className="text-xs text-zinc-600">Opening reconciliation: {a.reconciliationReference}</p>
        </div>)}
       {!treasury.accounts.length&&<p className="text-sm">No Management payment account has been reconciled.</p>}
      </div>}
-    {managementSelected&&<div className="rounded border border-zinc-200 p-3 text-sm">
+    {managementSelected&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
       <h5 className="font-semibold">Authoritative account ledger</h5>
       <div className="flex flex-wrap gap-2">
-       <select aria-label="Ledger direction" value={direction} onChange={e=>setDirection(e.target.value as typeof direction)} className="border p-2"><option value="all">All movements</option><option value="inflow">Inflows</option><option value="outflow">Outflows</option></select>
-       <input aria-label="Ledger from" type="date" value={period.from} onChange={e=>setPeriod(p=>({...p,from:e.target.value}))} className="border p-2"/>
-       <input aria-label="Ledger to" type="date" value={period.to} onChange={e=>setPeriod(p=>({...p,to:e.target.value}))} className="border p-2"/>
+       <select aria-label="Ledger direction" value={direction} onChange={e=>setDirection(e.target.value as typeof direction)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"><option value="all">All movements</option><option value="inflow">Inflows</option><option value="outflow">Outflows</option></select>
+       <input aria-label="Ledger from" type="date" value={period.from} onChange={e=>setPeriod(p=>({...p,from:e.target.value}))} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+       <input aria-label="Ledger to" type="date" value={period.to} onChange={e=>setPeriod(p=>({...p,to:e.target.value}))} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
       </div>
       {managementLoading?<p>Loading posted movements…</p>:managementError?<p role="alert">{managementError}</p>:managementLedger&&<>
        <p>Current reconciled balance: UGX {managementLedger.currentBalanceUGX.toLocaleString()}</p>
@@ -307,50 +307,50 @@ export function FinancialPortfoliosPanel(){
   </div>
 <div className="space-y-2">
    <h4 className="font-semibold text-zinc-900">Registered bank accounts ({bankIdentities.length})</h4>
-   {bankIdentities.map(bank=><div key={bank.id} className="rounded-lg border border-zinc-200 p-3 text-sm">
+   {bankIdentities.map(bank=><div key={bank.id} className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
     <strong>{bank.name}</strong> · {bank.bankInstitution} · {bank.status}
-    <p>Account reference: {bank.bankAccountReference}. Balance not yet reconciled.</p>{canRegister&&<button type="button" disabled={busy} onClick={()=>changeBankStatus(bank)} className="mt-2 rounded border border-zinc-400 px-3 py-1">{bank.status==='active'?'Deactivate':'Reactivate'}</button>}
+    <p>Account reference: {bank.bankAccountReference}. Balance not yet reconciled.</p>{canRegister&&<button type="button" disabled={busy} onClick={()=>changeBankStatus(bank)} className="mt-2 rounded border border-zinc-400 bg-white px-3 py-2 text-zinc-900">{bank.status==='active'?'Deactivate':'Reactivate'}</button>}
    </div>)}
    {canRegister&&<form onSubmit={registerBankAccount} className="grid gap-2 sm:grid-cols-4">
-     <input required maxLength={100} aria-label="Bank institution" placeholder="Bank name" value={bankInstitution} onChange={e=>setBankInstitution(e.target.value)} className="border p-2 rounded"/>
-     <input required maxLength={120} aria-label="Bank account display name" placeholder="Account name" value={bankAccountName} onChange={e=>setBankAccountName(e.target.value)} className="border p-2 rounded"/>
-     <input required maxLength={60} aria-label="Bank account reference" placeholder="Account number" value={bankReference} onChange={e=>setBankReference(e.target.value)} className="border p-2 rounded"/>
+     <input required maxLength={100} aria-label="Bank institution" placeholder="Bank name" value={bankInstitution} onChange={e=>setBankInstitution(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+     <input required maxLength={120} aria-label="Bank account display name" placeholder="Account name" value={bankAccountName} onChange={e=>setBankAccountName(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+     <input required maxLength={60} aria-label="Bank account reference" placeholder="Account number" value={bankReference} onChange={e=>setBankReference(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
      <button disabled={busy} className="rounded bg-emerald-800 text-white p-2">Register bank account</button>
    </form>}
   </div>
     <div className="grid gap-2 sm:grid-cols-2">
    {items.map(p=><button key={p.id} type="button" onClick={()=>setSelected(p.id)}
-     className="rounded-lg border border-zinc-300 text-left p-3 text-zinc-900" aria-pressed={selected===p.id}>
+     className="rounded-lg border border-zinc-300 bg-white text-left p-3 text-zinc-900 min-w-0 w-full" aria-pressed={selected===p.id}>
     <strong>{p.name}</strong><p className="text-xs">{p.classification} · {p.scope.kind==='branch'?p.scope.branchId:'Organisation'} · {p.status}</p>
     <p className="text-xs font-semibold">Balance: not established</p></button>)}
    {!items.length&&<p className="text-sm text-zinc-600">No custom portfolios registered for this scope.</p>}
   </div>
-  {canRegister&&selectedPortfolio&&selectedPortfolio.origin==='custom'&&<div className="rounded border p-3 text-sm">
+  {canRegister&&selectedPortfolio&&selectedPortfolio.origin==='custom'&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900">
    <h4 className="font-semibold">Custom portfolio lifecycle controls</h4>
    <p>Only never-funded portfolios may be retired. Funded portfolios and their financial history remain active and immutable. Reactivation restores the original identity.</p>
-   <button type="button" disabled={busy} onClick={()=>changeCustomStatus(selectedPortfolio)} className="mt-2 rounded border p-2">{selectedPortfolio.status==='active'?'Deactivate portfolio':'Reactivate portfolio'}</button>
+   <button type="button" disabled={busy} onClick={()=>changeCustomStatus(selectedPortfolio)} className="mt-2 rounded border border-zinc-400 bg-white p-2 text-zinc-900">{selectedPortfolio.status==='active'?'Deactivate portfolio':'Reactivate portfolio'}</button>
 
   </div>}
   {selectedPortfolio&&<div className="rounded-lg border border-zinc-300 p-3 space-y-3 text-sm text-zinc-800">
    <strong>{selectedPortfolio.name} — Account overview</strong>
    <p>{childAccounts.length} child accounts. Authoritative ledger posting and child-account registration are not yet enabled.</p>
-   {childAccounts.map(a=><div key={a.id} className="rounded-md border border-zinc-200 p-2">
+   {childAccounts.map(a=><div key={a.id} className="rounded-md border border-zinc-200 bg-white p-2 text-zinc-900">
      <strong>{a.displayName}</strong> · {a.institution||'Financial account'} · {a.status}
      <p>Account reference: {a.accountReference} · Opening balance not reconciled</p></div>)}
    <div className="flex flex-wrap gap-2">
-     <select aria-label="Movement direction" value={direction} onChange={e=>setDirection(e.target.value as typeof direction)} className="border p-2"><option value="all">All</option><option value="inflow">Inflows</option><option value="outflow">Outflows</option></select>
-     <input aria-label="From date" type="date" value={period.from} onChange={e=>setPeriod(p=>({...p,from:e.target.value}))} className="border p-2"/>
-     <input aria-label="To date" type="date" value={period.to} onChange={e=>setPeriod(p=>({...p,to:e.target.value}))} className="border p-2"/>
+     <select aria-label="Movement direction" value={direction} onChange={e=>setDirection(e.target.value as typeof direction)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"><option value="all">All</option><option value="inflow">Inflows</option><option value="outflow">Outflows</option></select>
+     <input aria-label="From date" type="date" value={period.from} onChange={e=>setPeriod(p=>({...p,from:e.target.value}))} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+     <input aria-label="To date" type="date" value={period.to} onChange={e=>setPeriod(p=>({...p,to:e.target.value}))} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
    </div>
    <p>Ledger unavailable pending authoritative financial posting integration; no synthetic transactions shown.</p>
   </div>}
   {canRegister&&<form onSubmit={create} className="grid gap-2 sm:grid-cols-3">
-    <input required maxLength={120} aria-label="Portfolio name" value={name} onChange={e=>setName(e.target.value)} placeholder="Portfolio name" className="border p-2 rounded"/>
-    <select aria-label="Portfolio classification" value={classification} onChange={e=>setClassification(e.target.value as FinancialPortfolioClassification)} className="border p-2 rounded">
+    <input required maxLength={120} aria-label="Portfolio name" value={name} onChange={e=>setName(e.target.value)} placeholder="Portfolio name" className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+    <select aria-label="Portfolio classification" value={classification} onChange={e=>setClassification(e.target.value as FinancialPortfolioClassification)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500">
       <option value="restricted_internal_fund">Internal fund</option>
       <option value="other_financial_asset">Other financial asset</option><option value="cash_equivalent">Cash equivalent</option>
     </select>
-    <select aria-label="Portfolio scope" value={scopeKind} onChange={e=>setScopeKind(e.target.value as typeof scopeKind)} className="border p-2 rounded">
+    <select aria-label="Portfolio scope" value={scopeKind} onChange={e=>setScopeKind(e.target.value as typeof scopeKind)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500">
       <option value="organisation">Organisation / HQ</option>
     </select>
     <p className="text-xs text-zinc-600">Child-account and branch-specific registration will be enabled after separate security certification.</p>
