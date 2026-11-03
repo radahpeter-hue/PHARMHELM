@@ -42,6 +42,7 @@ export function mapAuthoritativeMovement(id:string,raw:Record<string,unknown>,ac
   source:managementLedgerCollection(account),direction:delta>0?'inflow':'outflow',
   amountUGX:Math.abs(delta),actorId:String(raw.postedBy||''),status:'posted',
   ...(typeof raw.branchId==='string'&&raw.branchId?{branchId:raw.branchId}:{}),
+  ...(typeof raw.eodReconciliationId==='string'&&raw.eodReconciliationId?{eodReconciliationId:raw.eodReconciliationId,shiftId:raw.eodReconciliationId.split('~')[4]}:{}),
   ...(typeof raw.eodChannel==='string'&&raw.eodChannel?{eodChannel:raw.eodChannel}:{})};
 }
 export async function loadAuthoritativePortfolioLedger(
