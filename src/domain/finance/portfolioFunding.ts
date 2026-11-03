@@ -1,3 +1,4 @@
+import {BUILT_IN_PORTFOLIO_KEYS,defineBuiltInPortfolio} from './builtInPortfolios';
 import {collection,doc,getDoc,getDocs,query,where,runTransaction,Timestamp,type Firestore} from 'firebase/firestore';
 import {db} from '../../firebase';
 import type {FinancialPortfolio} from './financialPortfolio';
@@ -23,6 +24,13 @@ export async function registerPortfolioFunding(input:{
   throw new Error('The parent Bank is not a payment account. Select an individual registered bank.');
  if(p.classification==='bank'&&(!p.bankInstitution||!p.bankAccountReference))
   throw new Error('Unverified bank identity.');
+ if(p.origin==='system'){
+  const branchId=p.scope.kind==='branch'?p.scope.branchId:undefined;
+  const key=BUILT_IN_PORTFOLIO_KEYS.find(key=>p.id===('system_'+key+(branchId?'_'+branchId:'')));
+  if(!key)throw new Error('Invalid built-in portfolio identity.');
+  const expected=defineBuiltInPortfolio({tenantId:p.tenantId,key,branchId,createdBy:actorId,createdAt:p.createdAt});
+  if(expected.classification!==p.classification||expected.scope.kind!==p.scope.kind)throw new Error('Built-in portfolio classification does not match its canonical identity.');
+ }
  const accountId=p.id;
  const kind:'bank'|'petty_cash'=['bank','mobile_money'].includes(p.classification)?'bank':'petty_cash';
  const account:PortfolioFundingAccount={
@@ -36,9 +44,15 @@ export async function registerPortfolioFunding(input:{
  const settings=doc(database,'system_settings',p.tenantId);
  await runTransaction(database,async tx=>{
   const portfolioRef=doc(database,'finance_portfolios_v1',p.tenantId+'__'+p.id);
-  const [setting,existing,livePortfolio]=await Promise.all([tx.get(settings),tx.get(ref),tx.get(portfolioRef)]);
-  if(!livePortfolio.exists()||livePortfolio.data().status!=='active'||livePortfolio.data().tenantId!==p.tenantId)
+  const [setting,existing,livePortfolio]=await Promise.all([tx.get(settings),tx.get(ref),p.origin==='system'?Promise.resolve(null):tx.get(portfolioRef)]);
+  // Canonical legacy portfolios need no separate registry document. Creating a
+  // second identity is prohibited; reconcile their existing funding ID directly.
+  if(p.origin!=='system'&&(!livePortfolio?.exists()||livePortfolio.data().status!=='active'||livePortfolio.data().tenantId!==p.tenantId))
    throw new Error('Portfolio is inactive or missing; funding is blocked.');
+  if(p.origin==='system'&&p.scope.kind==='branch'){
+   const branch=await tx.get(doc(database,'branches',p.scope.branchId));
+   if(!branch.exists()||branch.data().tenantId!==p.tenantId)throw new Error('Branch portfolio is outside this tenant.');
+  }
   if(!setting.exists()||setting.data().managementCashAccountControlV1!==true)
    throw new Error('Account control not activated.');
   if(existing.exists())throw new Error('Funding already registered. Reconcile, do not reset an existing balance.');

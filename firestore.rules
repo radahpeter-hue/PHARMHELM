@@ -528,6 +528,50 @@ service cloud.firestore {
         ? /databases/$(database)/documents/banking_records/$(id)
         : /databases/$(database)/documents/petty_cash_ledger/$(id);
     }
+    function validBranchEodSubmission(id, audit) {
+      let operator = get(/databases/$(database)/documents/staff/$(request.auth.uid)).data;
+      let branch = get(/databases/$(database)/documents/branches/$(audit.branch_id)).data;
+      return audit.financial_posting == 'portfolios_v1'
+        && (audit.branch_id in operator.get('assigned_branches', []) || operator.get('branch_id', '') == audit.branch_id || isFinance())
+        && branch.tenantId == audit.tenantId && operator.tenantId == audit.tenantId
+        && audit.cashier_id == request.auth.uid && branch.shifts[audit.shift_id].enabled
+        && audit.shift_start == branch.shifts[audit.shift_id].startTime && audit.shift_end == branch.shifts[audit.shift_id].endTime
+        && id == audit.reconciliation_key
+        && id == 'eod~' + audit.tenantId + '~' + audit.branch_id + '~' + audit.reconciliation_date + '~' + audit.shift_id
+        && audit.get('card_settlement_account_id', null) == branch.get('cardSettlement', {}).get('bankPortfolioId', null);
+    }
+    // Every EOD movement requires the paired audit create/correction to pass its own Rules.
+    function validBranchEodMovement(id, data) {
+      let path = /databases/$(database)/documents/eod_reconciliations/$(data.eodReconciliationId);
+      let audit = getAfter(path).data;
+      let correcting = exists(path);
+      let channel = data.eodChannel;
+      let target = channel == 'cash' ? 'system_branch_cash_sales_' + audit.branch_id
+        : channel == 'momo' ? 'system_mtn_mobile_money'
+        : channel == 'airtel' ? 'system_airtel_mobile_money'
+        : audit.card_settlement_account_id;
+      return audit.financial_posting == 'portfolios_v1'
+        && channel in ['cash','momo','airtel','card']
+        && data.tenantId == audit.tenantId && data.branchId == audit.branch_id
+        && data.accountDocumentId == audit.tenantId + '_' + target
+        && (correcting
+          ? (audit.correction_posting_id == data.eodCorrectionId
+            && audit.correction_posting_id != get(path).data.get('correction_posting_id', '')
+            && audit.corrected_at == request.time
+            && id == audit.correction_posting_id + '~' + channel
+            && data.accountDeltaUGX == audit[channel + '_actual'] - get(path).data[channel + '_actual'])
+          : (id == audit.reconciliation_key + '~' + channel
+            && data.type == 'incoming' && data.amount == audit[channel + '_actual']));
+    }
+    function eodChannelPosted(id, audit, channel, bank) {
+      let prior = /databases/$(database)/documents/eod_reconciliations/$(id);
+      let correcting = exists(prior);
+      let delta = audit[channel + '_actual'] - (correcting ? get(prior).data[channel + '_actual'] : 0);
+      let posting = correcting ? audit.correction_posting_id : id;
+      let path = managementMovementPath(bank ? 'bank' : 'petty_cash', posting + '~' + channel);
+      return audit[channel + '_actual'] is int && audit[channel + '_actual'] >= 0
+        && (delta == 0 || (!exists(path) && getAfter(path).data.eodReconciliationId == id));
+    }
     function validManagementMovement(id, data, kind) {
       let accountPath = /databases/$(database)/documents/finance_payment_accounts/$(data.accountDocumentId);
       let before = get(accountPath).data;
@@ -537,7 +581,6 @@ service cloud.firestore {
         && data.amount is int && data.amount > 0
         && data.type in ['incoming','deposit','topup','outgoing','withdrawal']
         && data.accountDeltaUGX == (data.type in ['incoming','deposit','topup'] ? data.amount : -data.amount)
-        && (data.accountDeltaUGX <= 0 || isFinance() || isHR())
         && before.kind == kind
         && after.lastPostingId == id
         && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX;
@@ -546,7 +589,9 @@ service cloud.firestore {
       let movementPath = managementMovementPath(before.kind, after.lastPostingId);
       let movement = getAfter(movementPath).data;
       return isTenantMember(before.tenantId)
-        && (isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash()))
+        && ((movement.get('eodChannel', '') != '' && validBranchEodMovement(after.lastPostingId, movement)) || isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash()))
+        // Every ledger create requires this paired update; authorize cash credits once here.
+        && (movement.accountDeltaUGX <= 0 || before.accountId != 'management_petty_cash' || isFinance() || isHR())
         && after.diff(before).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
         && after.balanceUGX is int && after.balanceUGX >= 0 && after.balanceUGX <= 9007199254740991
         && !exists(movementPath)
@@ -589,7 +634,7 @@ service cloud.firestore {
           && (data.accountId.matches('^system_(mtn_mobile_money|airtel_mobile_money|branch_cash_sales_[A-Za-z0-9_-]+|petty_cash_[A-Za-z0-9_-]+)$')
             || exists(/databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId)));
       }
-      allow get: if (canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if (canOperateBranchFinance() || canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
       allow create: if isTenantMember(request.resource.data.tenantId)
         && get(/databases/$(database)/documents/system_settings/$(request.resource.data.tenantId)).data.managementCashAccountControlV1
@@ -637,7 +682,7 @@ service cloud.firestore {
           && movement.accountDocumentId == data.tenantId + '_' + data.paymentAccountId
           && data.excludeFromOpexRollup;
       }
-      allow get: if canViewFinance() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if (canOperateBranchFinance() || canViewFinance()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
       allow create: if validSettlement(request.resource.data);
       allow update, delete: if false;
@@ -1294,7 +1339,11 @@ service cloud.firestore {
           && request.time >= start && request.time < start + duration.value(14, 'd');
       }
       allow read: if isTenantMember(resource.data.tenantId) && canViewBranchFinance();
-      allow create: if isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
+      allow create: if canOperateBranchFinance() && validBranchEodSubmission(reconciliationId, request.resource.data)
+        && eodChannelPosted(reconciliationId, request.resource.data, 'cash', false)
+        && eodChannelPosted(reconciliationId, request.resource.data, 'momo', true)
+        && eodChannelPosted(reconciliationId, request.resource.data, 'airtel', true)
+        && eodChannelPosted(reconciliationId, request.resource.data, 'card', true);
       allow update: if isTenantMember(resource.data.tenantId)
         && hasAnyRole(['IT Head']) && withinCorrectionWindow()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -1302,12 +1351,19 @@ service cloud.firestore {
           'airtel_actual', 'airtel_variance', 'card_actual', 'card_variance',
           'insurance_actual', 'insurance_variance', 'institutional_credit_actual', 'institutional_credit_variance',
           'staff_welfare_actual', 'staff_welfare_variance', 'total_actual', 'total_variance',
-          'variance_reason', 'correction_reason', 'corrected_by', 'corrected_at'
+          'variance_reason', 'correction_reason', 'corrected_by', 'corrected_at', 'correction_posting_id'
         ])
         && request.resource.data.correction_reason is string
         && request.resource.data.correction_reason.trim().size() > 0 && request.resource.data.correction_reason.size() <= 1000
         && request.resource.data.corrected_by == request.auth.uid
-        && request.resource.data.corrected_at == request.time;
+        && request.resource.data.corrected_at == request.time
+        && (resource.data.get('financial_posting', 'none') != 'portfolios_v1' ||
+          (request.resource.data.correction_posting_id is string
+          && request.resource.data.correction_posting_id != resource.data.get('correction_posting_id', '')
+          && eodChannelPosted(reconciliationId, request.resource.data, 'cash', false)
+          && eodChannelPosted(reconciliationId, request.resource.data, 'momo', true)
+          && eodChannelPosted(reconciliationId, request.resource.data, 'airtel', true)
+          && eodChannelPosted(reconciliationId, request.resource.data, 'card', true)));
       allow delete: if false;
     }
 
@@ -1345,7 +1401,7 @@ service cloud.firestore {
     }
 
     match /banking_records/{recordId} {
-      allow get: if canViewFinance() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow get: if (canOperateBranchFinance() || canViewFinance()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
       allow create: if validManagementMovement(recordId, request.resource.data, 'bank');
       allow update, delete: if false;

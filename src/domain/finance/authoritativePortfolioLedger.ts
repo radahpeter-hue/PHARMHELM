@@ -2,12 +2,12 @@ import {collection,getDocs,query,where,type Firestore} from 'firebase/firestore'
 import {db} from '../../firebase';
 import type {ManagementPaymentAccount} from '../../services/managementCashPosting';
 import {MANAGEMENT_BANK_ACCOUNT,MANAGEMENT_CASH_ACCOUNT,managementAccountDocumentId} from '../../services/managementCashPosting';
-import type {FinancialLedgerEntry,FinancialLedgerQuery} from './portfolioLedger';
+import {projectLedgerWithRunningBalances,type FinancialLedgerEntry,type FinancialLedgerQuery} from './portfolioLedger';
 
 /** Read-only views of ledger entries already committed atomically with the account balance. */
 export interface AuthoritativePortfolioLedger {
   account:ManagementPaymentAccount;
-  entries:FinancialLedgerEntry[];
+  entries:Array<FinancialLedgerEntry&{runningBalanceUGX:number}>;
   currentBalanceUGX:number;
   openingBalanceUGX:number;
   reconciliationReference:string;
@@ -60,7 +60,7 @@ export async function loadAuthoritativePortfolioLedger(
  assertAuthoritativePostingBalance(account,all);
  return {account,currentBalanceUGX:account.balanceUGX,openingBalanceUGX:account.openingBalanceUGX,
   reconciliationReference:account.reconciliationReference,
-  entries:all.filter(e=>e.businessDate>=period.from&&e.businessDate<=period.to&&
+  entries:projectLedgerWithRunningBalances(all,account.openingBalanceUGX).filter(e=>e.businessDate>=period.from&&e.businessDate<=period.to&&
    (period.direction==='all'||e.direction===period.direction))
    .sort((a,b)=>a.occurredAt.localeCompare(b.occurredAt)||a.id.localeCompare(b.id))};
 }

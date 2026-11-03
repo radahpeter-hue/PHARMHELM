@@ -6,6 +6,7 @@ on:
       - 'firestore.rules'
       - 'scripts/build-firestore-release-rules.mjs'
       - 'scripts/validate-inactive-finance-rules.mjs'
+      - 'scripts/firestore-unbound-probe.mjs'
       - '.github/workflows/firestore-release-size.yml'
 permissions:
   contents: read
@@ -28,4 +29,5 @@ jobs:
       - name: Require actual compiled executable to fit the activation limit
         run: |
           cp scripts/validate-inactive-finance-rules.mjs /tmp/rules-size/validate.mjs
+          cp scripts/firestore-unbound-probe.mjs /tmp/rules-size/firestore-unbound-probe.mjs
           node /tmp/rules-size/validate.mjs

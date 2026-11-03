@@ -1,7 +1,8 @@
+import {useCreditReceivablesPortfolio,CreditReceivablesLedger} from './CreditReceivablesPortfolio';
+import {collection,getDocs,query,where} from 'firebase/firestore';
+import {db} from '../../firebase';
+import {projectLedgerWithRunningBalances} from '../../domain/finance/portfolioLedger';
 import {summarizeBranchContributions} from '../../domain/finance/portfolioBranchContributions';
-import {settleReconciledEod} from '../../domain/finance/eodPortfolioSettlement';
-import {eodIdentity} from '../../utils/eodShifts';
-import {readBranchCardSettlement,saveBranchCardSettlement} from '../../domain/finance/branchCardSettlement';
 import {registerPortfolioFunding,postPortfolioFundingMovement,portfolioPostingIdentity,transferPortfolioFunding,type PortfolioFundingAccount} from '../../domain/finance/portfolioFunding';
 import {loadPosChannelEvidence,type PosChannelEvidence} from '../../domain/finance/portfolioPosEvidence';
 import {loadEodChannelEvidence,type ReconciliationEvidence,type EodChannel} from '../../domain/finance/portfolioEodEvidence';
@@ -24,7 +25,10 @@ export function FinancialPortfoliosPanel(){
  const {profile,activeBranchId}=useAuth();
  const tenantId=profile?.tenantId||'';
  const treasury=useManagementPaymentAccounts(true);
+ const creditPortfolio=useCreditReceivablesPortfolio();
+ const [creditOpen,setCreditOpen]=useState(false);
  const canRegister=hasAnyRole(profile,['owner','CEO','CEO / MD']);
+ const [branches,setBranches]=useState<Array<{id:string;name:string}>>([]);
  const [items,setItems]=useState<FinancialPortfolio[]>([]);
  const [accounts,setAccounts]=useState<PortfolioChildAccount[]>([]);
  const [name,setName]=useState('');
@@ -47,11 +51,6 @@ export function FinancialPortfoliosPanel(){
  const [busy,setBusy]=useState(false);
  const [selected,setSelected]=useState('');
  const [managementSelected,setManagementSelected]=useState('');
- const [settlementDate,setSettlementDate]=useState(new Date().toISOString().slice(0,10));
- const [settlementShift,setSettlementShift]=useState('dayShift');
- const [cardDestination,setCardDestination]=useState('');
- const [savedCardDestination,setSavedCardDestination]=useState('');
- const [cardConfigError,setCardConfigError]=useState('');
  const [eodEvidence,setEodEvidence]=useState<ReconciliationEvidence[]|null>(null);
  const [eodError,setEodError]=useState('');
  const [posEvidence,setPosEvidence]=useState<PosChannelEvidence[]|null>(null);
@@ -71,6 +70,13 @@ export function FinancialPortfoliosPanel(){
      .catch(()=>{if(live)setMessage('Portfolio registry is currently unavailable.');});
    return ()=>{live=false;};
  },[tenantId,activeBranchId]);
+ useEffect(()=>{
+  let live=true;setBranches([]);if(!tenantId)return;
+  getDocs(query(collection(db,'branches'),where('tenantId','==',tenantId))).then(rows=>{
+   if(live)setBranches(rows.docs.map(d=>({id:d.id,name:String(d.data().name||d.id)})));
+  }).catch(()=>{if(live)setMessage('Unable to load branch coverage.');});
+  return ()=>{live=false;};
+ },[tenantId]);
  async function create(event:React.FormEvent){
    event.preventDefault();
    if(!tenantId||!profile?.uid||!canRegister||busy)return;
@@ -92,37 +98,6 @@ export function FinancialPortfoliosPanel(){
  const selectedPortfolio=items.find(p=>p.id===selected);
  const childAccounts=accounts.filter(a=>a.portfolioId===selectedPortfolio?.id);
 
- useEffect(()=>{
-  let live=true;setSavedCardDestination('');setCardDestination('');setCardConfigError('');
-  if(!tenantId||!activeBranchId)return;
-  readBranchCardSettlement(tenantId,activeBranchId).then(config=>{
-   if(live){setSavedCardDestination(config?.bankPortfolioId||'');setCardDestination(config?.bankPortfolioId||'');}
-  }).catch(error=>{if(live)setCardConfigError(error instanceof Error?error.message:'Unable to load card configuration.');});
-  return ()=>{live=false;};
- },[tenantId,activeBranchId]);
- async function saveCardDestination(event:React.FormEvent){
-  event.preventDefault();if(!canRegister||busy||!profile?.uid||!activeBranchId)return;
-  const bank=items.find(p=>p.id===cardDestination);
-  if(!bank){setCardConfigError('Choose an active registered bank account.');return;}
-  setBusy(true);setCardConfigError('');
-  try{
-   await saveBranchCardSettlement({tenantId,branchId:activeBranchId,bank,actorId:profile.uid});
-   setSavedCardDestination(bank.id);
-   setMessage('Branch default card account saved. This configuration does not post or move money.');
-  }catch(error){setCardConfigError(error instanceof Error?error.message:'Card account configuration failed.');}
-  finally{setBusy(false);}
- }
- async function settleEod(event:React.FormEvent){
-  event.preventDefault();
-  if(!activeBranchId||!tenantId||!profile?.uid||busy)return;
-  setBusy(true);setMessage('');
-  try{
-   const reconciliationId=eodIdentity(tenantId,activeBranchId,settlementDate,settlementShift);
-   const result=await settleReconciledEod({tenantId,branchId:activeBranchId,reconciliationId,actorId:profile.uid});
-   setMessage(result.replayed?'EOD settlement already posted. No duplicate movements.':`Posted ${result.postings} verified EOD channel movement(s). Refresh portfolio ledger.`);
-  }catch(error){setMessage(error instanceof Error?error.message:'EOD portfolio settlement was rejected.');}
-  finally{setBusy(false);}
- }
  async function registerBankAccount(event:React.FormEvent){
    event.preventDefault();
    if(!tenantId||!profile?.uid||!canRegister||busy)return;
@@ -165,24 +140,30 @@ export function FinancialPortfoliosPanel(){
  useEffect(()=>{
   let live=true;
   setManagementLedger(null);setManagementError('');
-  const account=treasury.accounts.find(a=>a.id===managementSelected);
-  if(!account)return;
+  const grouped=managementSelected==='$cash'||managementSelected==='$petty'||managementSelected==='$bank';
+  const prefix=managementSelected==='$cash'?'system_branch_cash_sales_':'system_petty_cash_';
+  const selectedAccounts=treasury.accounts.filter(a=>grouped?(managementSelected==='$bank'?(a.accountId==='management_bank'||items.some(p=>p.bankParentId==='system_bank'&&p.id===a.accountId)):a.accountId.startsWith(prefix)):a.id===managementSelected);
+  if(!selectedAccounts.length)return;
   setManagementLoading(true);
-  loadAuthoritativePortfolioLedger(account,{...period,direction:'all'})
-   .then(result=>{if(live)setManagementLedger(result);})
+  Promise.all(selectedAccounts.map(account=>loadAuthoritativePortfolioLedger(account,{from:'1900-01-01',to:'9999-12-31',direction:'all'})))
+   .then(results=>{if(live){
+    const opening=results.reduce((sum,r)=>sum+r.openingBalanceUGX,0);
+    const entries=projectLedgerWithRunningBalances(results.flatMap(r=>r.entries),opening).filter(e=>e.businessDate>=period.from&&e.businessDate<=period.to);
+    setManagementLedger({...results[0],entries,openingBalanceUGX:opening,currentBalanceUGX:results.reduce((sum,r)=>sum+r.currentBalanceUGX,0),reconciliationReference:grouped?'Consolidated reconciled accounts':results[0].reconciliationReference});
+   }})
    .catch(error=>{if(live)setManagementError(error instanceof Error?error.message:'Ledger unavailable.');})
    .finally(()=>{if(live)setManagementLoading(false);});
   return ()=>{live=false;};
- },[managementSelected,treasury.accounts,period,direction]);
+ },[managementSelected,treasury.accounts,period,items]);
  const bankIdentities=registeredBankAccounts(items);
  const builtInViews=tenantId&&profile?.uid?[
   defineBuiltInPortfolio({tenantId,key:'bank',createdBy:profile.uid,createdAt:'2026-10-30T00:00:00Z'}),
   defineBuiltInPortfolio({tenantId,key:'mtn_mobile_money',createdBy:profile.uid,createdAt:'2026-10-30T00:00:00Z'}),
   defineBuiltInPortfolio({tenantId,key:'airtel_mobile_money',createdBy:profile.uid,createdAt:'2026-10-30T00:00:00Z'}),
-  ...(activeBranchId?[
-   defineBuiltInPortfolio({tenantId,key:'branch_cash_sales',branchId:activeBranchId,createdBy:profile.uid,createdAt:'2026-10-30T00:00:00Z'}),
-   defineBuiltInPortfolio({tenantId,key:'petty_cash',branchId:activeBranchId,createdBy:profile.uid,createdAt:'2026-10-30T00:00:00Z'})
-  ]:[])
+  ...branches.flatMap(branch=>[
+   defineBuiltInPortfolio({tenantId,key:'branch_cash_sales',branchId:branch.id,createdBy:profile.uid,createdAt:'2026-10-30T00:00:00Z'}),
+   defineBuiltInPortfolio({tenantId,key:'petty_cash',branchId:branch.id,createdBy:profile.uid,createdAt:'2026-10-30T00:00:00Z'})
+  ])
  ]:[];
  const balanceViews=projectPortfolioBalances([...builtInViews,...items],treasury.accounts);
  const activePortfolio=[...builtInViews,...items].find(p=>p.id===selected);
@@ -252,51 +233,80 @@ export function FinancialPortfoliosPanel(){
   return ()=>{live=false;};
  },[tenantId,activeBranchId,evidenceChannel,period.from,period.to]);
  return <section className="rounded-2xl border border-zinc-200 bg-white p-3 sm:p-5 space-y-5 text-zinc-900 min-w-0 overflow-hidden">
-  <div><h3 className="text-lg font-bold text-zinc-950">Financial Portfolio Registry</h3>
-   <p className="text-sm text-zinc-600">New portfolios are tenant scoped. Legacy treasury balances are not silently migrated and unavailable financial balances are never displayed as zero.</p></div>
-  {activeBranchId&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 space-y-2">
-   <h4 className="font-semibold">Branch default card settlement account</h4>
-   <p className="text-sm text-zinc-600">Select the receiving registered bank for card payments made at this branch. This does not post EOD funds or rewrite past payments.</p>
-   <p className="text-xs text-zinc-600">Saved default: {items.find(x=>x.id===savedCardDestination)?.name||'Not configured'}</p>
-   {cardConfigError&&<p role="alert" className="text-sm text-red-700">{cardConfigError}</p>}
-   {canRegister&&<form onSubmit={saveCardDestination} className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-    <select aria-label="Branch default card bank" required value={cardDestination} onChange={e=>setCardDestination(e.target.value)} className="min-w-0 w-full rounded border border-zinc-400 bg-white p-2 text-zinc-900">
-     <option value="">Select bank account</option>
-     {items.filter(p=>p.origin==='custom'&&p.classification==='bank'&&p.bankParentId==='system_bank'&&p.status==='active').map(p=><option key={p.id} value={p.id}>{p.name} · {p.bankInstitution}</option>)}
-    </select>
-    <button type="submit" disabled={busy||!cardDestination} className="rounded bg-emerald-800 px-3 py-2 font-semibold text-white">Save branch default</button>
-   </form>}
-  </div>}
-  {activeBranchId&&hasAnyRole(profile,['Finance Head','Finance Officer','Accountant','CEO','CEO / MD','owner'])&&<form onSubmit={settleEod} className="rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 space-y-2">
-   <h4 className="font-semibold">Post submitted EOD to reconciled portfolios</h4>
-   <p className="text-xs text-zinc-600">Finance-controlled settlement only. All nonzero destinations must first have verified opening balances; repeat submissions cannot double post.</p>
-   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-    <input type="date" aria-label="EOD settlement business date" required value={settlementDate} onChange={e=>setSettlementDate(e.target.value)} className="min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900"/>
-    <select aria-label="EOD settlement shift" value={settlementShift} onChange={e=>setSettlementShift(e.target.value)} className="min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900">
-     <option value="dayShift">Day shift</option><option value="eveningShift">Evening shift</option><option value="nightShift">Night shift</option>
-    </select>
-    <button type="submit" disabled={busy} className="rounded bg-emerald-800 p-2 font-semibold text-white">Post reconciled EOD</button>
-   </div>
-  </form>}
+  <div><h3 className="text-lg font-bold text-zinc-950">Financial portfolios</h3>
+   <p className="text-sm text-zinc-600">Select a portfolio to view its inflows, outflows and balance.</p></div>
   <div className="space-y-2">
-   <h4 className="font-semibold text-zinc-900">Portfolio-wide funding coverage</h4>
-   <p className="text-xs text-zinc-600">System categories shown as a read-only projection. Unavailable is not zero. Branch cash and mobile money require separately reconciled posting evidence.</p>
+   <h4 className="font-semibold text-zinc-900">Portfolio balances</h4>
+   <p className="text-xs text-zinc-600">Balances update when branch EOD reconciliation is submitted.</p>
    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-    {[...builtInViews,...items].map(portfolio=>{
+    <button type="button" aria-pressed={creditOpen} onClick={()=>{setSelected('');setManagementSelected('');setCreditOpen(true);}} className="rounded-3xl border border-blue-200 bg-white p-6 shadow-sm text-left text-zinc-950 min-w-0 hover:shadow-md transition-all">
+     <span className="font-bold">Credit Receivables</span><p className="text-xs text-zinc-500">All branches · money owed to the pharmacy</p>
+     <p className="mt-2 text-2xl font-black font-mono break-words">{creditPortfolio.error?'Balance unavailable':creditPortfolio.loading?'Loading…':'UGX '+creditPortfolio.data!.totalOutstandingUGX.toLocaleString()}</p>
+    </button>
+    {(['cash','petty'] as const).map(key=>{
+      const prefix=key==='cash'?'system_branch_cash_sales_':'system_petty_cash_';
+      const matched=treasury.accounts.filter(a=>a.accountId.startsWith(prefix));
+      const complete=branches.length>0&&branches.every(b=>matched.some(a=>a.accountId===prefix+b.id&&a.initialized));
+      return <button type="button" key={key} onClick={()=>{setSelected('');setCreditOpen(false);setManagementSelected('$'+key);setLedgerBranchFilter('all');}} className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm text-left text-zinc-950 hover:shadow-md">
+       <span className="font-bold">{key==='cash'?'Branch Cash Sales':'Branch Petty Cash'}</span><p className="text-xs text-zinc-500">All branches</p>
+       <p className="mt-2 text-2xl font-black font-mono">{complete?'UGX '+matched.reduce((sum,a)=>sum+a.balanceUGX,0).toLocaleString():'Opening reconciliation required'}</p>
+      </button>;
+    })}
+    {[...builtInViews,...items].filter(p=>(p.scope.kind!=='branch'||p.origin==='custom')&&!p.bankParentId).map(portfolio=>{
       const view=balanceViews.find(x=>x.portfolioId===portfolio.id);
-      return <div key={portfolio.id} className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
-       <button type="button" onClick={()=>setSelected(portfolio.id)} className="font-semibold text-emerald-900 underline underline-offset-2 text-left break-words">{portfolio.name}</button> · {portfolio.scope.kind==='branch'?'Branch':'Organisation'}
-       <p>{view?.status==='reconciled'?'UGX '+view.balanceUGX!.toLocaleString():'Balance unavailable: not reconciled'}</p>
-      </div>;
+      return <button type="button" key={portfolio.id} onClick={()=>{setSelected(portfolio.id);setLedgerBranchFilter('all');setCreditOpen(false);setManagementSelected(portfolio.id==='system_bank'?'$bank':treasury.accounts.find(a=>a.accountId===portfolio.id)?.id||'');}} className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm text-left text-zinc-950 min-w-0 hover:shadow-md transition-all">
+       <span className="font-bold">{portfolio.name}</span><p className="text-xs text-zinc-500">All branches</p>
+       <p className="mt-2 text-2xl font-black font-mono break-words">{view?.status==='reconciled'?'UGX '+view.balanceUGX!.toLocaleString():'Opening reconciliation required'}</p>
+      </button>;
     })}
    </div>
   </div>
 
 
+  {creditOpen&&<p className="text-sm text-zinc-600">{creditPortfolio.unlinkedCount===null||creditPortfolio.unlinkedCount===undefined?'POS credit linkage check is unavailable or loading.':creditPortfolio.unlinkedCount>0?`${creditPortfolio.unlinkedCount} POS credit receipt(s) have no saved receivable. They are excluded from the balance and require reconciliation in the Credit Ledger.`:'POS credit receipt linkage check: no unmatched receipts found.'}</p>}
+  {creditOpen&&(creditPortfolio.error?<p role="alert" className="text-red-700">{creditPortfolio.error}</p>:creditPortfolio.data?<CreditReceivablesLedger data={creditPortfolio.data} branches={branches}/>:<p>Loading credit receivables…</p>)}
+  {selected==='system_bank'&&<div className="flex flex-wrap gap-2">{treasury.accounts.filter(a=>a.kind==='bank'&&(a.accountId==='management_bank'||bankIdentities.some(b=>b.id===a.accountId))).map(a=><button type="button" key={a.id} onClick={()=>{setCreditOpen(false);setManagementSelected(a.id);}} className="rounded-xl border border-zinc-200 bg-white p-3 text-zinc-900">{a.name} · UGX {a.balanceUGX.toLocaleString()}</button>)}</div>}
+    {managementSelected&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
+      <h5 className="font-semibold">Authoritative account ledger</h5>
+      <div className="flex flex-wrap gap-2">
+       <select aria-label="Ledger direction" value={direction} onChange={e=>setDirection(e.target.value as typeof direction)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"><option value="all">All movements</option><option value="inflow">Inflows</option><option value="outflow">Outflows</option></select>
+       <input aria-label="Ledger from" type="date" value={period.from} onChange={e=>setPeriod(p=>({...p,from:e.target.value}))} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+       <input aria-label="Ledger to" type="date" value={period.to} onChange={e=>setPeriod(p=>({...p,to:e.target.value}))} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
+      </div>
+      {managementLoading?<p>Loading posted movements…</p>:managementError?<p role="alert">{managementError}</p>:managementLedger&&<>
+       <p>Current reconciled balance: UGX {managementLedger.currentBalanceUGX.toLocaleString()}</p>
+       <p>Opening balance: UGX {managementLedger.openingBalanceUGX.toLocaleString()}</p>
+       <p>Reconciliation reference: {managementLedger.reconciliationReference}</p>
+       <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 space-y-2">
+        <h6 className="font-semibold text-zinc-900">Branch contributions for selected dates</h6>
+        <p className="text-xs text-zinc-600">Inflow and outflow totals from branch-tagged posted movements, not separate bank balances. The reconciled account balance above always reflects all branches.</p>
+        <select aria-label="Filter ledger by source branch" value={ledgerBranchFilter} onChange={e=>setLedgerBranchFilter(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900">
+         <option value="all">All branches</option>
+         {summarizeBranchContributions(managementLedger.entries).branches.map(b=><option key={b.branchId} value={b.branchId}>{branches.find(branch=>branch.id===b.branchId)?.name||b.branchId}</option>)}
+         {managementLedger.entries.some(e=>!e.branchId)&&<option value="unattributed">Unattributed / legacy</option>}
+        </select>
+        <div className="overflow-x-auto">
+         <table className="text-zinc-900 w-full text-left text-xs">
+          <thead className="bg-zinc-50 text-zinc-700"><tr><th className="p-1">Branch</th><th className="p-1 text-right">Inflows UGX</th><th className="p-1 text-right">Net UGX</th></tr></thead>
+          <tbody className="text-zinc-900">
+           {summarizeBranchContributions(managementLedger.entries).branches.filter(b=>ledgerBranchFilter==='all'||ledgerBranchFilter===b.branchId).map(b=><tr key={b.branchId}><td className="p-1">{branches.find(branch=>branch.id===b.branchId)?.name||b.branchId}</td><td className="p-1 text-right">{b.inflowUGX.toLocaleString()}</td><td className="p-1 text-right">{b.netUGX.toLocaleString()}</td></tr>)}
+          </tbody>
+         </table>
+        </div>
+       </div>
+       <div className="overflow-x-auto"><table className="text-zinc-900 w-full text-left"><thead className="bg-zinc-50 text-zinc-700"><tr><th>Date</th><th>Reference</th><th>Inflow UGX</th><th>Outflow UGX</th><th>Balance UGX</th></tr></thead><tbody className="text-zinc-900">
+        {managementLedger.entries.filter(e=>(direction==='all'||e.direction===direction)&&(ledgerBranchFilter==='all'||(ledgerBranchFilter==='unattributed'?!e.branchId:e.branchId===ledgerBranchFilter))).map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.reference}</td><td>{e.direction==='inflow'?e.amountUGX.toLocaleString():''}</td><td>{e.direction==='outflow'?e.amountUGX.toLocaleString():''}</td><td>{e.runningBalanceUGX.toLocaleString()}</td></tr>)}
+       </tbody></table></div>
+       {!managementLedger.entries.length&&<p>No movements in the selected period.</p>}
+      </>}
+     </div>}
+  <details className="rounded-2xl border border-zinc-200 p-4"><summary className="cursor-pointer font-semibold">Branch account opening reconciliation</summary>
+    <div className="mt-3 flex flex-wrap gap-2">{builtInViews.filter(p=>p.scope.kind==='branch').map(p=><button type="button" key={p.id} onClick={()=>{setSelected(p.id);setFundingName(p.name);setCreditOpen(false);setManagementSelected(treasury.accounts.find(a=>a.accountId===p.id)?.id||'');}} className="rounded-xl border border-zinc-200 p-3 text-zinc-900">{p.name} · {p.scope.kind==='branch'?branches.find(b=>b.id===p.scope.branchId)?.name:''}</button>)}</div>
+  </details>
   {activePortfolio&&activePortfolio.id!=='system_bank'&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
    <h4 className="font-semibold">{activePortfolio.name}: Authoritative funding</h4>
    {!activeFunding?<p>Not reconciled. CEO must register a verified opening balance before transactions can be posted.</p>:
-    <div><p>Reconciled balance: UGX {activeFunding.balanceUGX.toLocaleString()}. Ref: {activeFunding.reconciliationReference}</p><button type="button" className="mt-2 rounded border border-emerald-700 bg-white p-2 font-semibold text-emerald-900" onClick={()=>setManagementSelected(activeFunding.id)}>View verified account ledger</button></div>}
+    <div><p>Reconciled balance: UGX {activeFunding.balanceUGX.toLocaleString()}. Ref: {activeFunding.reconciliationReference}</p><button type="button" className="mt-2 rounded border border-emerald-700 bg-white p-2 font-semibold text-emerald-900" onClick={()=>{setCreditOpen(false);setManagementSelected(activeFunding.id);}}>View verified account ledger</button></div>}
    {canRegister&&!activeFunding&&<form onSubmit={initializeFunding} className="grid gap-2 sm:grid-cols-4">
      <input required aria-label="Funding name" placeholder="Account name" value={fundingName} onChange={e=>setFundingName(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
      <input required aria-label="Opening UGX" type="number" min="0" step="1" value={fundingOpening} onChange={e=>setFundingOpening(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
@@ -326,64 +336,30 @@ export function FinancialPortfoliosPanel(){
    <h4 className="font-semibold">Canonical POS V2 settled-payment evidence</h4>
    <p>Receipt components only. This does not include legacy POS or revisions and is not the available wallet/cash balance.</p>
    {posError?<p role="alert">{posError}</p>:posEvidence===null?<p>Loading receipts…</p>:
-    <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>Date</th><th>Receipt</th><th>Settled UGX</th></tr></thead><tbody>
+    <div className="overflow-x-auto"><table className="text-zinc-900 w-full text-left"><thead className="bg-zinc-50 text-zinc-700"><tr><th>Date</th><th>Receipt</th><th>Settled UGX</th></tr></thead><tbody className="text-zinc-900">
      {posEvidence.map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.receiptNumber}</td><td>{e.settledUGX.toLocaleString()}</td></tr>)}
     </tbody></table></div>}
   </div>}
   {evidenceChannel&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
    <h4 className="font-semibold">Branch EOD reconciliation evidence</h4>
-   <p>These are declared amounts, not bank deposits or verified current portfolio balances.</p>
+   <p>EOD source records. Posted collections appear in the portfolio ledger above; these records are not counted again.</p>
    {eodError?<p role="alert">{eodError}</p>:eodEvidence===null?<p>Loading reconciliations…</p>:
-   <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>Date</th><th>Shift</th><th>Declared UGX</th><th>Variance UGX</th></tr></thead><tbody>
+   <div className="overflow-x-auto"><table className="text-zinc-900 w-full text-left"><thead className="bg-zinc-50 text-zinc-700"><tr><th>Date</th><th>Shift</th><th>Declared UGX</th><th>Variance UGX</th></tr></thead><tbody className="text-zinc-900">
     {eodEvidence.map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.shiftId}</td><td>{e.declaredUGX.toLocaleString()}</td><td>{e.varianceUGX.toLocaleString()}</td></tr>)}
    </tbody></table></div>}
   </div>}
   <div className="space-y-2">
-    <h4 className="font-semibold text-zinc-900">Existing reconciled Management portfolios</h4>
+    <h4 className="font-semibold text-zinc-900">Account ledger</h4>
     {treasury.loading?<p className="text-sm">Loading reconciled payment accounts…</p>:
      treasury.error?<p role="alert" className="text-sm">{treasury.error}</p>:
      <div className="grid gap-2 sm:grid-cols-2">
       {treasury.accounts.filter(a=>['management_bank','management_petty_cash'].includes(a.accountId)&&a.initialized&&a.currency==='UGX'&&Number.isSafeInteger(a.balanceUGX)).map(a=>
        <div key={a.id} className="rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 min-w-0">
-        <button type="button" onClick={()=>setManagementSelected(a.id)} className="font-semibold text-emerald-900 underline underline-offset-2 text-left break-words">{a.name}</button><p className="text-xs text-zinc-600">{a.kind==='bank'?'Management Bank':'Management Petty Cash'} · Reconciled</p>
+        <button type="button" onClick={()=>{setCreditOpen(false);setManagementSelected(a.id);}} className="font-semibold text-emerald-900 underline underline-offset-2 text-left break-words">{a.name}</button><p className="text-xs text-zinc-600">{a.kind==='bank'?'Management Bank':'Management Petty Cash'} · Reconciled</p>
         <p className="font-semibold tabular-nums text-zinc-950">UGX {a.balanceUGX.toLocaleString()}</p>
         <p className="text-xs text-zinc-600">Opening reconciliation: {a.reconciliationReference}</p>
        </div>)}
       {!treasury.accounts.some(a=>['management_bank','management_petty_cash'].includes(a.accountId)&&a.initialized)&&<p className="text-sm">No Management payment account has been reconciled.</p>}
-     </div>}
-    {managementSelected&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
-      <h5 className="font-semibold">Authoritative account ledger</h5>
-      <div className="flex flex-wrap gap-2">
-       <select aria-label="Ledger direction" value={direction} onChange={e=>setDirection(e.target.value as typeof direction)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"><option value="all">All movements</option><option value="inflow">Inflows</option><option value="outflow">Outflows</option></select>
-       <input aria-label="Ledger from" type="date" value={period.from} onChange={e=>setPeriod(p=>({...p,from:e.target.value}))} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
-       <input aria-label="Ledger to" type="date" value={period.to} onChange={e=>setPeriod(p=>({...p,to:e.target.value}))} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
-      </div>
-      {managementLoading?<p>Loading posted movements…</p>:managementError?<p role="alert">{managementError}</p>:managementLedger&&<>
-       <p>Current reconciled balance: UGX {managementLedger.currentBalanceUGX.toLocaleString()}</p>
-       <p>Opening balance: UGX {managementLedger.openingBalanceUGX.toLocaleString()}</p>
-       <p>Reconciliation reference: {managementLedger.reconciliationReference}</p>
-       <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 space-y-2">
-        <h6 className="font-semibold text-zinc-900">Branch contributions for selected dates</h6>
-        <p className="text-xs text-zinc-600">Inflow and outflow totals from branch-tagged posted movements, not separate bank balances. The reconciled account balance above always reflects all branches.</p>
-        <select aria-label="Filter ledger by source branch" value={ledgerBranchFilter} onChange={e=>setLedgerBranchFilter(e.target.value)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900">
-         <option value="all">All branches</option>
-         {summarizeBranchContributions(managementLedger.entries).branches.map(b=><option key={b.branchId} value={b.branchId}>{b.branchId}</option>)}
-         {managementLedger.entries.some(e=>!e.branchId)&&<option value="unattributed">Unattributed / legacy</option>}
-        </select>
-        <div className="overflow-x-auto">
-         <table className="w-full text-left text-xs">
-          <thead><tr><th className="p-1">Branch</th><th className="p-1 text-right">Inflows UGX</th><th className="p-1 text-right">Net UGX</th></tr></thead>
-          <tbody>
-           {summarizeBranchContributions(managementLedger.entries).branches.filter(b=>ledgerBranchFilter==='all'||ledgerBranchFilter===b.branchId).map(b=><tr key={b.branchId}><td className="p-1">{b.branchId}</td><td className="p-1 text-right">{b.inflowUGX.toLocaleString()}</td><td className="p-1 text-right">{b.netUGX.toLocaleString()}</td></tr>)}
-          </tbody>
-         </table>
-        </div>
-       </div>
-       <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>Date</th><th>Reference</th><th>Direction</th><th>Amount UGX</th></tr></thead><tbody>
-        {managementLedger.entries.filter(e=>(direction==='all'||e.direction===direction)&&(ledgerBranchFilter==='all'||(ledgerBranchFilter==='unattributed'?!e.branchId:e.branchId===ledgerBranchFilter))).map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.reference}</td><td>{e.direction}</td><td>{e.amountUGX.toLocaleString()}</td></tr>)}
-       </tbody></table></div>
-       {!managementLedger.entries.length&&<p>No movements in the selected period.</p>}
-      </>}
      </div>}
     <p className="text-xs text-zinc-600">Read directly from existing authoritative finance_payment_accounts. Not added to or double-counted with the new registry.</p>
   </div>
@@ -392,7 +368,7 @@ export function FinancialPortfoliosPanel(){
    {bankIdentities.map(bank=><div key={bank.id} className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 min-w-0">
     <strong>{bank.name}</strong> · {bank.bankInstitution} · {bank.status}
     <p>Account reference: {bank.bankAccountReference}. {treasury.accounts.some(a=>a.accountId===bank.id&&a.initialized)?'Authoritative balance available':'Opening balance not yet reconciled'}</p>
-    <button type="button" onClick={()=>{setSelected(bank.id);setFundingName(bank.name);setManagementSelected('');}} className="mt-2 mr-2 rounded border border-emerald-700 bg-white px-3 py-2 font-semibold text-emerald-900">{treasury.accounts.some(a=>a.accountId===bank.id&&a.initialized)?'Open account and ledger':'Reconcile opening balance'}</button>
+    <button type="button" onClick={()=>{setSelected(bank.id);setFundingName(bank.name);setCreditOpen(false);setManagementSelected(treasury.accounts.find(a=>a.accountId===bank.id)?.id||'');}} className="mt-2 mr-2 rounded border border-emerald-700 bg-white px-3 py-2 font-semibold text-emerald-900">{treasury.accounts.some(a=>a.accountId===bank.id&&a.initialized)?'Open account and ledger':'Reconcile opening balance'}</button>
     {canRegister&&<button type="button" disabled={busy} onClick={()=>changeBankStatus(bank)} className="mt-2 rounded border border-zinc-400 bg-white px-3 py-2 text-zinc-900">{bank.status==='active'?'Deactivate':'Reactivate'}</button>}
    </div>)}
    {canRegister&&<form onSubmit={registerBankAccount} className="grid gap-2 sm:grid-cols-4">
@@ -402,31 +378,11 @@ export function FinancialPortfoliosPanel(){
      <button disabled={busy} className="rounded bg-emerald-800 text-white p-2">Register bank account</button>
    </form>}
   </div>
-    <div className="grid gap-2 sm:grid-cols-2">
-   {items.map(p=><button key={p.id} type="button" onClick={()=>setSelected(p.id)}
-     className="rounded-lg border border-zinc-300 bg-white text-left p-3 text-zinc-900 min-w-0 w-full" aria-pressed={selected===p.id}>
-    <strong>{p.name}</strong><p className="text-xs">{p.classification} · {p.scope.kind==='branch'?p.scope.branchId:'Organisation'} · {p.status}</p>
-    <p className="text-xs font-semibold">Balance: not established</p></button>)}
-   {!items.length&&<p className="text-sm text-zinc-600">No custom portfolios registered for this scope.</p>}
-  </div>
   {canRegister&&selectedPortfolio&&selectedPortfolio.origin==='custom'&&<div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900">
    <h4 className="font-semibold">Custom portfolio lifecycle controls</h4>
    <p>Only never-funded portfolios may be retired. Funded portfolios and their financial history remain active and immutable. Reactivation restores the original identity.</p>
    <button type="button" disabled={busy} onClick={()=>changeCustomStatus(selectedPortfolio)} className="mt-2 rounded border border-zinc-400 bg-white p-2 text-zinc-900">{selectedPortfolio.status==='active'?'Deactivate portfolio':'Reactivate portfolio'}</button>
 
-  </div>}
-  {selectedPortfolio&&<div className="rounded-lg border border-zinc-300 p-3 space-y-3 text-sm text-zinc-800">
-   <strong>{selectedPortfolio.name} — Account overview</strong>
-   <p>{childAccounts.length} child accounts. Authoritative ledger posting and child-account registration are not yet enabled.</p>
-   {childAccounts.map(a=><div key={a.id} className="rounded-md border border-zinc-200 bg-white p-2 text-zinc-900">
-     <strong>{a.displayName}</strong> · {a.institution||'Financial account'} · {a.status}
-     <p>Account reference: {a.accountReference} · Opening balance not reconciled</p></div>)}
-   <div className="flex flex-wrap gap-2">
-     <select aria-label="Movement direction" value={direction} onChange={e=>setDirection(e.target.value as typeof direction)} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"><option value="all">All</option><option value="inflow">Inflows</option><option value="outflow">Outflows</option></select>
-     <input aria-label="From date" type="date" value={period.from} onChange={e=>setPeriod(p=>({...p,from:e.target.value}))} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
-     <input aria-label="To date" type="date" value={period.to} onChange={e=>setPeriod(p=>({...p,to:e.target.value}))} className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>
-   </div>
-   <p>Ledger unavailable pending authoritative financial posting integration; no synthetic transactions shown.</p>
   </div>}
   {canRegister&&<form onSubmit={create} className="grid gap-2 sm:grid-cols-3">
     <input required maxLength={120} aria-label="Portfolio name" value={name} onChange={e=>setName(e.target.value)} placeholder="Portfolio name" className="w-full min-w-0 rounded border border-zinc-400 bg-white p-2 text-zinc-900 placeholder:text-zinc-500"/>

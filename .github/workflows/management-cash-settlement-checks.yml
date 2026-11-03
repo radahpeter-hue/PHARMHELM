@@ -9,6 +9,7 @@ on:
       - 'src/components/finance/**'
       - 'scripts/management-cash-settlement-*.mjs'
       - 'scripts/validate-inactive-finance-rules.mjs'
+      - 'scripts/firestore-unbound-probe.mjs'
       - '.github/workflows/management-cash-settlement-checks.yml'
       - 'firestore.rules'
       - 'scripts/build-firestore-release-rules.mjs'

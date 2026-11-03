@@ -1,3 +1,4 @@
+import {BranchCardAccountSetting} from '../../components/finance/BranchCardAccountSetting';
 import { staffMatchesId } from '../../utils/operationalStaff';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -337,6 +338,7 @@ export const BranchManager: React.FC = () => {
               </button>
             </div>
 
+            {editingBranch&&<div className="px-6 pb-4"><BranchCardAccountSetting branchId={editingBranch.id}/></div>}
             <form 
               key={editingBranch?.id || 'new'}
               onSubmit={handleSubmit} 

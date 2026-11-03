@@ -1,3 +1,5 @@
+import {planEodPortfolioRouting} from '../domain/finance/eodPortfolioRouting';
+import {managementAccountDocumentId,stageManagementCashEntry} from './managementCashPosting';
 import { collection, doc, getDocs, query, runTransaction, serverTimestamp, where, type Firestore } from 'firebase/firestore';
 import { db } from '../firebase';
 import { configuredEodShifts, eodIdentity } from '../utils/eodShifts';
@@ -49,12 +51,25 @@ export async function submitEod(input: EodSubmission, actor: { uid: string; tena
       if (!(operator.assigned_branches || []).includes(input.branch_id) && operator.branch_id !== input.branch_id && !hasAnyRole(operator, ['owner', 'CEO', 'CEO / MD', 'admin', 'Finance Head', 'Accountant'])) throw new Error('Operator is not assigned to this branch.');
       const shift = configuredEodShifts(branch.data() as Branch).find(s => s.id === input.shift_id);
       if (!shift || shift.startTime !== input.shift_start || shift.endTime !== input.shift_end) throw new Error('Shift configuration changed. Refresh and select an enabled shift.');
+      const bankId=branch.data().cardSettlement?.bankPortfolioId || null;
+      const plan=planEodPortfolioRouting({tenantId:input.tenantId,branchId:input.branch_id,reconciliationId:id,
+        cardBankPortfolioId:bankId,actual:{cash:amounts.cash_actual,momo:amounts.momo_actual,airtel:amounts.airtel_actual,card:amounts.card_actual}});
+      const destinations=await Promise.all(plan.map(p=>tx.get(doc(connection,'finance_payment_accounts',managementAccountDocumentId(input.tenantId,p.accountId)))));
+      plan.forEach((p,index)=>{
+        const account=destinations[index];
+        if(!account.exists()||account.data().tenantId!==actor.tenantId||account.data().accountId!==p.accountId||!account.data().initialized||account.data().currency!=='UGX')
+          throw new Error('Reconcile the opening balance for '+p.channel+' before submitting EOD. No reconciliation or funds have been saved.');
+        if(p.channel==='card'&&account.data().portfolioClassification!=='bank')throw new Error('Select a reconciled bank account in Branch Settings.');
+      });
+      plan.forEach(p=>stageManagementCashEntry(tx,id+'~'+p.channel,{tenantId:input.tenantId,amount:p.amountUGX,type:'incoming',
+        source:'EOD '+p.channel,date:input.reconciliation_date,reference_number:p.externalReference,branchId:input.branch_id,
+        eodReconciliationId:id,eodChannel:p.channel},connection,p.accountId,actor.uid));
       // No missing-document point read. The deterministic set is create-only under
       // deployed EOD update Rules: submission_attempt_id/submitted_at are never
       // correction fields. Concurrent sets after the first cannot overwrite it.
       tx.set(ref, { ...input, ...amounts, shift_name: shift.name, variance_reason: requiresEodVarianceReason(channels) ? reason : '',
         cashier_id: actor.uid, logged_by: actor.uid, created_at: new Date().toISOString(),
-        audit_only: true, financial_posting: 'none', card_settlement_account_id: branch.data().cardSettlement?.bankPortfolioId || null, reconciliation_key: id, submission_attempt_id: attemptId, submitted_at: serverTimestamp(), status: 'submitted' });
+        audit_only: false, financial_posting: 'portfolios_v1', card_settlement_account_id: branch.data().cardSettlement?.bankPortfolioId || null, reconciliation_key: id, submission_attempt_id: attemptId, submitted_at: serverTimestamp(), status: 'submitted' });
     });
     return { id, replayed: false };
   } catch (error) {
