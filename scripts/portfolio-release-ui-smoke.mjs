@@ -31,7 +31,7 @@ const server=createServer(async(req,res)=>{const name=req.url==='/'?'index.html'
 await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;const errors=[];
 const names=['Branch Cash Sales','Airtel Money','MTN Money','Bank','Credit Receivables','Petty Cash','Staff Welfare Fund'];
 const back=async page=>{await page.getByRole('button',{name:'Global Treasury Overview',exact:true}).click();await page.getByRole('heading',{name:'Global Treasury Overview',exact:true}).waitFor();};
-const fit=async(page,width)=>{assert.ok(await page.locator('body').evaluate(e=>e.scrollWidth<=innerWidth+1),`Treasury must fit ${width}px`);assert.equal(await page.locator('th,td').evaluateAll(cells=>cells.some(e=>getComputedStyle(e).color==='rgb(255, 255, 255)')),false,'Light-surface ledger text must be readable');};
+const fit=async(page,width)=>{const title=await page.locator('h2').textContent().catch(()=>'access');await page.screenshot({path:path.join(output,`check-${width}-${title.replace(/[^a-z0-9]/gi,'-')}.png`),fullPage:true});assert.ok(await page.locator('body').evaluate(e=>e.scrollWidth<=innerWidth+1),`Treasury must fit ${width}px`);assert.equal(await page.locator('th,td').evaluateAll(cells=>cells.some(e=>getComputedStyle(e).color==='rgb(255, 255, 255)')),false,'Light-surface ledger text must be readable');};
 const open=async(page,name)=>page.getByRole('button',{name:new RegExp('^'+name)}).first().click();
 try{browser=await chromium.launch({headless:true});
  for(const width of [360,390,768,1440]){
@@ -60,7 +60,7 @@ try{browser=await chromium.launch({headless:true});
   await open(page,'Staff Welfare Fund');await page.getByRole('heading',{name:'Staff Welfare Fund records'}).waitFor();await page.getByText('Fixture welfare allocation',{exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:/Allocate|Transfer/}).count(),0);await fit(page,width);await back(page);
   await open(page,'Equipment Reserve');await page.getByRole('heading',{name:'Equipment Reserve',exact:true}).waitFor();await page.getByRole('heading',{name:'Account controls'}).waitFor();await fit(page,width);await back(page);
   await open(page,'Bank');await page.getByRole('heading',{name:'Bank Accounts',exact:true}).waitFor();
-  await page.getByText('Register bank account',{exact:true}).click();await page.getByLabel('Bank institution',{exact:true}).waitFor();
+  await page.locator('summary').filter({hasText:/^Register bank account$/}).click();await page.getByLabel('Bank institution',{exact:true}).waitFor();
   await fit(page,width);await page.screenshot({path:path.join(output,`bank-accounts-${width}.png`),fullPage:true});
   await page.getByRole('button',{name:/^Equity Bank/}).click();await page.getByRole('heading',{name:'Equity Bank',exact:true}).waitFor();await page.getByRole('heading',{name:'Authoritative account ledger'}).waitFor();await page.getByRole('navigation',{name:'Treasury navigation'}).getByText('Bank Accounts',{exact:true}).waitFor();
   await fit(page,width);await page.screenshot({path:path.join(output,`bank-ledger-${width}.png`),fullPage:true});
@@ -71,7 +71,7 @@ try{browser=await chromium.launch({headless:true});
   const page=await browser.newPage({viewport:{width:390,height:900}});page.on('pageerror',e=>errors.push(e.message));await page.addInitScript(mode=>window.__mode=mode,mode);await page.goto(`http://127.0.0.1:${server.address().port}/`);
   if(mode==='denied'){await page.getByRole('alert').filter({hasText:'Finance access is required.'}).waitFor();assert.equal(await page.getByRole('heading',{name:'Global Treasury Overview'}).count(),0);}
   else if(mode==='error'){await page.getByRole('alert').filter({hasText:'Unable to load branch or portfolio coverage'}).waitFor();assert.equal(await page.getByLabel('Default financial portfolios').getByRole('button').count(),7);}
-  else if(mode==='missing'){await page.getByText('Verified liquid cash (partial)',{exact:true}).waitFor();const card=page.getByRole('button',{name:/^Airtel Money/});assert.ok((await card.textContent()).includes('Reconciliation required'));await card.click();await page.getByRole('heading',{name:'Account controls'}).waitFor();await page.getByLabel('Verified opening balance (UGX)').waitFor();}
+  else if(mode==='missing'){await page.getByText('Verified liquid cash (partial)',{exact:true}).waitFor();const card=page.getByRole('button',{name:/^Airtel Money/});await card.getByText('Reconciliation required',{exact:true}).waitFor();await card.click();await page.getByRole('heading',{name:'Account controls'}).waitFor();await page.getByLabel('Verified opening balance (UGX)').waitFor();}
   else {assert.equal(await page.getByRole('button',{name:'Add custom portfolio'}).count(),0);await open(page,'Bank');assert.equal(await page.getByText('Register bank account',{exact:true}).count(),0);await page.getByRole('button',{name:/^Equity Bank/}).click();assert.equal(await page.getByRole('heading',{name:'Account controls'}).count(),0);}
   await fit(page,390);await page.close();console.log(`Treasury ${mode} state passed`);
  }

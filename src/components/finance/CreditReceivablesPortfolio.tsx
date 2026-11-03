@@ -5,7 +5,7 @@ import {db} from '../../firebase';
 import {useAuth} from '../../contexts/AuthContext';
 import {projectCreditReceivables,type CreditSourceRecord} from '../../domain/finance/creditReceivablesPortfolio';
 
-export function useCreditReceivablesPortfolio(){
+export function useCreditReceivablesPortfolio(refreshKey=0){
  const {profile}=useAuth();const tenantId=profile?.tenantId||'';
  const [evidence,setEvidence]=useState<{tenantId:string;primary:CreditSourceRecord[]|null;secondary:CreditSourceRecord[]|null}>({tenantId:'',primary:null,secondary:null});
  const [state,setState]=useState<{tenantId:string;rows:CreditSourceRecord[];payments:CreditSourceRecord[];loaded:boolean;paymentsLoaded:boolean;error:string}>({tenantId:'',rows:[],payments:[],loaded:false,paymentsLoaded:false,error:''});
@@ -15,12 +15,12 @@ export function useCreditReceivablesPortfolio(){
   const unsubs=[onSnapshot(query(collection(db,'credit_receivables'),where('tenantId','==',tenantId)),snap=>setState(s=>s.tenantId===tenantId?{...s,rows:snap.docs.map(d=>({...d.data(),id:d.id})),loaded:true}:s),fail),
    onSnapshot(query(collection(db,'cashTransfers'),where('tenantId','==',tenantId)),snap=>setState(s=>s.tenantId===tenantId?{...s,payments:snap.docs.map(d=>({...d.data(),id:d.id})),paymentsLoaded:true}:s),fail)];
   return ()=>unsubs.forEach(fn=>fn());
- },[tenantId]);
+ },[tenantId,refreshKey]);
  useEffect(()=>{
   setEvidence({tenantId,primary:null,secondary:null});if(!tenantId)return;
   const unsubs=(['paymentMethod','secondaryPaymentMethod'] as const).map((field,index)=>onSnapshot(query(collection(db,'sales'),where('tenantId','==',tenantId),where(field,'==','institutional_credit')),snap=>setEvidence(s=>s.tenantId===tenantId?{...s,[index===0?'primary':'secondary']:snap.docs.map(d=>({...d.data(),id:d.id}))}:s),()=>{}));
   return ()=>unsubs.forEach(fn=>fn());
- },[tenantId]);
+ },[tenantId,refreshKey]);
  return useMemo(()=>{
   if(state.tenantId===tenantId&&state.error)return {loading:false,error:state.error,data:null,unlinkedCount:null};
   if(state.tenantId!==tenantId||!state.loaded||!state.paymentsLoaded)return {loading:true,error:'',data:null,unlinkedCount:null};
