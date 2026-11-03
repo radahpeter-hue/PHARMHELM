@@ -1,3 +1,5 @@
+import {registerPortfolioFunding} from '../src/domain/finance/portfolioFunding.ts';
+import {defineBuiltInPortfolio} from '../src/domain/finance/builtInPortfolios.ts';
 import {correctEod} from '../src/services/eodCorrectionService.ts';
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
@@ -13,12 +15,22 @@ try{
  await env.clearFirestore();
  await env.withSecurityRulesDisabled(async c=>{
   const db=c.firestore();
+  await setDoc(doc(db,'staff','owner'),{tenantId,role:'owner'});
+  await setDoc(doc(db,'system_settings',tenantId),{tenantId,managementCashAccountControlV1:true});
   await setDoc(doc(db,'staff',uid),{tenantId,role:'Branch Manager',assigned_branches:[branch_id]});
   await setDoc(doc(db,'staff','it_head'),{tenantId,role:'IT Head'});
   await setDoc(doc(db,'staff','other'),{tenantId,role:'Branch Manager',assigned_branches:['other']});
   await setDoc(doc(db,'branches',branch_id),{tenantId,shifts:{dayShift:{enabled:true,startTime:'08:00',endTime:'17:00'}},cardSettlement:{bankPortfolioId:bank}});
-  for(const [accountId,kind] of targets)await setDoc(doc(db,'finance_payment_accounts',tenantId+'_'+accountId),{tenantId,accountId,portfolioId:accountId,portfolioClassification:kind==='bank'?'bank':'cash_equivalent',kind,initialized:true,currency:'UGX',balanceUGX:0,openingBalanceUGX:0,reconciliationReference:'TEST-OPENING',lastPostingId:null});
+  await setDoc(doc(db,'finance_portfolios_v1',tenantId+'__'+bank),{id:bank,tenantId,origin:'custom',status:'active',classification:'bank',scope:{kind:'organisation'},currency:'UGX',bankParentId:'system_bank',bankInstitution:'Equity',bankAccountReference:'TEST-ACCOUNT',name:'Equity test'});
  });
+ const owner=env.authenticatedContext('owner',{tenantId}).firestore();
+ for(const key of ['branch_cash_sales','mtn_mobile_money','airtel_mobile_money']){
+  const portfolio=defineBuiltInPortfolio({tenantId,key,...(key==='branch_cash_sales'?{branchId:branch_id}:{}),createdBy:'owner',createdAt:new Date().toISOString()});
+  await registerPortfolioFunding({portfolio,actorId:'owner',name:portfolio.name,openingBalanceUGX:0,reconciliationReference:'TEST-OPENING'},owner);
+ }
+ const bankPortfolio=(await getDoc(doc(owner,'finance_portfolios_v1',tenantId+'__'+bank))).data();
+ await registerPortfolioFunding({portfolio:bankPortfolio,actorId:'owner',name:'Equity test',openingBalanceUGX:0,reconciliationReference:'BANK-OPENING'},owner);
+ await assert.rejects(registerPortfolioFunding({portfolio:bankPortfolio,actorId:'owner',name:'Equity test',openingBalanceUGX:100,reconciliationReference:'DUPLICATE-OPENING'},owner));
  const db=env.authenticatedContext(uid,{tenantId}).firestore();
  const results=await Promise.all([submitEod(input,{uid,tenantId},db),submitEod(input,{uid,tenantId},db)]);
  assert.equal(results.filter(r=>!r.replayed).length,1);
