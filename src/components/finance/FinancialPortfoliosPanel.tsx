@@ -286,15 +286,15 @@ export function FinancialPortfoliosPanel(){
          {managementLedger.entries.some(e=>!e.branchId)&&<option value="unattributed">Unattributed / legacy</option>}
         </select>
         <div className="overflow-x-auto">
-         <table className="w-full text-left text-xs">
-          <thead><tr><th className="p-1">Branch</th><th className="p-1 text-right">Inflows UGX</th><th className="p-1 text-right">Net UGX</th></tr></thead>
-          <tbody>
+         <table className="text-zinc-900 w-full text-left text-xs">
+          <thead className="bg-zinc-50 text-zinc-700"><tr><th className="p-1">Branch</th><th className="p-1 text-right">Inflows UGX</th><th className="p-1 text-right">Net UGX</th></tr></thead>
+          <tbody className="text-zinc-900">
            {summarizeBranchContributions(managementLedger.entries).branches.filter(b=>ledgerBranchFilter==='all'||ledgerBranchFilter===b.branchId).map(b=><tr key={b.branchId}><td className="p-1">{branches.find(branch=>branch.id===b.branchId)?.name||b.branchId}</td><td className="p-1 text-right">{b.inflowUGX.toLocaleString()}</td><td className="p-1 text-right">{b.netUGX.toLocaleString()}</td></tr>)}
           </tbody>
          </table>
         </div>
        </div>
-       <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>Date</th><th>Reference</th><th>Inflow UGX</th><th>Outflow UGX</th><th>Balance UGX</th></tr></thead><tbody>
+       <div className="overflow-x-auto"><table className="text-zinc-900 w-full text-left"><thead className="bg-zinc-50 text-zinc-700"><tr><th>Date</th><th>Reference</th><th>Inflow UGX</th><th>Outflow UGX</th><th>Balance UGX</th></tr></thead><tbody className="text-zinc-900">
         {managementLedger.entries.filter(e=>(direction==='all'||e.direction===direction)&&(ledgerBranchFilter==='all'||(ledgerBranchFilter==='unattributed'?!e.branchId:e.branchId===ledgerBranchFilter))).map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.reference}</td><td>{e.direction==='inflow'?e.amountUGX.toLocaleString():''}</td><td>{e.direction==='outflow'?e.amountUGX.toLocaleString():''}</td><td>{e.runningBalanceUGX.toLocaleString()}</td></tr>)}
        </tbody></table></div>
        {!managementLedger.entries.length&&<p>No movements in the selected period.</p>}
@@ -336,7 +336,7 @@ export function FinancialPortfoliosPanel(){
    <h4 className="font-semibold">Canonical POS V2 settled-payment evidence</h4>
    <p>Receipt components only. This does not include legacy POS or revisions and is not the available wallet/cash balance.</p>
    {posError?<p role="alert">{posError}</p>:posEvidence===null?<p>Loading receipts…</p>:
-    <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>Date</th><th>Receipt</th><th>Settled UGX</th></tr></thead><tbody>
+    <div className="overflow-x-auto"><table className="text-zinc-900 w-full text-left"><thead className="bg-zinc-50 text-zinc-700"><tr><th>Date</th><th>Receipt</th><th>Settled UGX</th></tr></thead><tbody className="text-zinc-900">
      {posEvidence.map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.receiptNumber}</td><td>{e.settledUGX.toLocaleString()}</td></tr>)}
     </tbody></table></div>}
   </div>}
@@ -344,7 +344,7 @@ export function FinancialPortfoliosPanel(){
    <h4 className="font-semibold">Branch EOD reconciliation evidence</h4>
    <p>EOD source records. Posted collections appear in the portfolio ledger above; these records are not counted again.</p>
    {eodError?<p role="alert">{eodError}</p>:eodEvidence===null?<p>Loading reconciliations…</p>:
-   <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>Date</th><th>Shift</th><th>Declared UGX</th><th>Variance UGX</th></tr></thead><tbody>
+   <div className="overflow-x-auto"><table className="text-zinc-900 w-full text-left"><thead className="bg-zinc-50 text-zinc-700"><tr><th>Date</th><th>Shift</th><th>Declared UGX</th><th>Variance UGX</th></tr></thead><tbody className="text-zinc-900">
     {eodEvidence.map(e=><tr key={e.id}><td>{e.businessDate}</td><td>{e.shiftId}</td><td>{e.declaredUGX.toLocaleString()}</td><td>{e.varianceUGX.toLocaleString()}</td></tr>)}
    </tbody></table></div>}
   </div>}
