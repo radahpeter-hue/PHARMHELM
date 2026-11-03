@@ -188,5 +188,5 @@ async function main() {
     martinPharma:report.tenants.find(t=>t.isMartinPharma)||null},null,2));
 }
 if(process.argv[1] && import.meta.url===new URL('file://'+process.argv[1]).href) {
-  main().catch(err=>{console.error('IDENTITY_AUDIT_FAILED:',err.code||err.message);process.exitCode=1;});
+  main().catch(err=>{console.error('IDENTITY_AUDIT_FAILED:',err.code||'UNKNOWN',String(err.details||err.message||'Unknown failure').slice(0,500));process.exitCode=1;});
 }
