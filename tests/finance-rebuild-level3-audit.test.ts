@@ -4,8 +4,11 @@ import { readFileSync } from 'node:fs';
 test('031 treasury cannot consume EOD declarations as cash funding', () => {
   const source=readFileSync('src/pages/finance/management/CashAndBanking.tsx','utf8');
   assert.doesNotMatch(source,/eod_reconciliations|cash_actual|card_actual|momo_actual|airtel_actual|staff_welfare_actual/);
-  assert.match(source,/registeredBank.balanceUGX/);
-  assert.match(source,/totalTransferredToBanked - totalTransferredFromBanked/);
+  assert.match(source,/FinancialPortfoliosPanel/);
+  const view=readFileSync('src/domain/finance/treasuryOverview.ts','utf8');
+  assert.doesNotMatch(view,/eod_reconciliations|cash_actual|totalTransferredToBanked/);
+  assert.match(view,/projectPortfolioBalances/);
+  assert.match(view,/a.balanceUGX/);
 });
 test('031 EOD submission service has exactly one monetary-free write destination', () => {
   const source=readFileSync('src/services/eodSubmissionService.ts','utf8');
