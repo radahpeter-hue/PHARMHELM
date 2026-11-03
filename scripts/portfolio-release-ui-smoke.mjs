@@ -31,7 +31,7 @@ const server=createServer(async(req,res)=>{const name=req.url==='/'?'index.html'
 await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;const errors=[];
 const names=['Branch Cash Sales','Airtel Money','MTN Money','Bank','Credit Receivables','Petty Cash','Staff Welfare Fund'];
 const back=async page=>{await page.getByRole('button',{name:'Global Treasury Overview',exact:true}).click();await page.getByRole('heading',{name:'Global Treasury Overview',exact:true}).waitFor();};
-const fit=async(page,width)=>{const title=await page.locator('h2').textContent().catch(()=>'access');await page.screenshot({path:path.join(output,`check-${width}-${title.replace(/[^a-z0-9]/gi,'-')}.png`),fullPage:true});assert.ok(await page.locator('body').evaluate(e=>e.scrollWidth<=innerWidth+1),`Treasury must fit ${width}px`);assert.equal(await page.locator('th,td').evaluateAll(cells=>cells.some(e=>getComputedStyle(e).color==='rgb(255, 255, 255)')),false,'Light-surface ledger text must be readable');};
+const fit=async(page,width)=>{const title=await page.locator('h2').count()?await page.locator('h2').textContent():'access';await page.screenshot({path:path.join(output,`check-${width}-${title.replace(/[^a-z0-9]/gi,'-')}.png`),fullPage:true});assert.ok(await page.locator('body').evaluate(e=>e.scrollWidth<=innerWidth+1),`Treasury must fit ${width}px`);assert.equal(await page.locator('th,td').evaluateAll(cells=>cells.some(e=>getComputedStyle(e).color==='rgb(255, 255, 255)')),false,'Light-surface ledger text must be readable');};
 const open=async(page,name)=>page.getByRole('button',{name:new RegExp('^'+name)}).first().click();
 try{browser=await chromium.launch({headless:true});
  for(const width of [360,390,768,1440]){
@@ -57,7 +57,7 @@ try{browser=await chromium.launch({headless:true});
   await open(page,'Credit Receivables');await page.getByRole('heading',{name:'Credit Receivables ledger'}).waitFor();await page.getByLabel('Receivables customer or reference').fill('Fixture');
   await fit(page,width);await page.screenshot({path:path.join(output,`credit-ledger-${width}.png`),fullPage:true});await back(page);
   for(const name of ['Airtel Money','MTN Money','Petty Cash']){await open(page,name);await page.getByRole('heading',{name:name,exact:true}).waitFor();await page.getByRole('heading',{name:'Authoritative account ledger'}).waitFor();await fit(page,width);await back(page);}
-  await open(page,'Staff Welfare Fund');await page.getByRole('heading',{name:'Staff Welfare Fund records'}).waitFor();await page.getByText('Fixture welfare allocation',{exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:/Allocate|Transfer/}).count(),0);await fit(page,width);await back(page);
+  await open(page,'Staff Welfare Fund');await page.getByRole('heading',{name:'Staff Welfare Fund records'}).waitFor();await page.getByRole('cell',{name:/Fixture welfare allocation/}).waitFor();assert.equal(await page.getByRole('button',{name:/Allocate|Transfer/}).count(),0);await fit(page,width);await back(page);
   await open(page,'Equipment Reserve');await page.getByRole('heading',{name:'Equipment Reserve',exact:true}).waitFor();await page.getByRole('heading',{name:'Account controls'}).waitFor();await fit(page,width);await back(page);
   await open(page,'Bank');await page.getByRole('heading',{name:'Bank Accounts',exact:true}).waitFor();
   await page.locator('summary').filter({hasText:/^Register bank account$/}).click();await page.getByLabel('Bank institution',{exact:true}).waitFor();
@@ -76,4 +76,4 @@ try{browser=await chromium.launch({headless:true});
   await fit(page,390);await page.close();console.log(`Treasury ${mode} state passed`);
  }
  assert.deepEqual(errors,[]);console.log(`Portfolio screenshots: ${output}`);
-}finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}
+}catch(error){if(browser)for(const context of browser.contexts())for(const [index,page] of context.pages().entries()){await page.screenshot({path:path.join(output,`failure-${index}.png`),fullPage:true}).catch(()=>{});}throw error;}finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}
