@@ -58,7 +58,7 @@ export async function submitEod(input: EodSubmission, actor: { uid: string; tena
       plan.forEach((p,index)=>{
         const account=destinations[index];
         if(!account.exists()||account.data().tenantId!==actor.tenantId||account.data().accountId!==p.accountId||!account.data().initialized||account.data().currency!=='UGX')
-          throw new Error('Reconcile the opening balance for '+p.channel+' before submitting EOD. No reconciliation or funds have been saved.');
+          throw new Error('Opening reconciliation required for '+({cash:'Branch Cash Sales',momo:'MTN Money',airtel:'Airtel Money',card:'Bank'}[p.channel])+' (account '+p.accountId+'). Ask the CEO to open Finance → Management → Cash & Banking → '+(p.channel==='card'?'Bank → Bank Accounts → selected account':p.channel==='cash'?'Branch Cash Sales':p.channel==='momo'?'MTN Money':'Airtel Money')+' and confirm the verified opening balance and statement reference. No reconciliation or funds have been saved.');
         if(p.channel==='card'&&account.data().portfolioClassification!=='bank')throw new Error('Select a reconciled bank account in Branch Settings.');
       });
       plan.forEach(p=>stageManagementCashEntry(tx,id+'~'+p.channel,{tenantId:input.tenantId,amount:p.amountUGX,type:'incoming',

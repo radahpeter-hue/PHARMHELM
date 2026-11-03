@@ -17,10 +17,11 @@ export function useManagementPaymentAccounts(includePortfolioAccounts=false) {
   return state.tenantId===tenantId?state:{tenantId,accounts:[],error:'',loading:true};
 }
 
-export function ManagementPaymentAccounts() {
+export function ManagementPaymentAccounts({allowedKinds=['petty_cash','bank']}:{allowedKinds?:Array<'petty_cash'|'bank'>}={}) {
   const {profile,hasPermission}=useAuth();
-  const {accounts,error,loading}=useManagementPaymentAccounts();
-  const [kind,setKind]=useState<'petty_cash'|'bank'>('petty_cash');
+  const {accounts:allAccounts,error,loading}=useManagementPaymentAccounts();
+  const accounts=allAccounts.filter(a=>allowedKinds.includes(a.kind));
+  const [kind,setKind]=useState<'petty_cash'|'bank'>(allowedKinds[0]||'petty_cash');
   const [name,setName]=useState('Management Petty Cash');
   const [reference,setReference]=useState('');
   const [opening,setOpening]=useState('');
@@ -40,8 +41,8 @@ export function ManagementPaymentAccounts() {
     <h3 className="text-lg font-bold text-zinc-950">Management payment accounts</h3>
     <p className="mt-1 text-sm text-zinc-700">Supplier payments and cash postings use these reconciled account balances.</p>
     {loading?<p className="mt-3 text-sm text-zinc-700">Loading accounts…</p>:error?<p role="alert" className="mt-3 text-sm text-red-800">{error}</p>:<div className="mt-3 grid gap-3 sm:grid-cols-2">{accounts.map(account=><div key={account.id} className="min-w-0 rounded-xl border border-zinc-200 p-3"><p className="break-words font-bold text-zinc-950">{account.name}</p><p className="text-sm text-zinc-700">{account.kind==='bank'?'Bank':'Petty cash'} · UGX {Number(account.balanceUGX).toLocaleString()}</p><p className="mt-1 break-words text-xs text-zinc-700">Opening reconciliation: {account.reconciliationReference}</p></div>)}{!accounts.length&&<p className="text-sm font-medium text-amber-900">Register and reconcile a funding account before posting cash or supplier payments.</p>}</div>}
-    {canRegister&&!loading&&!error&&accounts.length<2&&<details className="mt-4"><summary className="min-h-11 cursor-pointer py-2 font-semibold text-zinc-900">Register a missing account</summary><form onSubmit={register} className="mt-2 grid gap-3">
-      <label className="text-sm font-medium text-zinc-900">Account type<select value={kind} onChange={e=>{const value=e.target.value as 'petty_cash'|'bank';setKind(value);setName(value==='bank'?'Management Bank':'Management Petty Cash');}} className="mt-1 min-h-11 w-full rounded-xl border border-zinc-400 bg-white p-2 text-zinc-900"><option value="petty_cash" disabled={accounts.some(a=>a.kind==='petty_cash')}>Management Petty Cash</option><option value="bank" disabled={accounts.some(a=>a.kind==='bank')}>Management Bank</option></select></label>
+    {canRegister&&!loading&&!error&&accounts.length<allowedKinds.length&&<details className="mt-4"><summary className="min-h-11 cursor-pointer py-2 font-semibold text-zinc-900">Register a missing account</summary><form onSubmit={register} className="mt-2 grid gap-3">
+      <label className="text-sm font-medium text-zinc-900">Account type<select value={kind} onChange={e=>{const value=e.target.value as 'petty_cash'|'bank';setKind(value);setName(value==='bank'?'Management Bank':'Management Petty Cash');}} className="mt-1 min-h-11 w-full rounded-xl border border-zinc-400 bg-white p-2 text-zinc-900">{allowedKinds.includes('petty_cash')&&<option value="petty_cash" disabled={accounts.some(a=>a.kind==='petty_cash')}>Management Petty Cash</option>}{allowedKinds.includes('bank')&&<option value="bank" disabled={accounts.some(a=>a.kind==='bank')}>Management Bank</option>}</select></label>
       <label className="text-sm font-medium text-zinc-900">Registered account name<input required value={name} onChange={e=>setName(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-zinc-400 bg-white p-2 text-zinc-900"/></label>
       <label className="text-sm font-medium text-zinc-900">Reconciliation reference<input required minLength={5} value={reference} onChange={e=>setReference(e.target.value)} placeholder="Cash count or bank statement reference" className="mt-1 min-h-11 w-full rounded-xl border border-zinc-400 bg-white p-2 text-zinc-900"/></label>
       {kind==='bank'?<label className="text-sm font-medium text-zinc-900">Verified bank opening balance (UGX)<input required type="number" min="0" step="1" value={opening} onChange={e=>setOpening(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-zinc-400 bg-white p-2 text-zinc-900"/></label>:<p className="text-sm text-zinc-700">The opening petty-cash balance is reconciled from the existing ledger. Historical entries are retained.</p>}

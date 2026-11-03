@@ -1,3 +1,4 @@
+import {loadAuthoritativePortfolioLedger} from '../src/domain/finance/authoritativePortfolioLedger.ts';
 import {registerPortfolioFunding} from '../src/domain/finance/portfolioFunding.ts';
 import {defineBuiltInPortfolio} from '../src/domain/finance/builtInPortfolios.ts';
 import {correctEod} from '../src/services/eodCorrectionService.ts';
@@ -57,7 +58,14 @@ try{
  // Preserve the original card destination even when the branch default changes.
  await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),'branches',branch_id),{cardSettlement:{bankPortfolioId:'bank_'+'b'.repeat(64)}}));
  await correctEod(auditId,{uid:'it_head',tenantId,role:'IT Head'},correction(110,210,310,410),'Verified additional collections',it);
- for(const [index,[accountId]] of targets.entries())assert.equal((await getDoc(doc(db,'finance_payment_accounts',tenantId+'_'+accountId))).data().balanceUGX,[110,210,310,410][index]);
+ for(const [index,[accountId]] of targets.entries()){
+  const snapshot=await getDoc(doc(db,'finance_payment_accounts',tenantId+'_'+accountId));
+  assert.equal(snapshot.data().balanceUGX,[110,210,310,410][index]);
+  const ledger=await loadAuthoritativePortfolioLedger({...snapshot.data(),id:snapshot.id},{from:'1900-01-01',to:'9999-12-31',direction:'all'},owner);
+  assert.equal(ledger.currentBalanceUGX,[110,210,310,410][index]);
+  assert.equal(ledger.entries.length,3,'One original funding plus two linked correction movements');
+  assert.ok(ledger.entries.every(e=>e.eodReconciliationId===auditId&&e.shiftId==='dayShift'));
+ }
  // A correction may not reverse funds already spent. No audit/channel changes may survive.
  await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),'finance_payment_accounts',tenantId+'_system_branch_cash_sales_masaka'),{balanceUGX:0}));
  await assert.rejects(correctEod(auditId,{uid:'it_head',tenantId,role:'IT Head'},correction(100),'Insufficient cash reversal',it));
@@ -68,5 +76,26 @@ try{
  await env.withSecurityRulesDisabled(c=>deleteDoc(doc(c.firestore(),'finance_payment_accounts',tenantId+'_system_airtel_mobile_money')));
  await assert.rejects(submitEod({...input,reconciliation_date:'2026-11-04'},{uid,tenantId},db));
  assert.equal((await getDoc(doc(db,'finance_payment_accounts',tenantId+'_'+bank))).data().balanceUGX,410);
- console.log('Automatic branch EOD posting, replay, assignment, tampering and atomic failure PASSED');
+ await env.withSecurityRulesDisabled(async c=>{
+  assert.equal((await getDoc(doc(c.firestore(),'eod_reconciliations','eod~tenant_a~masaka~2026-11-04~dayShift'))).exists(),false,'Atomic failure cannot leave an EOD record');
+  await setDoc(doc(c.firestore(),'staff','second_operator'),{tenantId,role:'Branch Manager',assigned_branches:['second_branch']});
+  await setDoc(doc(c.firestore(),'staff','foreign_operator'),{tenantId:'foreign_tenant',role:'owner'});
+  await setDoc(doc(c.firestore(),'branches','second_branch'),{tenantId,shifts:{dayShift:{enabled:true,startTime:'08:00',endTime:'17:00'},nightShift:{enabled:true,startTime:'17:00',endTime:'23:00'}}});
+ });
+ const secondPortfolio=defineBuiltInPortfolio({tenantId,key:'branch_cash_sales',branchId:'second_branch',createdBy:'owner',createdAt:new Date().toISOString()});
+ await registerPortfolioFunding({portfolio:secondPortfolio,actorId:'owner',name:'Second branch cash',openingBalanceUGX:0,reconciliationReference:'SECOND-OPENING'},owner);
+ const second=env.authenticatedContext('second_operator',{tenantId}).firestore();
+ const secondInput={...input,branch_id:'second_branch',cash_actual:700,cash_expected:700,momo_actual:0,momo_expected:0,airtel_actual:0,airtel_expected:0,card_actual:0,card_expected:0};
+ const day=await submitEod(secondInput,{uid:'second_operator',tenantId},second);
+ const nightInput={...secondInput,shift_id:'nightShift',shift_start:'17:00',shift_end:'23:00',cash_actual:900,cash_expected:900};
+ const night=await submitEod(nightInput,{uid:'second_operator',tenantId},second);
+ assert.notEqual(day.id,night.id);assert.equal(day.replayed,false);assert.equal(night.replayed,false);
+ assert.equal((await submitEod(nightInput,{uid:'second_operator',tenantId},second)).replayed,true);
+ const secondSnapshot=await getDoc(doc(owner,'finance_payment_accounts',tenantId+'_system_branch_cash_sales_second_branch'));
+ assert.equal(secondSnapshot.data().balanceUGX,1600);
+ const secondLedger=await loadAuthoritativePortfolioLedger({...secondSnapshot.data(),id:secondSnapshot.id},{from:'1900-01-01',to:'9999-12-31',direction:'all'},owner);
+ assert.equal(secondLedger.entries.length,2);assert.deepEqual(new Set(secondLedger.entries.map(e=>e.shiftId)),new Set(['dayShift','nightShift']));
+ const foreign=env.authenticatedContext('foreign_operator',{tenantId:'foreign_tenant'}).firestore();
+ await assert.rejects(submitEod({...secondInput,reconciliation_date:'2026-11-03'},{uid:'foreign_operator',tenantId},foreign));
+ console.log('Automatic branch EOD posting, exactly-once ledgers, independent branches/shifts, previous-day posting, corrections, tenant isolation and atomic failure PASSED');
 }finally{await env.cleanup();}

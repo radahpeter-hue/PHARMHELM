@@ -2,6 +2,15 @@ name: Finance Level 4 validation
 on:
   pull_request:
     paths:
+      - 'src/pages/Finance.tsx'
+      - 'src/pages/finance/management/CashAndBanking.tsx'
+      - 'tests/treasury*.test.ts'
+      - 'tests/finance-rebuild-level3-audit.test.ts'
+      - 'tests/portfolio*.test.ts'
+      - 'tests/authoritative-portfolio-ledger.test.ts'
+      - 'tests/credit-receivables*.test.ts'
+      - 'src/services/managementCashPosting.ts'
+      - 'src/services/managementPaymentAccountService.ts'
       - 'src/domain/finance/**'
       - 'src/components/finance/**'
       - 'src/services/financePortfolio*'
