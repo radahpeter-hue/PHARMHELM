@@ -28,6 +28,12 @@ try{
  await assertFails(updateDoc(doc(db,'finance_payment_accounts',tenantId+'_'+bank),{balanceUGX:999999}));
  const other=env.authenticatedContext('other',{tenantId}).firestore();
  await assert.rejects(submitEod({...input,reconciliation_date:'2026-11-03'},{uid:'other',tenantId},other));
+ const zeroId='eod~tenant_a~masaka~2026-11-06~dayShift';
+ const zero={...input,reconciliation_date:'2026-11-06',reconciliation_key:zeroId,financial_posting:'portfolios_v1',card_settlement_account_id:bank,cashier_id:'other'};
+ for(const c of ['cash','momo','airtel','card'])zero[c+'_actual']=0;
+ await assertFails(setDoc(doc(other,'eod_reconciliations',zeroId),zero));
+ await setDoc(doc(db,'eod_reconciliations',zeroId),{...zero,cashier_id:uid});
+ await assertFails(setDoc(doc(db,'eod_reconciliations','legacy-bypass'),{...input,financial_posting:'none',audit_only:true}));
  const it=env.authenticatedContext('it_head',{tenantId}).firestore();
  const auditId='eod~tenant_a~masaka~2026-11-02~dayShift';
  await assertFails(updateDoc(doc(it,'eod_reconciliations',auditId),{cash_actual:999,cash_variance:879,correction_reason:'unpaired',corrected_by:'it_head',corrected_at:serverTimestamp(),correction_posting_id:'unpaired'}));
