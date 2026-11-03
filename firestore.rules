@@ -557,6 +557,28 @@ service cloud.firestore {
         (audit[channel + '_actual'] is int && audit[channel + '_actual'] > 0
         && !exists(path) && getAfter(path).data.eodReconciliationId == id);
     }
+    function validEodAdjustment(id, data) {
+      let path = /databases/$(database)/documents/eod_reconciliations/$(data.eodReconciliationId);
+      let before = get(path).data;
+      let after = getAfter(path).data;
+      let channel = data.eodChannel;
+      let target = channel == 'cash' ? 'system_branch_cash_sales_' + before.branch_id
+        : channel == 'momo' ? 'system_mtn_mobile_money'
+        : channel == 'airtel' ? 'system_airtel_mobile_money' : before.card_settlement_account_id;
+      return before.financial_posting == 'portfolios_v1'
+        && after.correction_posting_id != before.get('correction_posting_id', '')
+        && after.correction_posting_id == data.eodCorrectionId && after.corrected_at == request.time
+        && id == data.eodCorrectionId + '~' + channel
+        && data.tenantId == before.tenantId && data.branchId == before.branch_id
+        && data.accountDocumentId == before.tenantId + '_' + target
+        && channel in ['cash','momo','airtel','card']
+        && after[channel + '_actual'] is int && after[channel + '_actual'] >= 0
+        && data.accountDeltaUGX == after[channel + '_actual'] - before[channel + '_actual'];
+    }
+    function eodAdjustmentPosted(id, before, after, channel, bank) {
+      return after[channel + '_actual'] == before[channel + '_actual'] ||
+        getAfter(managementMovementPath(bank ? 'bank' : 'petty_cash', after.correction_posting_id + '~' + channel)).data.eodReconciliationId == id;
+    }
     function validManagementMovement(id, data, kind) {
       let accountPath = /databases/$(database)/documents/finance_payment_accounts/$(data.accountDocumentId);
       let before = get(accountPath).data;
@@ -575,7 +597,7 @@ service cloud.firestore {
       let movementPath = managementMovementPath(before.kind, after.lastPostingId);
       let movement = getAfter(movementPath).data;
       return isTenantMember(before.tenantId)
-        && ((movement.get('eodChannel', '') != '' && validBranchEodMovement(after.lastPostingId, movement)) || isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash()))
+        && ((movement.get('eodCorrectionId', '') != '' && validEodAdjustment(after.lastPostingId, movement)) || (movement.get('eodChannel', '') != '' && validBranchEodMovement(after.lastPostingId, movement)) || isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash()))
         && after.diff(before).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
         && after.balanceUGX is int && after.balanceUGX >= 0 && after.balanceUGX <= 9007199254740991
         && !exists(movementPath)
@@ -1330,19 +1352,25 @@ service cloud.firestore {
           && eodChannelPosted(reconciliationId, request.resource.data, 'airtel', true)
           && eodChannelPosted(reconciliationId, request.resource.data, 'card', true)));
       allow update: if isTenantMember(resource.data.tenantId)
-        && resource.data.get('financial_posting', 'none') != 'portfolios_v1'
         && hasAnyRole(['IT Head']) && withinCorrectionWindow()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'cash_actual', 'cash_variance', 'momo_actual', 'momo_variance',
           'airtel_actual', 'airtel_variance', 'card_actual', 'card_variance',
           'insurance_actual', 'insurance_variance', 'institutional_credit_actual', 'institutional_credit_variance',
           'staff_welfare_actual', 'staff_welfare_variance', 'total_actual', 'total_variance',
-          'variance_reason', 'correction_reason', 'corrected_by', 'corrected_at'
+          'variance_reason', 'correction_reason', 'corrected_by', 'corrected_at', 'correction_posting_id'
         ])
         && request.resource.data.correction_reason is string
         && request.resource.data.correction_reason.trim().size() > 0 && request.resource.data.correction_reason.size() <= 1000
         && request.resource.data.corrected_by == request.auth.uid
-        && request.resource.data.corrected_at == request.time;
+        && request.resource.data.corrected_at == request.time
+        && (resource.data.get('financial_posting', 'none') != 'portfolios_v1' ||
+          (request.resource.data.correction_posting_id is string
+          && request.resource.data.correction_posting_id != resource.data.get('correction_posting_id', '')
+          && eodAdjustmentPosted(reconciliationId, resource.data, request.resource.data, 'cash', false)
+          && eodAdjustmentPosted(reconciliationId, resource.data, request.resource.data, 'momo', true)
+          && eodAdjustmentPosted(reconciliationId, resource.data, request.resource.data, 'airtel', true)
+          && eodAdjustmentPosted(reconciliationId, resource.data, request.resource.data, 'card', true)));
       allow delete: if false;
     }
 

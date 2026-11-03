@@ -9,6 +9,10 @@ on:
       - 'tests/eod-portfolio-routing.test.ts'
       - 'scripts/eod-portfolio-settlement-emulator.mjs'
       - 'src/services/eodSubmissionService.ts'
+      - 'src/services/eodCorrectionService.ts'
+      - 'scripts/eod-automatic-posting-emulator.mjs'
+      - 'scripts/portfolio-release-ui-smoke.mjs'
+      - 'firestore.rules'
       - '.github/workflows/finance-level4-validation.yml'
   workflow_dispatch:
 jobs:
@@ -37,3 +41,16 @@ jobs:
         run: npx firebase emulators:exec --only firestore --project pharmhelm-eod-posting-acceptance "node --import tsx scripts/eod-portfolio-settlement-emulator.mjs"
       - name: Automatic branch EOD portfolio posting acceptance
         run: npx firebase emulators:exec --only firestore --project pharmhelm-eod-auto-test "node --import tsx scripts/eod-automatic-posting-emulator.mjs"
+      - name: Install portfolio verification browser
+        run: |
+          npm install --prefix /tmp/portfolio-browser --no-save playwright@1.51.1
+          /tmp/portfolio-browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Portfolio ledgers on phone and desktop
+        env:
+          PLAYWRIGHT_MODULE: /tmp/portfolio-browser/node_modules/playwright
+        run: node scripts/portfolio-release-ui-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: portfolio-release-ui-proof
+          path: /tmp/portfolio-release-ui-*/*.png
