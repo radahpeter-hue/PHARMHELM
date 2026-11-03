@@ -2,7 +2,7 @@ import {correctEod} from '../src/services/eodCorrectionService.ts';
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {initializeTestEnvironment,assertFails} from '@firebase/rules-unit-testing';
-import {doc,setDoc,getDoc,updateDoc,deleteDoc} from 'firebase/firestore';
+import {doc,setDoc,getDoc,updateDoc,deleteDoc,serverTimestamp} from 'firebase/firestore';
 import {submitEod} from '../src/services/eodSubmissionService.ts';
 const env=await initializeTestEnvironment({projectId:'pharmhelm-eod-auto-test',firestore:{rules:readFileSync('firestore.rules','utf8')}});
 const tenantId='tenant_a',branch_id='masaka',uid='branch_operator',bank='bank_'+ 'a'.repeat(64);
@@ -30,11 +30,25 @@ try{
  await assert.rejects(submitEod({...input,reconciliation_date:'2026-11-03'},{uid:'other',tenantId},other));
  const it=env.authenticatedContext('it_head',{tenantId}).firestore();
  const auditId='eod~tenant_a~masaka~2026-11-02~dayShift';
- await assertFails(updateDoc(doc(it,'eod_reconciliations',auditId),{cash_actual:999,cash_variance:879,correction_reason:'unpaired',corrected_by:'it_head',corrected_at:new Date()}));
+ await assertFails(updateDoc(doc(it,'eod_reconciliations',auditId),{cash_actual:999,cash_variance:879,correction_reason:'unpaired',corrected_by:'it_head',corrected_at:serverTimestamp(),correction_posting_id:'unpaired'}));
  await correctEod(auditId,{uid:'it_head',tenantId,role:'IT Head'},{cash:100,momo:200,airtel:300,card:400,insurance:0,institutional_credit:0,staff_welfare:0},'Correct declared collections',it);
  for(const [index,[accountId]] of targets.entries())assert.equal((await getDoc(doc(db,'finance_payment_accounts',tenantId+'_'+accountId))).data().balanceUGX,[100,200,300,400][index]);
+ const correction=(cash,momo=200,airtel=300,card=400)=>({cash,momo,airtel,card,insurance:0,institutional_credit:0,staff_welfare:0});
+ await correctEod(auditId,{uid:'it_head',tenantId,role:'IT Head'},correction(100),'Retry correction without adding funds',it);
+ assert.equal((await getDoc(doc(db,'finance_payment_accounts',tenantId+'_system_branch_cash_sales_masaka'))).data().balanceUGX,100);
+ // Preserve the original card destination even when the branch default changes.
+ await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),'branches',branch_id),{cardSettlement:{bankPortfolioId:'bank_'+'b'.repeat(64)}}));
+ await correctEod(auditId,{uid:'it_head',tenantId,role:'IT Head'},correction(110,210,310,410),'Verified additional collections',it);
+ for(const [index,[accountId]] of targets.entries())assert.equal((await getDoc(doc(db,'finance_payment_accounts',tenantId+'_'+accountId))).data().balanceUGX,[110,210,310,410][index]);
+ // A correction may not reverse funds already spent. No audit/channel changes may survive.
+ await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),'finance_payment_accounts',tenantId+'_system_branch_cash_sales_masaka'),{balanceUGX:0}));
+ await assert.rejects(correctEod(auditId,{uid:'it_head',tenantId,role:'IT Head'},correction(100),'Insufficient cash reversal',it));
+ assert.equal((await getDoc(doc(it,'eod_reconciliations',auditId))).data().cash_actual,110);
+ assert.equal((await getDoc(doc(db,'finance_payment_accounts',tenantId+'_'+bank))).data().balanceUGX,410);
+ await assert.rejects(correctEod(auditId,{uid,tenantId,role:'Branch Manager'},correction(120),'Unauthorized correction',db));
+ await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),'branches',branch_id),{cardSettlement:{bankPortfolioId:bank}}));
  await env.withSecurityRulesDisabled(c=>deleteDoc(doc(c.firestore(),'finance_payment_accounts',tenantId+'_system_airtel_mobile_money')));
  await assert.rejects(submitEod({...input,reconciliation_date:'2026-11-04'},{uid,tenantId},db));
- assert.equal((await getDoc(doc(db,'finance_payment_accounts',tenantId+'_'+bank))).data().balanceUGX,400);
+ assert.equal((await getDoc(doc(db,'finance_payment_accounts',tenantId+'_'+bank))).data().balanceUGX,410);
  console.log('Automatic branch EOD posting, replay, assignment, tampering and atomic failure PASSED');
 }finally{await env.cleanup();}

@@ -252,7 +252,7 @@ export function FinancialPortfoliosPanel(){
        <p className="mt-2 text-2xl font-black font-mono">{complete?'UGX '+matched.reduce((sum,a)=>sum+a.balanceUGX,0).toLocaleString():'Opening reconciliation required'}</p>
       </button>;
     })}
-    {[...builtInViews,...items].filter(p=>p.scope.kind!=='branch'&&!p.bankParentId).map(portfolio=>{
+    {[...builtInViews,...items].filter(p=>(p.scope.kind!=='branch'||p.origin==='custom')&&!p.bankParentId).map(portfolio=>{
       const view=balanceViews.find(x=>x.portfolioId===portfolio.id);
       return <button type="button" key={portfolio.id} onClick={()=>{setSelected(portfolio.id);setLedgerBranchFilter('all');setCreditOpen(false);setManagementSelected(portfolio.id==='system_bank'?'$bank':treasury.accounts.find(a=>a.accountId===portfolio.id)?.id||'');}} className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm text-left text-zinc-950 min-w-0 hover:shadow-md transition-all">
        <span className="font-bold">{portfolio.name}</span><p className="text-xs text-zinc-500">All branches</p>
