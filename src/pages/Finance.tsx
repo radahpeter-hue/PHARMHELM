@@ -2327,13 +2327,13 @@ const ManagementFinance: React.FC<{ settings: SystemSettings | null }> = ({ sett
 
   return (
     <div className="space-y-6">
-      <div className="flex border-b border-zinc-200 overflow-x-auto no-scrollbar">
+      <div className="flex flex-wrap border-b border-zinc-200">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveSubTab(tab.id as any)}
             className={cn(
-              "flex items-center gap-2 px-6 py-3 text-sm font-medium transition-all border-b-2 whitespace-nowrap",
+              "flex items-center gap-2 px-3 py-3 text-sm font-medium transition-all border-b-2",
               activeSubTab === tab.id 
                 ? "border-emerald-500 text-emerald-600" 
                 : "border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300"

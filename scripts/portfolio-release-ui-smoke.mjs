@@ -34,7 +34,7 @@ const back=async page=>{await page.getByRole('button',{name:'Global Treasury Ove
 const fit=async(page,width)=>{const title=await page.locator('h2').count()?await page.locator('h2').textContent():'access';await page.screenshot({path:path.join(output,`check-${width}-${title.replace(/[^a-z0-9]/gi,'-')}.png`),fullPage:true});assert.ok(await page.locator('body').evaluate(e=>e.scrollWidth<=innerWidth+1),`Treasury must fit ${width}px`);assert.equal(await page.locator('th,td').evaluateAll(cells=>cells.some(e=>getComputedStyle(e).color==='rgb(255, 255, 255)')),false,'Light-surface ledger text must be readable');};
 const open=async(page,name)=>page.getByRole('button',{name:new RegExp('^'+name)}).first().click();
 try{browser=await chromium.launch({headless:true});
- for(const width of [360,390,768,1440]){
+ for(const width of [360,390,768,1024,1280,1440]){
   const page=await browser.newPage({viewport:{width,height:960}});page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',route=>route.request().url().startsWith('http://127.0.0.1:')?route.continue():route.abort());
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
@@ -59,8 +59,21 @@ try{browser=await chromium.launch({headless:true});
   for(const name of ['Airtel Money','MTN Money','Petty Cash']){await open(page,name);await page.getByRole('heading',{name:name,exact:true}).waitFor();await page.getByRole('heading',{name:'Authoritative account ledger'}).waitFor();await fit(page,width);await back(page);}
   await open(page,'Staff Welfare Fund');await page.getByRole('heading',{name:'Staff Welfare Fund records'}).waitFor();await page.getByRole('cell',{name:/Fixture welfare allocation/}).waitFor();assert.equal(await page.getByRole('button',{name:/Allocate|Transfer/}).count(),0);await fit(page,width);await back(page);
   await open(page,'Equipment Reserve');await page.getByRole('heading',{name:'Equipment Reserve',exact:true}).waitFor();await page.getByRole('heading',{name:'Account controls'}).waitFor();await fit(page,width);await back(page);
-  await open(page,'Bank');await page.getByRole('heading',{name:'Bank Accounts',exact:true}).waitFor();
-  await page.locator('summary').filter({hasText:/^Register bank account$/}).click();await page.getByLabel('Bank institution',{exact:true}).waitFor();
+  await open(page,'Bank');await page.getByRole('heading',{name:'Unified Ledger',exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Unified Ledger',exact:true}).getAttribute('aria-pressed'),'true');
+  await page.getByRole('columnheader',{name:'Account',exact:true}).waitFor();
+  await page.getByLabel('Bank account',{exact:true}).selectOption(bank);
+  await page.getByRole('cell',{name:'Equity Bank',exact:true}).first().waitFor();
+  await page.getByLabel('Search transactions').fill('no-result');
+  await page.getByText('No posted movements match these filters.').waitFor();
+  await page.getByLabel('Search transactions').fill('');
+  const download=page.waitForEvent('download');
+  await page.getByRole('button',{name:'Export CSV'}).click();
+  assert.equal((await download).suggestedFilename(),'treasury-ledger.csv');
+  await fit(page,width);await page.screenshot({path:path.join(output,`bank-unified-${width}.png`),fullPage:true});
+  await page.getByRole('button',{name:'Account Management',exact:true}).click();
+  await page.getByRole('heading',{name:'Bank Accounts',exact:true}).waitFor();
+  await page.getByLabel('Bank institution',{exact:true}).waitFor();
   await fit(page,width);await page.screenshot({path:path.join(output,`bank-accounts-${width}.png`),fullPage:true});
   await page.getByRole('button',{name:/^Equity Bank/}).click();await page.getByRole('heading',{name:'Equity Bank',exact:true}).waitFor();await page.getByRole('heading',{name:'Authoritative account ledger'}).waitFor();await page.getByRole('navigation',{name:'Treasury navigation'}).getByText('Bank Accounts',{exact:true}).waitFor();
   await fit(page,width);await page.screenshot({path:path.join(output,`bank-ledger-${width}.png`),fullPage:true});
