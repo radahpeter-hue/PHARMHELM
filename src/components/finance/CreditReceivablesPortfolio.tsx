@@ -1,3 +1,5 @@
+import {CreditCard, List, ArrowDownLeft} from 'lucide-react';
+import {TreasuryKpi, treasuryGrid} from './TreasuryPresentation';
 import {isActiveSale} from '../../utils/activeSales';
 import React,{useEffect,useMemo,useState} from 'react';
 import {collection,onSnapshot,query,where} from 'firebase/firestore';
@@ -41,15 +43,21 @@ export function CreditReceivablesLedger({data,branches}:{data:ReturnType<typeof 
  const rows=scope.filter(r=>inDates(r.businessDate));
  const ids=new Set(scope.map(r=>r.id));
  const payments=data.repayments.filter(p=>ids.has(p.receivableId)&&inDates(p.businessDate));
+ const repaid=payments.reduce((sum,p)=>sum+p.amountUGX,0);
+ const validPeriod=!from||!to||from<=to;
  const label=(id:string)=>branches.find(b=>b.id===id)?.name||id||'Unattributed';
  return <section aria-label="Credit receivables ledger" className="rounded-2xl border border-zinc-200 bg-white p-4 text-zinc-900 space-y-4">
   <h4 className="text-lg font-bold">Credit Receivables ledger</h4>
-  <p className="text-sm text-zinc-600">Outstanding across all branches: UGX {data.totalOutstandingUGX.toLocaleString()}. Date filters select credit issue dates below and repayment dates in payment history.</p>
+  <div className={treasuryGrid}>
+   <TreasuryKpi title="Outstanding credit" value={'UGX '+data.totalOutstandingUGX.toLocaleString()} icon={CreditCard} note="All branches · Non-cash"/>
+   <TreasuryKpi title="Receivable records" value={validPeriod?String(rows.length):'Unavailable'} icon={List} tone="blue" note="Matching credit issue dates"/>
+   <TreasuryKpi title="Recorded repayments" value={validPeriod&&Number.isSafeInteger(repaid)?'UGX '+repaid.toLocaleString():'Unavailable'} icon={ArrowDownLeft} note="Matching payment dates"/>
+  </div>
   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-   <select aria-label="Receivables branch" value={branch} onChange={e=>setBranch(e.target.value)} className="rounded-xl border border-zinc-200 bg-white p-3"><option value="all">All branches</option>{[...new Set(data.rows.map(r=>r.branchId))].map(id=><option key={id} value={id}>{label(id)}</option>)}</select>
-   <input aria-label="Receivables customer or reference" placeholder="Customer, institution or invoice" value={client} onChange={e=>setClient(e.target.value)} className="rounded-xl border border-zinc-200 p-3"/>
-   <input aria-label="Receivables from date" type="date" value={from} onChange={e=>setFrom(e.target.value)} className="rounded-xl border border-zinc-200 p-3"/>
-   <input aria-label="Receivables to date" type="date" value={to} onChange={e=>setTo(e.target.value)} className="rounded-xl border border-zinc-200 p-3"/>
+   <select aria-label="Receivables branch" value={branch} onChange={e=>setBranch(e.target.value)} className="w-full min-w-0 rounded-xl border border-zinc-200 bg-white p-3"><option value="all">All branches</option>{[...new Set(data.rows.map(r=>r.branchId))].map(id=><option key={id} value={id}>{label(id)}</option>)}</select>
+   <input aria-label="Receivables customer or reference" placeholder="Customer, institution or invoice" value={client} onChange={e=>setClient(e.target.value)} className="w-full min-w-0 rounded-xl border border-zinc-200 p-3"/>
+   <input aria-label="Receivables from date" type="date" value={from} onChange={e=>setFrom(e.target.value)} className="w-full min-w-0 rounded-xl border border-zinc-200 p-3"/>
+   <input aria-label="Receivables to date" type="date" value={to} onChange={e=>setTo(e.target.value)} className="w-full min-w-0 rounded-xl border border-zinc-200 p-3"/>
   </div>
   {from&&to&&from>to?<p role="alert">Choose an end date on or after the start date.</p>:<>
   <div className="overflow-x-auto"><table className="text-zinc-900 w-full text-left text-sm"><thead className="bg-zinc-50 text-zinc-700"><tr>{['Credit date','Reference','Customer / institution','Branch','Original credit UGX','Outstanding UGX','Status'].map(h=><th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody className="text-zinc-900">{rows.map(r=><tr key={r.id} className="border-t border-zinc-100"><td className="p-3">{r.businessDate||'Not recorded'}</td><td className="p-3">{r.reference}</td><td className="p-3">{r.client}</td><td className="p-3">{label(r.branchId)}</td><td className="p-3 tabular-nums">{r.originalUGX.toLocaleString()}</td><td className="p-3 tabular-nums font-bold">{r.outstandingUGX.toLocaleString()}</td><td className="p-3">{r.status}</td></tr>)}</tbody></table></div>
