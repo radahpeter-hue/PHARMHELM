@@ -7,13 +7,13 @@ import {ArrowDownLeft, ArrowUpRight, Download, List, Wallet, ShieldCheck} from '
 import {pettyCashCSV} from '../../utils/pettyCashExport';
 import {TreasuryKpi, treasuryDateTime, treasuryGrid} from './TreasuryPresentation';
 
-export function TreasuryLedger({ledgers,branches,bank=false,balance,initialReference='',partial=false,accountCount,audit=false}:{ledgers:AuthoritativePortfolioLedger[];branches:Array<{id:string;name:string}>;bank?:boolean;balance:string;initialReference?:string;partial?:boolean;accountCount?:number;audit?:boolean}){
+export function TreasuryLedger({ledgers,branches,bank=false,balance,initialReference='',partial=false,accountCount,audit=false,aside}:{ledgers:AuthoritativePortfolioLedger[];branches:Array<{id:string;name:string}>;bank?:boolean;balance:string;initialReference?:string;partial?:boolean;accountCount?:number;audit?:boolean;aside?:React.ReactNode}){
  const [from,setFrom]=useState(''),[to,setTo]=useState(''),[direction,setDirection]=useState('all'),[branch,setBranch]=useState('all');
  const [detail,setDetail]=useState<FinancialLedgerEntry|null|undefined>(undefined);
  const [account,setAccount]=useState('all'),[search,setSearch]=useState(''),[page,setPage]=useState(1),[pageSize,setPageSize]=useState(10);
  const entries=ledgers.flatMap(l=>l.entries.map(entry=>({...entry,accountName:l.account.name,ledgerAccount:l.account.accountId})))
    .sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt)||b.id.localeCompare(a.id));
- const showBalance=!partial&&(ledgers.length===1||account!=='all');
+ const showBalance=!partial&&(ledgers.length===1||account!=='all')&&entries.every(e=>Number.isSafeInteger(e.runningBalanceUGX));
  const dated=entries.filter(e=>(!from||e.businessDate>=from)&&(!to||e.businessDate<=to));
  const period=dated.filter(e=>(account==='all'||e.ledgerAccount===account)&&(branch==='all'||(branch==='unattributed'?!e.branchId:e.branchId===branch)));
  const label=(id?:string)=>branches.find(b=>b.id===id)?.name||id||'Unattributed';
@@ -47,7 +47,7 @@ export function TreasuryLedger({ledgers,branches,bank=false,balance,initialRefer
  const contributions=summarizeBranchContributions(dated);
  return <section className="min-w-0 space-y-4 rounded-2xl border border-zinc-200 bg-white p-4 sm:p-5">
   <div><h3 className="font-semibold">{audit?'Bank posting audit trail':bank?'Unified Ledger':'Authoritative account ledger'}</h3><p className="mt-1 text-xs text-zinc-600">Full account history determines balances. Filters only select movements shown below.</p></div>
-  <div className={treasuryGrid}>
+  <div className={treasuryGrid+(bank?' @min-[1160px]:grid-cols-5':'')}>
    <TreasuryKpi title={bank?'Consolidated bank balance':'Current verified balance'} value={balance} icon={Wallet}/>
    <TreasuryKpi title="Total inflows" value={amount('inflow')} icon={ArrowUpRight} note="Posted movements for selected period"/>
    <TreasuryKpi title="Total outflows" value={amount('outflow')} icon={ArrowDownLeft} tone="red" note="Includes transfers where applicable"/>
@@ -59,16 +59,18 @@ export function TreasuryLedger({ledgers,branches,bank=false,balance,initialRefer
    <label className="text-sm">To date<input aria-label="Ledger to" type="date" value={to} onChange={e=>{setTo(e.target.value);setPage(1)}} className={treasuryField}/></label>
    <label className="text-sm">Direction<select aria-label="Ledger direction" value={direction} onChange={e=>{setDirection(e.target.value);setPage(1)}} className={treasuryField}><option value="all">All movements</option><option value="inflow">Inflows</option><option value="outflow">Outflows</option></select></label>
    <label className="text-sm">Source branch<select aria-label="Filter ledger by source branch" value={branch} onChange={e=>{setBranch(e.target.value);setPage(1)}} className={treasuryField}><option value="all">All branches</option>{[...new Set(entries.flatMap(e=>e.branchId?[e.branchId]:[]))].map(id=><option key={id} value={id}>{label(id)}</option>)}<option value="unattributed">Unattributed / legacy</option></select></label>
-   {bank&&<label className="text-sm">Bank account<select value={account} onChange={e=>{setAccount(e.target.value);setPage(1)}} className={treasuryField}><option value="all">All verified account histories</option>{ledgers.map(l=><option key={l.account.accountId} value={l.account.accountId}>{l.account.name}</option>)}</select></label>}
+   {bank&&<label className="text-sm">Bank account<select aria-label="Bank account" value={account} onChange={e=>{setAccount(e.target.value);setPage(1)}} className={treasuryField}><option value="all">All verified account histories</option>{ledgers.map(l=><option key={l.account.accountId} value={l.account.accountId}>{l.account.name}</option>)}</select></label>}
    <label className="text-sm">Search transactions<input value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}} placeholder="Reference, description or amount" className={treasuryField}/></label>
    <button type="button" disabled={invalid||!filtered.length} onClick={download} className="flex min-h-11 items-center gap-2 self-end rounded-xl border border-emerald-700 px-3 text-sm font-semibold text-emerald-800 disabled:opacity-50"><Download size={16}/>Export CSV</button>
   </div>
   {partial&&<p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Coverage is incomplete. The table shows available verified account histories.</p>}
+  <div className={aside?'grid gap-4 @min-[1080px]:grid-cols-[minmax(0,1fr)_250px]':'min-w-0'}>
+   <div className="min-w-0 space-y-3">
   {from&&to&&from>to?<p role="alert" className="text-sm text-red-800">Choose an end date on or after the start date.</p>:<>
    <details><summary className="cursor-pointer py-2 text-sm font-semibold">Branch contributions for selected dates</summary><p className="text-xs text-zinc-600">Posted inflows and net movement, not independent branch bank balances.</p><div className="overflow-x-auto"><table className="w-full text-left text-sm text-zinc-900"><thead className="text-zinc-600"><tr><th className="p-3">Branch</th><th className="p-3">Inflows UGX</th><th className="p-3">Net UGX</th></tr></thead><tbody className="text-zinc-900">{contributions.branches.filter(b=>branch==='all'||branch===b.branchId).map(b=><tr key={b.branchId}><td className="p-3">{label(b.branchId)}</td><td className="p-3">{b.inflowUGX.toLocaleString()}</td><td className="p-3">{b.netUGX.toLocaleString()}</td></tr>)}</tbody></table></div></details>
    <div tabIndex={0} aria-label="Scrollable transaction table" className="overflow-x-auto rounded-xl border border-zinc-200">
-    <table className="w-full min-w-[760px] text-left text-sm text-zinc-900">
-     <thead className="bg-zinc-100 text-zinc-700"><tr>{['Date & time',...(bank?['Account']:[]),'Reference','Description','Branch','Type','Inflow (UGX)','Outflow (UGX)',...(audit?['Posting ID','Posted by']:[]),...(showBalance?['Account balance (UGX)']:[])].map((h,i)=><th key={h} scope="col" className={`whitespace-nowrap px-3 py-3 font-semibold ${i>=(bank?6:5)?'text-right':''}`}>{h}</th>)}</tr></thead>
+    <table className="w-full min-w-[740px] text-left text-sm text-zinc-900">
+     <thead className="bg-zinc-100 text-zinc-700"><tr>{['Date & time',...(bank?['Account']:[]),'Reference','Description','Branch','Type','Inflow (UGX)','Outflow (UGX)',...(audit?['Posting ID','Posted by']:[]),...(showBalance?['Account balance (UGX)']:[])].map((h,i)=><th key={h} scope="col" className={`px-2 py-3 font-semibold ${i>=(bank?6:5)?'text-right':''}`}>{h}</th>)}</tr></thead>
      <tbody>{visible.map(e=><tr key={e.ledgerAccount+':'+e.id} className="border-t border-zinc-100 even:bg-zinc-50">
       <td className="whitespace-nowrap px-3 py-2">{treasuryDateTime(e.businessDate,e.occurredAt)}</td>
       {bank&&<td className="px-3 py-2">{e.accountName}</td>}
@@ -96,5 +98,8 @@ export function TreasuryLedger({ledgers,branches,bank=false,balance,initialRefer
   </>}
   <details><summary className="cursor-pointer py-2 text-sm font-semibold">Opening reconciliation references</summary>{ledgers.map(l=><p key={l.account.id} className="break-words py-1 text-xs text-zinc-600">{l.account.name}: UGX {l.openingBalanceUGX.toLocaleString()} · {l.reconciliationReference}</p>)}</details>
   {selected&&<section aria-label="Transaction details" className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm"><div className="flex items-center justify-between gap-3"><h4 className="font-semibold">Transaction details</h4><button className="min-h-11 px-3 underline" onClick={()=>setDetail(null)}>Close details</button></div>{[['Reference',selected.reference],['Account',selected.accountId],['Source',selected.description],['Branch',label(selected.branchId)],['Shift',selected.shiftId||'Not recorded'],['EOD reconciliation',selected.eodReconciliationId||'Not applicable'],['Posting ID',selected.id],['Posted by',selected.actorId||'Not recorded']].map(([key,value])=><p key={key} className="break-words"><span className="font-medium">{key}: </span>{value}</p>)}</section>}
+   </div>
+   {aside}
+  </div>
  </section>;
 }
