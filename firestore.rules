@@ -3264,7 +3264,7 @@ service cloud.firestore {
         && data.status == 'active'
         && data.currency == 'UGX'
         && data.scope.kind == 'organisation'
-        && !data.keys().hasAny(['removedAt','removedBy','removalReason','balanceUGX']);
+        && !data.keys().hasAny(['removed','removalReason','balanceUGX']);
       }
       function validLifecycleUpdate() {
         let actor = request.auth.uid;
@@ -3274,7 +3274,7 @@ service cloud.firestore {
         let changed = after.diff(before).affectedKeys();
         let funding = /databases/$(database)/documents/finance_payment_accounts/$(before.tenantId + '_' + before.id);
         return isTenantMember(before.tenantId)
-          && before.origin == 'custom' && !('removedAt' in before)
+          && before.origin == 'custom' && !('removed' in before)
           && after.updatedBy == actor && after.updatedAt is string
           && ((status == (before.status == 'active' ? 'inactive' : 'active')
             && (status == 'active' || !exists(funding) || getAfter(funding).data.balanceUGX == 0)
@@ -3284,9 +3284,9 @@ service cloud.firestore {
             && changed.hasOnly(['status','updatedBy','updatedAt','deactivatedBy','deactivatedAt','deactivationReason']))
           || (before.status == 'inactive' && before.supportsChildAccounts == false
             && !exists(funding) && !existsAfter(funding)
-            && after.removedBy == actor && after.removedAt is string
+            && after.removed == true
             && after.removalReason is string && after.removalReason.size() > 0
-            && changed.hasOnly(['removedAt','removedBy','removalReason','updatedBy','updatedAt'])));
+            && changed.hasOnly(['removed','removalReason','updatedBy','updatedAt'])));
       }
       allow create, update: if isCEO()
         && (request.method == 'create' ? validPortfolioRegistration(request.resource.data) : validLifecycleUpdate());

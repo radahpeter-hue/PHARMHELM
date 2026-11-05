@@ -51,10 +51,10 @@ test('Level 4 custom creation uses write-on-create rather than a denied missing-
 
 test('Removed unused identities require terminal status and complete audit attribution',()=>{
  const inactive=deactivatePortfolio(p,'ceo','2026-11-05T09:00:00Z','unused',zero);
- const removed={...inactive,removedAt:'2026-11-05T10:00:00Z',removedBy:'ceo',removalReason:'duplicate'};
+ const removed={...inactive,removed:true as const,removalReason:'duplicate'};
  assert.doesNotThrow(()=>validateFinancialPortfolio(removed));
  assert.throws(()=>validateFinancialPortfolio({...removed,status:'active'}),/Active portfolio|deleted/);
- assert.throws(()=>validateFinancialPortfolio({...removed,removedBy:''}),/deleted/);
- assert.throws(()=>validateFinancialPortfolio({...removed,removedAt:'invalid'}),/deleted/);
+ assert.throws(()=>validateFinancialPortfolio({...removed,updatedBy:''}),/identifiers/);
+ assert.throws(()=>validateFinancialPortfolio({...removed,removed:false as any}),/deleted/);
  assert.throws(()=>validateFinancialPortfolio({...removed,removalReason:''}),/deleted/);
 });

@@ -169,17 +169,17 @@ try{
  const unusedRef=ref(ceo,tenant,unusedId);
  const close={status:'inactive',updatedBy:'ceo_a',updatedAt:'2026-11-05T09:00:00Z',
   deactivatedBy:'ceo_a',deactivatedAt:'2026-11-05T09:00:00Z',deactivationReason:'Closed'};
- const remove={removedBy:'ceo_a',removedAt:'2026-11-05T10:00:00Z',removalReason:'Unused duplicate',
+ const remove={removed:true,removalReason:'Unused duplicate',
   updatedBy:'ceo_a',updatedAt:'2026-11-05T10:00:00Z'};
  await checkedSucceeds(setDoc(unusedRef,row('ceo_a',unusedId)));
  await assertFails(updateDoc(unusedRef,remove)); // Must deactivate first.
  await assertFails(setDoc(ref(ceo,tenant,'removed_on_create'),{...row('ceo_a','removed_on_create'),...remove}));
  await checkedSucceeds(updateDoc(unusedRef,close));
- await assertFails(updateDoc(ref(finance,tenant,unusedId),{...remove,removedBy:'finance_a',updatedBy:'finance_a'}));
- await assertFails(updateDoc(ref(otherDb,tenant,unusedId),{...remove,removedBy:'ceo_b',updatedBy:'ceo_b'}));
+ await assertFails(updateDoc(ref(finance,tenant,unusedId),{...remove,updatedBy:'finance_a'}));
+ await assertFails(updateDoc(ref(otherDb,tenant,unusedId),{...remove,updatedBy:'ceo_b'}));
  await checkedSucceeds(updateDoc(unusedRef,remove));
  await assertFails(updateDoc(unusedRef,{status:'active',updatedBy:'ceo_a'}));
- await assertFails(updateDoc(unusedRef,{removedAt:deleteField()}));
+ await assertFails(updateDoc(unusedRef,{removed:deleteField()}));
  await assertFails(setDoc(unusedRef,row('ceo_a',unusedId)));
  await assertFails(deleteDoc(unusedRef));
  await assertFails(setDoc(doc(ceo,'finance_payment_accounts',tenant+'_'+unusedId),{

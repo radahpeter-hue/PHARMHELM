@@ -19,7 +19,7 @@ export async function listFinancialPortfolios(
  const result:FinancialPortfolio[]=[];
  for(const snapshot of snapshots)for(const d of snapshot.docs){
    const p=validateFinancialPortfolio(d.data() as FinancialPortfolio);
-   if(p.removedAt)continue;
+   if(p.removed)continue;
    if(seen.has(p.id))throw new Error('Duplicate portfolio registry identity.');
    seen.add(p.id);result.push(p);
  }
@@ -149,7 +149,7 @@ export async function setCustomPortfolioActive(
    throw new Error('Portfolio identity mismatch.');
   if(current.status!==(active?'inactive':'active'))
    throw new Error('Portfolio status changed; reload before continuing.');
-  if(current.removedAt)throw new Error('Deleted portfolios cannot be reactivated.');
+  if(current.removed)throw new Error('Deleted portfolios cannot be reactivated.');
   if(!active&&account.exists()&&(!Number.isSafeInteger(account.data().balanceUGX)||account.data().balanceUGX!==0))
    throw new Error('Resolve the non-zero account balance before deactivation.');
   const metadata=active
@@ -179,10 +179,10 @@ export async function removeUnusedPortfolio(
   if(!snapshot.exists())throw new Error('Portfolio no longer exists.');
   const current=validateFinancialPortfolio(snapshot.data() as FinancialPortfolio);
   if(current.id!==portfolio.id||current.tenantId!==portfolio.tenantId||current.origin!=='custom')throw new Error('Portfolio identity mismatch.');
-  if(current.status!=='inactive'||current.removedAt)throw new Error('Deactivate the unused account before deletion.');
+  if(current.status!=='inactive'||current.removed)throw new Error('Deactivate the unused account before deletion.');
   if(account.exists())throw new Error('Reconciled accounts retain their identity and financial history; deactivate instead.');
   if(current.supportsChildAccounts)throw new Error('Portfolios supporting child accounts must retain their parent identity.');
   const now=new Date().toISOString();
-  tx.update(ref,{removedAt:now,removedBy:actorId,removalReason:reason.trim(),updatedBy:actorId,updatedAt:now});
+  tx.update(ref,{removed:true,removalReason:reason.trim(),updatedBy:actorId,updatedAt:now});
  });
 }
