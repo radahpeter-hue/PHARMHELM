@@ -1,6 +1,7 @@
 import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
+import {validateFinancialPortfolio} from '../src/domain/finance/financialPortfolio';
 import {defineBuiltInPortfolio} from '../src/domain/finance/builtInPortfolios';
 import {canDeleteUnusedFinancialObject,canDeactivateFinancialObject,deactivatePortfolio,reactivatePortfolio,assertUnusedPortfolioCanBeDeleted,assertUnusedChildAccountCanBeDeleted,type LifecycleEvidence} from '../src/domain/finance/portfolioLifecycle';
 const zero:LifecycleEvidence={ledgerEntryCount:0,transferCount:0,dependentRecordCount:0,openingBalanceUGX:0,currentBalanceUGX:0,childMovementCount:0};
@@ -46,4 +47,15 @@ test('Level 4 custom creation uses write-on-create rather than a denied missing-
  const create=source.split('export async function createCustomFinancialPortfolio')[1]?.split('export async function createPortfolioBankAccount')[0]||'';
  assert.match(create,/await setDoc\(portfolioRef\(/);
  assert.doesNotMatch(create,/transaction\.get|runTransaction/);
+});
+
+test('Deleted unused identities require terminal status and complete audit attribution',()=>{
+ const inactive=deactivatePortfolio(p,'ceo','2026-11-05T09:00:00Z','unused',zero);
+ const removed={...inactive,status:'deleted' as const,updatedBy:'ceo',updatedAt:'2026-11-05T10:00:00Z',deactivationReason:'duplicate'};
+ assert.doesNotThrow(()=>validateFinancialPortfolio(removed));
+ assert.throws(()=>validateFinancialPortfolio({...removed,status:'active'}),/Active portfolio/);
+ assert.throws(()=>validateFinancialPortfolio({...removed,updatedBy:''}),/identifiers/);
+ assert.throws(()=>validateFinancialPortfolio({...removed,updatedAt:'invalid'}),/timestamps/);
+ assert.throws(()=>validateFinancialPortfolio({...removed,deactivationReason:''}),/deleted/);
+ assert.throws(()=>validateFinancialPortfolio({...removed,origin:'system'}),/deleted/);
 });

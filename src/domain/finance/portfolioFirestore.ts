@@ -19,6 +19,7 @@ export async function listFinancialPortfolios(
  const result:FinancialPortfolio[]=[];
  for(const snapshot of snapshots)for(const d of snapshot.docs){
    const p=validateFinancialPortfolio(d.data() as FinancialPortfolio);
+   if(p.status==='deleted')continue;
    if(seen.has(p.id))throw new Error('Duplicate portfolio registry identity.');
    seen.add(p.id);result.push(p);
  }
@@ -117,7 +118,7 @@ export function registeredBankAccounts(portfolios:readonly FinancialPortfolio[])
    &&p.bankParentId==='system_bank'&&!!p.bankAccountReference&&!!p.bankInstitution);
 }
 
-/** Lifecycle for unfunded bank identity records only. Posting stays disabled. */
+/** CEO lifecycle for individual bank identities, preserving their funding and ledgers. */
 export async function setRegisteredBankAccountActive(
  bank:FinancialPortfolio,active:boolean,actorId:string,reason:string,database:Firestore=db
 ):Promise<FinancialPortfolio>{
@@ -148,8 +149,8 @@ export async function setCustomPortfolioActive(
    throw new Error('Portfolio identity mismatch.');
   if(current.status!==(active?'inactive':'active'))
    throw new Error('Portfolio status changed; reload before continuing.');
-  if(!active&&account.exists())
-   throw new Error('Funded portfolios retain their active identity and financial history. Only never-funded portfolios can be retired.');
+  if(!active&&account.exists()&&(!Number.isSafeInteger(account.data().balanceUGX)||account.data().balanceUGX!==0))
+   throw new Error('Resolve the non-zero account balance before deactivation.');
   const metadata=active
    ?{status:'active' as const,updatedBy:actorId,updatedAt:now}
    :{status:'inactive' as const,updatedBy:actorId,updatedAt:now,deactivatedBy:actorId,deactivatedAt:now,deactivationReason:reason.trim()};
@@ -162,3 +163,25 @@ export async function setCustomPortfolioActive(
  });
 }
 
+
+/** Remove an unused identity from the directory, retaining an immutable audit tombstone.
+ * Funding records are never deleted, so their existence permanently prevents removal.
+ */
+export async function removeUnusedPortfolio(
+ portfolio:FinancialPortfolio,actorId:string,reason:string,database:Firestore=db
+):Promise<void>{
+ if(portfolio.origin!=='custom'||!actorId||!reason.trim())throw new Error('CEO actor and deletion reason required.');
+ const ref=portfolioRef(database,portfolio.tenantId,portfolio.id);
+ const funding=doc(database,'finance_payment_accounts',portfolio.tenantId+'_'+portfolio.id);
+ await runTransaction(database,async tx=>{
+  const [snapshot,account]=await Promise.all([tx.get(ref),tx.get(funding)]);
+  if(!snapshot.exists())throw new Error('Portfolio no longer exists.');
+  const current=validateFinancialPortfolio(snapshot.data() as FinancialPortfolio);
+  if(current.id!==portfolio.id||current.tenantId!==portfolio.tenantId||current.origin!=='custom')throw new Error('Portfolio identity mismatch.');
+  if(current.status!=='inactive')throw new Error('Deactivate the unused account before deletion.');
+  if(account.exists())throw new Error('Reconciled accounts retain their identity and financial history; deactivate instead.');
+  if(current.supportsChildAccounts)throw new Error('Portfolios supporting child accounts must retain their parent identity.');
+  const now=new Date().toISOString();
+  tx.update(ref,{status:'deleted',deactivationReason:reason.trim(),updatedBy:actorId,updatedAt:now});
+ });
+}
