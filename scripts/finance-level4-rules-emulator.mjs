@@ -164,5 +164,64 @@ try{
  if(bankAfter.data().balanceUGX!==130||pettyAfter.data().balanceUGX!==70)
   throw new Error('Atomic portfolio transfer conservation failed.');
  await assertFails(setDoc(doc(finance,'banking_records',transferDebit),{...entry,amount:20,accountDeltaUGX:-20,type:'outgoing'}));
- console.log('Finance Level 4 custom portfolio role/isolation PASSED; built-in and bank registrations remain fail-closed');
+ // Lifecycle repair: unused removal keeps a terminal audit identity and cannot mint funds.
+ const unusedId='unused_lifecycle';
+ const unusedRef=ref(ceo,tenant,unusedId);
+ const close={status:'inactive',updatedBy:'ceo_a',updatedAt:'2026-11-05T09:00:00Z',
+  deactivatedBy:'ceo_a',deactivatedAt:'2026-11-05T09:00:00Z',deactivationReason:'Closed'};
+ const remove={removedBy:'ceo_a',removedAt:'2026-11-05T10:00:00Z',removalReason:'Unused duplicate',
+  updatedBy:'ceo_a',updatedAt:'2026-11-05T10:00:00Z'};
+ await checkedSucceeds(setDoc(unusedRef,row('ceo_a',unusedId)));
+ await assertFails(updateDoc(unusedRef,remove)); // Must deactivate first.
+ await assertFails(setDoc(ref(ceo,tenant,'removed_on_create'),{...row('ceo_a','removed_on_create'),...remove}));
+ await checkedSucceeds(updateDoc(unusedRef,close));
+ await assertFails(updateDoc(ref(finance,tenant,unusedId),{...remove,removedBy:'finance_a',updatedBy:'finance_a'}));
+ await assertFails(updateDoc(ref(otherDb,tenant,unusedId),{...remove,removedBy:'ceo_b',updatedBy:'ceo_b'}));
+ await checkedSucceeds(updateDoc(unusedRef,remove));
+ await assertFails(updateDoc(unusedRef,{status:'active',updatedBy:'ceo_a'}));
+ await assertFails(updateDoc(unusedRef,{removedAt:deleteField()}));
+ await assertFails(setDoc(unusedRef,row('ceo_a',unusedId)));
+ await assertFails(deleteDoc(unusedRef));
+ await assertFails(setDoc(doc(ceo,'finance_payment_accounts',tenant+'_'+unusedId),{
+  ...funding,accountId:unusedId,portfolioId:unusedId}));
+ const inactiveId='inactive_unfunded';
+ await checkedSucceeds(setDoc(ref(ceo,tenant,inactiveId),row('ceo_a',inactiveId)));
+ await checkedSucceeds(updateDoc(ref(ceo,tenant,inactiveId),close));
+ await assertFails(setDoc(doc(ceo,'finance_payment_accounts',tenant+'_'+inactiveId),{
+  ...funding,accountId:inactiveId,portfolioId:inactiveId}));
+ const parentId='unused_parent';
+ await checkedSucceeds(setDoc(ref(ceo,tenant,parentId),{...row('ceo_a',parentId),supportsChildAccounts:true}));
+ await checkedSucceeds(updateDoc(ref(ceo,tenant,parentId),close));
+ await assertFails(updateDoc(ref(ceo,tenant,parentId),remove));
+ // A real outgoing movement empties the used bank without deleting its history.
+ const emptyId='lifecycle_empty_bank';
+ const empty=writeBatch(finance);
+ empty.set(doc(finance,'banking_records',emptyId),{...entry,type:'outgoing',amount:130,
+  accountDeltaUGX:-130,reference_number:'CLOSE-TEST-001'});
+ empty.update(doc(finance,'finance_payment_accounts',ar.id),{balanceUGX:0,lastPostingId:emptyId,updatedAt:'2026-11-05'});
+ await checkedSucceeds(empty.commit());
+ await assertFails(updateDoc(ref(finance,tenant,id),{...close,updatedBy:'finance_a',deactivatedBy:'finance_a'}));
+ await assertFails(updateDoc(ref(otherDb,tenant,id),{...close,updatedBy:'ceo_b',deactivatedBy:'ceo_b'}));
+ await checkedSucceeds(updateDoc(ref(ceo,tenant,id),close));
+ await assertFails(updateDoc(ref(ceo,tenant,id),remove)); // Ever-reconciled is never unused.
+ const blockedId='inactive_bank_deposit';
+ const blocked=writeBatch(finance);
+ blocked.set(doc(finance,'banking_records',blockedId),{...entry,amount:10,accountDeltaUGX:10});
+ blocked.update(doc(finance,'finance_payment_accounts',ar.id),{balanceUGX:10,lastPostingId:blockedId,updatedAt:'2026-11-05'});
+ await assertFails(blocked.commit());
+ if((await getDoc(ar)).data().balanceUGX!==0||(await getDoc(doc(finance,'banking_records',blockedId))).exists())
+  throw Error('Inactive account posting must fail atomically.');
+ await checkedSucceeds(updateDoc(ref(ceo,tenant,id),{status:'active',updatedBy:'ceo_a',updatedAt:'2026-11-05T11:00:00Z',
+  deactivatedBy:deleteField(),deactivatedAt:deleteField(),deactivationReason:deleteField()}));
+ if(!(await getDoc(doc(finance,'banking_records',emptyId))).exists()||!(await getDoc(doc(finance,'banking_records',transferDebit))).exists())
+  throw Error('Lifecycle must retain original ledger history.');
+ // A same-batch deposit cannot bypass the zero balance closure gate.
+ const raced=writeBatch(ceo),racedId='close_and_deposit';
+ raced.update(ref(ceo,tenant,id),close);
+ raced.set(doc(ceo,'banking_records',racedId),{...entry,postedBy:'ceo_a',amount:10,accountDeltaUGX:10});
+ raced.update(ar,{balanceUGX:10,lastPostingId:racedId,updatedAt:'2026-11-05'});
+ await assertFails(raced.commit());
+ if((await getDoc(ref(ceo,tenant,id))).data().status!=='active'||(await getDoc(ar)).data().balanceUGX!==0)
+  throw Error('Racing close and posting changed state.');
+ console.log('Finance Level 4 lifecycle repair PASSED: zero-balance closure, reactivation, immutable histories, unused removal, inactive posting/funding rejection, tenant/RBAC and atomic closure race.');
 }finally{await env.cleanup();}

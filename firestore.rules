@@ -585,10 +585,17 @@ service cloud.firestore {
         && after.lastPostingId == id
         && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX;
     }
+    // Canonical built-ins and legacy Management accounts have no custom registry.
+    // getAfter prevents a posting from racing with lifecycle closure in the same batch.
+    function activePortfolioAccount(data) {
+      let path = /databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId);
+      return !exists(path) || (getAfter(path).data.status == 'active' && !('removedAt' in getAfter(path).data));
+    }
     function validManagementAccountUpdate(accountId, before, after) {
       let movementPath = managementMovementPath(before.kind, after.lastPostingId);
       let movement = getAfter(movementPath).data;
       return isTenantMember(before.tenantId)
+        && activePortfolioAccount(before)
         && ((movement.get('eodChannel', '') != '' && validBranchEodMovement(after.lastPostingId, movement)) || isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash()))
         // Every ledger create requires this paired update; authorize cash credits once here.
         && (movement.accountDeltaUGX <= 0 || before.accountId != 'management_petty_cash' || isFinance() || isHR())
@@ -632,7 +639,8 @@ service cloud.firestore {
         return isCEO() && data.portfolioId == data.accountId
           && data.kind in ['bank','petty_cash']
           && (data.accountId.matches('^system_(mtn_mobile_money|airtel_mobile_money|branch_cash_sales_[A-Za-z0-9_-]+|petty_cash_[A-Za-z0-9_-]+)$')
-            || exists(/databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId)));
+            || (exists(/databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId))
+              && activePortfolioAccount(data)));
       }
       allow get: if (canOperateBranchFinance() || canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
@@ -3248,15 +3256,30 @@ service cloud.firestore {
         && request.resource.data.status == 'active'
         && request.resource.data.currency == 'UGX'
         && request.resource.data.scope.kind == 'organisation'
+        && !('removedAt' in request.resource.data) && !('removedBy' in request.resource.data) && !('removalReason' in request.resource.data)
         && !('balanceUGX' in request.resource.data);
+      function fundingPath() {
+        return /databases/$(database)/documents/finance_payment_accounts/$(resource.data.tenantId + '_' + resource.data.id);
+      }
       allow update: if isCEO() && isTenantMember(resource.data.tenantId)
-        && resource.data.origin == 'custom'
-        && request.resource.data.status == (resource.data.status == 'active' ? 'inactive' : 'active')
-        && (request.resource.data.status == 'active' ||
-          !exists(/databases/$(database)/documents/finance_payment_accounts/$(resource.data.tenantId + '_' + resource.data.id)))
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status','updatedBy','updatedAt','deactivatedBy','deactivatedAt','deactivationReason'])
-        && request.resource.data.updatedBy == request.auth.uid;
+        && resource.data.origin == 'custom' && !('removedAt' in resource.data)
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt is string
+        && ((request.resource.data.status == (resource.data.status == 'active' ? 'inactive' : 'active')
+          && (request.resource.data.status == 'active' || !exists(fundingPath()) || getAfter(fundingPath()).data.balanceUGX == 0)
+          && (request.resource.data.status == 'active' ||
+            (request.resource.data.deactivatedBy == request.auth.uid
+              && request.resource.data.deactivatedAt is string
+              && request.resource.data.deactivationReason is string && request.resource.data.deactivationReason.size() > 0))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status','updatedBy','updatedAt','deactivatedBy','deactivatedAt','deactivationReason']))
+        || (resource.data.status == 'inactive' && resource.data.supportsChildAccounts == false
+          && !exists(fundingPath()) && !existsAfter(fundingPath())
+          && request.resource.data.removedBy == request.auth.uid
+          && request.resource.data.removedAt is string
+          && request.resource.data.removalReason is string && request.resource.data.removalReason.size() > 0
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'removedAt','removedBy','removalReason','updatedBy','updatedAt'])));
       allow delete: if false;
     }
 

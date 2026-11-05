@@ -23,11 +23,16 @@ const stubs={
  firebase:'export const db={},auth={},storage={};',
  tenant:'export const useTenant=()=>({tenant:{id:"test",name:"Fixture organisation"}});',
  service:`const data=${JSON.stringify(records)};export const firestoreService={getCollection:async name=>data[name]||[],subscribeToCollection:(name,_tenant,cb)=>{cb(data[name]||[]);return()=>{};}};`,
- registry:`export const listFinancialPortfolios=async()=>{if(window.__mode==='error')throw Error('Fixture registry error');return ${JSON.stringify(portfolios)};};export const registeredBankAccounts=items=>items.filter(p=>p.bankParentId==='system_bank');export const createCustomFinancialPortfolio=()=>{throw Error('Read-only fixture')};export const registerPortfolioBankIdentity=createCustomFinancialPortfolio,setRegisteredBankAccountActive=createCustomFinancialPortfolio,setCustomPortfolioActive=createCustomFinancialPortfolio;`,
+ registry:`export const listFinancialPortfolios=async()=>{if(window.__mode==='error')throw Error('Fixture registry error');return ${JSON.stringify(portfolios)};};export const registeredBankAccounts=items=>items.filter(p=>p.bankParentId==='system_bank');export const createCustomFinancialPortfolio=()=>{throw Error('Read-only fixture')};export const registerPortfolioBankIdentity=createCustomFinancialPortfolio;
+export async function setCustomPortfolioActive(p,active,actor,reason){if(!window.__mode?.startsWith('lifecycle'))throw Error('Read-only fixture');window.__lifecycleCalls=(window.__lifecycleCalls||0)+1;await new Promise(r=>setTimeout(r,100));if(window.__mode==='lifecycle-nonzero')throw Error('Resolve the non-zero account balance before deactivation.');window.__lifecyclePortfolio={...p,status:active?'active':'inactive'};}
+export const setRegisteredBankAccountActive=setCustomPortfolioActive;
+export async function removeUnusedPortfolio(){if(!window.__mode?.startsWith('lifecycle'))throw Error('Read-only fixture');window.__lifecycleCalls=(window.__lifecycleCalls||0)+1;await new Promise(r=>setTimeout(r,100));}`,
  ledger:`export const loadAuthoritativePortfolioLedger=async account=>({account,openingBalanceUGX:account.openingBalanceUGX,currentBalanceUGX:account.balanceUGX,reconciliationReference:'VERIFIED-OPENING',entries:account.accountId==='custom_fixture'?[]:[{id:account.id+'-in',tenantId:'test',accountId:account.accountId,occurredAt:'${day}T08:00:00Z',status:'posted',direction:'inflow',runningBalanceUGX:account.balanceUGX+1000,amountUGX:account.balanceUGX-account.openingBalanceUGX+1000,businessDate:'${day}',reference:'EOD-MASAKA',description:'EOD cash',branchId:'masaka',shiftId:'dayShift',eodReconciliationId:'eod~test~masaka~${day}~dayShift',actorId:'branch_operator'},{id:account.id+'-out',tenantId:'test',accountId:account.accountId,occurredAt:'${day}T09:00:00Z',status:'posted',direction:'outflow',runningBalanceUGX:account.balanceUGX,amountUGX:1000,businessDate:'${day}',reference:'OUTFLOW-MASAKA',description:'Verified movement',branchId:'masaka',actorId:'ceo'}]});`,
  sdk:`export * from ${JSON.stringify(require.resolve('firebase/firestore'))};const accounts=${JSON.stringify(accounts)};const records={...${JSON.stringify(records)},finance_payment_accounts:accounts};export const collection=(_db,path)=>({path});export const doc=(_db,path,id)=>({path,id});export const where=(...a)=>a;export const query=(ref,...filters)=>({...ref,filters});const snapshot=ref=>({docs:(records[ref.path]||[]).filter(r=>(ref.filters||[]).every(([key,op,value])=>op!=='=='||r[key]===value)).filter(r=>window.__mode!=='missing'||r.accountId!=='system_airtel_mobile_money').map(r=>({id:r.id,data:()=>r}))});export const getDocs=async ref=>snapshot(ref);export const onSnapshot=(ref,cb)=>{cb(snapshot(ref));return()=>{};};`
 };
-await build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';import {CashAndBanking} from './src/pages/finance/management/CashAndBanking';import Finance from './src/pages/Finance';createRoot(document.getElementById('root')).render(<main className="min-h-screen bg-zinc-50 p-3 sm:p-6">{location.search.includes("finance")?<Finance/>:<CashAndBanking/>}</main>);`,loader:'tsx',resolveDir:process.cwd()},bundle:true,format:'iife',outfile:path.join(output,'app.js'),plugins:[{name:'isolated-portfolio',setup(b){
+await build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';import {CashAndBanking} from './src/pages/finance/management/CashAndBanking';import Finance from './src/pages/Finance';import {TreasuryAccountControls} from './src/components/finance/TreasuryAccountControls';
+function Lifecycle(){const [p,setP]=React.useState({id:'fixture_unused',tenantId:'test',name:'Fixture fund',origin:'custom',supportsChildAccounts:false,status:window.__mode==='lifecycle-unused'?'inactive':'active'});const account=window.__mode==='lifecycle-unused'?undefined:{id:'test_fixture_unused',accountId:'fixture_unused',tenantId:'test',kind:'bank',initialized:true,balanceUGX:window.__mode==='lifecycle-nonzero'?100:0};return <TreasuryAccountControls portfolio={p} account={account} accounts={[]} actorId="ceo" onChanged={()=>{if(window.__lifecyclePortfolio)setP(window.__lifecyclePortfolio);}}/>;}
+createRoot(document.getElementById('root')).render(<main className="min-h-screen bg-zinc-50 p-3 sm:p-6">{window.__mode?.startsWith("lifecycle")?<Lifecycle/>:location.search.includes("finance")?<Finance/>:<CashAndBanking/>}</main>);`,loader:'tsx',resolveDir:process.cwd()},bundle:true,format:'iife',outfile:path.join(output,'app.js'),plugins:[{name:'isolated-portfolio',setup(b){
 for(const [filter,key] of [[/AuthContext$/,'auth'],[/TenantContext$/,'tenant'],[/services\/firestore$/,'service'],[/\/firebase$/,'firebase'],[/portfolioFirestore$/,'registry'],[/authoritativePortfolioLedger$/,'ledger'],[/^firebase\/firestore$/,'sdk']])b.onResolve({filter},()=>({path:key,namespace:'stub'}));
 b.onLoad({filter:/.*/,namespace:'stub'},args=>({contents:stubs[args.path],loader:'js',resolveDir:process.cwd()}));}}]});
 const css=(await readdir('dist/assets')).find(n=>n.endsWith('.css'));
@@ -112,6 +117,30 @@ try{browser=await chromium.launch({headless:true});
   else if(mode==='missing'){await page.getByText('Verified liquid cash (partial)',{exact:true}).waitFor();const card=page.getByRole('button',{name:/^Airtel Money/});await card.getByText('Reconciliation required',{exact:true}).waitFor();await card.click();await page.getByRole('heading',{name:'Account controls'}).waitFor();await page.getByLabel('Verified opening balance (UGX)').waitFor();}
   else {assert.equal(await page.getByRole('button',{name:'Add custom portfolio'}).count(),0);await open(page,'Bank');assert.equal(await page.getByText('Register bank account',{exact:true}).count(),0);await page.getByRole('button',{name:/^Equity Bank/}).click();assert.equal(await page.getByRole('heading',{name:'Account controls'}).count(),0);}
   await fit(page,390);await page.close();console.log(`Treasury ${mode} state passed`);
+ }
+ for(const width of [360,1440])for(const mode of ['lifecycle-used','lifecycle-unused','lifecycle-nonzero']){
+  const page=await browser.newPage({viewport:{width,height:960}});page.on('pageerror',e=>errors.push(e.message));
+  await page.addInitScript(mode=>window.__mode=mode,mode);await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  if(mode==='lifecycle-unused'){
+   await page.getByLabel('Deletion reason').fill('Unused duplicate');
+   await page.getByRole('button',{name:'Delete unused account',exact:true}).dblclick();
+   await page.getByRole('status').filter({hasText:'Unused account deleted.'}).waitFor();
+   assert.equal(await page.getByRole('button',{name:'Reactivate account'}).count(),0);
+  }else{
+   assert.equal(await page.getByRole('button',{name:'Delete unused account'}).count(),0);
+   await page.getByLabel('Deactivation reason').fill('Balance resolved');
+   await page.getByRole('button',{name:'Deactivate account',exact:true}).dblclick();
+   if(mode==='lifecycle-nonzero')await page.getByRole('status').filter({hasText:'Resolve the non-zero account balance'}).waitFor();
+   else{
+    await page.getByRole('button',{name:'Reactivate account',exact:true}).waitFor();
+    assert.equal(await page.getByRole('button',{name:'Delete unused account'}).count(),0);
+    assert.equal(await page.evaluate(()=>window.__lifecycleCalls),1);
+    await page.getByRole('button',{name:'Reactivate account',exact:true}).click();
+    await page.getByRole('button',{name:'Deactivate account',exact:true}).waitFor();
+   }
+  }
+  assert.equal(await page.evaluate(()=>window.__lifecycleCalls),mode==='lifecycle-used'?2:1);
+  await fit(page,width);await page.screenshot({path:path.join(output,`${mode}-${width}.png`),fullPage:true});await page.close();
  }
  assert.deepEqual(errors,[]);console.log(`Portfolio screenshots: ${output}`);
 }catch(error){if(browser)for(const context of browser.contexts())for(const [index,page] of context.pages().entries()){await page.screenshot({path:path.join(output,`failure-${index}.png`),fullPage:true}).catch(()=>{});}throw error;}finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}

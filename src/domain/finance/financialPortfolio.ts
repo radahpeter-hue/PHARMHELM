@@ -39,6 +39,9 @@ export interface FinancialPortfolio {
   deactivatedBy?: string;
   deactivatedAt?: string;
   deactivationReason?: string;
+  removedAt?:string;
+  removedBy?:string;
+  removalReason?:string;
   bankInstitution?:string;
   bankAccountReference?:string;
   bankParentId?:string;
@@ -46,7 +49,7 @@ export interface FinancialPortfolio {
 
 export type NewFinancialPortfolio = Omit<
   FinancialPortfolio,
-  'status' | 'updatedBy' | 'updatedAt' | 'deactivatedBy' | 'deactivatedAt' | 'deactivationReason'
+  'status' | 'updatedBy' | 'updatedAt' | 'deactivatedBy' | 'deactivatedAt' | 'deactivationReason' | 'removedAt' | 'removedBy' | 'removalReason'
 >;
 
 const identifier = /^[A-Za-z0-9_-]{1,150}$/;
@@ -94,6 +97,12 @@ export function validateFinancialPortfolio(portfolio: FinancialPortfolio): Finan
       throw new Error('Inactive portfolio requires deactivation attribution.');
   } else if (portfolio.deactivatedBy || portfolio.deactivatedAt || portfolio.deactivationReason) {
     throw new Error('Active portfolio cannot retain deactivation metadata.');
+  }
+  if (portfolio.removedAt !== undefined || portfolio.removedBy !== undefined || portfolio.removalReason !== undefined) {
+    if (portfolio.origin !== 'custom' || portfolio.status !== 'inactive' ||
+        !isIdentifier(portfolio.removedBy) || !portfolio.removedAt || !validIsoDate(portfolio.removedAt) ||
+        typeof portfolio.removalReason !== 'string' || !portfolio.removalReason.trim())
+      throw new Error('Invalid deleted portfolio audit metadata.');
   }
   return portfolio;
 }
