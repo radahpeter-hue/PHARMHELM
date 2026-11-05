@@ -16,7 +16,7 @@ export type FinancialPortfolioClassification = typeof FINANCIAL_PORTFOLIO_CLASSI
 export type FinancialPortfolioScope =
   | { kind: 'organisation'; branchId?: never }
   | { kind: 'branch'; branchId: string };
-export type FinancialPortfolioStatus = 'active' | 'inactive';
+export type FinancialPortfolioStatus = 'active' | 'inactive' | 'deleted';
 export type FinancialPortfolioOrigin = 'system' | 'custom';
 
 export interface FinancialPortfolio {
@@ -39,8 +39,6 @@ export interface FinancialPortfolio {
   deactivatedBy?: string;
   deactivatedAt?: string;
   deactivationReason?: string;
-  removed?:true;
-  removalReason?:string;
   bankInstitution?:string;
   bankAccountReference?:string;
   bankParentId?:string;
@@ -48,7 +46,7 @@ export interface FinancialPortfolio {
 
 export type NewFinancialPortfolio = Omit<
   FinancialPortfolio,
-  'status' | 'updatedBy' | 'updatedAt' | 'deactivatedBy' | 'deactivatedAt' | 'deactivationReason' | 'removed' | 'removalReason'
+  'status' | 'updatedBy' | 'updatedAt' | 'deactivatedBy' | 'deactivatedAt' | 'deactivationReason'
 >;
 
 const identifier = /^[A-Za-z0-9_-]{1,150}$/;
@@ -79,7 +77,7 @@ export function validateFinancialPortfolio(portfolio: FinancialPortfolio): Finan
       throw new Error('Invalid individual bank account portfolio.');
   }
   if (!['system', 'custom'].includes(portfolio.origin)) throw new Error('Invalid portfolio origin.');
-  if (!['active', 'inactive'].includes(portfolio.status)) throw new Error('Invalid portfolio status.');
+  if (!['active', 'inactive', 'deleted'].includes(portfolio.status)) throw new Error('Invalid portfolio status.');
   if (portfolio.scope?.kind === 'branch') {
     if (!isIdentifier(portfolio.scope.branchId)) throw new Error('Branch portfolio requires a valid branch ID.');
   } else if (portfolio.scope?.kind === 'organisation') {
@@ -90,18 +88,15 @@ export function validateFinancialPortfolio(portfolio: FinancialPortfolio): Finan
   }
   if (!validIsoDate(portfolio.createdAt) || !validIsoDate(portfolio.updatedAt))
     throw new Error('Invalid portfolio timestamps.');
-  if (portfolio.status === 'inactive') {
+  if (portfolio.status === 'inactive' || portfolio.status === 'deleted') {
     if (!portfolio.deactivatedBy || !isIdentifier(portfolio.deactivatedBy) ||
         !portfolio.deactivatedAt || !validIsoDate(portfolio.deactivatedAt))
       throw new Error('Inactive portfolio requires deactivation attribution.');
   } else if (portfolio.deactivatedBy || portfolio.deactivatedAt || portfolio.deactivationReason) {
     throw new Error('Active portfolio cannot retain deactivation metadata.');
   }
-  if (portfolio.removed !== undefined || portfolio.removalReason !== undefined) {
-    if (portfolio.origin !== 'custom' || portfolio.status !== 'inactive' || portfolio.removed !== true ||
-        typeof portfolio.removalReason !== 'string' || !portfolio.removalReason.trim())
-      throw new Error('Invalid deleted portfolio audit metadata.');
-  }
+  if (portfolio.status === 'deleted' && (portfolio.origin !== 'custom' || !portfolio.deactivationReason?.trim()))
+    throw new Error('Invalid deleted portfolio audit metadata.');
   return portfolio;
 }
 

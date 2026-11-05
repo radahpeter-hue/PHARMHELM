@@ -3264,7 +3264,7 @@ service cloud.firestore {
         && data.status == 'active'
         && data.currency == 'UGX'
         && data.scope.kind == 'organisation'
-        && !data.keys().hasAny(['removed','removalReason','balanceUGX']);
+        && !('balanceUGX' in data);
       }
       function validLifecycleUpdate() {
         let actor = request.auth.uid;
@@ -3274,19 +3274,17 @@ service cloud.firestore {
         let changed = after.diff(before).affectedKeys();
         let funding = /databases/$(database)/documents/finance_payment_accounts/$(before.tenantId + '_' + before.id);
         return isTenantMember(before.tenantId)
-          && before.origin == 'custom' && !('removed' in before)
+          && before.origin == 'custom' && before.status in ['active','inactive']
           && after.updatedBy == actor && after.updatedAt is string
+          && (status == 'active' || (after.deactivationReason is string && after.deactivationReason.size() > 0))
           && ((status == (before.status == 'active' ? 'inactive' : 'active')
             && (status == 'active' || !exists(funding) || getAfter(funding).data.balanceUGX == 0)
             && (status == 'active' ||
-              (after.deactivatedBy == actor && after.deactivatedAt is string
-                && after.deactivationReason is string && after.deactivationReason.size() > 0))
+              (after.deactivatedBy == actor && after.deactivatedAt is string))
             && changed.hasOnly(['status','updatedBy','updatedAt','deactivatedBy','deactivatedAt','deactivationReason']))
-          || (before.status == 'inactive' && before.supportsChildAccounts == false
+          || (before.status == 'inactive' && status == 'deleted' && before.supportsChildAccounts == false
             && !exists(funding) && !existsAfter(funding)
-            && after.removed == true
-            && after.removalReason is string && after.removalReason.size() > 0
-            && changed.hasOnly(['removed','removalReason','updatedBy','updatedAt'])));
+            && changed.hasOnly(['status','deactivationReason','updatedBy','updatedAt'])));
       }
       allow create, update: if isCEO()
         && (request.method == 'create' ? validPortfolioRegistration(request.resource.data) : validLifecycleUpdate());
