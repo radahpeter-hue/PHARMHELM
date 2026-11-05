@@ -636,20 +636,22 @@ service cloud.firestore {
     }
     match /finance_payment_accounts/{accountId} {
       function eligiblePortfolioAccount(data) {
-        let path = /databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId);
-        return isCEO() && data.portfolioId == data.accountId
+        let identity = data.accountId;
+        let path = /databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + identity);
+        return isCEO() && data.portfolioId == identity
           && data.kind in ['bank','petty_cash']
-          && (data.accountId.matches('^system_(mtn_mobile_money|airtel_mobile_money|branch_cash_sales_[A-Za-z0-9_-]+|petty_cash_[A-Za-z0-9_-]+)$')
+          && (identity.matches('^system_(mtn_mobile_money|airtel_mobile_money|branch_cash_sales_[A-Za-z0-9_-]+|petty_cash_[A-Za-z0-9_-]+)$')
             || (exists(path) && getAfter(path).data.status == 'active'));
       }
       allow get: if (canOperateBranchFinance() || canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
       function validAccountRegistration(data) {
+        let identity = data.accountId;
         return isTenantMember(data.tenantId)
         && get(/databases/$(database)/documents/system_settings/$(data.tenantId)).data.managementCashAccountControlV1
-        && accountId == data.tenantId + '_' + data.accountId
-        && (((isFinance() && data.accountId in ['management_petty_cash','management_bank'])
-          && data.kind == (data.accountId == 'management_bank' ? 'bank' : 'petty_cash'))
+        && accountId == data.tenantId + '_' + identity
+        && (((isFinance() && identity in ['management_petty_cash','management_bank'])
+          && data.kind == (identity == 'management_bank' ? 'bank' : 'petty_cash'))
           || eligiblePortfolioAccount(data))
         && data.currency == 'UGX' && data.controlVersion == 1
         && data.initialized && data.lastPostingId == null
@@ -3248,8 +3250,11 @@ service cloud.firestore {
     }
 
     match /finance_portfolios_v1/{portfolioId} {
-      allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId)
-        && (resource.data.scope.kind == 'organisation' || isAssignedToBranch(resource.data.scope.branchId));
+      function canReadPortfolio(data) {
+        return canViewFinance() && isTenantMember(data.tenantId)
+          && (data.scope.kind == 'organisation' || isAssignedToBranch(data.scope.branchId));
+      }
+      allow get, list: if canReadPortfolio(resource.data);
       function validPortfolioRegistration(data) {
         return isTenantMember(data.tenantId)
         && isCEO()
@@ -3260,27 +3265,28 @@ service cloud.firestore {
         && data.status == 'active'
         && data.currency == 'UGX'
         && data.scope.kind == 'organisation'
-        && !data.keys().hasAny(['removedAt','removedBy','removalReason'])
-        && !('balanceUGX' in data);
+        && !data.keys().hasAny(['removedAt','removedBy','removalReason','balanceUGX']);
       }
       allow create: if validPortfolioRegistration(request.resource.data);
       function validLifecycleUpdate() {
+        let actor = request.auth.uid;
         let before = resource.data;
         let after = request.resource.data;
+        let status = after.status;
         let changed = after.diff(before).affectedKeys();
         let funding = /databases/$(database)/documents/finance_payment_accounts/$(before.tenantId + '_' + before.id);
         return isCEO() && isTenantMember(before.tenantId)
           && before.origin == 'custom' && !('removedAt' in before)
-          && after.updatedBy == request.auth.uid && after.updatedAt is string
-          && ((after.status == (before.status == 'active' ? 'inactive' : 'active')
-            && (after.status == 'active' || !exists(funding) || getAfter(funding).data.balanceUGX == 0)
-            && (after.status == 'active' ||
-              (after.deactivatedBy == request.auth.uid && after.deactivatedAt is string
+          && after.updatedBy == actor && after.updatedAt is string
+          && ((status == (before.status == 'active' ? 'inactive' : 'active')
+            && (status == 'active' || !exists(funding) || getAfter(funding).data.balanceUGX == 0)
+            && (status == 'active' ||
+              (after.deactivatedBy == actor && after.deactivatedAt is string
                 && after.deactivationReason is string && after.deactivationReason.size() > 0))
             && changed.hasOnly(['status','updatedBy','updatedAt','deactivatedBy','deactivatedAt','deactivationReason']))
           || (before.status == 'inactive' && before.supportsChildAccounts == false
             && !exists(funding) && !existsAfter(funding)
-            && after.removedBy == request.auth.uid && after.removedAt is string
+            && after.removedBy == actor && after.removedAt is string
             && after.removalReason is string && after.removalReason.size() > 0
             && changed.hasOnly(['removedAt','removedBy','removalReason','updatedBy','updatedAt'])));
       }
