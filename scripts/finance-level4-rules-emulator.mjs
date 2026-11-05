@@ -204,6 +204,9 @@ try{
  await assertFails(updateDoc(ref(otherDb,tenant,id),{...close,updatedBy:'ceo_b',deactivatedBy:'ceo_b'}));
  await checkedSucceeds(updateDoc(ref(ceo,tenant,id),close));
  await assertFails(updateDoc(ref(ceo,tenant,id),remove)); // Ever-reconciled is never unused.
+ await assertFails(deleteDoc(ar));
+ const eraseHistory=writeBatch(ceo);eraseHistory.delete(ar);eraseHistory.update(ref(ceo,tenant,id),remove);
+ await assertFails(eraseHistory.commit());
  const blockedId='inactive_bank_deposit';
  const blocked=writeBatch(finance);
  blocked.set(doc(finance,'banking_records',blockedId),{...entry,amount:10,accountDeltaUGX:10});
