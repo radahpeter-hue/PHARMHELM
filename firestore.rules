@@ -3257,7 +3257,6 @@ service cloud.firestore {
       allow get, list: if canReadPortfolio(resource.data);
       function validPortfolioRegistration(data) {
         return isTenantMember(data.tenantId)
-        && isCEO()
         && portfolioId == data.tenantId + '__' + data.id
         && data.createdBy == request.auth.uid
         && data.updatedBy == request.auth.uid
@@ -3267,7 +3266,6 @@ service cloud.firestore {
         && data.scope.kind == 'organisation'
         && !data.keys().hasAny(['removedAt','removedBy','removalReason','balanceUGX']);
       }
-      allow create: if validPortfolioRegistration(request.resource.data);
       function validLifecycleUpdate() {
         let actor = request.auth.uid;
         let before = resource.data;
@@ -3275,7 +3273,7 @@ service cloud.firestore {
         let status = after.status;
         let changed = after.diff(before).affectedKeys();
         let funding = /databases/$(database)/documents/finance_payment_accounts/$(before.tenantId + '_' + before.id);
-        return isCEO() && isTenantMember(before.tenantId)
+        return isTenantMember(before.tenantId)
           && before.origin == 'custom' && !('removedAt' in before)
           && after.updatedBy == actor && after.updatedAt is string
           && ((status == (before.status == 'active' ? 'inactive' : 'active')
@@ -3290,7 +3288,8 @@ service cloud.firestore {
             && after.removalReason is string && after.removalReason.size() > 0
             && changed.hasOnly(['removedAt','removedBy','removalReason','updatedBy','updatedAt'])));
       }
-      allow update: if validLifecycleUpdate();
+      allow create, update: if isCEO()
+        && (request.method == 'create' ? validPortfolioRegistration(request.resource.data) : validLifecycleUpdate());
       allow delete: if false;
     }
 
