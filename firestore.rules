@@ -589,7 +589,7 @@ service cloud.firestore {
     // getAfter prevents a posting from racing with lifecycle closure in the same batch.
     function activePortfolioAccount(data) {
       let path = /databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId);
-      return !exists(path) || (getAfter(path).data.status == 'active' && !('removedAt' in getAfter(path).data));
+      return !exists(path) || getAfter(path).data.status == 'active';
     }
     function validManagementAccountUpdate(accountId, before, after) {
       let movementPath = managementMovementPath(before.kind, after.lastPostingId);
@@ -3256,30 +3256,29 @@ service cloud.firestore {
         && request.resource.data.status == 'active'
         && request.resource.data.currency == 'UGX'
         && request.resource.data.scope.kind == 'organisation'
-        && !('removedAt' in request.resource.data) && !('removedBy' in request.resource.data) && !('removalReason' in request.resource.data)
+        && !request.resource.data.keys().hasAny(['removedAt','removedBy','removalReason'])
         && !('balanceUGX' in request.resource.data);
-      function fundingPath() {
-        return /databases/$(database)/documents/finance_payment_accounts/$(resource.data.tenantId + '_' + resource.data.id);
+      function validLifecycleUpdate() {
+        let before = resource.data;
+        let after = request.resource.data;
+        let changed = after.diff(before).affectedKeys();
+        let funding = /databases/$(database)/documents/finance_payment_accounts/$(before.tenantId + '_' + before.id);
+        return isCEO() && isTenantMember(before.tenantId)
+          && before.origin == 'custom' && !('removedAt' in before)
+          && after.updatedBy == request.auth.uid && after.updatedAt is string
+          && ((after.status == (before.status == 'active' ? 'inactive' : 'active')
+            && (after.status == 'active' || !exists(funding) || getAfter(funding).data.balanceUGX == 0)
+            && (after.status == 'active' ||
+              (after.deactivatedBy == request.auth.uid && after.deactivatedAt is string
+                && after.deactivationReason is string && after.deactivationReason.size() > 0))
+            && changed.hasOnly(['status','updatedBy','updatedAt','deactivatedBy','deactivatedAt','deactivationReason']))
+          || (before.status == 'inactive' && before.supportsChildAccounts == false
+            && !exists(funding) && !existsAfter(funding)
+            && after.removedBy == request.auth.uid && after.removedAt is string
+            && after.removalReason is string && after.removalReason.size() > 0
+            && changed.hasOnly(['removedAt','removedBy','removalReason','updatedBy','updatedAt'])));
       }
-      allow update: if isCEO() && isTenantMember(resource.data.tenantId)
-        && resource.data.origin == 'custom' && !('removedAt' in resource.data)
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt is string
-        && ((request.resource.data.status == (resource.data.status == 'active' ? 'inactive' : 'active')
-          && (request.resource.data.status == 'active' || !exists(fundingPath()) || getAfter(fundingPath()).data.balanceUGX == 0)
-          && (request.resource.data.status == 'active' ||
-            (request.resource.data.deactivatedBy == request.auth.uid
-              && request.resource.data.deactivatedAt is string
-              && request.resource.data.deactivationReason is string && request.resource.data.deactivationReason.size() > 0))
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'status','updatedBy','updatedAt','deactivatedBy','deactivatedAt','deactivationReason']))
-        || (resource.data.status == 'inactive' && resource.data.supportsChildAccounts == false
-          && !exists(fundingPath()) && !existsAfter(fundingPath())
-          && request.resource.data.removedBy == request.auth.uid
-          && request.resource.data.removedAt is string
-          && request.resource.data.removalReason is string && request.resource.data.removalReason.size() > 0
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'removedAt','removedBy','removalReason','updatedBy','updatedAt'])));
+      allow update: if validLifecycleUpdate();
       allow delete: if false;
     }
 
