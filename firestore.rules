@@ -636,27 +636,30 @@ service cloud.firestore {
     }
     match /finance_payment_accounts/{accountId} {
       function eligiblePortfolioAccount(data) {
+        let path = /databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId);
         return isCEO() && data.portfolioId == data.accountId
           && data.kind in ['bank','petty_cash']
           && (data.accountId.matches('^system_(mtn_mobile_money|airtel_mobile_money|branch_cash_sales_[A-Za-z0-9_-]+|petty_cash_[A-Za-z0-9_-]+)$')
-            || (exists(/databases/$(database)/documents/finance_portfolios_v1/$(data.tenantId + '__' + data.accountId))
-              && activePortfolioAccount(data)));
+            || (exists(path) && getAfter(path).data.status == 'active'));
       }
       allow get: if (canOperateBranchFinance() || canViewFinance() || canPostManagementCash()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
-      allow create: if isTenantMember(request.resource.data.tenantId)
-        && get(/databases/$(database)/documents/system_settings/$(request.resource.data.tenantId)).data.managementCashAccountControlV1
-        && accountId == request.resource.data.tenantId + '_' + request.resource.data.accountId
-        && (((isFinance() && request.resource.data.accountId in ['management_petty_cash','management_bank'])
-          && request.resource.data.kind == (request.resource.data.accountId == 'management_bank' ? 'bank' : 'petty_cash'))
-          || eligiblePortfolioAccount(request.resource.data))
-        && request.resource.data.currency == 'UGX' && request.resource.data.controlVersion == 1
-        && request.resource.data.initialized && request.resource.data.lastPostingId == null
-        && request.resource.data.balanceUGX is int && request.resource.data.balanceUGX >= 0 && request.resource.data.balanceUGX <= 9007199254740991
-        && request.resource.data.balanceUGX == request.resource.data.openingBalanceUGX
-        && request.resource.data.registeredBy == request.auth.uid
-        && request.resource.data.name is string
-        && request.resource.data.reconciliationReference is string && request.resource.data.reconciliationReference.size() >= 5;
+      function validAccountRegistration(data) {
+        return isTenantMember(data.tenantId)
+        && get(/databases/$(database)/documents/system_settings/$(data.tenantId)).data.managementCashAccountControlV1
+        && accountId == data.tenantId + '_' + data.accountId
+        && (((isFinance() && data.accountId in ['management_petty_cash','management_bank'])
+          && data.kind == (data.accountId == 'management_bank' ? 'bank' : 'petty_cash'))
+          || eligiblePortfolioAccount(data))
+        && data.currency == 'UGX' && data.controlVersion == 1
+        && data.initialized && data.lastPostingId == null
+        && data.balanceUGX is int && data.balanceUGX >= 0 && data.balanceUGX <= 9007199254740991
+        && data.balanceUGX == data.openingBalanceUGX
+        && data.registeredBy == request.auth.uid
+        && data.name is string
+        && data.reconciliationReference is string && data.reconciliationReference.size() >= 5;
+      }
+      allow create: if validAccountRegistration(request.resource.data);
       allow update: if validManagementAccountUpdate(accountId, resource.data, request.resource.data);
       allow delete: if false;
     }
@@ -3247,17 +3250,20 @@ service cloud.firestore {
     match /finance_portfolios_v1/{portfolioId} {
       allow get, list: if canViewFinance() && isTenantMember(resource.data.tenantId)
         && (resource.data.scope.kind == 'organisation' || isAssignedToBranch(resource.data.scope.branchId));
-      allow create: if isTenantMember(request.resource.data.tenantId)
+      function validPortfolioRegistration(data) {
+        return isTenantMember(data.tenantId)
         && isCEO()
-        && portfolioId == request.resource.data.tenantId + '__' + request.resource.data.id
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.origin == 'custom'
-        && request.resource.data.status == 'active'
-        && request.resource.data.currency == 'UGX'
-        && request.resource.data.scope.kind == 'organisation'
-        && !request.resource.data.keys().hasAny(['removedAt','removedBy','removalReason'])
-        && !('balanceUGX' in request.resource.data);
+        && portfolioId == data.tenantId + '__' + data.id
+        && data.createdBy == request.auth.uid
+        && data.updatedBy == request.auth.uid
+        && data.origin == 'custom'
+        && data.status == 'active'
+        && data.currency == 'UGX'
+        && data.scope.kind == 'organisation'
+        && !data.keys().hasAny(['removedAt','removedBy','removalReason'])
+        && !('balanceUGX' in data);
+      }
+      allow create: if validPortfolioRegistration(request.resource.data);
       function validLifecycleUpdate() {
         let before = resource.data;
         let after = request.resource.data;
