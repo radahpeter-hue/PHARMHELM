@@ -18,3 +18,21 @@ Ledger result: deterministic references only, no entries created.
 Security result: pure contract rejects tenant mismatch and incomplete identity. Persisted authorization remains a required next checkpoint.
 Regression: none observed.
 Accepted: YES (contract checkpoint only).
+
+## 060A: Bank-to-Bank principal posting
+
+Files: `portfolioTransferService.ts`, `portfolio-transfer-emulator.mjs`, `firestore.rules`, Finance validation workflow.
+
+A new transfer record, source debit, destination credit and both authoritative balance updates commit in one Firestore transaction. Fresh linked movements are required by Rules; a record alone, either leg alone, missing/inactive/foreign accounts and a forged transfer tag cannot post. Transfer records and movements cannot be edited or deleted. A denied concurrent rewrite is resolved only by reading and matching the already committed winner. A changed amount or endpoint with the same reference is a conflict, never a duplicate posting.
+
+Source and destination are active, reconciled, individual UGX Bank accounts under the Bank Portfolio. No generic consolidated Bank destination. Existing Finance initiation roles remain authoritative; IT-only and view-only users cannot transfer. No global permission-map changes or relaxed existing financial authorization.
+
+Balance proof: Equity 10,000,000 / Stanbic 5,000,000 -> transfer 2,000,000 -> Equity 8,000,000 / Stanbic 7,000,000. Aggregate 15,000,000 unchanged. Repeat reference changes neither balance. Concurrent same-reference submissions create one transfer; competing different-reference spending cannot overdraw. Successful test sequence reconciles opening plus all six immutable movements to final 2,000,000 / 13,000,000 balances and three transfer records.
+
+Charges are deliberately blocked at this principal checkpoint; Change 069 onward must add their separate movements only after the first route clears the Rules gate. No Level 5 UI is exposed yet and later routes are not implemented.
+
+Targeted authenticated emulator: bank posting, sequential replay, concurrent sessions, conflicting intent, competing spending, insufficient/invalid amount, same account, generic Bank rejection, inactive source/destination, unsupported FX, IT/view-only/wrong-tenant denial, partial posting failure, orphan/forged movements, immutable history, and full balance reconciliation.
+
+A permission-denied/error-limit message on the losing concurrent write was isolated with emulator Rules coverage. The initial posting was valid. Verified winner read-back fixes that retry without weakening permissions. Unnecessary role/ordering experiments were discarded; existing account authorization and generic fallback conditions are unchanged.
+
+Accepted: PENDING hosted compilation and regression CI. Do not advance to other routes while this gate is unresolved.
