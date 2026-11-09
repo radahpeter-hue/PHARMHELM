@@ -16,7 +16,7 @@ import {projectPortfolioBalances} from '../../domain/finance/portfolioWideView';
 import {DEFAULT_TREASURY_PORTFOLIOS,treasuryPositions,verifiedLiquidPosition} from '../../domain/finance/treasuryOverview';
 import {TreasuryLedger} from './TreasuryLedger';
 import {TreasuryAccountControls,treasuryButton,treasuryField} from './TreasuryAccountControls';
-import {TreasuryTransferAction,TreasuryTransferHistory} from './TreasuryTransfers';
+import {TreasuryTransferAction} from './TreasuryTransfers';
 import {TreasuryWelfareRecords} from './TreasuryWelfareRecords';
 
 import {TreasuryKpi, treasuryDateTime, treasuryGrid} from './TreasuryPresentation';
@@ -118,7 +118,7 @@ function TreasuryWorkspace(){
     {workspace&&!accountId&&hasPermission('finance','operate')&&<div key={workspace}><TreasuryTransferAction
      tenantId={tenantId} actorId={profile!.uid} allowedBranches={canRegister?null:[...(profile!.assigned_branches||[]),profile!.branch_id||'',profile!.default_branch_id||'']}
      accounts={treasury.accounts} portfolios={items} sourceAccountIds={workspaceAccounts.map(a=>a.accountId)}
-     sourcePortfolioName={current?.name||customPortfolio?.name||heading} bank={bankRoot} onChanged={changed}/></div>}
+     sourcePortfolioName={current?.name||customPortfolio?.name||heading} bank={bankRoot} loading={loading} unavailable={!!error} supportsTransfers={!['credit','welfare'].includes(workspace)&&customPortfolio?.allowsTransfersOut!==false} onChanged={changed}/></div>}
     <button onClick={changed} aria-label="Refresh treasury" className="flex min-h-11 items-center gap-2 rounded-xl border border-emerald-700 bg-white px-3 text-sm font-semibold text-emerald-800"><RefreshCw size={15}/>Refresh</button>
    </div>
   </header>
@@ -130,7 +130,6 @@ function TreasuryWorkspace(){
     <TreasuryKpi title="Pending Reconciliation" value={loading?'Loading…':error?'Unavailable':String(pending)} icon={AlertCircle} tone="red" note="Default portfolios requiring action"/>
     <TreasuryKpi title="Today’s Movements" value={ledgerPending&&!error?'Loading…':movementVerified&&Number.isSafeInteger(movementTotal)?money(movementTotal):'Unavailable'} icon={ArrowLeftRight} tone="blue" note="Gross inflows and outflows, including transfers"/>
    </div>
-   {!error&&<TreasuryTransferHistory tenantId={tenantId} accounts={treasury.accounts} portfolios={items} revision={refresh}/>}
    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-lg font-semibold">Financial Portfolios (7)</h3>{canRegister&&<button onClick={()=>setCreateOpen(v=>!v)} className="flex min-h-11 items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 text-sm font-medium"><Plus size={16}/>{createOpen?'Close registration':'Add custom portfolio'}</button>}</div>
    <div className={treasuryGrid+' auto-rows-fr'} aria-label="Default financial portfolios">
     {positions.map(p=>{
