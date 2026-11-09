@@ -32,6 +32,11 @@ export function mapAuthoritativeMovement(id:string,raw:Record<string,unknown>,ac
  const delta=raw.accountDeltaUGX;
  if(typeof delta!=='number'||!Number.isSafeInteger(delta)||delta===0||Math.abs(delta)!==raw.amount)
   throw new Error('Unverified authoritative account movement.');
+ const movementClass=raw.movementClass;
+ const legacyTransfer=raw.source==='Management portfolio transfer'||raw.source==='Portfolio transfer debit'
+  ||raw.source==='Portfolio transfer credit'||raw.source==='Management bank transfer';
+ const transferClass=movementClass==='transfer_in'||movementClass==='transfer_out'||movementClass==='transfer_charge'
+  ?movementClass:legacyTransfer?delta>0?'transfer_in':'transfer_out':undefined;
  const businessDate=isoDate(raw.date||raw.createdAt);
  const stamp=raw.createdAt;
  const occurredAt=stamp&&typeof stamp==='object'&&'toDate' in stamp&&typeof stamp.toDate==='function'
@@ -41,7 +46,8 @@ export function mapAuthoritativeMovement(id:string,raw:Record<string,unknown>,ac
   description:String(raw.source||raw.type||'Posted management transaction'),
   source:managementLedgerCollection(account),direction:delta>0?'inflow':'outflow',
   amountUGX:Math.abs(delta),actorId:String(raw.postedBy||''),status:'posted',
-  ...(typeof raw.branchId==='string'&&raw.branchId?{branchId:raw.branchId}:{}),
+  ...(transferClass?{transferClass}:{}),
+  ...(typeof raw.branchId==='string'&&raw.branchId?{branchId:raw.branchId}:account.scope?.kind==='branch'?{branchId:account.scope.branchId}:{}),
   ...(typeof raw.eodReconciliationId==='string'&&raw.eodReconciliationId?{eodReconciliationId:raw.eodReconciliationId,shiftId:raw.eodReconciliationId.split('~')[4]}:{}),
   ...(typeof raw.eodChannel==='string'&&raw.eodChannel?{eodChannel:raw.eodChannel}:{})};
 }

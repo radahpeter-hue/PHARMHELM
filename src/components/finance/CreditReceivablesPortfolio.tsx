@@ -1,3 +1,4 @@
+import {TreasuryLedgerExports} from './TreasuryLedgerExports';
 import {CreditCard, List, ArrowDownLeft} from 'lucide-react';
 import {TreasuryKpi, treasuryGrid} from './TreasuryPresentation';
 import {isActiveSale} from '../../utils/activeSales';
@@ -37,7 +38,7 @@ export function useCreditReceivablesPortfolio(refreshKey=0){
  },[state,tenantId,evidence]);
 }
 export function CreditReceivablesLedger({data,branches}:{data:ReturnType<typeof projectCreditReceivables>;branches:Array<{id:string;name:string}>}){
- const [branch,setBranch]=useState('all'),[client,setClient]=useState(''),[from,setFrom]=useState(''),[to,setTo]=useState('');
+ const [branch,setBranch]=useState('all'),[client,setClient]=useState(''),[from,setFrom]=useState(''),[to,setTo]=useState(''),[movement,setMovement]=useState('all');
  const scope=data.rows.filter(r=>(branch==='all'||r.branchId===branch)&&(!client||(r.client+' '+r.reference).toLowerCase().includes(client.toLowerCase())));
  const inDates=(date:string)=>(!from||date>=from)&&(!to||(!!date&&date<=to));
  const rows=scope.filter(r=>inDates(r.businessDate));
@@ -46,6 +47,13 @@ export function CreditReceivablesLedger({data,branches}:{data:ReturnType<typeof 
  const repaid=payments.reduce((sum,p)=>sum+p.amountUGX,0);
  const validPeriod=!from||!to||from<=to;
  const label=(id:string)=>branches.find(b=>b.id===id)?.name||id||'Unattributed';
+ const showCredit=movement!=='repayment';
+ const showPayments=movement!=='credit';
+ const exportRows=()=>[
+  ...(showCredit?rows.map(r=>({Type:'Credit issued',Date:r.businessDate,Reference:r.reference,Customer:r.client,Branch:label(r.branchId),'Amount UGX':r.originalUGX,'Outstanding UGX':r.outstandingUGX,Status:r.status})):[]),
+  ...(showPayments?payments.map(p=>({Type:'Repayment',Date:p.businessDate,Reference:p.reference,'Credit reference':scope.find(r=>r.id===p.receivableId)?.reference??'','Amount UGX':p.amountUGX})):[])
+ ];
+
  return <section aria-label="Credit receivables ledger" className="rounded-2xl border border-zinc-200 bg-white p-4 text-zinc-900 space-y-4">
   <h4 className="text-lg font-bold">Credit Receivables ledger</h4>
   <div className={treasuryGrid}>
@@ -58,14 +66,17 @@ export function CreditReceivablesLedger({data,branches}:{data:ReturnType<typeof 
    <input aria-label="Receivables customer or reference" placeholder="Customer, institution or invoice" value={client} onChange={e=>setClient(e.target.value)} className="w-full min-w-0 rounded-xl border border-zinc-200 p-3"/>
    <input aria-label="Receivables from date" type="date" value={from} onChange={e=>setFrom(e.target.value)} className="w-full min-w-0 rounded-xl border border-zinc-200 p-3"/>
    <input aria-label="Receivables to date" type="date" value={to} onChange={e=>setTo(e.target.value)} className="w-full min-w-0 rounded-xl border border-zinc-200 p-3"/>
+   <label className="text-sm">Movement<select value={movement} onChange={e=>setMovement(e.target.value)} className="block w-full min-w-0 rounded-xl border border-zinc-200 bg-white p-3"><option value="all">All records</option><option value="credit">Credit issued</option><option value="repayment">Repayments</option></select></label>
+   <TreasuryLedgerExports filename="credit-receivables-ledger" disabled={!validPeriod||!(showCredit&&rows.length||showPayments&&payments.length)} rows={exportRows}/>
   </div>
   {from&&to&&from>to?<p role="alert">Choose an end date on or after the start date.</p>:<>
-  <div className="overflow-x-auto"><table className="text-zinc-900 w-full text-left text-sm"><thead className="bg-zinc-50 text-zinc-700"><tr>{['Credit date','Reference','Customer / institution','Branch','Original credit UGX','Outstanding UGX','Status'].map(h=><th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody className="text-zinc-900">{rows.map(r=><tr key={r.id} className="border-t border-zinc-100"><td className="p-3">{r.businessDate||'Not recorded'}</td><td className="p-3">{r.reference}</td><td className="p-3">{r.client}</td><td className="p-3">{label(r.branchId)}</td><td className="p-3 tabular-nums">{r.originalUGX.toLocaleString()}</td><td className="p-3 tabular-nums font-bold">{r.outstandingUGX.toLocaleString()}</td><td className="p-3">{r.status}</td></tr>)}</tbody></table></div>
+  {showCredit&&<><div className="overflow-x-auto"><table className="text-zinc-900 w-full text-left text-sm"><thead className="bg-zinc-50 text-zinc-700"><tr>{['Credit date','Reference','Customer / institution','Branch','Original credit UGX','Outstanding UGX','Status'].map(h=><th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody className="text-zinc-900">{rows.map(r=><tr key={r.id} className="border-t border-zinc-100"><td className="p-3">{r.businessDate||'Not recorded'}</td><td className="p-3">{r.reference}</td><td className="p-3">{r.client}</td><td className="p-3">{label(r.branchId)}</td><td className="p-3 tabular-nums">{r.originalUGX.toLocaleString()}</td><td className="p-3 tabular-nums font-bold">{r.outstandingUGX.toLocaleString()}</td><td className="p-3">{r.status}</td></tr>)}</tbody></table></div>
   {!rows.length&&<p>No saved receivables match these filters.</p>}
-  <h5 className="font-bold">Recorded repayments</h5>
+  </>}
+  {showPayments&&<><h5 className="font-bold">Recorded repayments</h5>
   <div className="overflow-x-auto"><table className="text-zinc-900 w-full text-left text-sm"><thead className="bg-zinc-50 text-zinc-700"><tr><th className="p-3">Date</th><th className="p-3">Payment reference</th><th className="p-3">Credit reference</th><th className="p-3">Repayment UGX</th></tr></thead><tbody className="text-zinc-900">{payments.map(p=><tr key={p.id} className="border-t border-zinc-100"><td className="p-3">{p.businessDate||'Not recorded'}</td><td className="p-3">{p.reference}</td><td className="p-3">{data.rows.find(r=>r.id===p.receivableId)?.reference}</td><td className="p-3 tabular-nums">{p.amountUGX.toLocaleString()}</td></tr>)}</tbody></table></div>
   {!payments.length&&<p>No linked repayment records match these filters.</p>}
-  </>}
+  </>}</>}
   <p className="text-xs text-zinc-500">Existing saved credit records determine the balance. Older repayments, adjustments and opening balances appear only where recorded; they are not reconstructed from the difference between original and outstanding amounts. Unlinked POS evidence and invoices are not added to this total.</p>
  </section>;
 }

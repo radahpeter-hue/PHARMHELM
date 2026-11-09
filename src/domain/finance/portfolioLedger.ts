@@ -1,11 +1,12 @@
 import type {FinancialPortfolio} from './financialPortfolio';
 export type LedgerDirection='inflow'|'outflow';
+export type LedgerTransferClass='transfer_in'|'transfer_out'|'transfer_charge';
 export interface FinancialLedgerEntry {
  id:string;tenantId:string;portfolioId:string;accountId?:string;
  businessDate:string;occurredAt:string;reference:string;description:string;
  source:string;direction:LedgerDirection;amountUGX:number;actorId:string;
  status:'posted'|'reversed';linkedRecordId?:string;
- branchId?:string;eodChannel?:string;eodReconciliationId?:string;shiftId?:string;
+ transferClass?:LedgerTransferClass;branchId?:string;eodChannel?:string;eodReconciliationId?:string;shiftId?:string;
 }
 /** Changes 037-041: presentation-only ledger view, no posting or balances invented. */
 export interface FinancialLedgerQuery {from:string;to:string;direction:'all'|LedgerDirection}
