@@ -30,8 +30,11 @@ test('GRN-generated draft rule requires matching completed GRN and invoice and n
   assert.match(block,/request\.resource\.data\.status == 'draft'/);
   assert.match(block,/request\.resource\.data\.paymentStatus == 'pending_payment'/);
   assert.match(block,/request\.resource\.data\.excludeFromOpexRollup(?: == true)?/);
-  assert.match(block,/getAfter\(\/databases\/\$\(database\)\/documents\/grn_records\/\$\(request\.resource\.data\.grnId\)\)/);
-  assert.match(block,/getAfter\(\/databases\/\$\(database\)\/documents\/invoices\/\$\(request\.resource\.data\.invoiceId\)\)/);
+  assert.match(block,/getAfter\(\/databases\/\$\(database\)\/documents\/grn_records\/\$\(data\.grnId\)\)/);
+  assert.match(block,/getAfter\(\/databases\/\$\(database\)\/documents\/invoices\/\$\(data\.invoiceId\)\)/);
+  assert.match(block,/validGrnDraftSource\(request\.resource\.data\)/);
+  assert.match(block,/grn\.invoice_id == data\.invoiceId/);
+  assert.match(block,/invoice\.tenantId == data\.tenantId && invoice\.invoiceValue == data\.amount/);
   assert.match(block,/request\.resource\.data\.createdBy == request\.auth\.uid/);
 });
 
