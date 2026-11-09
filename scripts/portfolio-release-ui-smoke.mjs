@@ -28,7 +28,19 @@ export async function setCustomPortfolioActive(p,active,actor,reason){if(!window
 export const setRegisteredBankAccountActive=setCustomPortfolioActive;
 export async function removeUnusedPortfolio(){if(!window.__mode?.startsWith('lifecycle'))throw Error('Read-only fixture');window.__lifecycleCalls=(window.__lifecycleCalls||0)+1;await new Promise(r=>setTimeout(r,100));}`,
  ledger:`export const loadAuthoritativePortfolioLedger=async account=>({account,openingBalanceUGX:account.openingBalanceUGX,currentBalanceUGX:account.balanceUGX,reconciliationReference:'VERIFIED-OPENING',entries:account.accountId==='custom_fixture'?[]:[{id:account.id+'-in',tenantId:'test',accountId:account.accountId,occurredAt:'${day}T08:00:00Z',status:'posted',direction:'inflow',runningBalanceUGX:account.balanceUGX+1000,amountUGX:account.balanceUGX-account.openingBalanceUGX+1000,businessDate:'${day}',reference:'EOD-MASAKA',description:'EOD cash',branchId:'masaka',shiftId:'dayShift',eodReconciliationId:'eod~test~masaka~${day}~dayShift',actorId:'branch_operator'},{id:account.id+'-out',tenantId:'test',accountId:account.accountId,occurredAt:'${day}T09:00:00Z',status:'posted',direction:'outflow',runningBalanceUGX:account.balanceUGX,amountUGX:1000,businessDate:'${day}',reference:'OUTFLOW-MASAKA',description:'Verified movement',branchId:'masaka',actorId:'ceo'}]});`,
- sdk:`export * from ${JSON.stringify(require.resolve('firebase/firestore'))};const accounts=${JSON.stringify(accounts)};const records={...${JSON.stringify(records)},finance_payment_accounts:accounts};export const collection=(_db,path)=>({path});export const doc=(_db,path,id)=>({path,id});export const where=(...a)=>a;export const query=(ref,...filters)=>({...ref,filters});const snapshot=ref=>({docs:(records[ref.path]||[]).filter(r=>(ref.filters||[]).every(([key,op,value])=>op!=='=='||r[key]===value)).filter(r=>window.__mode!=='missing'||r.accountId!=='system_airtel_mobile_money').map(r=>({id:r.id,data:()=>r}))});export const getDocs=async ref=>snapshot(ref);export const onSnapshot=(ref,cb)=>{cb(snapshot(ref));return()=>{};};`
+ sdk:`export * from ${JSON.stringify(require.resolve('firebase/firestore'))};const accounts=${JSON.stringify(accounts)};const records={...${JSON.stringify(records)},finance_payment_accounts:accounts};export const collection=(_db,path)=>({path});export const doc=(_db,path,id)=>({path,id});export const where=(...a)=>a;export const query=(ref,...filters)=>({...ref,filters});const snapshot=ref=>({docs:(records[ref.path]||[]).filter(r=>(ref.filters||[]).every(([key,op,value])=>op!=='=='||r[key]===value)).filter(r=>window.__mode!=='missing'||r.accountId!=='system_airtel_mobile_money').map(r=>({id:r.id,data:()=>r}))});export const getDocs=async ref=>snapshot(ref);export const runTransaction=async(_db,operation)=>{
+ const writes=[];
+ const result=await operation({
+  get:async ref=>{const row=ref.path==='finance_portfolios_v1'?${JSON.stringify(portfolios)}.find(p=>'test__'+p.id===ref.id):(records[ref.path]||[]).find(p=>p.id===ref.id);return {exists:()=>!!row,data:()=>row};},
+  set:(ref,row)=>writes.push({ref,row}),update:()=>{}
+ });
+ await new Promise(resolve=>setTimeout(resolve,100));
+ for(const {ref,row} of writes)if(ref.path==='finance_transfers_v1'){
+  window.__transferCalls=(window.__transferCalls||0)+1;
+  (records.finance_transfers_v1??=[]).push({...row,postedAt:{toDate:()=>new Date()}});
+ }
+ return result;
+};export const onSnapshot=(ref,cb)=>{cb(snapshot(ref));return()=>{};};`
 };
 await build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';import {CashAndBanking} from './src/pages/finance/management/CashAndBanking';import Finance from './src/pages/Finance';import {TreasuryAccountControls} from './src/components/finance/TreasuryAccountControls';
 function Lifecycle(){const [p,setP]=React.useState({id:'fixture_unused',tenantId:'test',name:'Fixture fund',origin:'custom',supportsChildAccounts:false,status:window.__mode==='lifecycle-unused'?'inactive':'active'});const account=window.__mode==='lifecycle-unused'?undefined:{id:'test_fixture_unused',accountId:'fixture_unused',tenantId:'test',kind:'bank',initialized:true,balanceUGX:window.__mode==='lifecycle-nonzero'?100:0};return <TreasuryAccountControls portfolio={p} account={account} accounts={[]} actorId="ceo" onChanged={()=>{if(window.__lifecyclePortfolio)setP(window.__lifecyclePortfolio);}}/>;}
@@ -117,6 +129,28 @@ try{browser=await chromium.launch({headless:true});
   else if(mode==='missing'){await page.getByText('Verified liquid cash (partial)',{exact:true}).waitFor();const card=page.getByRole('button',{name:/^Airtel Money/});await card.getByText('Reconciliation required',{exact:true}).waitFor();await card.click();await page.getByRole('heading',{name:'Account controls'}).waitFor();await page.getByLabel('Verified opening balance (UGX)').waitFor();}
   else {assert.equal(await page.getByRole('button',{name:'Add custom portfolio'}).count(),0);await open(page,'Bank');assert.equal(await page.getByText('Register bank account',{exact:true}).count(),0);await page.getByRole('button',{name:/^Equity Bank/}).click();assert.equal(await page.getByRole('heading',{name:'Account controls'}).count(),0);}
   await fit(page,390);await page.close();console.log(`Treasury ${mode} state passed`);
+ }
+ for(const width of [360,1440]){
+  const page=await browser.newPage({viewport:{width,height:960}});page.on('pageerror',e=>errors.push(e.message));
+  await page.route('**/*',route=>route.request().url().startsWith('http://127.0.0.1:')?route.continue():route.abort());
+  await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  await page.getByText('Portfolio transfers and history',{exact:true}).click();
+  await page.getByLabel('Source account',{exact:true}).selectOption(bank);
+  await page.getByLabel('Destination account',{exact:true}).selectOption(secondBank);
+  await page.getByLabel('Principal (UGX)',{exact:true}).fill('500');
+  await page.getByLabel('Charge (UGX, optional)',{exact:true}).fill('20');
+  await page.getByLabel('Transaction reference',{exact:true}).fill('UI-TRANSFER-001');
+  await page.getByRole('button',{name:'Post transfer',exact:true}).dblclick();
+  await page.getByText('Transfer posted to both ledgers.',{exact:true}).waitFor();
+  await page.getByText(/UGX 500 principal · UGX 20 charge/).waitFor();
+  assert.equal(await page.evaluate(()=>window.__transferCalls),1);
+  await page.getByLabel('Transfer class',{exact:true}).selectOption('inter_portfolio');
+  await page.getByText('No transfers match these filters.',{exact:true}).waitFor();
+  await page.getByLabel('Transfer class',{exact:true}).selectOption('intra_portfolio');
+  await page.getByText(/UI-TRANSFER-001/).waitFor();
+  await fit(page,width);
+  await page.screenshot({path:path.join(output,`transfers-${width}.png`),fullPage:true});
+  await page.close();
  }
  for(const width of [360,1440])for(const mode of ['lifecycle-used','lifecycle-unused','lifecycle-nonzero']){
   const page=await browser.newPage({viewport:{width,height:960}});page.on('pageerror',e=>errors.push(e.message));

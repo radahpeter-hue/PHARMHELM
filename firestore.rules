@@ -572,18 +572,34 @@ service cloud.firestore {
       return audit[channel + '_actual'] is int && audit[channel + '_actual'] >= 0
         && (delta == 0 || (!exists(path) && getAfter(path).data.eodReconciliationId == id));
     }
+    function linkedPortfolioTransfer(id, data, before, after) {
+      let path = /databases/$(database)/documents/finance_transfers_v1/$(data.portfolioTransferId);
+      let transfer = getAfter(path).data;
+      let incoming = id == transfer.destinationMovement.id;
+      let charge = id == transfer.id + '_fee';
+      let expectedAmount = charge ? transfer.chargeUGX : transfer.principalUGX;
+      return !exists(path) && transfer.postedAt == request.time
+        && (incoming || id == transfer.sourceMovement.id || (charge && transfer.chargeUGX > 0))
+        && data.tenantId == transfer.tenantId && data.postedBy == transfer.initiatedBy
+        && data.amount == expectedAmount && data.reference_number == transfer.reference
+        && data.accountDocumentId == (incoming ? transfer.destination.accountDocumentId : transfer.source.accountDocumentId)
+        && data.accountDeltaUGX == (incoming ? expectedAmount : -expectedAmount)
+        && data.movementClass == (incoming ? 'transfer_in' : charge ? 'transfer_charge' : 'transfer_out')
+        && after.lastPostingId == (incoming ? transfer.destinationMovement.id : transfer.sourceMovement.id)
+        && after.balanceUGX == before.balanceUGX + (incoming ? transfer.principalUGX : -transfer.principalUGX - transfer.chargeUGX);
+    }
     function validManagementMovement(id, data, kind) {
       let accountPath = /databases/$(database)/documents/finance_payment_accounts/$(data.accountDocumentId);
       let before = get(accountPath).data;
       let after = getAfter(accountPath).data;
-      // The required paired account update enforces tenant and posting role.
       return data.postedBy == request.auth.uid
         && data.amount is int && data.amount > 0
         && data.type in ['incoming','deposit','topup','outgoing','withdrawal']
         && data.accountDeltaUGX == (data.type in ['incoming','deposit','topup'] ? data.amount : -data.amount)
         && before.kind == kind
-        && after.lastPostingId == id
-        && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX;
+        && (id.matches('^pt_.*') || data.keys().hasAny(['portfolioTransferId','movementClass'])
+          ? linkedPortfolioTransfer(id, data, before, after)
+          : (after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX));
     }
     // Canonical built-ins and legacy Management accounts have no custom registry.
     // getAfter prevents a posting from racing with lifecycle closure in the same batch.
@@ -594,6 +610,7 @@ service cloud.firestore {
     function validManagementAccountUpdate(accountId, before, after) {
       let movementPath = managementMovementPath(before.kind, after.lastPostingId);
       let movement = getAfter(movementPath).data;
+      let transferDebit = movement.get('movementClass', '') == 'transfer_out';
       return isTenantMember(before.tenantId)
         && activePortfolioAccount(before)
         && ((movement.get('eodChannel', '') != '' && validBranchEodMovement(after.lastPostingId, movement)) || isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash()))
@@ -603,7 +620,7 @@ service cloud.firestore {
         && after.balanceUGX is int && after.balanceUGX >= 0 && after.balanceUGX <= 9007199254740991
         && !exists(movementPath)
         && movement.tenantId == before.tenantId && movement.accountDocumentId == accountId
-        && after.balanceUGX == before.balanceUGX + movement.accountDeltaUGX;
+        && (transferDebit || after.balanceUGX == before.balanceUGX + movement.accountDeltaUGX);
     }
     function supplierPaymentPath(id) {
       return /databases/$(database)/documents/cash_grn_payments/$(id);
@@ -3246,6 +3263,81 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/stock_orders/$(request.resource.data.orderId)).data.approved_by == request.auth.uid
         && getAfter(/databases/$(database)/documents/stock_orders/$(request.resource.data.orderId)).data.approval_audit_id == approvalId;
       allow update, delete: if false;
+    }
+
+    match /finance_transfers_v1/{transferId} {
+      function registeredEndpoint(endpoint, tenant, outgoing) {
+        let portfolio = get(/databases/$(database)/documents/finance_portfolios_v1/$(tenant + '__' + endpoint.accountId)).data;
+        return portfolio.status == 'active' && portfolio.tenantId == tenant
+          && portfolio.id == endpoint.accountId && portfolio.currency == 'UGX'
+          && (endpoint.portfolioId == 'system_bank'
+            ? endpoint.accountId.matches('^bank_[a-f0-9]{64}$') && portfolio.bankParentId == 'system_bank' && portfolio.classification == 'bank'
+              && endpoint.kind == 'bank' && endpoint.branchId == ''
+            : endpoint.accountId.matches('^custom_.*') && portfolio.origin == 'custom' && endpoint.portfolioId == portfolio.id
+              && (outgoing ? portfolio.allowsTransfersOut : portfolio.allowsTransfersIn)
+              && endpoint.branchId == portfolio.scope.get('branchId', ''));
+      }
+      function validTransferEndpoint(endpoint, tenant, outgoing) {
+        let account = get(/databases/$(database)/documents/finance_payment_accounts/$(endpoint.accountDocumentId)).data;
+        let key = endpoint.accountId;
+        let branch = endpoint.branchId;
+        return endpoint.tenantId == tenant && endpoint.accountDocumentId == tenant + '_' + key
+          && account.tenantId == tenant && account.accountId == key && account.portfolioId == key
+          && endpoint.name == account.name && endpoint.kind == account.kind
+          && account.currency == 'UGX' && account.initialized
+          && branch == account.scope.get('branchId', '')
+          && (branch == '' || (isAssignedToBranch(branch)
+            && get(/databases/$(database)/documents/branches/$(branch)).data.tenantId == tenant))
+          && (key.matches('^(bank_[a-f0-9]{64}|custom_[A-Za-z0-9_-]+)$')
+            ? registeredEndpoint(endpoint, tenant, outgoing)
+            : endpoint.portfolioId == key
+              && (key in ['system_mtn_mobile_money', 'system_airtel_mobile_money']
+                ? branch == '' && endpoint.kind == 'bank'
+                : branch != '' && endpoint.kind == 'petty_cash'
+                  && key in ['system_branch_cash_sales_' + branch, 'system_petty_cash_' + branch]));
+      }
+      function allowedTransferRoute(source, destination) {
+        let branch = source.branchId;
+        let cashSales = branch != '' && source.accountId == 'system_branch_cash_sales_' + branch;
+        let bank = source.portfolioId == 'system_bank';
+        let toBank = destination.portfolioId == 'system_bank';
+        let toPetty = destination.branchId != '' && destination.accountId == 'system_petty_cash_' + destination.branchId;
+        return (branch == '' || destination.branchId == '' || branch == destination.branchId)
+          && (source.accountId.matches('^custom_.*') || destination.accountId.matches('^custom_.*')
+            || (toBank && (cashSales || bank || source.accountId in ['system_mtn_mobile_money','system_airtel_mobile_money']))
+            || (toPetty && (cashSales || bank)));
+      }
+      function validTransferLeg(endpoint, movement, id) {
+        let path = managementMovementPath(endpoint.kind, id);
+        return movement.id == id
+          && movement.collection == (endpoint.kind == 'bank' ? 'banking_records' : 'petty_cash_ledger')
+          && !exists(path) && getAfter(path).data.portfolioTransferId == transferId;
+      }
+      function validTransferCharge(data) {
+        let feeId = transferId + '_fee';
+        return data.chargeUGX == 0 ? data.chargeMovement == null
+          : validTransferLeg(data.source, data.chargeMovement, feeId);
+      }
+      function validTransfer(data) {
+        return isFinance() && isTenantMember(data.tenantId)
+          && transferId == data.id && transferId.matches('^pt_[a-f0-9]{64}$')
+          && data.idempotencyKey == transferId && data.auditVersion == 1 && data.reversalOf == null
+          && data.status == 'completed' && data.currency == 'UGX' && data.transferClass == (data.source.portfolioId == data.destination.portfolioId ? 'intra_portfolio' : 'inter_portfolio')
+          && data.principalUGX is int && data.principalUGX > 0 && data.principalUGX <= 9007199254740991
+          && data.chargeUGX is int && data.chargeUGX >= 0
+          && data.principalUGX + data.chargeUGX <= 9007199254740991 && validTransferCharge(data)
+          && data.reference is string && data.reference.size() >= 5 && data.reference.size() <= 100
+          && data.initiatedBy == request.auth.uid && data.initiatedAt is string && data.postedAt == request.time
+          && data.source.accountDocumentId != data.destination.accountDocumentId
+          && validTransferEndpoint(data.source, data.tenantId, true)
+          && validTransferEndpoint(data.destination, data.tenantId, false)
+          && allowedTransferRoute(data.source, data.destination)
+          && validTransferLeg(data.source, data.sourceMovement, transferId + '_out')
+          && validTransferLeg(data.destination, data.destinationMovement, transferId + '_in');
+      }
+      allow get: if canViewFinance() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
+      allow create: if validTransfer(request.resource.data);
     }
 
     match /finance_portfolios_v1/{portfolioId} {

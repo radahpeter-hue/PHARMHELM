@@ -1,6 +1,6 @@
 import { ManagementPaymentAccounts } from '../../../components/finance/ManagementPaymentAccounts';
 import { SupplierInvoicePaymentPanel } from '../../../components/finance/SupplierInvoicePaymentPanel';
-import { stageManagementCashEntry } from '../../../services/managementCashPosting';
+import { belongsToManagementPettyCash, stageManagementCashEntry } from '../../../services/managementCashPosting';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
@@ -204,7 +204,7 @@ export const ManagementExpenseLedger: React.FC = () => {
       const pcData = pcSnap.docs.map(doc => ({
         ...(doc.data() as any),
         id: doc.id
-      })) as PettyCashEntry[];
+      })).filter(row => belongsToManagementPettyCash(profile.tenantId, row)) as PettyCashEntry[];
       setPcLedger(pcData);
     } catch (e: any) {
       console.error("Error fetching management expenses ledger:", e);

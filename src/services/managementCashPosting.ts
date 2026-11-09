@@ -17,6 +17,9 @@ function cleanRecord(value: any): any {
   if(value && typeof value==='object' && Object.getPrototypeOf(value)===Object.prototype)return Object.fromEntries(Object.entries(value).filter(([,v])=>v!==undefined).map(([k,v])=>[k,cleanRecord(v)]));
   return value;
 }
+export function belongsToManagementPettyCash(tenantId: string, entry: {accountDocumentId?: unknown}): boolean {
+  return entry.accountDocumentId == null || entry.accountDocumentId === managementAccountDocumentId(tenantId);
+}
 export function cashEntryDelta(data: { amount?: unknown; type?: unknown }) {
   const amount = Number(data.amount);
   if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('Cash postings require a positive whole UGX amount.');
