@@ -126,7 +126,7 @@ function TreasuryWorkspace(){
     <TreasuryKpi title="Pending Reconciliation" value={loading?'Loading…':error?'Unavailable':String(pending)} icon={AlertCircle} tone="red" note="Default portfolios requiring action"/>
     <TreasuryKpi title="Today’s Movements" value={ledgerPending&&!error?'Loading…':movementVerified&&Number.isSafeInteger(movementTotal)?money(movementTotal):'Unavailable'} icon={ArrowLeftRight} tone="blue" note="Gross inflows and outflows, including transfers"/>
    </div>
-   {!loading&&!error&&<TreasuryTransfers tenantId={tenantId} actorId={profile!.uid} canOperate={hasPermission('finance','operate')}
+   {!error&&<TreasuryTransfers tenantId={tenantId} actorId={profile!.uid} canOperate={hasPermission('finance','operate')}
     allowedBranches={canRegister?null:[...(profile!.assigned_branches||[]),profile!.branch_id||'',profile!.default_branch_id||'']}
     accounts={treasury.accounts} portfolios={items} onChanged={changed}/>}
    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-lg font-semibold">Financial Portfolios (7)</h3>{canRegister&&<button onClick={()=>setCreateOpen(v=>!v)} className="flex min-h-11 items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 text-sm font-medium"><Plus size={16}/>{createOpen?'Close registration':'Add custom portfolio'}</button>}</div>

@@ -36,3 +36,24 @@ Targeted authenticated emulator: bank posting, sequential replay, concurrent ses
 A permission-denied/error-limit message on the losing concurrent write was isolated with emulator Rules coverage. The initial posting was valid. Verified winner read-back fixes that retry without weakening permissions. Unnecessary role/ordering experiments were discarded; existing account authorization and generic fallback conditions are unchanged.
 
 Accepted: PENDING hosted compilation and regression CI. Do not advance to other routes while this gate is unresolved.
+
+## Level 5 completion candidate
+
+The release generator binds incoming and existing document snapshots in eligible create and update grants. The authored predicates, roles and match scopes remain the source of truth. Firebase accepted the compacted Bank principal checkpoint. The final candidate requires its own hosted compilation result.
+
+The transfer engine now handles Bank to Bank, Branch Cash Sales to a selected Bank or same-branch Petty Cash, MTN and Airtel to a selected Bank, selected Bank to branch Petty Cash, and transfers involving a registered custom portfolio whose direction flags permit them. Custom child-account transfers are conditional on a registered child-account model. The current registry provides individual Bank children and standalone custom portfolios.
+
+Treasury provides account selectors, a separate optional charge, a transaction reference, and history filters by date, class, source portfolio and destination portfolio. The form uses a submission lock. Transfer principal stays out of the expense ledger. Branch-account ledger entries are excluded from the Management Petty Cash balance and opening reconciliation.
+
+### Acceptance
+
+Use reconciled test accounts and a Finance operator assigned to the branch.
+
+1. In Finance, open Management, Cash & Banking, then Portfolio transfers and history.
+2. Post a Bank transfer with a small principal and fee. Confirm the destination gains the full principal, the source loses principal plus fee, and the source ledger shows separate debit and charge entries.
+3. Retry with the same reference and values, then change the principal and reuse the reference. Confirm the exact retry replays and the changed intent is rejected.
+4. Verify the Branch Cash Sales, mobile-money, Petty Cash and custom routes above. Verify an unassigned branch and a custom portfolio with its direction disabled are rejected.
+5. Review both account ledgers and transfer history, including date, class and portfolio filters. Confirm a viewer can read history and an IT-only or view-only account cannot post.
+6. Confirm immutability and use a separate linked correction in a later reversal release when required.
+
+Hosting preview shares production Firebase. It supports interface review. Authenticated emulator tests exercise the candidate write rules, including concurrent submissions, insufficient funds, atomic posting, forged movements, tenant and branch boundaries, and separate fees.

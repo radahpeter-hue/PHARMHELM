@@ -145,5 +145,15 @@ try{
  await env.withSecurityRulesDisabled(c=>setDoc(portfolio(c.firestore(),custom),{allowsTransfersIn:false,allowsTransfersOut:false},{merge:true}));
  await assert.rejects(branchDenied(custom,equity,'CUSTOM-OUT-DENIED'),/selected direction/);
  await assert.rejects(branchDenied(equity,custom,'CUSTOM-IN-DENIED'),/selected direction/);
- console.log('Level 5 Bank-to-Bank principal PASSED: 10m/5m -> 8m/7m; 15m conserved; exactly-once concurrent retry, competing spend, linked immutable records/ledgers, atomic failure, inactive/FX/IT/tenant denial.');
+ const bankToCustom = await rawTransfer('FORGED-CUSTOM-DESTINATION');
+ const forgedDestination = {tenantId:tenant,portfolioId:custom,accountId:custom,
+  accountDocumentId:tenant+'_'+custom,name:custom,branchId:'',kind:'petty_cash'};
+ const forged = {...bankToCustom,transferClass:'inter_portfolio',destination:forgedDestination,
+  destinationMovement:{...bankToCustom.destinationMovement,collection:'petty_cash_ledger'}};
+ const beforeBank = (await getDoc(account(finance,equity))).data().balanceUGX;
+ const beforeCustom = (await getDoc(account(finance,custom))).data().balanceUGX;
+ await assertFails(rawBatch(finance,forged,{sourceBalance:beforeBank,destinationBalance:beforeCustom}).commit());
+ assert.equal((await getDoc(account(finance,equity))).data().balanceUGX,beforeBank);
+ assert.equal((await getDoc(account(finance,custom))).data().balanceUGX,beforeCustom);
+ console.log('Level 5 transfer routes and charges PASSED. Bank principal proof: 10m/5m -> 8m/7m; 15m conserved; exactly-once concurrent retry, competing spend, linked immutable records/ledgers, atomic failure, inactive/FX/IT/tenant denial.');
 }finally{await env.cleanup();}
