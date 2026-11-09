@@ -24,8 +24,49 @@ export function compactCollectionSets(source) {
   (match,list)=>list===undefined?match:`collectionName.matches('${exactCollectionPattern([...list.matchAll(/'([a-z0-9_]+)'/g)].map(m=>m[1]))}')`);
 }
 
+/** A create has an incoming document and an update has both snapshots.
+ * Bind only those guaranteed snapshots, leaving reads, deletes and mixed
+ * method grants alone. The predicate stays in its original match scope.
+ */
+export function bindWriteSnapshots(source) {
+ const trivia = /'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
+ const mask = value => value.replace(trivia, literal => ' '.repeat(literal.length));
+ const masked = mask(source);
+ const grants = [...masked.matchAll(/\ballow\s+(create|update)\s*:\s*if\b([^;]+);/g)];
+ let serial = 0;
+ const unique = label => {
+  let name;
+  do { name = 'release' + label + serial++; } while (source.includes(name));
+  return name;
+ };
+ for (const grant of grants.reverse()) {
+  const [statement, method, predicate] = grant;
+  const start = grant.index + statement.indexOf(predicate);
+  let body = source.slice(start, start + predicate.length);
+  const references = [...predicate.matchAll(/\b(request\.resource\.data|resource\.data)\b/g)];
+  const bindings = new Map();
+  for (const snapshot of ['request.resource.data', 'resource.data']) {
+   if (snapshot === 'resource.data' && method !== 'update') continue;
+   if (references.filter(reference => reference[0] === snapshot).length >= 4) {
+    bindings.set(snapshot, unique('Snapshot'));
+   }
+  }
+  if (!bindings.size) continue;
+  for (const reference of references.reverse()) {
+   const alias = bindings.get(reference[0]);
+   if (alias) body = body.slice(0, reference.index) + alias + body.slice(reference.index + reference[0].length);
+  }
+  const check = unique('Write');
+  const declarations = [...bindings].map(([snapshot, alias]) => 'let ' + alias + ' = ' + snapshot + ';').join(' ');
+  source = source.slice(0, grant.index) + 'function ' + check + '() { ' + declarations +
+   ' return ' + body + '; } allow ' + method + ': if ' + check + '();' +
+   source.slice(grant.index + statement.length);
+ }
+ return source;
+}
+
 export function compactRuleSymbols(source){
- source=compactCollectionSets(source);
+ source=compactCollectionSets(bindWriteSnapshots(source));
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(stripped.match(/\b[A-Za-z_]\w*\b/g)||[]),functions=new Map(),variables=new Map();
