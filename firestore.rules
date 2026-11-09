@@ -606,8 +606,7 @@ service cloud.firestore {
         && expense.tenantId == data.tenantId && data.tenantId == account.tenantId
         && (collectionName == 'branch_expenses'
           ? id == 'expense_payment_' + sourceId && expense.cashPaymentVersion == 1
-            && expense.status == 'paid' && expense.cashPaidAt == request.time
-            && expense.cashOutflowPostingId == id && expense.cashPaidBy == request.auth.uid
+            && expense.cashPaidAt == request.time && expense.cashOutflowPostingId == id
             && expense.amount_ugx == data.amount && expense.category == data.expenseCategory
             && expense.branch_id == data.branchId && account.accountId == 'system_petty_cash_' + expense.branch_id
             && account.scope.kind == 'branch' && account.scope.branchId == expense.branch_id
@@ -1455,7 +1454,7 @@ service cloud.firestore {
       }
       allow get: if isAuthenticated() && ((resource == null && isPOSOperator()) || canReadPosFinancial());
       allow read: if isTenantMember(resource.data.tenantId) && canViewBranchFinance();
-      allow create: if !request.resource.data.keys().hasAny(['cashPaymentVersion']) && atomicWelfareRecord(expenseId, 'branch_expenses');
+      allow create: if !('cashPaymentVersion' in request.resource.data) && atomicWelfareRecord(expenseId, 'branch_expenses');
       allow create: if isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance()
         && !request.resource.data.keys().hasAny(['cashOutflowPostingId','cashPaidBy','cashPaidAt','cashApprovedBy','cashApprovedAt'])
         && (request.resource.data.get('cashPaymentVersion', 0) == 0
@@ -1552,41 +1551,41 @@ service cloud.firestore {
         && expenseId.matches('management_payment_draft_(grn_|op_grn_).*')
         && (resource == null || isTenantMember(resource.data.tenantId));
       allow read: if isTenantMember(resource.data.tenantId) && (canViewFinance() || isHR());
-      // A cash GRN creates a payment DRAFT, never a disbursement.
-      // The linked completed GRN and invoice must exist after the same commit.
+      function validGrnDraftSource(data) {
+        let grn = getAfter(/databases/$(database)/documents/grn_records/$(data.grnId)).data;
+        let invoice = getAfter(/databases/$(database)/documents/invoices/$(data.invoiceId)).data;
+        return grn.tenantId == data.tenantId && grn.payment_type == 'cash'
+          && grn.payment_status == 'pending_payment' && grn.invoice_id == data.invoiceId
+          && invoice.tenantId == data.tenantId && invoice.invoiceValue == data.amount
+          && invoice.paymentStatus == 'Pending Payment';
+      }
+      function validGrnDraftSettlement(data) {
+        let payment = getAfter(supplierPaymentPath(data.lastPaymentId)).data;
+        return linkedSupplierPayment(data) && payment.draftId == expenseId
+          && data.diff(resource.data).affectedKeys().hasOnly(['status','paymentStatus','paidAmountUGX','balanceUGX','excludeFromOpexRollup','updatedAt','issuedAt','issuedBy','lastPaymentId'])
+          && data.paidAmountUGX == payment.previouslyPaidUGX + payment.amountUGX
+          && data.balanceUGX == payment.remainingUGX && data.excludeFromOpexRollup;
+      }
+      // A cash GRN creates a payment draft tied to the GRN and invoice in the same commit.
       allow create: if isProcurement()
         && isTenantMember(request.resource.data.tenantId)
         && expenseId == 'management_payment_draft_' + request.resource.data.grnId
         && request.resource.data.source == 'procurement_cash_grn'
-        && !request.resource.data.keys().hasAny(['cashOutflowPostingId'])
+        && !('cashOutflowPostingId' in request.resource.data)
         && request.resource.data.status == 'draft'
         && request.resource.data.paymentStatus == 'pending_payment'
         && request.resource.data.excludeFromOpexRollup
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.amount == request.resource.data.amount_ugx
         && request.resource.data.amount > 0
-        && existsAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId))
-        && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId)).data.tenantId == request.resource.data.tenantId
-        && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId)).data.payment_type == 'cash'
-        && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId)).data.payment_status == 'pending_payment'
-        && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grnId)).data.invoice_id == request.resource.data.invoiceId
-        && existsAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId))
-        && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.tenantId == request.resource.data.tenantId
-        && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.invoiceValue == request.resource.data.amount
-        && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.paymentStatus == 'Pending Payment';
+        && validGrnDraftSource(request.resource.data);
       allow create: if isTenantMember(request.resource.data.tenantId) && (isFinance() || isHR())
-        && (!request.resource.data.keys().hasAny(['cashOutflowPostingId']) || freshManagementExpensePayment(request.resource.data));
+        && (!('cashOutflowPostingId' in request.resource.data) || freshManagementExpensePayment(request.resource.data));
       allow update: if isFinance() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
-        && !resource.data.keys().hasAny(['cashOutflowPostingId'])
-        && (!request.resource.data.keys().hasAny(['cashOutflowPostingId']) || freshManagementExpensePayment(request.resource.data))
-        && (resource.data.get('source','') != 'procurement_cash_grn' || (
-          linkedSupplierPayment(request.resource.data)
-          && getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.draftId == expenseId
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','paymentStatus','paidAmountUGX','balanceUGX','excludeFromOpexRollup','updatedAt','issuedAt','issuedBy','lastPaymentId'])
-          && request.resource.data.paidAmountUGX == getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.previouslyPaidUGX + getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.amountUGX
-          && request.resource.data.balanceUGX == getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.remainingUGX
-          && request.resource.data.excludeFromOpexRollup));
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId) && !resource.data.keys().hasAny(['cashOutflowPostingId']);
+        && !('cashOutflowPostingId' in resource.data)
+        && (!('cashOutflowPostingId' in request.resource.data) || freshManagementExpensePayment(request.resource.data))
+        && (resource.data.get('source','') != 'procurement_cash_grn' || validGrnDraftSettlement(request.resource.data));
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId) && !('cashOutflowPostingId' in resource.data);
     }
 
     match /campaigns/{campaignId} {
