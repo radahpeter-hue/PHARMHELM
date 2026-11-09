@@ -130,10 +130,8 @@ export const ManagementExpenseLedger: React.FC = () => {
   const [minAmount, setMinAmount] = useState<string>('');
   const [maxAmount, setMaxAmount] = useState<string>('');
   const [dateRange, setDateRange] = useState(() => {
-    const today = new Date();
-    const start = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-    const end = today.toISOString().split('T')[0];
-    return { start, end };
+    const today = kampalaBusinessDate();
+    return { start: today.slice(0, 8) + '01', end: today };
   });
 
   // Modal States
@@ -148,7 +146,7 @@ export const ManagementExpenseLedger: React.FC = () => {
     department: 'HQ',
     description: '',
     voucher: '',
-    expense_date: new Date().toISOString().split('T')[0]
+    expense_date: kampalaBusinessDate()
   });
 
   // Review Form State
@@ -324,7 +322,7 @@ export const ManagementExpenseLedger: React.FC = () => {
         department: 'HQ',
         description: '',
         voucher: '',
-        expense_date: new Date().toISOString().split('T')[0]
+        expense_date: kampalaBusinessDate()
       });
       fetchData(); // refresh
     } catch (err) {

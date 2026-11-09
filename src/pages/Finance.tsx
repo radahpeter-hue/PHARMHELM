@@ -665,15 +665,15 @@ const BranchExpenseLog: React.FC = () => {
   const [isAdding, setIsAdding] = useState(false);
   const [editingExpense, setEditingExpense] = useState<BranchExpense | null>(null);
   const [dateRange, setDateRange] = useState({ 
-    start: new Date().toISOString().split('T')[0], 
-    end: new Date().toISOString().split('T')[0] 
+    start: kampalaBusinessDate(),
+    end: kampalaBusinessDate()
   });
   const [formData, setFormData] = useState({
     category: 'utilities',
     amount: 0,
     description: '',
     recipient: '',
-    date: new Date().toISOString().split('T')[0]
+    date: kampalaBusinessDate()
   });
 
   useEffect(() => {
@@ -746,7 +746,7 @@ const BranchExpenseLog: React.FC = () => {
       setEditingExpense(null);
       setRecipientType('external');
       setSelectedStaffId('');
-      setFormData({ category: 'utilities', amount: 0, description: '', recipient: '', date: new Date().toISOString().split('T')[0] });
+      setFormData({ category: 'utilities', amount: 0, description: '', recipient: '', date: kampalaBusinessDate() });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to save expense');
     }
@@ -814,7 +814,7 @@ const BranchExpenseLog: React.FC = () => {
           <button 
             onClick={() => {
               setEditingExpense(null); setRecipientType('external'); setSelectedStaffId('');
-              setFormData({ category: 'utilities', amount: 0, description: '', recipient: '', date: new Date().toISOString().split('T')[0] });
+              setFormData({ category: 'utilities', amount: 0, description: '', recipient: '', date: kampalaBusinessDate() });
               setIsAdding(true);
             }}
             className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl font-medium transition-colors flex items-center gap-2"
