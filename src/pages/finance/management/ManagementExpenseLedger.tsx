@@ -1,7 +1,9 @@
-import { ManagementPaymentAccounts } from '../../../components/finance/ManagementPaymentAccounts';
+import { CashOutflowReport } from '../../../components/finance/CashOutflowReport';
+import { kampalaBusinessDate } from '../../../utils/eodBusinessDate';
+import { ManagementPaymentAccounts, useManagementPaymentAccounts } from '../../../components/finance/ManagementPaymentAccounts';
 import { SupplierInvoicePaymentPanel } from '../../../components/finance/SupplierInvoicePaymentPanel';
-import { belongsToManagementPettyCash, stageManagementCashEntry } from '../../../services/managementCashPosting';
-import React, { useState, useEffect, useMemo } from 'react';
+import { MANAGEMENT_CASH_ACCOUNT, managementAccountDocumentId, stageManagementCashEntry } from '../../../services/managementCashPosting';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
 import { 
@@ -20,7 +22,7 @@ import {
   RefreshCw,
   Wallet
 } from 'lucide-react';
-import { collection, query, where, getDocs, doc, writeBatch, addDoc, updateDoc, Timestamp, orderBy, runTransaction } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, Timestamp, runTransaction } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
 import { exportRecordsToExcel } from '../../../utils/excelExport';
@@ -51,23 +53,15 @@ interface ManagementExpense {
   excludeFromOpexRollup?: boolean;
 }
 
-interface PettyCashEntry {
-  id: string;
-  tenantId: string;
-  date: string;
-  amount: number;
-  source: string;
-  reference_number: string;
-  type: 'incoming' | 'outgoing';
-  branch_id?: string;
-  logged_by: string;
-  created_at: string;
-}
-
 export const ManagementExpenseLedger: React.FC = () => {
   const { profile } = useAuth();
   const [expenses, setExpenses] = useState<ManagementExpense[]>([]);
-  const [pcLedger, setPcLedger] = useState<PettyCashEntry[]>([]);
+  const { accounts } = useManagementPaymentAccounts();
+  const cashAccount = accounts.find(account => account.accountId === MANAGEMENT_CASH_ACCOUNT && account.initialized);
+  const pettyCashBalance = cashAccount?.balanceUGX ?? null;
+  const [paymentRefresh, setPaymentRefresh] = useState(0);
+  const [posting, setPosting] = useState(false);
+  const postingLock = useRef(false);
   const [loading, setLoading] = useState(true);
 
   // Safe date parsing helpers to prevent crashes from Firestore Timestamp / undefined / invalid values
@@ -153,6 +147,7 @@ export const ManagementExpenseLedger: React.FC = () => {
     category: 'HR & Remunerations',
     department: 'HQ',
     description: '',
+    voucher: '',
     expense_date: new Date().toISOString().split('T')[0]
   });
 
@@ -196,16 +191,6 @@ export const ManagementExpenseLedger: React.FC = () => {
       
       setExpenses(expData);
 
-      // 2. Fetch Petty Cash Balance
-      const pcSnap = await getDocs(query(
-        collection(db, 'petty_cash_ledger'),
-        where('tenantId', '==', profile.tenantId)
-      ));
-      const pcData = pcSnap.docs.map(doc => ({
-        ...(doc.data() as any),
-        id: doc.id
-      })).filter(row => belongsToManagementPettyCash(profile.tenantId, row)) as PettyCashEntry[];
-      setPcLedger(pcData);
     } catch (e: any) {
       console.error("Error fetching management expenses ledger:", e);
       toast.error("Failed to load management cash outflows.");
@@ -217,13 +202,6 @@ export const ManagementExpenseLedger: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, [profile?.tenantId]);
-
-  // Available Petty Cash Balance calculation
-  const pettyCashBalance = useMemo(() => {
-    return pcLedger.reduce((acc, curr) => {
-      return curr.type === 'incoming' ? acc + curr.amount : acc - curr.amount;
-    }, 0);
-  }, [pcLedger]);
 
   // Dynamic dropdown filters arrays
   const categories = useMemo(() => {
@@ -278,25 +256,27 @@ export const ManagementExpenseLedger: React.FC = () => {
   // Log manual expense
   const handleLogManual = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile?.tenantId) return;
+    if (!profile?.tenantId || postingLock.current) return;
 
-    const amt = parseFloat(manualForm.amount);
-    if (isNaN(amt) || amt <= 0) {
+    const amt = Number(manualForm.amount);
+    if (!Number.isSafeInteger(amt) || amt <= 0) {
       toast.error("Please enter a valid amount");
       return;
     }
 
-    if (amt > pettyCashBalance) {
-      toast.error(`Insufficient petty cash balance! Current available is UGX ${pettyCashBalance.toLocaleString()}`);
+    const voucher = manualForm.voucher.trim().toUpperCase();
+    if (voucher.length < 3 || voucher.length > 100) {
+      toast.error('Enter the cash voucher or receipt reference.');
       return;
     }
 
+    postingLock.current = true;
+    setPosting(true);
     try {
-      // Create manual approved expense and deduct petty cash
-      const batch = writeBatch(db);
-
-      // 1. Add to management_expenses
-      const expRef = doc(collection(db, 'management_expenses'));
+      const identity = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([profile.tenantId, voucher])));
+      const expenseId = 'mcpay_' + Array.from(new Uint8Array(identity), byte => byte.toString(16).padStart(2, '0')).join('');
+      const expRef = doc(db, 'management_expenses', expenseId);
+      const postingId = 'expense_payment_' + expRef.id;
       const expPayload = {
         tenantId: profile.tenantId,
         date: new Date().toISOString(),
@@ -310,26 +290,32 @@ export const ManagementExpenseLedger: React.FC = () => {
         description: manualForm.description,
         department: manualForm.department,
         sourceType: 'manual',
-        excludeFromOpexRollup: false
+        excludeFromOpexRollup: false,
+        cashOutflowPostingId: postingId,
+        paymentReference: voucher,
       };
-      batch.set(expRef, expPayload);
 
-      // 2. Add outgoing to petty_cash_ledger
-      const pcRef = doc(collection(db, 'petty_cash_ledger'));
-      const pcPayload = {
-        tenantId: profile.tenantId,
-        date: manualForm.expense_date,
-        amount: amt,
-        source: `Management Expense: ${manualForm.category}`,
-        reference_number: `EXP-${expRef.id.slice(-6).toUpperCase()}`,
-        type: 'outgoing',
-        logged_by: profile.fullName || profile.email || 'SYSTEM',
-        created_at: new Date().toISOString()
-      };
-      stageManagementCashEntry(batch, pcRef.id, pcPayload);
-
-      await batch.commit();
-
+      await runTransaction(db, async tx => {
+        const existing = (await tx.get(expRef)).data();
+        if (existing) {
+          if (existing.tenantId !== profile.tenantId || existing.cashOutflowPostingId !== postingId ||
+              existing.paymentReference !== voucher || existing.amount !== amt || existing.category !== expPayload.category || existing.description !== expPayload.description ||
+              existing.expense_date !== expPayload.expense_date || existing.department !== expPayload.department)
+            throw new Error('This payment reference is already in use.');
+          return;
+        }
+        const accountRef = doc(db, 'finance_payment_accounts', managementAccountDocumentId(profile.tenantId));
+        const funding = (await tx.get(accountRef)).data();
+        if (!funding?.initialized || !Number.isSafeInteger(funding.balanceUGX) || funding.balanceUGX < amt)
+          throw new Error('Reconcile and fund Management Petty Cash before recording the payment.');
+        tx.set(expRef, expPayload);
+        stageManagementCashEntry(tx, postingId, {
+          tenantId: profile.tenantId, date: kampalaBusinessDate(), amount: amt, type: 'outgoing',
+          source: manualForm.description || 'Management expense payment', expenseCategory: manualForm.category,
+          reference_number: voucher, externalExpenseCollection: 'management_expenses', externalExpenseId: expRef.id,
+        }, db, MANAGEMENT_CASH_ACCOUNT, profile.uid);
+      });
+      setPaymentRefresh(value => value + 1);
       toast.success("Expense logged & disbursed from petty cash successfully.");
       setIsManualModalOpen(false);
       setManualForm({
@@ -337,12 +323,16 @@ export const ManagementExpenseLedger: React.FC = () => {
         category: 'HR & Remunerations',
         department: 'HQ',
         description: '',
+        voucher: '',
         expense_date: new Date().toISOString().split('T')[0]
       });
       fetchData(); // refresh
     } catch (err) {
       console.error(err);
-      toast.error("Failed to log manual expense");
+      toast.error(err instanceof Error ? err.message : 'Failed to record the payment.');
+    } finally {
+      postingLock.current = false;
+      setPosting(false);
     }
   };
 
@@ -360,7 +350,7 @@ export const ManagementExpenseLedger: React.FC = () => {
 
   // Confirm and Issue draft
   const handleConfirmAndIssue = async () => {
-    if (!profile?.tenantId || !reviewingExpense) return;
+    if (!profile?.tenantId || !reviewingExpense || postingLock.current) return;
     if (reviewingExpense.source === 'procurement_cash_grn') {
       toast.error('This GRN cash-payment draft requires the dedicated atomic supplier-invoice settlement workflow. Payment is not enabled yet.');
       return;
@@ -369,7 +359,7 @@ export const ManagementExpenseLedger: React.FC = () => {
     const amt = reviewForm.amount;
     const origAmt = reviewingExpense.originalAmount || reviewingExpense.amount;
 
-    if (amt <= 0) {
+    if (!Number.isSafeInteger(amt) || amt <= 0) {
       toast.error("Amount must be greater than zero");
       return;
     }
@@ -381,11 +371,13 @@ export const ManagementExpenseLedger: React.FC = () => {
     }
 
     // Verify petty cash
-    if (amt > pettyCashBalance) {
-      toast.error(`Insufficient petty cash! Available: UGX ${pettyCashBalance.toLocaleString()}`);
+    if (pettyCashBalance === null || amt > pettyCashBalance) {
+      toast.error("Reconcile and fund Management Petty Cash before recording the payment.");
       return;
     }
 
+    postingLock.current = true;
+    setPosting(true);
     try {
       if (reviewingExpense.sourceType === 'credit' && reviewingExpense.invoiceId && reviewingExpense.sourceRefId) {
         const expenseRef = doc(db, 'management_expenses', reviewingExpense.id);
@@ -403,10 +395,18 @@ export const ManagementExpenseLedger: React.FC = () => {
           if (!expenseSnap.exists() || !creditSnap.exists() || !invoiceSnap.exists()) {
             throw new Error('The payment draft, supplier liability, or invoice is missing.');
           }
-          if (paymentSnap.exists() || expenseSnap.data().status === 'approved') return;
-          if (expenseSnap.data().tenantId !== profile.tenantId || creditSnap.data().tenantId !== profile.tenantId) {
+          if (expenseSnap.data().tenantId !== profile.tenantId || creditSnap.data().tenantId !== profile.tenantId ||
+              invoiceSnap.data().tenantId !== profile.tenantId) {
             throw new Error('The payment does not belong to the active tenant.');
           }
+          if (paymentSnap.exists()) {
+            if (paymentSnap.data().tenantId !== profile.tenantId || paymentSnap.data().amount !== amt)
+              throw new Error('The supplier payment already has a different posted amount.');
+            return;
+          }
+          if (!['draft', 'pending', 'partial'].includes(String(expenseSnap.data().status).toLowerCase()) ||
+              expenseSnap.data().sourceRefId !== reviewingExpense.sourceRefId || expenseSnap.data().invoiceId !== reviewingExpense.invoiceId)
+            throw new Error('The draft changed. Review the current draft before paying.');
           const remainingBefore = Number(
             creditSnap.data().remainingCreditBalance ?? creditSnap.data().balance ?? creditSnap.data().amount ?? 0
           );
@@ -450,6 +450,7 @@ export const ManagementExpenseLedger: React.FC = () => {
           });
         });
 
+        setPaymentRefresh(value => value + 1);
         toast.success('Supplier credit payment issued and liability updated.');
         setIsReviewModalOpen(false);
         setReviewingExpense(null);
@@ -457,120 +458,91 @@ export const ManagementExpenseLedger: React.FC = () => {
         return;
       }
 
-      const batch = writeBatch(db);
-
-      // 1. Update the management_expenses record status to approved (Issued) and details
       const expRef = doc(db, 'management_expenses', reviewingExpense.id);
-      batch.update(expRef, {
-        amount: amt,
-        amount_ugx: amt,
-        category: reviewForm.category,
-        department: reviewForm.department,
-        description: reviewForm.description,
-        status: 'approved',
-        updatedAt: new Date().toISOString(),
-        issuedAt: new Date().toISOString(),
-        issuedBy: profile.fullName || profile.email || 'Authorized Finance',
-        excludeFromOpexRollup: reviewingExpense.excludeFromOpexRollup === true ||
-          reviewingExpense.source === 'cash_grn' || reviewingExpense.source === 'credit_payment' ||
-          reviewingExpense.sourceType === 'procurement' || reviewingExpense.sourceType === 'credit'
-      });
-
-      // 2. Add outgoing to petty_cash_ledger
-      const pcRef = doc(collection(db, 'petty_cash_ledger'));
-      stageManagementCashEntry(batch, pcRef.id, {
-        tenantId: profile.tenantId,
-        date: new Date().toISOString().split('T')[0],
-        amount: amt,
-        source: `Issued Auto-Log: ${reviewForm.category}`,
-        reference_number: `PC-${reviewingExpense.id.slice(-6).toUpperCase()}`,
-        type: 'outgoing',
-        logged_by: profile.fullName || profile.email || 'SYSTEM',
-        created_at: new Date().toISOString()
-      });
-
-      // 3. Handle specific sourceType logic (Procurement & Credits partial payments)
-      if (reviewingExpense.sourceType === 'procurement' && reviewingExpense.invoiceId) {
-        const invRef = doc(db, 'invoices', reviewingExpense.invoiceId);
-        
-        if (amt < origAmt) {
-          // It's a partial payment! Label invoice as 'partial' and note remaining in creditLedger
-          const remainingCredit = origAmt - amt;
-          batch.update(invRef, {
-            paymentStatus: 'partial',
-            creditBalance: remainingCredit,
-            updatedAt: new Date().toISOString()
-          });
-
-          // Create a creditLog / creditLedger document for the balance
-          const credRef = doc(collection(db, 'creditLedger'));
-          batch.set(credRef, {
-            tenantId: profile.tenantId,
-            invoiceId: reviewingExpense.invoiceId,
-            invoiceRef: reviewingExpense.invoiceRef || 'Manual-GRN',
-            originalCreditAmount: origAmt,
-            remainingCreditBalance: remainingCredit,
-            status: 'outstanding',
-            creditAccruedAt: new Date().toISOString(),
-            branchId: reviewingExpense.department || 'HQ',
-            branchName: reviewingExpense.department || 'HQ Branch',
-            supplierName: reviewingExpense.description ? reviewingExpense.description.split(' - ')[0] : 'Supplier',
-            createdAt: new Date().toISOString()
-          });
-          toast.info(`Invoice updated to partial payment. Credit of UGX ${remainingCredit.toLocaleString()} Accrued.`);
-        } else {
-          // Fully paid cash GRN
-          batch.update(invRef, {
-            paymentStatus: 'cash',
-            creditBalance: 0,
-            updatedAt: new Date().toISOString()
-          });
+      const postingId = 'expense_payment_' + expRef.id;
+      await runTransaction(db, async tx => {
+        const current = (await tx.get(expRef)).data();
+        if (!current || current.tenantId !== profile.tenantId) throw new Error('The payment draft is unavailable.');
+        if (current.cashOutflowPostingId === postingId) {
+          if (current.amount !== amt) throw new Error('The draft already has a different posted amount.');
+          return;
         }
-      } else if (reviewingExpense.sourceType === 'credit' && reviewingExpense.invoiceId && reviewingExpense.sourceRefId) {
-        // SourceType is credit. Update the credit record in creditLedger
-        const credRef = doc(db, 'creditLedger', reviewingExpense.sourceRefId);
-        
-        const remainingCredit = origAmt - amt;
-        if (remainingCredit > 0) {
-          // Partially paid credit! Update creditLedger remaining balance
-          batch.update(credRef, {
-            remainingCreditBalance: remainingCredit,
-            status: 'outstanding',
-            lastProcessedAt: new Date().toISOString()
-          });
+        if (!['draft', 'pending', 'partial'].includes(String(current.status).toLowerCase()) ||
+            current.source === 'procurement_cash_grn' || current.invoiceId !== reviewingExpense.invoiceId ||
+            current.sourceType !== reviewingExpense.sourceType ||
+            Number(current.originalAmount || current.amount || current.amount_ugx) !== origAmt)
+          throw new Error('The draft changed. Review the current draft before paying.');
 
-          // Update invoices ledger to partial
-          const invRef = doc(db, 'invoices', reviewingExpense.invoiceId);
-          batch.update(invRef, {
-            paymentStatus: 'partial',
-            creditBalance: remainingCredit,
-            updatedAt: new Date().toISOString()
-          });
-        } else {
-          // Fully paid credit!
-          batch.update(credRef, {
-            remainingCreditBalance: 0,
-            status: 'paid',
-            lastProcessedAt: new Date().toISOString()
-          });
+        tx.update(expRef, {
+          amount: amt,
+          amount_ugx: amt,
+          category: reviewForm.category,
+          department: reviewForm.department,
+          description: reviewForm.description,
+          status: 'approved', cashOutflowPostingId: postingId,
+          updatedAt: new Date().toISOString(),
+          issuedAt: new Date().toISOString(),
+          issuedBy: profile.fullName || profile.email || 'Authorized Finance',
+          excludeFromOpexRollup: reviewingExpense.excludeFromOpexRollup === true ||
+            reviewingExpense.source === 'cash_grn' || reviewingExpense.source === 'credit_payment' ||
+            reviewingExpense.sourceType === 'procurement' || reviewingExpense.sourceType === 'credit'
+        });
 
+        stageManagementCashEntry(tx, postingId, {
+          tenantId: profile.tenantId, date: kampalaBusinessDate(), amount: amt, type: 'outgoing',
+          source: reviewForm.description || 'Management expense payment', expenseCategory: reviewForm.category,
+          reference_number: postingId, externalExpenseCollection: 'management_expenses', externalExpenseId: expRef.id,
+        }, db, MANAGEMENT_CASH_ACCOUNT, profile.uid);
+
+        // Preserve the legacy procurement invoice settlement path.
+        if (reviewingExpense.sourceType === 'procurement' && reviewingExpense.invoiceId) {
           const invRef = doc(db, 'invoices', reviewingExpense.invoiceId);
-          batch.update(invRef, {
-            paymentStatus: 'cash',
-            creditBalance: 0,
-            updatedAt: new Date().toISOString()
-          });
+
+          if (amt < origAmt) {
+            // It's a partial payment! Label invoice as 'partial' and note remaining in creditLedger
+            const remainingCredit = origAmt - amt;
+            tx.update(invRef, {
+              paymentStatus: 'partial',
+              creditBalance: remainingCredit,
+              updatedAt: new Date().toISOString()
+            });
+
+            // Create a creditLog / creditLedger document for the balance
+            const credRef = doc(collection(db, 'creditLedger'));
+            tx.set(credRef, {
+              tenantId: profile.tenantId,
+              invoiceId: reviewingExpense.invoiceId,
+              invoiceRef: reviewingExpense.invoiceRef || 'Manual-GRN',
+              originalCreditAmount: origAmt,
+              remainingCreditBalance: remainingCredit,
+              status: 'outstanding',
+              creditAccruedAt: new Date().toISOString(),
+              branchId: reviewingExpense.department || 'HQ',
+              branchName: reviewingExpense.department || 'HQ Branch',
+              supplierName: reviewingExpense.description ? reviewingExpense.description.split(' - ')[0] : 'Supplier',
+              createdAt: new Date().toISOString()
+            });
+          } else {
+            // Fully paid cash GRN
+            tx.update(invRef, {
+              paymentStatus: 'cash',
+              creditBalance: 0,
+              updatedAt: new Date().toISOString()
+            });
+          }
         }
-      }
-
-      await batch.commit();
+      });
+      setPaymentRefresh(value => value + 1);
       toast.success("Draft reviewed, confirmed, and issued successfully!");
       setIsReviewModalOpen(false);
       setReviewingExpense(null);
       fetchData(); // refresh
     } catch (err) {
       console.error(err);
-      toast.error("Failed to issue expense draft");
+      toast.error(err instanceof Error ? err.message : "Failed to issue expense draft");
+    } finally {
+      postingLock.current = false;
+      setPosting(false);
     }
   };
 
@@ -632,7 +604,7 @@ export const ManagementExpenseLedger: React.FC = () => {
     // Insert Total row
     const totalIssued = filteredExpenses.reduce((sum,e)=>sum+(e.source==='procurement_cash_grn'?Number(e.paidAmountUGX||0):e.status==='approved'?e.amount:0),0);
     exportData.push({
-      'Date': 'TOTAL ISSUED EXPENSES',
+      'Date': 'TOTAL RECORDED AS ISSUED',
       'Category/Type': '',
       'Department/Branch': '',
       'Description': '',
@@ -648,8 +620,8 @@ export const ManagementExpenseLedger: React.FC = () => {
     const formattedTo = dateRange.end.split('-').reverse().join('-');
     await exportRecordsToExcel(
       exportData,
-      'Management Cash Outflows',
-      `ManagementCashOutflows_Report_${formattedFrom}_to_${formattedTo}.xlsx`
+      'Management Expense Register',
+      `ManagementExpenseRegister_${formattedFrom}_to_${formattedTo}.xlsx`
     );
     toast.success("Excel report exported successfully!");
   };
@@ -671,7 +643,7 @@ export const ManagementExpenseLedger: React.FC = () => {
             </div>
             <div>
               <p className="text-[10px] text-zinc-400 font-black uppercase tracking-wider">Petty Cash Balance</p>
-              <p className="text-base font-black font-mono text-zinc-950">UGX {pettyCashBalance.toLocaleString()}</p>
+              <p className="text-base font-black font-mono text-zinc-950">{pettyCashBalance === null ? 'Unreconciled' : 'UGX ' + pettyCashBalance.toLocaleString()}</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -685,12 +657,14 @@ export const ManagementExpenseLedger: React.FC = () => {
               onClick={handleExportExcel}
               className="flex min-h-11 items-center gap-1.5 px-4 py-2 text-xs font-bold bg-[#1A5E38] hover:bg-[#124227] text-white rounded-xl shadow-sm transition-all"
             >
-              <Download size={14} /> Download Report
+              <Download size={14} /> Download expense register
             </button>
           </div>
         </div>
       </div>
 
+      <CashOutflowReport management refresh={paymentRefresh} />
+      <h3 className="text-lg font-bold">Expense and approval register</h3>
       {/* Advanced Filter Box */}
       <div className="bg-zinc-50 border border-zinc-200 p-6 rounded-[24px] shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200/60 pb-3">
@@ -987,6 +961,13 @@ export const ManagementExpenseLedger: React.FC = () => {
                   />
                 </div>
 
+                <label className="grid gap-1 text-sm font-semibold">
+                  Cash voucher or receipt reference
+                  <input type="text" required minLength={3} maxLength={100} value={manualForm.voucher}
+                    onChange={e => setManualForm({ ...manualForm, voucher: e.target.value })}
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3" />
+                </label>
+                <p className="text-xs text-zinc-600">Record the payment after the recipient has been paid. Reuse the voucher reference if you retry.</p>
                 <div className="flex gap-3 pt-4">
                   <button
                     type="button"
@@ -997,9 +978,10 @@ export const ManagementExpenseLedger: React.FC = () => {
                   </button>
                   <button
                     type="submit"
+                    disabled={posting}
                     className="flex-1 py-3 bg-zinc-950 hover:bg-zinc-850 text-white rounded-xl text-xs font-bold uppercase tracking-widest"
                   >
-                    Confirm & Disburse
+                    Record external payment
                   </button>
                 </div>
               </form>
@@ -1008,7 +990,7 @@ export const ManagementExpenseLedger: React.FC = () => {
         </div>
       )}
 
-      {isReviewModalOpen && reviewingExpense?.source==='procurement_cash_grn'&&<div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3"><div className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-lg min-w-0 flex-col overflow-hidden rounded-2xl bg-white text-zinc-900 shadow-2xl"><div className="flex shrink-0 items-center justify-between border-b border-zinc-200 p-4"><h3 className="font-bold text-zinc-950">Supplier payment</h3><button aria-label="Close supplier payment" onClick={()=>setIsReviewModalOpen(false)} className="min-h-11 min-w-11 rounded-xl border border-zinc-300 bg-white text-zinc-900"><X size={20} className="mx-auto"/></button></div><div className="min-h-0 overflow-y-auto overscroll-contain p-4"><SupplierInvoicePaymentPanel draftId={reviewingExpense.id} onSettled={()=>{setIsReviewModalOpen(false);setReviewingExpense(null);toast.success('Supplier payment recorded.');void fetchData();}}/></div></div></div>}
+      {isReviewModalOpen && reviewingExpense?.source==='procurement_cash_grn'&&<div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3"><div className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-lg min-w-0 flex-col overflow-hidden rounded-2xl bg-white text-zinc-900 shadow-2xl"><div className="flex shrink-0 items-center justify-between border-b border-zinc-200 p-4"><h3 className="font-bold text-zinc-950">Supplier payment</h3><button aria-label="Close supplier payment" onClick={()=>setIsReviewModalOpen(false)} className="min-h-11 min-w-11 rounded-xl border border-zinc-300 bg-white text-zinc-900"><X size={20} className="mx-auto"/></button></div><div className="min-h-0 overflow-y-auto overscroll-contain p-4"><SupplierInvoicePaymentPanel draftId={reviewingExpense.id} onSettled={()=>{setIsReviewModalOpen(false);setReviewingExpense(null);toast.success('Supplier payment recorded.');setPaymentRefresh(value=>value+1);void fetchData();}}/></div></div></div>}
       {/* Review Draft Modal */}
       {isReviewModalOpen && reviewingExpense && reviewingExpense.source !== 'procurement_cash_grn' && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -1118,10 +1100,11 @@ export const ManagementExpenseLedger: React.FC = () => {
                   </button>
                   <button
                     type="button"
+                    disabled={posting}
                     onClick={handleConfirmAndIssue}
                     className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-1"
                   >
-                    <Check size={14} /> Confirm & Issue
+                    <Check size={14} /> Record external payment
                   </button>
                 </div>
               </div>

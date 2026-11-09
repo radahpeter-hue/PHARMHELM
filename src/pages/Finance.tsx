@@ -1,3 +1,4 @@
+import { approveBranchExpense, postBranchExpensePayment } from '../services/branchExpensePayment';
 import { EodLegacyShiftReview } from '../components/finance/EodLegacyShiftReview';
 import { withVerifiedLegacyShifts } from '../utils/eodLegacyEvidence';
 import type { LegacyShiftEvidence } from '../services/eodLegacyShiftService';
@@ -653,6 +654,9 @@ const VarianceRow: React.FC<{ label: string, declared: number, expected: number 
 const BranchExpenseLog: React.FC = () => {
   const { profile, activeBranchId } = useAuth();
   const isFinanceHead = hasAnyRole(profile, ['Finance Head']);
+  const canPayExpense = isFinanceHead || hasAnyRole(profile, ['Branch Manager', 'branch manager']);
+  const [expenseAction, setExpenseAction] = useState<{ expense: BranchExpense; action: 'approve' | 'pay' } | null>(null);
+  const [expenseActionBusy, setExpenseActionBusy] = useState(false);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [recipientType, setRecipientType] = useState<'external' | 'staff'>('external');
   const [selectedStaffId, setSelectedStaffId] = useState('');
@@ -692,6 +696,10 @@ const BranchExpenseLog: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile?.tenantId || !activeBranchId) return;
+    if (!Number.isSafeInteger(formData.amount) || formData.amount <= 0) {
+      toast.error('Enter a positive whole UGX amount.');
+      return;
+    }
 
     if (!canUseBranchExpenseCategory(formData.category, editingExpense?.category)) {
       toast.error('Salaries must be handled through payroll.');
@@ -729,6 +737,7 @@ const BranchExpenseLog: React.FC = () => {
           payment_method: 'Petty Cash',
           logged_by: profile.uid,
           status: 'Pending',
+          cashPaymentVersion: 1,
           created_at: new Date().toISOString()
         });
         toast.success('Expense logged successfully');
@@ -759,6 +768,23 @@ const BranchExpenseLog: React.FC = () => {
       date: exp.expense_date
     });
     setIsAdding(true);
+  };
+
+  const confirmExpenseAction = async () => {
+    if (!expenseAction || expenseActionBusy || !profile?.tenantId || !activeBranchId ||
+        expenseAction.expense.tenantId !== profile.tenantId || expenseAction.expense.branch_id !== activeBranchId) return;
+    const { expense, action } = expenseAction;
+    setExpenseActionBusy(true);
+    try {
+      const input = { tenantId: profile.tenantId, branchId: activeBranchId, expenseId: expense.id, actorId: profile.uid, amount: expense.amount_ugx };
+      await (action === 'approve' ? approveBranchExpense(input) : postBranchExpensePayment(input));
+      toast.success(action === 'approve' ? 'Expense approved and awaiting payment.' : 'Branch Petty Cash payment recorded.');
+      setExpenseAction(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to save the expense action.');
+    } finally {
+      setExpenseActionBusy(false);
+    }
   };
 
   return (
@@ -799,6 +825,16 @@ const BranchExpenseLog: React.FC = () => {
         </div>
       </div>
 
+      {expenseAction && <div role="alert" className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4">
+        <p className="font-semibold">{expenseAction.action === 'approve' ? 'Approve' : 'Record external payment of'} UGX {expenseAction.expense.amount_ugx.toLocaleString()} for {expenseAction.expense.issued_to || expenseAction.expense.description}?</p>
+        <p className="text-sm">{expenseAction.action === 'approve' ? 'The expense will await payment.' : 'Confirm the recipient has been paid from this branch’s Petty Cash.'}</p>
+        <div className="flex flex-wrap gap-3">
+          <button type="button" disabled={expenseActionBusy} className="rounded-lg border bg-white px-3 py-2" onClick={() => setExpenseAction(null)}>Cancel</button>
+          <button type="button" disabled={expenseActionBusy} className="rounded-lg bg-emerald-800 px-3 py-2 text-white" onClick={() => void confirmExpenseAction()}>
+            {expenseActionBusy ? 'Saving…' : expenseAction.action === 'approve' ? 'Confirm approval' : 'Confirm payment'}
+          </button>
+        </div>
+      </div>}
       {isAdding && (
         <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm animate-in fade-in slide-in-from-top-4">
           <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
@@ -928,21 +964,26 @@ const BranchExpenseLog: React.FC = () => {
                 <td className="px-6 py-4">
                   <span className={cn(
                     "px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider",
-                    expense.status === 'approved' ? "bg-emerald-50 text-emerald-600" : 
+                    ['approved', 'paid'].includes(expense.status) ? "bg-emerald-50 text-emerald-600" :
                     expense.status === 'rejected' ? "bg-red-50 text-red-600" : "bg-amber-50 text-amber-600"
                   )}>
                     {expense.status}
                   </span>
                 </td>
                 <td className="px-6 py-4 text-right">
-                  {isFinanceHead && (
+                  {isFinanceHead && (!expense.cashPaymentVersion || expense.status.toLowerCase() === 'pending') && (
                     <button 
                       onClick={() => handleEdit(expense)}
+                      aria-label="Edit expense"
                       className="p-2 text-zinc-400 hover:text-zinc-900 transition-colors"
                     >
                       <Edit2 size={16} />
                     </button>
                   )}
+                  {expense.cashPaymentVersion === 1 && isFinanceHead && expense.status.toLowerCase() === 'pending' &&
+                    <button type="button" className="min-h-10 px-2 font-semibold text-emerald-800" onClick={() => setExpenseAction({ expense, action: 'approve' })}>Approve</button>}
+                  {expense.cashPaymentVersion === 1 && canPayExpense && expense.status === 'approved' &&
+                    <button type="button" className="min-h-10 px-2 font-semibold text-emerald-800" onClick={() => setExpenseAction({ expense, action: 'pay' })}>Record payment</button>}
                 </td>
               </tr>
             ))}
@@ -1196,6 +1237,7 @@ const BranchPettyCash: React.FC = () => {
     .reduce((sum, i) => sum + i.amount, 0);
 
   const totalPettyCashSpent = expenses
+    .filter(expense => expense.cashPaymentVersion !== 1)
     .reduce((sum, e) => sum + e.amount_ugx, 0);
 
   const totalPettyCash = totalPettyCashReceived - totalPettyCashSpent;
@@ -1207,9 +1249,9 @@ const BranchPettyCash: React.FC = () => {
           <div className="absolute top-0 right-0 p-4 opacity-10">
             <Wallet size={80} />
           </div>
-          <p className="text-xs font-bold opacity-60 uppercase tracking-widest mb-1">Total Branch Petty Cash</p>
+          <p className="text-xs font-bold opacity-60 uppercase tracking-widest mb-1">Legacy branch cash issue balance</p>
           <h3 className="text-3xl font-black">UGX {(totalPettyCash || 0).toLocaleString()}</h3>
-          <p className="text-[10px] mt-2 font-bold bg-white/20 inline-block px-2 py-1 rounded">Available for Operations</p>
+          <p className="text-[10px] mt-2 font-bold bg-white/20 inline-block px-2 py-1 rounded">For new expense payments, use the reconciled branch Petty Cash balance in Treasury.</p>
         </div>
         <button 
           onClick={() => setIsAdding(true)}

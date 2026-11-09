@@ -588,6 +588,38 @@ service cloud.firestore {
         && after.lastPostingId == (incoming ? transfer.destinationMovement.id : transfer.sourceMovement.id)
         && after.balanceUGX == before.balanceUGX + (incoming ? transfer.principalUGX : -transfer.principalUGX - transfer.chargeUGX);
     }
+    function canPayBranchExpense(branchId, tenantId) {
+      let actor = getUserData();
+      let roles = actor.get('secondaryRoles', []);
+      return actor.tenantId == tenantId
+        && (actor.role == 'Finance Head' || 'Finance Head' in roles
+          || ((actor.role in ['Branch Manager', 'branch manager'] || roles.hasAny(['Branch Manager', 'branch manager']))
+            && (branchId in actor.get('assigned_branches', []) || branchId == actor.get('branch_id', '')
+              || branchId == actor.get('default_branch_id', ''))));
+    }
+    function linkedExternalExpense(id, data, account) {
+      let collectionName = data.externalExpenseCollection;
+      let sourceId = data.externalExpenseId;
+      let path = /databases/$(database)/documents/$(collectionName)/$(sourceId);
+      let expense = getAfter(path).data;
+      return data.type == 'outgoing' && account.initialized && account.currency == 'UGX'
+        && expense.tenantId == data.tenantId && data.tenantId == account.tenantId
+        && (collectionName == 'branch_expenses'
+          ? id == 'expense_payment_' + sourceId && expense.cashPaymentVersion == 1
+            && expense.status == 'paid' && expense.cashPaidAt == request.time
+            && expense.cashOutflowPostingId == id && expense.cashPaidBy == request.auth.uid
+            && expense.amount_ugx == data.amount && expense.category == data.expenseCategory
+            && expense.branch_id == data.branchId && account.accountId == 'system_petty_cash_' + expense.branch_id
+            && account.scope.kind == 'branch' && account.scope.branchId == expense.branch_id
+            && get(path).data.status == 'approved'
+          : account.accountId == 'management_petty_cash' &&
+            (collectionName == 'management_expenses'
+              ? isFinance() && id == 'expense_payment_' + sourceId && expense.status == 'approved'
+                && expense.cashOutflowPostingId == id && expense.amount == data.amount && expense.category == data.expenseCategory
+              : collectionName in ['fuel_logs','maintenance_logs','traffic_fine_logs','logistics_expenses']
+                && id == 'logistics_payment_' + sourceId && !exists(path)
+                && expense.get('cost_ugx', expense.get('fine_amount_ugx', 0)) == data.amount));
+    }
     function validManagementMovement(id, data, kind) {
       let accountPath = /databases/$(database)/documents/finance_payment_accounts/$(data.accountDocumentId);
       let before = get(accountPath).data;
@@ -597,6 +629,7 @@ service cloud.firestore {
         && data.type in ['incoming','deposit','topup','outgoing','withdrawal']
         && data.accountDeltaUGX == (data.type in ['incoming','deposit','topup'] ? data.amount : -data.amount)
         && before.kind == kind
+        && (!data.keys().hasAny(['externalExpenseCollection','externalExpenseId']) || linkedExternalExpense(id, data, before))
         && (id.matches('^pt_.*') || data.keys().hasAny(['portfolioTransferId','movementClass'])
           ? linkedPortfolioTransfer(id, data, before, after)
           : (after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX));
@@ -613,7 +646,10 @@ service cloud.firestore {
       let transferDebit = movement.get('movementClass', '') == 'transfer_out';
       return isTenantMember(before.tenantId)
         && activePortfolioAccount(before)
-        && ((movement.get('eodChannel', '') != '' && validBranchEodMovement(after.lastPostingId, movement)) || isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash()))
+        && (movement.get('externalExpenseCollection', '') == 'branch_expenses'
+          ? before.accountId == 'system_petty_cash_' + before.scope.branchId
+          : ((movement.get('eodChannel', '') != '' && validBranchEodMovement(after.lastPostingId, movement))
+            || isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash())))
         // Every ledger create requires this paired update; authorize cash credits once here.
         && (movement.accountDeltaUGX <= 0 || before.accountId != 'management_petty_cash' || isFinance() || isHR())
         && after.diff(before).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
@@ -1397,12 +1433,43 @@ service cloud.firestore {
     }
 
     match /branch_expenses/{expenseId} {
+      function expenseBranchBelongs(data) {
+        return get(/databases/$(database)/documents/branches/$(data.branch_id)).data.tenantId == data.tenantId;
+      }
+      function validBranchExpenseChange(before, after) {
+        let changed = after.diff(before).affectedKeys();
+        let postingId = 'expense_payment_' + expenseId;
+        let movementPath = managementMovementPath('petty_cash', postingId);
+        return before.cashPaymentVersion == 1 && after.cashPaymentVersion == 1
+          && (before.status in ['Pending','pending'] && hasAnyRole(['Finance Head'])
+            && ((after.status == before.status && after.amount_ugx is int && after.amount_ugx > 0
+                && changed.hasOnly(['expense_date','category','description','issued_to','recipient_type','recipient_staff_id','recipient_staff_code','amount_ugx','updatedAt']))
+              || (after.status == 'approved' && after.cashApprovedBy == request.auth.uid && after.cashApprovedAt == request.time
+                && changed.hasOnly(['status','cashApprovedBy','cashApprovedAt'])))
+            || (before.status == 'approved' && canPayBranchExpense(before.branch_id, before.tenantId)
+              && after.status == 'paid' && after.cashOutflowPostingId == postingId
+              && after.cashPaidBy == request.auth.uid && after.cashPaidAt == request.time
+              && changed.hasOnly(['status','cashOutflowPostingId','cashPaidBy','cashPaidAt'])
+              && !exists(movementPath) && getAfter(movementPath).data.externalExpenseCollection == 'branch_expenses'
+              && getAfter(movementPath).data.externalExpenseId == expenseId));
+      }
       allow get: if isAuthenticated() && ((resource == null && isPOSOperator()) || canReadPosFinancial());
       allow read: if isTenantMember(resource.data.tenantId) && canViewBranchFinance();
-      allow create: if atomicWelfareRecord(expenseId, 'branch_expenses');
-      allow create: if isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
-      allow update: if isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance();
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+      allow create: if !request.resource.data.keys().hasAny(['cashPaymentVersion']) && atomicWelfareRecord(expenseId, 'branch_expenses');
+      allow create: if isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance()
+        && !request.resource.data.keys().hasAny(['cashOutflowPostingId','cashPaidBy','cashPaidAt','cashApprovedBy','cashApprovedAt'])
+        && (request.resource.data.get('cashPaymentVersion', 0) == 0
+          || (request.resource.data.cashPaymentVersion == 1 && request.resource.data.status in ['Pending','pending']
+            && request.resource.data.amount_ugx is int && request.resource.data.amount_ugx > 0
+            && request.resource.data.logged_by == request.auth.uid && expenseBranchBelongs(request.resource.data)
+            && (isAssignedToBranch(request.resource.data.branch_id) || isFinance())));
+      allow update: if isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
+        && (resource.data.get('cashPaymentVersion', 0) == 0
+          ? canOperateBranchFinance() && !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['cashPaymentVersion','cashOutflowPostingId','cashPaidBy','cashPaidAt','cashApprovedBy','cashApprovedAt'])
+          : expenseBranchBelongs(resource.data) && validBranchExpenseChange(resource.data, request.resource.data));
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId)
+        && resource.data.get('cashPaymentVersion', 0) == 0;
     }
 
     match /cash_requisitions/{requisitionId} {
@@ -1471,6 +1538,14 @@ service cloud.firestore {
     }
 
     match /management_expenses/{expenseId} {
+      function freshManagementExpensePayment(data) {
+        let postingId = 'expense_payment_' + expenseId;
+        let path = managementMovementPath('petty_cash', postingId);
+        let movement = getAfter(path).data;
+        return isFinance() && data.cashOutflowPostingId == postingId && !exists(path)
+          && movement.externalExpenseCollection == 'management_expenses' && movement.externalExpenseId == expenseId;
+      }
+      allow get: if isFinance() && resource == null && expenseId.matches('^mcpay_[A-Za-z0-9]+$');
       // Procurement can only read deterministic GRN cash drafts for atomic
       // collision checks. Ordinary management expenses remain Finance/HR only.
       allow get: if isProcurement()
@@ -1483,6 +1558,7 @@ service cloud.firestore {
         && isTenantMember(request.resource.data.tenantId)
         && expenseId == 'management_payment_draft_' + request.resource.data.grnId
         && request.resource.data.source == 'procurement_cash_grn'
+        && !request.resource.data.keys().hasAny(['cashOutflowPostingId'])
         && request.resource.data.status == 'draft'
         && request.resource.data.paymentStatus == 'pending_payment'
         && request.resource.data.excludeFromOpexRollup
@@ -1498,8 +1574,11 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.tenantId == request.resource.data.tenantId
         && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.invoiceValue == request.resource.data.amount
         && getAfter(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.paymentStatus == 'Pending Payment';
-      allow create: if isTenantMember(request.resource.data.tenantId) && (isFinance() || isHR());
+      allow create: if isTenantMember(request.resource.data.tenantId) && (isFinance() || isHR())
+        && (!request.resource.data.keys().hasAny(['cashOutflowPostingId']) || freshManagementExpensePayment(request.resource.data));
       allow update: if isFinance() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
+        && !resource.data.keys().hasAny(['cashOutflowPostingId'])
+        && (!request.resource.data.keys().hasAny(['cashOutflowPostingId']) || freshManagementExpensePayment(request.resource.data))
         && (resource.data.get('source','') != 'procurement_cash_grn' || (
           linkedSupplierPayment(request.resource.data)
           && getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.draftId == expenseId
@@ -1507,7 +1586,7 @@ service cloud.firestore {
           && request.resource.data.paidAmountUGX == getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.previouslyPaidUGX + getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.amountUGX
           && request.resource.data.balanceUGX == getAfter(supplierPaymentPath(request.resource.data.lastPaymentId)).data.remainingUGX
           && request.resource.data.excludeFromOpexRollup));
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId) && !resource.data.keys().hasAny(['cashOutflowPostingId']);
     }
 
     match /campaigns/{campaignId} {
