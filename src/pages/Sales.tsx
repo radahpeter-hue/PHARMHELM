@@ -1514,7 +1514,7 @@ const Sales: React.FC = () => {
       )}
 
       {view === 'pos' && canProcessSales && (
-        <div className="flex-1 flex flex-col gap-6 overflow-visible lg:overflow-hidden animate-fade-in">
+        <div className="flex-1 flex flex-col gap-4 lg:gap-5 overflow-visible lg:overflow-hidden animate-fade-in">
           {/* Top Bar: Context Selection & Receipt Ledger Toggle */}
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 w-full bg-zinc-50/50 p-4 rounded-3xl border border-zinc-200/60 shadow-sm">
             <div className="flex flex-col gap-1">
@@ -1557,9 +1557,9 @@ const Sales: React.FC = () => {
           </div>
 
           {/* Interactive POS Grid */}
-          <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-visible lg:overflow-hidden min-h-0">
-            {/* Left Column: Massive Active Basket Area */}
-            <div className="lg:col-span-8 flex flex-col bg-white rounded-3xl border border-zinc-200/80 shadow-xl shadow-zinc-100/30 overflow-visible lg:overflow-hidden min-h-0">
+          <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-5 overflow-visible lg:overflow-hidden min-h-0">
+            {/* Left Column: Active Basket Area (58% of workspace) */}
+            <div className="lg:col-span-7 flex flex-col bg-white rounded-3xl border border-zinc-200/80 shadow-xl shadow-zinc-100/30 overflow-visible lg:overflow-hidden min-h-0">
               {/* Basket Card Header */}
               <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/40">
                 <div className="flex items-center gap-3">
@@ -1870,7 +1870,8 @@ const Sales: React.FC = () => {
               </div>
             </div>
 
-            <div className="lg:col-span-4 flex flex-col gap-6 overflow-visible lg:overflow-hidden min-h-0">
+            {/* Right Column: Operational Panel (42% of workspace) */}
+            <div className="lg:col-span-5 flex flex-col gap-4 lg:gap-5 overflow-visible lg:overflow-hidden min-h-0">
               <div className="bg-white p-5 rounded-3xl border border-zinc-200/90 shadow-lg shadow-zinc-100/10 space-y-4 relative shrink-0 lg:max-h-[48%] lg:overflow-y-auto custom-scrollbar">
                 <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
                   <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Patient Details</span>
@@ -2138,7 +2139,7 @@ const Sales: React.FC = () => {
                   <h3 className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Available Items</h3>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar min-h-[250px] lg:min-h-0">
+                <div className="flex-1 overflow-y-auto p-3 space-y-2.5 custom-scrollbar min-h-[250px] lg:min-h-0">
                   {filteredItems.map(item => {
                     const isProduct = activeTab === 'products';
                     const product = isProduct ? item as Product : null;
@@ -2170,63 +2171,152 @@ const Sales: React.FC = () => {
                           if ((e.key === 'Enter' || e.key === ' ') && (!isProduct || defaultHasStock)) addToCart(item, defaultTier?.code);
                         }}
                         className={cn(
-                          "w-full flex items-center justify-between gap-3 p-3 rounded-2xl hover:bg-emerald-50/50 hover:border-emerald-100 border border-transparent group transition-all text-left duration-150 select-none cursor-pointer",
-                          isProduct && !defaultHasStock && "opacity-40"
+                          "w-full p-3.5 rounded-2xl border transition-all text-left duration-150 select-none cursor-pointer flex flex-col gap-2.5",
+                          isProduct && !defaultHasStock
+                            ? "bg-zinc-50/70 border-zinc-200/80 opacity-60"
+                            : "bg-white hover:bg-emerald-50/30 border-zinc-200/80 hover:border-emerald-200 shadow-xs hover:shadow-sm group"
                         )}
                       >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className={cn(
-                            "h-10 w-10 rounded-xl flex items-center justify-center shrink-0 transition-all",
-                            isProduct ? "bg-slate-100 text-slate-600 group-hover:bg-emerald-500 group-hover:text-white" : "bg-blue-150/40 text-blue-600 group-hover:bg-blue-500 group-hover:text-white"
-                          )}>
-                            {isProduct ? <Package size={16} strokeWidth={2.5} /> : <ShieldCheck size={16} strokeWidth={2.5} />}
+                        {/* Row 1: Product identity & Primary Action */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-extrabold text-zinc-900 text-xs sm:text-sm uppercase tracking-tight leading-snug group-hover:text-emerald-950 transition-colors break-words">
+                              {item.name}
+                            </h4>
+                            {isProduct && product?.genericName && (
+                              <p className="text-[10px] text-zinc-400 font-semibold uppercase tracking-tight mt-0.5 break-words">
+                                {product.genericName}
+                              </p>
+                            )}
+                            {!isProduct && (
+                              <span className="inline-block mt-0.5 bg-blue-50 text-blue-700 border border-blue-150 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider">
+                                Clinical Fee Service
+                              </span>
+                            )}
                           </div>
 
-                          <div className="min-w-0">
-                            <p className="font-extrabold text-zinc-900 text-xs truncate uppercase tracking-tight group-hover:text-emerald-950 transition-colors">{item.name}</p>
-                            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                              {isProduct ? (
-                                <>
-                                  <span className={cn("px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider block border", totalBaseStock > 50 ? "bg-emerald-50 text-emerald-600 border-emerald-100" : totalBaseStock > 0 ? "bg-amber-50 text-amber-600 border-amber-100" : "bg-rose-50 text-rose-600 border-rose-100")}>{totalBaseStock} {product?.baseUnit || product?.unit || 'base units'}</span>
-                                  <span className="text-[8px] font-black uppercase text-emerald-700">Default: {defaultTier?.label || 'Unit'}</span>
-                                </>
+                          <div className="text-right shrink-0">
+                            {isProduct ? (
+                              !defaultHasStock ? (
+                                <span className="px-2 py-0.5 rounded-md bg-rose-50 border border-rose-200 text-rose-600 text-[9px] font-black uppercase tracking-widest block">
+                                  OUT
+                                </span>
                               ) : (
-                                <span className="bg-blue-50 text-blue-650 border border-blue-100 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider">Fee Service</span>
-                              )}
-                              <p className="text-[9px] text-zinc-400 truncate uppercase tracking-tight max-w-[120px]">{isProduct ? (product?.genericName || '') : 'Clinical'}</p>
-                            </div>
+                                <span className="text-[10px] font-black text-emerald-600 group-hover:text-emerald-700 uppercase tracking-widest flex items-center justify-end gap-1">
+                                  ADD {isMultiTier && defaultTier?.label ? defaultTier.label.toUpperCase() : ''} +
+                                </span>
+                              )
+                            ) : (
+                              <span className="text-[10px] font-black text-blue-600 group-hover:text-blue-700 uppercase tracking-widest flex items-center justify-end gap-1">
+                                ADD SERVICE +
+                              </span>
+                            )}
                           </div>
                         </div>
 
-                        <div className="text-right shrink-0 min-w-[118px]">
-                          <p className="font-black text-zinc-850 text-xs tracking-tight leading-none">UGX {(price || 0).toLocaleString()} / {isProduct ? (defaultTier?.label || 'Unit').toLowerCase() : 'service'}</p>
-                          {isProduct && !defaultHasStock ? (
-                            <span className="text-[9px] font-black text-rose-500 uppercase tracking-widest mt-1 block">OUT</span>
+                        {/* Row 2: Available Stock & Pricing */}
+                        <div className="flex items-center justify-between gap-2 flex-wrap text-xs pt-0.5">
+                          {isProduct ? (
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[11px] font-medium text-zinc-500">
+                                Available:{' '}
+                                <span className={cn(
+                                  "font-bold font-mono",
+                                  totalBaseStock > 0 ? "text-emerald-700" : "text-rose-600"
+                                )}>
+                                  {totalBaseStock.toLocaleString()} {product?.baseUnit || product?.unit || 'base units'}
+                                </span>
+                              </span>
+
+                              {totalBaseStock <= 0 ? (
+                                <span className="text-[9px] font-black uppercase text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded">
+                                  OUT OF STOCK
+                                </span>
+                              ) : defaultTier && isMultiTier ? (
+                                <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider">
+                                  Default: <span className="text-emerald-700 font-extrabold">{defaultTier.label}</span>
+                                </span>
+                              ) : null}
+                            </div>
                           ) : (
-                            <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest mt-1 block">ADD {isMultiTier ? defaultTier?.label : ''} +</span>
+                            <span className="text-[11px] font-medium text-zinc-500">
+                              Service Fee:{' '}
+                              <span className="font-bold text-zinc-900 font-mono">
+                                UGX {(service?.defaultFee || 0).toLocaleString()}
+                              </span>
+                            </span>
                           )}
-                          {isProduct && isMultiTier && resolution.tiers.length > 1 && (
-                            <div className="mt-2 flex flex-wrap justify-end gap-1">
-                              {resolution.tiers.filter(tier => tier.code !== defaultTier?.code).map(tier => {
+
+                          <div className="text-right">
+                            <p className="font-black text-zinc-850 text-xs tracking-tight leading-none">
+                              UGX {(price || 0).toLocaleString()} / {isProduct ? (defaultTier?.label || 'Unit').toLowerCase() : 'service'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Row 3: Configured Selling Tiers */}
+                        {isProduct && isMultiTier && resolution && resolution.tiers.length > 0 && (
+                          <div className="space-y-1.5 pt-1.5 border-t border-zinc-100">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] font-extrabold uppercase tracking-wider text-zinc-400">
+                                Selling Options:
+                              </span>
+                              <span className="text-[9px] text-zinc-400">
+                                Click tier to select
+                              </span>
+                            </div>
+
+                            <div className="flex flex-wrap gap-1.5">
+                              {resolution.tiers.map(tier => {
+                                const tierPrice = resolveSellingTierPrice(tier, baseSellingPrice);
                                 const hasTierStock = totalBaseStock >= tier.multiplier;
+                                const isDefault = tier.code === defaultTier?.code;
+
                                 return (
                                   <button
                                     type="button"
                                     key={tier.code}
                                     disabled={!hasTierStock}
-                                    onClick={event => {
+                                    onClick={(event) => {
                                       event.stopPropagation();
                                       if (hasTierStock) addToCart(item, tier.code);
                                     }}
-                                    className="px-2 py-1 rounded-lg border border-emerald-100 bg-white text-[8px] font-black uppercase text-emerald-700 disabled:opacity-30"
+                                    title={
+                                      !hasTierStock
+                                        ? `Insufficient stock for 1 ${tier.label} (${tier.multiplier} base units required)`
+                                        : `Add 1 ${tier.label} to basket (UGX ${tierPrice.toLocaleString()})`
+                                    }
+                                    className={cn(
+                                      "px-2.5 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-1.5 border select-none",
+                                      isDefault
+                                        ? "bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-500/20 hover:bg-emerald-100/80 hover:border-emerald-400"
+                                        : "bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100 hover:text-zinc-900 hover:border-zinc-300",
+                                      !hasTierStock && "opacity-40 cursor-not-allowed bg-zinc-100/70 border-zinc-200 text-zinc-400 ring-0 hover:bg-zinc-100/70 hover:border-zinc-200 hover:text-zinc-400"
+                                    )}
                                   >
-                                    {tier.label} • UGX {Number(tier.configuredPrice || 0).toLocaleString()} / {tier.label.toLowerCase()}
+                                    <span className="font-black">{tier.label}:</span>
+                                    <span className={cn("font-extrabold font-mono", isDefault ? "text-emerald-700" : "text-zinc-900")}>
+                                      UGX {tierPrice.toLocaleString()}
+                                    </span>
+                                    <span className="text-[9px] opacity-70">
+                                      / {tier.label.toLowerCase()}
+                                    </span>
+                                    {isDefault && (
+                                      <span className="ml-0.5 px-1 py-0.2 rounded bg-emerald-600 text-white text-[8px] font-extrabold tracking-wider">
+                                        DEF
+                                      </span>
+                                    )}
+                                    {!hasTierStock && (
+                                      <span className="ml-0.5 text-[8px] text-rose-500 font-bold">
+                                        (OUT)
+                                      </span>
+                                    )}
                                   </button>
                                 );
                               })}
                             </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

@@ -28,6 +28,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const routeSegment = location.pathname.split('/').filter(Boolean).pop() || 'app';
+  const isSalesRoute = routeSegment === 'sales' || location.pathname.includes('/sales');
   const pageTitle: Record<string, string> = {
     app: 'Dashboard', sales: 'Sales / POS', inventory: 'Inventory', clients: 'Clients',
     stock: 'Stock In / Out', procurement: 'Procurement', logistics: 'Fleet & Logistics',
@@ -229,7 +230,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </header>
 
         <main className="flex-1 overflow-y-auto relative">
-          <div className="p-3 sm:p-5 md:p-8 max-w-7xl mx-auto min-w-0">
+          <div className={cn(
+            "min-w-0 w-full",
+            isSalesRoute
+              ? "p-3 sm:p-4 md:px-5 lg:px-6 md:py-4 max-w-none"
+              : "p-3 sm:p-5 md:p-8 max-w-7xl mx-auto"
+          )}>
             <ModuleErrorBoundary key={location.pathname}>{children}</ModuleErrorBoundary>
           </div>
           <Toaster position="top-right" expand={false} richColors />
