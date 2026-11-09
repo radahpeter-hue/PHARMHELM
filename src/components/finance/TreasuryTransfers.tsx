@@ -98,10 +98,10 @@ export function TreasuryTransfers({tenantId, actorId, canOperate, allowedBranche
     {open && <div className="mt-4 space-y-4">
       {canOperate && <form onSubmit={submit} className="space-y-3">
         <fieldset disabled={busy} className="grid gap-3 sm:grid-cols-2">
-          <label>Source account<select required className={treasuryField} value={sourceId} onChange={event => { setSourceId(event.target.value); setDestinationId(''); }}>
+          <label>Source account<select aria-label="Source account" required className={treasuryField} value={sourceId} onChange={event => { setSourceId(event.target.value); setDestinationId(''); }}>
             <option value="">Select source</option>{sources.map(endpoint => <option key={endpoint.accountId} value={endpoint.accountId}>{endpoint.name}</option>)}
           </select></label>
-          <label>Destination account<select required className={treasuryField} value={destinationId} onChange={event => setDestinationId(event.target.value)}>
+          <label>Destination account<select aria-label="Destination account" required className={treasuryField} value={destinationId} onChange={event => setDestinationId(event.target.value)}>
             <option value="">Select destination</option>{destinations.map(endpoint => <option key={endpoint.accountId} value={endpoint.accountId}>{endpoint.name}</option>)}
           </select></label>
           <label>Principal (UGX)<input required type="number" min="1" step="1" className={treasuryField} value={principal} onChange={event => setPrincipal(event.target.value)}/></label>
@@ -115,9 +115,9 @@ export function TreasuryTransfers({tenantId, actorId, canOperate, allowedBranche
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <label>From date<input type="date" value={from} onChange={event => setFrom(event.target.value)} className={treasuryField}/></label>
         <label>To date<input type="date" value={to} onChange={event => setTo(event.target.value)} className={treasuryField}/></label>
-        <label>Source portfolio<select value={sourceFilter} onChange={event => setSourceFilter(event.target.value)} className={treasuryField}><option value="">All</option>{options.map(id => <option key={id} value={id}>{portfolioName(id)}</option>)}</select></label>
-        <label>Destination portfolio<select value={destinationFilter} onChange={event => setDestinationFilter(event.target.value)} className={treasuryField}><option value="">All</option>{options.map(id => <option key={id} value={id}>{portfolioName(id)}</option>)}</select></label>
-        <label>Transfer class<select value={classFilter} onChange={event => setClassFilter(event.target.value)} className={treasuryField}><option value="">All</option><option value="intra_portfolio">Within portfolio</option><option value="inter_portfolio">Between portfolios</option></select></label>
+        <label>Source portfolio<select aria-label="Source portfolio" value={sourceFilter} onChange={event => setSourceFilter(event.target.value)} className={treasuryField}><option value="">All</option>{options.map(id => <option key={id} value={id}>{portfolioName(id)}</option>)}</select></label>
+        <label>Destination portfolio<select aria-label="Destination portfolio" value={destinationFilter} onChange={event => setDestinationFilter(event.target.value)} className={treasuryField}><option value="">All</option>{options.map(id => <option key={id} value={id}>{portfolioName(id)}</option>)}</select></label>
+        <label>Transfer class<select aria-label="Transfer class" value={classFilter} onChange={event => setClassFilter(event.target.value)} className={treasuryField}><option value="">All</option><option value="intra_portfolio">Within portfolio</option><option value="inter_portfolio">Between portfolios</option></select></label>
       </div>
       <button type="button" onClick={() => setRefresh(value => value + 1)} className="text-sm font-semibold text-emerald-800">Refresh transfer history</button>
       {historyError && <p role="alert">{historyError}</p>}
