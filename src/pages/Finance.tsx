@@ -12,7 +12,7 @@ import { eodVariance, requiresEodVarianceReason, formatEodAmount, eodAmountNumbe
 import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
 import { inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../utils/financeDateFilters';
 import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, buildBranchExpenseRecipient, isAllowanceCategory, expenseRecipientTypeAllowed } from '../utils/branchExpensePolicy';
-import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
+import { belongsToManagementPettyCash, createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -1694,7 +1694,7 @@ const OldManagementExpenseLedger: React.FC = () => {
       const unsubMg = firestoreService.subscribeToCollection<ManagementExpense>('management_expenses', profile.tenantId, (data) => {
         setExpenses(data.sort((a, b) => new Date(b.expense_date || b.created_at || '').getTime() - new Date(a.expense_date || a.created_at || '').getTime()));
       });
-      const unsubPc = firestoreService.subscribeToCollection<any>('petty_cash_ledger', profile.tenantId, setPcLedger);
+      const unsubPc = firestoreService.subscribeToCollection<any>('petty_cash_ledger', profile.tenantId, rows => setPcLedger(rows.filter(row => belongsToManagementPettyCash(profile.tenantId, row))));
       return () => {
         unsubMg();
         unsubPc();
@@ -2784,7 +2784,7 @@ const PettyCashManagement: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId) {
       firestoreService.subscribeToCollection<PettyCashLedger>('petty_cash_ledger', profile.tenantId, (data) => {
-        setLedger(data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+        setLedger(data.filter(row => belongsToManagementPettyCash(profile.tenantId, row)).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
       });
       firestoreService.subscribeToCollection<PettyCashRequisition>('petty_cash_requisitions', profile.tenantId, (data) => {
         setRequisitions(data.sort((a, b) => new Date(b.requisition_date).getTime() - new Date(a.requisition_date).getTime()));
@@ -3674,6 +3674,7 @@ const LegacyCashBankingOversight: React.FC = () => {
   });
 
   const filteredPcLedger = pettyCashLedger.filter(entry => {
+    if (!profile?.tenantId || !belongsToManagementPettyCash(profile.tenantId, entry)) return false;
     if (!isDateFilterActive) return true;
     const d = (entry.date || '').split('T')[0];
     return d >= dateRange.start && d <= dateRange.end;

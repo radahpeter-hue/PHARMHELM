@@ -1561,6 +1561,7 @@ export interface PracticalAssessment {
 }
 
 export interface PettyCashLedger {
+  accountDocumentId?: string;
   id: string;
   tenantId: string;
   date: string;

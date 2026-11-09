@@ -32,7 +32,7 @@ export function TreasuryAccountControls({portfolio,account,accounts,actorId,onCh
      <button disabled={busy} className={treasuryButton}>Record verified movement</button>
     </form>
    </details>}
-   <details><summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold">Transfer between reconciled portfolios</summary>
+   {transferOnly&&<details><summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold">Allocate legacy reserve</summary>
     <p className="mb-3 text-xs text-zinc-600">Both ledgers and balances update together. Allocate overlapping legacy bank reserves by transfer; never reconcile the same funds twice.</p>
     <form className="grid gap-3 sm:grid-cols-2" onSubmit={e=>{e.preventDefault();void run(async()=>{const to=accounts.find(a=>a.accountId===destination);if(!to)throw Error('Select a reconciled destination.');const result=await transferPortfolioFunding({from:account,to,actorId,amountUGX:Number(transferAmount),externalReference:transferRef});setTransferAmount('');setTransferRef('');return result.replayed?'Transfer already recorded; no duplicate created.':'Both portfolio ledgers and balances transferred atomically.';});}}>
      <label className="text-sm">Destination portfolio<select required value={destination} onChange={e=>setDestination(e.target.value)} className={treasuryField}><option value="">Select account</option>{accounts.filter(a=>a.tenantId===account.tenantId&&a.initialized&&a.accountId!==account.accountId).map(a=><option key={a.id} value={a.accountId}>{a.name}</option>)}</select></label>
@@ -40,7 +40,7 @@ export function TreasuryAccountControls({portfolio,account,accounts,actorId,onCh
      <label className="text-sm">Transfer reference<input required minLength={5} value={transferRef} onChange={e=>setTransferRef(e.target.value)} className={treasuryField}/></label>
      <button disabled={busy} className={treasuryButton}>Transfer atomically</button>
     </form>
-   </details>
+   </details>}
   </>}
   {portfolio.origin==='custom'&&<form className="flex flex-wrap items-end gap-3 border-t border-zinc-100 pt-3" onSubmit={e=>{e.preventDefault();void run(async()=>{const update=portfolio.bankParentId?setRegisteredBankAccountActive:setCustomPortfolioActive;await update(portfolio,!active,actorId,reason);return active?'Account deactivated; financial history retained.':'Account reactivated with its original identity.';});}}>
    <p className="w-full text-xs text-zinc-600">Accounts can be deactivated once their balance is zero. Financial history is retained.</p>

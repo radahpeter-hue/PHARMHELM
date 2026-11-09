@@ -1,6 +1,6 @@
 import { collection, doc, getDocs, query, runTransaction, Timestamp, where, type Firestore } from 'firebase/firestore';
 import { db } from '../firebase';
-import { cashEntryDelta, managementAccountDocumentId, MANAGEMENT_CASH_ACCOUNT, MANAGEMENT_BANK_ACCOUNT } from './managementCashPosting';
+import { belongsToManagementPettyCash, cashEntryDelta, managementAccountDocumentId, MANAGEMENT_CASH_ACCOUNT, MANAGEMENT_BANK_ACCOUNT } from './managementCashPosting';
 
 /** After the account-control rules are deployed, legacy unlinked postings are
  * denied and a missing account blocks new postings. This makes first-time cash
@@ -18,9 +18,11 @@ export async function registerManagementPaymentAccount(input: {
   let openingEntryCount = 0;
   if(input.kind === 'petty_cash') {
     const ledger = await getDocs(query(collection(connection,'petty_cash_ledger'),where('tenantId','==',input.tenantId)));
-    openingBalanceUGX=0;openingEntryCount=ledger.size;
+    openingBalanceUGX=0;
     ledger.forEach(row=>{
       const data=row.data();
+      if (!belongsToManagementPettyCash(input.tenantId, data)) return;
+      openingEntryCount++;
       // Zero historical entries are harmless; invalid or unknown amounts fail closed.
       if(Number(data.amount)===0 && Number.isSafeInteger(data.amount))return;
       openingBalanceUGX+=cashEntryDelta(data);

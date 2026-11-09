@@ -4,7 +4,7 @@ import {initializeTestEnvironment,assertFails} from '@firebase/rules-unit-testin
 import {doc,setDoc,getDoc,getDocs,collection,query,where,writeBatch,serverTimestamp,deleteDoc} from 'firebase/firestore';
 import {submitPortfolioTransfer} from '../src/domain/finance/portfolioTransferService.ts';
 import {definePortfolioTransfer,portfolioTransferIdentity} from '../src/domain/finance/portfolioTransfer.ts';
-const env=await initializeTestEnvironment({projectId:'pharmhelm-level5-bank-transfer-test',firestore:{rules:readFileSync('firestore.rules','utf8')}});
+const env=await initializeTestEnvironment({projectId:'pharmhelm-level5-bank-transfer-test',firestore:{rules:readFileSync(process.env.LEVEL5_RULES_PATH || 'firestore.rules','utf8')}});
 const tenant='tenant_a',equity='bank_'+'a'.repeat(64),stanbic='bank_'+'b'.repeat(64);
 const funding=(id,openingBalanceUGX)=>({id:tenant+'_'+id,tenantId:tenant,accountId:id,portfolioId:id,
  portfolioClassification:'bank',scope:{kind:'organisation'},name:id===equity?'Equity Bank':'Stanbic Bank',
@@ -37,14 +37,14 @@ async function rawTransfer(reference){
  return definePortfolioTransfer({id,tenantId:tenant,source:endpoint(equity),destination:endpoint(stanbic),principalUGX:100,chargeUGX:0,
   reference,initiatedBy:'finance',initiatedAt:'2026-11-06T08:00:00Z'});
 }
-function rawBatch(db,r,{partial=false,foreign=false}={}){
+function rawBatch(db,r,{partial=false,foreign=false,sourceBalance=2000000,destinationBalance=13000000}={}){
  const batch=writeBatch(db),now=serverTimestamp();
  for(const [endpoint,sign,movement] of [[r.source,-1,r.sourceMovement],...partial?[]:[[r.destination,1,r.destinationMovement]]]){
   batch.set(doc(db,movement.collection,movement.id),{tenantId:r.tenantId,accountDocumentId:endpoint.accountDocumentId,
    portfolioTransferId:r.id,amount:r.principalUGX,accountDeltaUGX:sign*r.principalUGX,type:sign<0?'outgoing':'incoming',
    movementClass:sign<0?'transfer_out':'transfer_in',source:'Transfer',reference_number:r.reference,postedBy:'finance',createdAt:now,updatedAt:now});
   // Current balance snapshots are intentionally fixed; all attack fixtures run at 2m/13m.
-  batch.update(doc(db,'finance_payment_accounts',endpoint.accountDocumentId),{balanceUGX:(sign<0?2000000:13000000)+sign*r.principalUGX,lastPostingId:movement.id,updatedAt:now});
+  batch.update(doc(db,'finance_payment_accounts',endpoint.accountDocumentId),{balanceUGX:(sign<0?sourceBalance-r.chargeUGX:destinationBalance)+sign*r.principalUGX,lastPostingId:movement.id,updatedAt:now});
  }
  batch.set(doc(db,'finance_transfers_v1',r.id),{...r,...foreign?{destination:{...r.destination,tenantId:'tenant_b'}}:{},postedAt:now});
  return batch;
@@ -63,8 +63,8 @@ try{
  assert.equal(spend.filter(x=>x.status==='fulfilled').length,1);await balances(2000000,13000000);
  for(const principalUGX of [0,-1,0.5,NaN,3000000])await assert.rejects(submitPortfolioTransfer({...input,reference:'INVALID-AMOUNT',principalUGX},finance));
  await assert.rejects(submitPortfolioTransfer({...input,reference:'SAME-ACCOUNT',destinationAccountId:equity},finance),/different/);
- await assert.rejects(submitPortfolioTransfer({...input,reference:'NO-GENERIC-BANK',destinationAccountId:'system_bank'},finance),/individual Bank/);
- await assert.rejects(submitPortfolioTransfer({...input,reference:'NOT-YET-CHARGED',chargeUGX:5},finance),/charges are not enabled/);
+ await assert.rejects(submitPortfolioTransfer({...input,reference:'NO-GENERIC-BANK',destinationAccountId:'system_bank'},finance),/verified openings/);
+ await assert.rejects(submitPortfolioTransfer({...input,reference:'NEGATIVE-CHARGE',chargeUGX:-5},finance),/charge/);
  for(const actorId of ['it','viewer','outsider']){
   const actor=env.authenticatedContext(actorId,{tenantId:actorId==='outsider'?'tenant_b':tenant}).firestore();
   await assert.rejects(submitPortfolioTransfer({...input,reference:'DENIED-'+actorId,actorId,principalUGX:100},actor));
@@ -95,5 +95,55 @@ try{
   const ledger=movements.docs.map(d=>d.data()).filter(r=>r.accountDocumentId===tenant+'_'+id);
   assert.equal(opening+ledger.reduce((sum,row)=>sum+row.accountDeltaUGX,0),(await getDoc(account(finance,id))).data().balanceUGX);
  }
+ const chargedInput={...input,reference:'BANK-CHARGED-001',principalUGX:100000,chargeUGX:2500};
+ const charged=await submitPortfolioTransfer(chargedInput,finance);
+ await balances(1897500,13100000);
+ assert.equal((await getDoc(doc(finance,'banking_records',charged.record.chargeMovement.id))).data().amount,2500);
+ assert.equal((await submitPortfolioTransfer(chargedInput,second)).replayed,true);
+ await assert.rejects(submitPortfolioTransfer({...chargedInput,chargeUGX:2501},finance),/different transaction/);
+ await balances(1897500,13100000);
+ const feeOmitted = await rawTransfer('MISSING-FEE');
+ await assertFails(rawBatch(finance,{...feeOmitted,chargeUGX:10,chargeMovement:{id:feeOmitted.id+'_fee',collection:'banking_records'}},{sourceBalance:1897500,destinationBalance:13100000}).commit());
+ await balances(1897500,13100000);
+ const cash='system_branch_cash_sales_masaka', petty='system_petty_cash_masaka';
+ const otherCash='system_branch_cash_sales_kampala', otherPetty='system_petty_cash_kampala';
+ const mtn='system_mtn_mobile_money', airtel='system_airtel_mobile_money', custom='custom_emergency';
+ await env.withSecurityRulesDisabled(async context=>{
+  const db=context.firestore();
+  for(const branch of ['masaka','kampala']) await setDoc(doc(db,'branches',branch),{tenantId:tenant});
+  for(const [id,kind,branch] of [[cash,'petty_cash','masaka'],[petty,'petty_cash','masaka'],[otherCash,'petty_cash','kampala'],[otherPetty,'petty_cash','kampala'],[mtn,'bank',''],[airtel,'bank',''],[custom,'petty_cash','']]){
+   await setDoc(account(db,id),{...funding(id,10000),kind,name:id,scope:branch?{kind:'branch',branchId:branch}:{kind:'organisation'}});
+  }
+  await setDoc(portfolio(db,custom),{...registry(custom),id:custom,classification:'restricted_internal_fund',bankParentId:null,allowsTransfersIn:true,allowsTransfersOut:true});
+ });
+ async function verifyRoute(sourceAccountId,destinationAccountId,reference,chargeUGX=0){
+  const source=account(finance,sourceAccountId),destination=account(finance,destinationAccountId);
+  const beforeSource=(await getDoc(source)).data().balanceUGX,beforeDestination=(await getDoc(destination)).data().balanceUGX;
+  const intent={...input,sourceAccountId,destinationAccountId,reference,principalUGX:100,chargeUGX};
+  const posted=await submitPortfolioTransfer(intent,finance);
+  assert.equal(posted.record.transferClass,'inter_portfolio');
+  assert.equal((await getDoc(source)).data().balanceUGX,beforeSource-100-chargeUGX);
+  assert.equal((await getDoc(destination)).data().balanceUGX,beforeDestination+100);
+  for(const [movement,delta] of [[posted.record.sourceMovement,-100],[posted.record.destinationMovement,100],...(chargeUGX?[[posted.record.chargeMovement,-chargeUGX]]:[])]){
+   assert.equal((await getDoc(doc(finance,movement.collection,movement.id))).data().accountDeltaUGX,delta);
+  }
+  assert.equal((await submitPortfolioTransfer(intent,second)).replayed,true);
+ }
+ await verifyRoute(cash,equity,'BCS-BANK-001',5);
+ await verifyRoute(cash,petty,'BCS-PETTY-001');
+ await verifyRoute(mtn,equity,'MTN-BANK-001');
+ await verifyRoute(airtel,equity,'AIRTEL-BANK-001');
+ await verifyRoute(equity,petty,'BANK-PETTY-001');
+ await verifyRoute(cash,custom,'BCS-CUSTOM-001');
+ await verifyRoute(custom,equity,'CUSTOM-BANK-001');
+ await verifyRoute(equity,custom,'BANK-CUSTOM-001');
+ const branchDenied=(sourceAccountId,destinationAccountId,reference)=>submitPortfolioTransfer({...input,sourceAccountId,destinationAccountId,reference,principalUGX:100},finance);
+ await assert.rejects(branchDenied(otherCash,equity,'UNASSIGNED-BRANCH'));
+ await assert.rejects(branchDenied(cash,otherPetty,'CROSS-BRANCH'),/unavailable/);
+ assert.equal((await getDoc(account(finance,otherCash))).data().balanceUGX,10000);
+ assert.equal((await getDoc(account(finance,otherPetty))).data().balanceUGX,10000);
+ await env.withSecurityRulesDisabled(c=>setDoc(portfolio(c.firestore(),custom),{allowsTransfersIn:false,allowsTransfersOut:false},{merge:true}));
+ await assert.rejects(branchDenied(custom,equity,'CUSTOM-OUT-DENIED'),/selected direction/);
+ await assert.rejects(branchDenied(equity,custom,'CUSTOM-IN-DENIED'),/selected direction/);
  console.log('Level 5 Bank-to-Bank principal PASSED: 10m/5m -> 8m/7m; 15m conserved; exactly-once concurrent retry, competing spend, linked immutable records/ledgers, atomic failure, inactive/FX/IT/tenant denial.');
 }finally{await env.cleanup();}
