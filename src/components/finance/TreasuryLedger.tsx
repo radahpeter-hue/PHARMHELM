@@ -24,12 +24,15 @@ export function TreasuryLedger({ledgers,branches,bank=false,balance,initialRefer
  const period=dated.filter(e=>(account==='all'||e.ledgerAccount===account)&&(branch==='all'||(branch==='unattributed'?!e.branchId:e.branchId===branch)));
  const label=(id?:string)=>branches.find(b=>b.id===id)?.name||id||'Unattributed';
  const displayReference=(entry:FinancialLedgerEntry)=>{
+   const generatedEodReference=entry.reference.startsWith('eod_'+entry.eodReconciliationId+'_')
+     ||(entry.description.startsWith('EOD correction')&&entry.id.startsWith(entry.reference+'~'));
+   const hasBusinessReference=entry.reference&&entry.reference!==entry.id&&entry.reference!==entry.linkedRecordId&&!generatedEodReference;
+   if(hasBusinessReference)return entry.reference;
    if(entry.eodReconciliationId){
      const kind=entry.description.startsWith('EOD correction')?'EOD correction':'EOD settlement';
      const channel=eodChannels[entry.eodChannel??''];
      return [kind,entry.businessDate,branches.find(b=>b.id===entry.branchId)?.name,channel].filter(Boolean).join(' · ');
    }
-   if(entry.reference&&entry.reference!==entry.id&&entry.reference!==entry.linkedRecordId)return entry.reference;
    return [entry.transferClass?movementLabel(entry):entry.description,entry.businessDate].join(' · ');
  };
  const matchesMovement=(entry:FinancialLedgerEntry)=>direction==='all'||entry.direction===direction
