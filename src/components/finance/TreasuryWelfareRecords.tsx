@@ -24,7 +24,7 @@ export function useTreasuryWelfareEvidence(tenantId:string,revision:number){
      amount=recordedAmount(sale.welfareAmount??sale.totalAmount??sale.total);
     }
    }
-   return {id:source+'/'+d.id,source,reference:String(r.reference_number||r.notes||r.saleId||d.id),date,amount,status:String(r.status||''),type:source==='welfareAllocations'?'Funding allocation record':String(r.type||'Welfare benefit record')};}));
+   return {id:source+'/'+d.id,source,reference:String(r.reference_number||r.notes||r.receiptNumber||(source==='welfareAllocations'?'Welfare funding allocation':'Welfare benefit')),date,amount,status:String(r.status||''),type:source==='welfareAllocations'?'Funding allocation record':String(r.type||'Welfare benefit record')};}));
  })).then(results=>{if(live)setRows(results.flat().sort((a,b)=>b.date.localeCompare(a.date)));}).catch(()=>{if(live)setError('Welfare funding and expenditure history is unavailable. Refresh this portfolio to retry.');});return()=>{live=false;};},[tenantId,revision]);
  useEffect(()=>{
   let live=true;
@@ -35,7 +35,7 @@ export function useTreasuryWelfareEvidence(tenantId:string,revision:number){
      const row=doc.data();
      if(row.category!=='Staff Welfare'||!['withdrawal','incoming'].includes(row.type)||!belongsToManagementPettyCash(tenantId,row))return [];
      return [{id:'petty_cash_ledger/'+doc.id,source:'petty_cash_ledger',date:typeof row.date==='string'?row.date.slice(0,10):'',
-      reference:String(row.reference_number||doc.id),type:row.type==='withdrawal'?'Recorded Management Cash withdrawal':'Recorded return to Management Cash',status:row.type,
+      reference:String(row.reference_number||(row.type==='withdrawal'?'Management Cash withdrawal':'Return to Management Cash')),type:row.type==='withdrawal'?'Recorded Management Cash withdrawal':'Recorded return to Management Cash',status:row.type,
       amount:recordedAmount(row.amount)}];
     });
     if(live)setFunding(withdrawals);
@@ -62,6 +62,6 @@ export function TreasuryWelfareRecords({evidence}:{evidence:ReturnType<typeof us
    <TreasuryLedgerExports filename="welfare-ledger" disabled={!!error||!visible.length||!!(from&&to&&from>to)}
     rows={()=>visible.map(r=>({Date:r.date,Reference:r.reference,Type:r.type,Status:r.status,'Recorded UGX':r.amount??'Unverified amount'}))}/>
   </div>
-  {error?<p role="alert" className="text-sm text-red-800">{error}</p>:rows===null?<p className="text-sm">Loading saved records…</p>:from&&to&&from>to?<p role="alert">Choose a valid date range.</p>:<><div className="overflow-x-auto"><table className="w-full text-left text-sm text-zinc-900"><thead className="bg-zinc-50 text-zinc-600"><tr>{['Date','Record / reference','Type','Recorded UGX'].map(h=><th key={h} className="p-3">{h}</th>)}</tr></thead><tbody className="text-zinc-900">{visible.map(r=><tr key={r.id} className="border-t border-zinc-100"><td className="whitespace-nowrap p-3">{r.date||'Not recorded'}</td><td className="p-3">{r.reference}<p className="text-xs text-zinc-500">{r.id}</p></td><td className="p-3">{r.type}</td><td className="p-3 tabular-nums">{r.amount===null?'Unverified amount':formatEodAmount(r.amount)}</td></tr>)}</tbody></table></div>{!visible.length&&<p className="py-4 text-sm text-zinc-500">No recorded funding or benefit expenditure matches these dates.</p>}</>}
+  {error?<p role="alert" className="text-sm text-red-800">{error}</p>:rows===null?<p className="text-sm">Loading saved records…</p>:from&&to&&from>to?<p role="alert">Choose a valid date range.</p>:<><div className="overflow-x-auto"><table className="w-full text-left text-sm text-zinc-900"><thead className="bg-zinc-50 text-zinc-600"><tr>{['Date','Record / reference','Type','Recorded UGX'].map(h=><th key={h} className="p-3">{h}</th>)}</tr></thead><tbody className="text-zinc-900">{visible.map(r=><tr key={r.id} className="border-t border-zinc-100"><td className="whitespace-nowrap p-3">{r.date||'Not recorded'}</td><td className="p-3">{r.reference}</td><td className="p-3">{r.type}</td><td className="p-3 tabular-nums">{r.amount===null?'Unverified amount':formatEodAmount(r.amount)}</td></tr>)}</tbody></table></div>{!visible.length&&<p className="py-4 text-sm text-zinc-500">No recorded funding or benefit expenditure matches these dates.</p>}</>}
  </section>;
 }

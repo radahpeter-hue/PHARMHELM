@@ -11,6 +11,8 @@ const transferLabels={transfer_in:'Transfer In',transfer_out:'Transfer Out',tran
 const movementLabel=(entry:FinancialLedgerEntry)=>entry.transferClass?transferLabels[entry.transferClass]:
  entry.eodReconciliationId?'EOD settlement':entry.direction==='inflow'?'Inflow':'Outflow';
 
+const eodChannels:Record<string,string>={cash:'Cash',card:'Card',momo:'MTN Money',airtel:'Airtel Money'};
+
 export function TreasuryLedger({ledgers,branches,bank=false,balance,initialReference='',partial=false,accountCount,audit=false,aside}:{ledgers:AuthoritativePortfolioLedger[];branches:Array<{id:string;name:string}>;bank?:boolean;balance:string;initialReference?:string;partial?:boolean;accountCount?:number;audit?:boolean;aside?:React.ReactNode}){
  const [from,setFrom]=useState(''),[to,setTo]=useState(''),[direction,setDirection]=useState('all'),[branch,setBranch]=useState('all');
  const [detail,setDetail]=useState<FinancialLedgerEntry|null|undefined>(undefined);
@@ -21,12 +23,24 @@ export function TreasuryLedger({ledgers,branches,bank=false,balance,initialRefer
  const dated=entries.filter(e=>(!from||e.businessDate>=from)&&(!to||e.businessDate<=to));
  const period=dated.filter(e=>(account==='all'||e.ledgerAccount===account)&&(branch==='all'||(branch==='unattributed'?!e.branchId:e.branchId===branch)));
  const label=(id?:string)=>branches.find(b=>b.id===id)?.name||id||'Unattributed';
+ const displayReference=(entry:FinancialLedgerEntry)=>{
+   const generatedEodReference=entry.reference.startsWith('eod_'+entry.eodReconciliationId+'_')
+     ||(entry.description.startsWith('EOD correction')&&entry.id.startsWith(entry.reference+'~'));
+   const hasBusinessReference=entry.reference&&entry.reference!==entry.id&&entry.reference!==entry.linkedRecordId&&!generatedEodReference;
+   if(hasBusinessReference)return entry.reference;
+   if(entry.eodReconciliationId){
+     const kind=entry.description.startsWith('EOD correction')?'EOD correction':'EOD settlement';
+     const channel=eodChannels[entry.eodChannel??''];
+     return [kind,entry.businessDate,branches.find(b=>b.id===entry.branchId)?.name,channel].filter(Boolean).join(' · ');
+   }
+   return [entry.transferClass?movementLabel(entry):entry.description,entry.businessDate].join(' · ');
+ };
  const matchesMovement=(entry:FinancialLedgerEntry)=>direction==='all'||entry.direction===direction
    ||entry.transferClass===direction||(direction==='eod'&&!!entry.eodReconciliationId)
    ||(direction==='other_in'&&!entry.transferClass&&entry.direction==='inflow')
    ||(direction==='other_out'&&!entry.transferClass&&entry.direction==='outflow');
  const filtered=period.filter(e=>matchesMovement(e)&&
-   [e.reference,e.description,String(e.amountUGX),e.accountName,label(e.branchId)].some(value=>value.toLowerCase().includes(search.trim().toLowerCase())));
+   [displayReference(e),e.reference,e.description,String(e.amountUGX),e.accountName,label(e.branchId)].some(value=>value.toLowerCase().includes(search.trim().toLowerCase())));
  const pages=Math.max(1,Math.ceil(filtered.length/pageSize));
  const currentPage=Math.min(page,pages);
  const visible=filtered.slice((currentPage-1)*pageSize,currentPage*pageSize);
@@ -38,7 +52,7 @@ export function TreasuryLedger({ledgers,branches,bank=false,balance,initialRefer
    return partial||invalid||!Number.isSafeInteger(total)?'Unavailable':'UGX '+total.toLocaleString();
  };
  const exportRows=()=>filtered.map(e=>({
-     Date:treasuryDateTime(e.businessDate,e.occurredAt),Reference:e.reference,Description:e.description,
+     Date:treasuryDateTime(e.businessDate,e.occurredAt),Reference:displayReference(e),Description:e.description,
      Account:e.accountName,...(audit?{'Posting ID':e.id,'Posted by':e.actorId}:{}),Branch:label(e.branchId),Type:movementLabel(e),
      'Inflow (UGX)':e.direction==='inflow'?e.amountUGX:'',
      'Outflow (UGX)':e.direction==='outflow'?e.amountUGX:'',
@@ -74,7 +88,7 @@ export function TreasuryLedger({ledgers,branches,bank=false,balance,initialRefer
      <tbody>{visible.map(e=><tr key={e.ledgerAccount+':'+e.id} className="border-t border-zinc-100 even:bg-zinc-50">
       <td className="whitespace-nowrap px-3 py-2">{treasuryDateTime(e.businessDate,e.occurredAt)}</td>
       {bank&&<td className="px-3 py-2">{e.accountName}</td>}
-      <td className="px-3 py-2"><button className="min-h-9 text-left font-semibold text-emerald-800 underline underline-offset-2" onClick={()=>setDetail(e)}>{e.reference}</button></td>
+      <td className="px-3 py-2"><button className="min-h-9 text-left font-semibold text-emerald-800 underline underline-offset-2" onClick={()=>setDetail(e)}>{displayReference(e)}</button></td>
       <td className="px-3 py-2">{e.description}{e.shiftId&&<p className="text-xs text-zinc-600">Shift {e.shiftId}</p>}</td>
       <td className="px-3 py-2">{label(e.branchId)}</td>
       <td className="px-3 py-2"><span className="whitespace-nowrap rounded-md bg-zinc-100 px-2 py-1 text-xs font-semibold">{movementLabel(e)}</span></td>
@@ -97,7 +111,7 @@ export function TreasuryLedger({ledgers,branches,bank=false,balance,initialRefer
    {!filtered.length&&<p className="py-5 text-center text-sm text-zinc-500">No posted movements match these filters.</p>}
   </>}
   <details><summary className="cursor-pointer py-2 text-sm font-semibold">Opening reconciliation references</summary>{ledgers.map(l=><p key={l.account.id} className="break-words py-1 text-xs text-zinc-600">{l.account.name}: UGX {l.openingBalanceUGX.toLocaleString()} · {l.reconciliationReference}</p>)}</details>
-  {selected&&<section aria-label="Transaction details" className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm"><div className="flex items-center justify-between gap-3"><h4 className="font-semibold">Transaction details</h4><button className="min-h-11 px-3 underline" onClick={()=>setDetail(null)}>Close details</button></div>{[['Reference',selected.reference],['Account',selected.accountId],['Source',selected.description],['Branch',label(selected.branchId)],['Shift',selected.shiftId||'Not recorded'],['EOD reconciliation',selected.eodReconciliationId||'Not applicable'],['Posting ID',selected.id],['Posted by',selected.actorId||'Not recorded']].map(([key,value])=><p key={key} className="break-words"><span className="font-medium">{key}: </span>{value}</p>)}</section>}
+  {selected&&<section aria-label="Transaction details" className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm"><div className="flex items-center justify-between gap-3"><h4 className="font-semibold">Transaction details</h4><button className="min-h-11 px-3 underline" onClick={()=>setDetail(null)}>Close details</button></div>{[['Reference',displayReference(selected)],['Account',selected.accountId],['Source',selected.description],['Branch',label(selected.branchId)],['Shift',selected.shiftId||'Not recorded'],['EOD reconciliation',selected.eodReconciliationId||'Not applicable'],['Posting ID',selected.id],['Posted by',selected.actorId||'Not recorded']].map(([key,value])=><p key={key} className="break-words"><span className="font-medium">{key}: </span>{value}</p>)}</section>}
    </div>
    {aside}
   </div>

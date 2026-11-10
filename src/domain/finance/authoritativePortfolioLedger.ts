@@ -46,7 +46,8 @@ export function mapAuthoritativeMovement(id:string,raw:Record<string,unknown>,ac
   description:String(raw.source||raw.type||'Posted management transaction'),
   source:managementLedgerCollection(account),direction:delta>0?'inflow':'outflow',
   amountUGX:Math.abs(delta),actorId:String(raw.postedBy||''),status:'posted',
-  ...(transferClass?{transferClass}:{}),
+   ...(transferClass?{transferClass}:{}),
+  ...(typeof raw.transferId==='string'&&raw.transferId?{linkedRecordId:raw.transferId}:{}),
   ...(typeof raw.branchId==='string'&&raw.branchId?{branchId:raw.branchId}:account.scope?.kind==='branch'?{branchId:account.scope.branchId}:{}),
   ...(typeof raw.eodReconciliationId==='string'&&raw.eodReconciliationId?{eodReconciliationId:raw.eodReconciliationId,shiftId:raw.eodReconciliationId.split('~')[4]}:{}),
   ...(typeof raw.eodChannel==='string'&&raw.eodChannel?{eodChannel:raw.eodChannel}:{})};

@@ -39,7 +39,7 @@ export async function removeUnusedPortfolio(){if(!window.__mode?.startsWith('lif
  if(transfer.destination.accountId===account.accountId)entries.push({id:'transfer-credit',direction:'inflow',transferClass:'transfer_in',amountUGX:transfer.principalUGX});
  return entries.map(entry=>({...entry,status:'posted',accountId:account.accountId,reference:transfer.reference,businessDate:'${day}',occurredAt:'${day}T10:00:00Z',description:'Fixture transfer'}));
 }
-export const loadAuthoritativePortfolioLedger=async account=>({account,openingBalanceUGX:account.openingBalanceUGX,currentBalanceUGX:account.balanceUGX,reconciliationReference:'VERIFIED-OPENING',entries:account.accountId==='custom_fixture'?[]:[...transferEntries(account),{id:account.id+'-in',tenantId:'test',accountId:account.accountId,occurredAt:'${day}T08:00:00Z',status:'posted',direction:'inflow',runningBalanceUGX:account.balanceUGX+1000,amountUGX:account.balanceUGX-account.openingBalanceUGX+1000,businessDate:'${day}',reference:'EOD-MASAKA',description:'EOD cash',branchId:'masaka',shiftId:'dayShift',eodReconciliationId:'eod~test~masaka~${day}~dayShift',actorId:'branch_operator'},{id:account.id+'-out',tenantId:'test',accountId:account.accountId,occurredAt:'${day}T09:00:00Z',status:'posted',direction:'outflow',runningBalanceUGX:account.balanceUGX,amountUGX:1000,businessDate:'${day}',reference:'OUTFLOW-MASAKA',transferClass:'transfer_out',description:'Verified movement',branchId:'masaka',actorId:'ceo'}]});`,
+export const loadAuthoritativePortfolioLedger=async account=>({account,openingBalanceUGX:account.openingBalanceUGX,currentBalanceUGX:account.balanceUGX,reconciliationReference:'VERIFIED-OPENING',entries:account.accountId==='custom_fixture'?[]:[...transferEntries(account),{id:account.id+'-in',tenantId:'test',accountId:account.accountId,occurredAt:'${day}T08:00:00Z',status:'posted',direction:'inflow',runningBalanceUGX:account.balanceUGX+1000,amountUGX:account.balanceUGX-account.openingBalanceUGX+1000,businessDate:'${day}',reference:'eod_eod~test~masaka~${day}~dayShift_cash',description:'EOD cash',eodChannel:'cash',branchId:'masaka',shiftId:'dayShift',eodReconciliationId:'eod~test~masaka~${day}~dayShift',actorId:'branch_operator'},{id:account.id+'-out',tenantId:'test',accountId:account.accountId,occurredAt:'${day}T09:00:00Z',status:'posted',direction:'outflow',runningBalanceUGX:account.balanceUGX,amountUGX:1000,businessDate:'${day}',reference:'OUTFLOW-MASAKA',transferClass:'transfer_out',description:'Verified movement',branchId:'masaka',actorId:'ceo'}]});`,
  sdk:`export * from ${JSON.stringify(require.resolve('firebase/firestore'))};const accounts=${JSON.stringify(accounts)};const records={...${JSON.stringify(records)},finance_payment_accounts:accounts};export const collection=(_db,path)=>({path});export const doc=(_db,path,id)=>({path,id});export const where=(...a)=>a;export const query=(ref,...filters)=>({...ref,filters});const snapshot=ref=>({docs:(records[ref.path]||[]).filter(r=>(ref.filters||[]).every(([key,op,value])=>op!=='=='||r[key]===value)).filter(r=>window.__mode!=='missing'||r.accountId!=='system_airtel_mobile_money').filter(r=>window.__mode!=='single-bank'||!r.accountId||r.accountId===${JSON.stringify(bank)}).map(r=>({id:r.id,data:()=>r}))});export const getDocs=async ref=>snapshot(ref);export const runTransaction=async(_db,operation)=>{
  const writes=[];
  const result=await operation({
@@ -86,9 +86,9 @@ try{browser=await chromium.launch({headless:true});
   assert.equal(await page.getByLabel('Filter ledger by source branch').evaluate(select=>select.value),'all');
   await page.getByLabel('Filter ledger by source branch').selectOption('masaka');
   await page.getByLabel('Ledger direction').selectOption('outflow');
-  assert.equal(await page.getByRole('button',{name:'EOD-MASAKA',exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:`EOD settlement · ${day} · Masaka · Cash`,exact:true}).count(),0);
   await page.getByLabel('Ledger direction').selectOption('all');
-  await page.getByRole('button',{name:'EOD-MASAKA',exact:true}).click();await page.getByText('dayShift',{exact:false}).first().waitFor();
+  await page.getByRole('button',{name:`EOD settlement · ${day} · Masaka · Cash`,exact:true}).click();await page.getByText('dayShift',{exact:false}).first().waitFor();
   await page.getByLabel('Ledger from').fill('2099-01-01');await page.getByText('No posted movements match these filters.').waitFor();await page.getByLabel('Ledger from').fill('');
   await fit(page,width);await page.screenshot({path:path.join(output,`cash-ledger-${width}.png`),fullPage:true});await back(page);
   await open(page,'Credit Receivables');await page.getByRole('heading',{name:'Credit Receivables ledger'}).waitFor();await page.getByLabel('Receivables customer or reference').fill('Fixture');
@@ -176,7 +176,7 @@ try{browser=await chromium.launch({headless:true});
   await page.getByLabel('Ledger direction').selectOption('transfer_out');
   await page.getByRole('button',{name:'UI-TRANSFER-001',exact:true}).waitFor();
   await page.getByRole('cell',{name:'Transfer Out',exact:true}).first().waitFor();
-  assert.equal(await page.getByRole('button',{name:'EOD-MASAKA',exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:`EOD settlement · ${day} · Masaka · Cash`,exact:true}).count(),0);
   const excelDownload=page.waitForEvent('download');
   await page.getByRole('button',{name:'Export Excel',exact:true}).click();
   assert.equal((await excelDownload).suggestedFilename(),'treasury-ledger.xlsx');
