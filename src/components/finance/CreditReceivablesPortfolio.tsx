@@ -6,7 +6,7 @@ import React,{useEffect,useMemo,useState} from 'react';
 import {collection,onSnapshot,query,where} from 'firebase/firestore';
 import {db} from '../../firebase';
 import {useAuth} from '../../contexts/AuthContext';
-import {projectCreditReceivables,type CreditSourceRecord} from '../../domain/finance/creditReceivablesPortfolio';
+import {projectCreditReceivables,receivableDate,type CreditSourceRecord} from '../../domain/finance/creditReceivablesPortfolio';
 
 export function useCreditReceivablesPortfolio(refreshKey=0){
  const {profile}=useAuth();const tenantId=profile?.tenantId||'';
@@ -25,16 +25,17 @@ export function useCreditReceivablesPortfolio(refreshKey=0){
   return ()=>unsubs.forEach(fn=>fn());
  },[tenantId,refreshKey]);
  return useMemo(()=>{
-  if(state.tenantId===tenantId&&state.error)return {loading:false,error:state.error,data:null,unlinkedCount:null};
-  if(state.tenantId!==tenantId||!state.loaded||!state.paymentsLoaded)return {loading:true,error:'',data:null,unlinkedCount:null};
-  if(state.error)return {loading:false,error:state.error,data:null};
+  if(state.tenantId===tenantId&&state.error)return {loading:false,error:state.error,data:null,unlinkedReceipts:null};
+  if(state.tenantId!==tenantId||!state.loaded||!state.paymentsLoaded)return {loading:true,error:'',data:null,unlinkedReceipts:null};
+  const linked=new Set(state.rows.flatMap(row=>[row.id,String(row.receipt_id||''),String(row.saleId||'')]).filter(Boolean));
+  const unlinkedReceipts=evidence.tenantId===tenantId&&evidence.primary&&evidence.secondary
+   ?[...new Map([...evidence.primary,...evidence.secondary]
+     .filter(row=>isActiveSale(row)&&!linked.has(row.id))
+     .map(row=>[row.id,{id:row.id,reference:String(row.receiptNumber||row.id),branchId:String(row.branchId||row.branch_id||''),date:receivableDate(row.timestamp||row.createdAt)}])).values()]
+   :null;
   try{
-   const linked=new Set(state.rows.flatMap(r=>[r.id,String(r.receipt_id||''),String(r.saleId||'')]).filter(Boolean));
-   const unlinkedCount=evidence.tenantId===tenantId&&evidence.primary&&evidence.secondary
-    ?new Set([...evidence.primary,...evidence.secondary].filter(r=>isActiveSale(r)&&!linked.has(r.id)).map(r=>r.id)).size:null;
-   return {loading:false,error:'',data:projectCreditReceivables(tenantId,state.rows,state.payments),unlinkedCount};
-  }
-  catch(e){return {loading:false,error:e instanceof Error?e.message:'Receivables unavailable.',data:null};}
+   return {loading:false,error:'',data:projectCreditReceivables(tenantId,state.rows,state.payments),unlinkedReceipts};
+  }catch(e){return {loading:false,error:e instanceof Error?e.message:'Receivables unavailable.',data:null,unlinkedReceipts};}
  },[state,tenantId,evidence]);
 }
 export function CreditReceivablesLedger({data,branches}:{data:ReturnType<typeof projectCreditReceivables>;branches:Array<{id:string;name:string}>}){

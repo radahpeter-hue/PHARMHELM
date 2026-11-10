@@ -7,7 +7,7 @@ import {mapAuthoritativeMovement} from '../src/domain/finance/authoritativePortf
 const tenantId='tenant_a';
 const bank=defineFinancialPortfolio({tenantId,id:'bank_'+'a'.repeat(64),name:'Test Bank',classification:'bank',description:'Test',origin:'custom',scope:{kind:'organisation'},currency:'UGX',supportsChildAccounts:false,allowsTransfersIn:false,allowsTransfersOut:false,createdBy:'owner',createdAt:'2026-11-01T00:00:00Z',bankParentId:'system_bank',bankInstitution:'Test',bankAccountReference:'1234'});
 const account=(id:string,value=100):ManagementPaymentAccount=>({id:tenantId+'_'+id,tenantId,accountId:id,portfolioId:id,name:id,kind:id.startsWith('system_branch_cash')||id.startsWith('system_petty_cash')||id==='management_petty_cash'?'petty_cash':'bank',currency:'UGX',initialized:true,balanceUGX:value,openingBalanceUGX:0,reconciliationReference:'VERIFIED-OPENING'});
-const accounts=['system_branch_cash_sales_b1','system_petty_cash_b1','system_mtn_mobile_money','system_airtel_mobile_money',bank.id].map(id=>account(id));
+const accounts=['system_branch_cash_sales_b1','system_petty_cash_b1','system_mtn_mobile_money','system_airtel_mobile_money',bank.id,'management_petty_cash'].map(id=>account(id));
 const input={tenantId,branches:[{id:'b1'}],portfolios:[bank],accounts};
 test('Treasury presents seven categories and never creates accounts for credit or welfare',()=>{
  const positions=treasuryPositions(input);
@@ -23,10 +23,10 @@ test('Treasury reports a partial verified subtotal and never makes absent accoun
  assert.deepEqual(verifiedLiquidPosition(positions),{balanceUGX:400,verifiedCount:4,totalCount:5,complete:false});
  assert.equal(treasuryPositions({...input,branches:[{id:'b1'},{id:'b2'}]}).find(p=>p.id==='cash')!.balanceUGX,null);
 });
-test('Treasury includes Management Cash once in Petty Cash and excludes restricted custom funds',()=>{
- const positions=treasuryPositions({...input,accounts:[...accounts,account('management_petty_cash',200),{...account('custom_fund',900),kind:'petty_cash',portfolioClassification:'restricted_internal_fund'}]});
- assert.equal(positions.find(p=>p.id==='petty')!.balanceUGX,300);
- assert.equal(verifiedLiquidPosition(positions).balanceUGX,700);
+test('Treasury includes only Management Cash in Petty Cash and excludes restricted custom funds',()=>{
+ const positions=treasuryPositions({...input,accounts:[...accounts.filter(a=>a.accountId!=='management_petty_cash'),account('management_petty_cash',200),{...account('custom_fund',900),kind:'petty_cash',portfolioClassification:'restricted_internal_fund'}]});
+ assert.equal(positions.find(p=>p.id==='petty')!.balanceUGX,200);
+ assert.equal(verifiedLiquidPosition(positions).balanceUGX,600);
 });
 test('Treasury isolates tenants, rejects duplicate mappings and invalid balances',()=>{
  assert.equal(verifiedLiquidPosition(treasuryPositions({...input,accounts:[...accounts,{...account('system_airtel_mobile_money',999999),tenantId:'other'}]})).balanceUGX,500);

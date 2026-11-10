@@ -1,4 +1,5 @@
 import { approveBranchExpense, postBranchExpensePayment } from '../services/branchExpensePayment';
+import {useManagementPaymentAccounts} from '../components/finance/ManagementPaymentAccounts';
 import { EodLegacyShiftReview } from '../components/finance/EodLegacyShiftReview';
 import { withVerifiedLegacyShifts } from '../utils/eodLegacyEvidence';
 import type { LegacyShiftEvidence } from '../services/eodLegacyShiftService';
@@ -13,7 +14,7 @@ import { eodVariance, requiresEodVarianceReason, formatEodAmount, eodAmountNumbe
 import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
 import { inFinanceDateRange, lastSevenFinanceDays, previousFinanceMonth } from '../utils/financeDateFilters';
 import { canUseBranchExpenseCategory, eligibleExpenseStaff, expenseStaffName, buildBranchExpenseRecipient, isAllowanceCategory, expenseRecipientTypeAllowed } from '../utils/branchExpensePolicy';
-import { belongsToManagementPettyCash, createManagementFinanceWriteGroup } from '../services/managementCashPosting';
+import { MANAGEMENT_CASH_ACCOUNT, belongsToManagementPettyCash, createManagementFinanceWriteGroup } from '../services/managementCashPosting';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -2845,9 +2846,13 @@ const PettyCashManagement: React.FC = () => {
     return matchesStart && matchesEnd;
   });
 
-  const balance = ledger.reduce((acc, curr) => {
-    return curr.type === 'incoming' ? acc + curr.amount : acc - curr.amount;
-  }, 0);
+  const {accounts,loading:balanceLoading,error:balanceError}=useManagementPaymentAccounts();
+  const cashAccount=accounts.find(account=>account.accountId===MANAGEMENT_CASH_ACCOUNT);
+  const verifiedBalance=cashAccount?.initialized&&cashAccount.currency==='UGX'&&Number.isSafeInteger(cashAccount.balanceUGX)
+    &&Number.isSafeInteger(cashAccount.openingBalanceUGX)&&cashAccount.reconciliationReference ? cashAccount.balanceUGX : null;
+  const balance=verifiedBalance??0;
+  const balanceText=balanceLoading?'Loading…':balanceError?'Unavailable':
+    verifiedBalance===null?'Reconciliation required':'UGX '+verifiedBalance.toLocaleString();
 
   const handleApproveFinance = async (reqId: string) => {
     try {
@@ -3003,7 +3008,7 @@ const PettyCashManagement: React.FC = () => {
             <Wallet size={80} />
           </div>
           <p className="text-xs font-bold opacity-60 uppercase tracking-widest mb-1">Petty Cash Balance</p>
-          <h3 className="text-3xl font-black">UGX {(balance || 0).toLocaleString()}</h3>
+          <h3 className="text-3xl font-black">{balanceText}</h3>
           <div className="flex gap-2 mt-4">
             <button 
               onClick={() => { setModalType('incoming'); setIsModalOpen(true); }}

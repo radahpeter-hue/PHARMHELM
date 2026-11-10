@@ -1,4 +1,4 @@
-import type {ManagementPaymentAccount} from '../../services/managementCashPosting';
+import {MANAGEMENT_CASH_ACCOUNT,type ManagementPaymentAccount} from '../../services/managementCashPosting';
 import type {FinancialPortfolio} from './financialPortfolio';
 import {defineBuiltInPortfolio} from './builtInPortfolios';
 import {projectPortfolioBalances} from './portfolioWideView';
@@ -9,7 +9,7 @@ export const DEFAULT_TREASURY_PORTFOLIOS = [
  {id:'mtn',name:'MTN Money',context:'Authoritative MTN wallet'},
  {id:'bank',name:'Bank',context:'Consolidated registered bank accounts'},
  {id:'credit',name:'Credit Receivables',context:'Outstanding credit, excluded from liquid cash'},
- {id:'petty',name:'Petty Cash',context:'Branch petty cash and Management Cash'},
+ {id:'petty',name:'Petty Cash',context:'Management Petty Cash Ledger'},
  {id:'welfare',name:'Staff Welfare Fund',context:'Restricted staff welfare records'}
 ] as const;
 export type TreasuryCategory = typeof DEFAULT_TREASURY_PORTFOLIOS[number]['id'];
@@ -23,13 +23,13 @@ export function treasuryPositions(input:{tenantId:string;branches:readonly {id:s
  const bank=defineBuiltInPortfolio({tenantId,key:'bank',createdBy:'treasury_view',createdAt:'2026-01-01T00:00:00Z'});
  const bankView=projectPortfolioBalances([bank,...portfolios.filter(p=>p.id!=='system_bank')],accounts).find(p=>p.portfolioId==='system_bank')!;
  const verified=(a:ManagementPaymentAccount)=>a.initialized===true&&a.currency==='UGX'&&Number.isSafeInteger(a.balanceUGX)&&Number.isSafeInteger(a.openingBalanceUGX)&&!!a.reconciliationReference;
- const cashIds=branches.map(b=>'system_branch_cash_sales_'+b.id),pettyIds=branches.map(b=>'system_petty_cash_'+b.id);
+ const cashIds=branches.map(b=>'system_branch_cash_sales_'+b.id);
  const bankIds=new Set(['management_bank',...portfolios.filter(p=>p.bankParentId==='system_bank').map(p=>p.id)]);
  return DEFAULT_TREASURY_PORTFOLIOS.map(p=>{
-  const ids=p.id==='cash'?cashIds:p.id==='petty'?[...pettyIds,...(accounts.some(a=>a.accountId==='management_petty_cash')?['management_petty_cash']:[])]:p.id==='bank'?[...bankIds]:p.id==='mtn'?['system_mtn_mobile_money']:p.id==='airtel'?['system_airtel_mobile_money']:[];
+  const ids=p.id==='cash'?cashIds:p.id==='petty'?[MANAGEMENT_CASH_ACCOUNT]:p.id==='bank'?[...bankIds]:p.id==='mtn'?['system_mtn_mobile_money']:p.id==='airtel'?['system_airtel_mobile_money']:[];
   const matched=accounts.filter(a=>ids.includes(a.accountId));
   let reason=p.id==='credit'?'Outstanding receivables are shown separately.':p.id==='welfare'?'A spendable welfare reserve has not been established.':p.id==='bank'?bankView.reason||'':
-   !ids.length?'Branch coverage is unavailable.':ids.some(id=>!matched.some(a=>a.accountId===id))?'Open this portfolio and reconcile each missing account opening balance.':'';
+   !ids.length?'Branch coverage is unavailable.':ids.some(id=>!matched.some(a=>a.accountId===id))?p.id==='petty'?'Reconcile the Management Petty Cash opening balance.':'Open this portfolio and reconcile each missing account opening balance.':'';
   if(matched.some(a=>!verified(a)))reason='An account requires a verified opening reconciliation.';
   if(matched.some(a=>a.kind!==(['cash','petty'].includes(p.id)?'petty_cash':'bank')))reason='Account classification requires reconciliation.';
   if(p.id==='bank'&&bankView.balanceUGX===null&&!reason)reason='Consolidated bank balance is unavailable.';

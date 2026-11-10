@@ -26,3 +26,8 @@ test('only payments linked to saved debts appear and duplicates are rejected',()
  assert.throws(()=>projectCreditReceivables('tenant_a',[row],[payment,payment]),/Invalid/);
 });
 test('empty saved ledger is zero and no synthetic credit obligation is introduced',()=>assert.equal(projectCreditReceivables('tenant_a',[]).totalOutstandingUGX,0));
+
+test('invalid amounts identify the record and field for reconciliation',()=>{
+ assert.throws(()=>projectCreditReceivables('tenant_a',[{...row,amount_ugx:'1000'}]),/amount_ugx on credit record debt1/);
+ assert.throws(()=>projectCreditReceivables('tenant_a',[{...row,outstanding_ugx:-1}]),/outstanding_ugx on credit record debt1/);
+});

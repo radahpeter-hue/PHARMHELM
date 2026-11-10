@@ -11,6 +11,7 @@ const output=await mkdtemp(path.join(tmpdir(),'portfolio-release-ui-'));
 const bank='bank_'+'a'.repeat(64),day=new Date().toISOString().slice(0,10);
 const ids=['system_branch_cash_sales_masaka','system_petty_cash_masaka','system_mtn_mobile_money','system_airtel_mobile_money',bank];
 const accounts=ids.map((id,i)=>({id:'test_'+id,tenantId:'test',accountId:id,portfolioId:id,name:['Masaka Cash','Masaka Petty Cash','MTN','Airtel','Equity Bank'][i],kind:i<2?'petty_cash':'bank',initialized:true,currency:'UGX',balanceUGX:12000+i*1000,openingBalanceUGX:10000,reconciliationReference:'VERIFIED-OPENING'}));
+accounts.push({...accounts[1],id:'test_management_petty_cash',accountId:'management_petty_cash',portfolioId:'management_petty_cash',name:'Management Petty Cash'});
 const secondBank='bank_'+'b'.repeat(64);
 accounts[4].balanceUGX=12000;
 accounts.push({...accounts[4],id:'test_'+secondBank,accountId:secondBank,portfolioId:secondBank,name:'Fixture Bank Two',balanceUGX:4000,openingBalanceUGX:1000});
