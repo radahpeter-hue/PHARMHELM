@@ -59,6 +59,17 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - name: Set up Google Cloud CLI
+        if: success() && steps.inactive_rules_auth.outcome == 'success'
+        uses: google-github-actions/setup-gcloud@v3
+      - name: Verify candidate rules against the active named database
+        id: active_rules
+        if: success() && steps.inactive_rules_auth.outcome == 'success'
+        continue-on-error: true
+        env:
+          FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+          FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+        run: bash scripts/verify-active-firestore-rules.sh
       - name: Verify compiled release limits without activating rules
-        if: success() && github.event.pull_request.head.repo.full_name == github.repository
+        if: success() && steps.inactive_rules_auth.outcome == 'success' && steps.active_rules.outcome != 'success'
         run: node scripts/validate-inactive-finance-rules.mjs
