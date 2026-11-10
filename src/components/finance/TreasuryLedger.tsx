@@ -1,4 +1,5 @@
 import React,{useState} from 'react';
+import {BRANCH_SHIFT_NAMES} from '../../utils/branchShifts';
 import type {AuthoritativePortfolioLedger} from '../../domain/finance/authoritativePortfolioLedger';
 import {type FinancialLedgerEntry} from '../../domain/finance/portfolioLedger';
 import {summarizeBranchContributions} from '../../domain/finance/portfolioBranchContributions';
@@ -111,7 +112,33 @@ export function TreasuryLedger({ledgers,branches,bank=false,balance,initialRefer
    {!filtered.length&&<p className="py-5 text-center text-sm text-zinc-500">No posted movements match these filters.</p>}
   </>}
   <details><summary className="cursor-pointer py-2 text-sm font-semibold">Opening reconciliation references</summary>{ledgers.map(l=><p key={l.account.id} className="break-words py-1 text-xs text-zinc-600">{l.account.name}: UGX {l.openingBalanceUGX.toLocaleString()} · {l.reconciliationReference}</p>)}</details>
-  {selected&&<section aria-label="Transaction details" className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm"><div className="flex items-center justify-between gap-3"><h4 className="font-semibold">Transaction details</h4><button className="min-h-11 px-3 underline" onClick={()=>setDetail(null)}>Close details</button></div>{[['Reference',displayReference(selected)],['Account',selected.accountId],['Source',selected.description],['Branch',label(selected.branchId)],['Shift',selected.shiftId||'Not recorded'],['EOD reconciliation',selected.eodReconciliationId||'Not applicable'],['Posting ID',selected.id],['Posted by',selected.actorId||'Not recorded']].map(([key,value])=><p key={key} className="break-words"><span className="font-medium">{key}: </span>{value}</p>)}</section>}
+  {selected&&<section aria-label="Transaction details" className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm">
+   <div className="flex flex-wrap items-center justify-between gap-3">
+    <h4 className="font-semibold">Transaction details</h4>
+    <button className="min-h-11 px-3 underline" onClick={()=>setDetail(null)}>Close details</button>
+   </div>
+   <dl className="space-y-2">
+    {[
+      ['Reference',displayReference(selected)],
+      ['Account',ledgers.find(l=>l.account.accountId===selected.accountId)?.account.name||'Account name unavailable'],
+      ['Source',selected.eodReconciliationId
+        ? [selected.description.startsWith('EOD correction')?'End-of-day correction':'End-of-day settlement',eodChannels[selected.eodChannel??'']].filter(Boolean).join(' · ')
+        : selected.description],
+      ['Branch',branches.find(b=>b.id===selected.branchId)?.name||(selected.branchId?'Branch name unavailable':'Unattributed')],
+      ['Business date',selected.businessDate],
+      ...(selected.eodReconciliationId?[['Shift',BRANCH_SHIFT_NAMES[selected.shiftId as keyof typeof BRANCH_SHIFT_NAMES]||'Shift name unavailable']]:[]),
+    ].map(([key,value])=><div key={key} className="break-words"><dt className="inline font-medium">{key}: </dt><dd className="inline">{value}</dd></div>)}
+   </dl>
+   <details key={selected.id}>
+    <summary className="cursor-pointer py-2 font-semibold">Audit identifiers</summary>
+    <dl className="space-y-2 text-xs">
+     {[
+       ['Account ID',selected.accountId],['Branch ID',selected.branchId],['Shift ID',selected.shiftId],
+       ['EOD reconciliation ID',selected.eodReconciliationId],['Posting ID',selected.id],['Posted by ID',selected.actorId],
+     ].filter(([,value])=>value).map(([key,value])=><div key={key} className="break-all"><dt className="inline font-medium">{key}: </dt><dd className="inline">{value}</dd></div>)}
+    </dl>
+   </details>
+  </section>}
    </div>
    {aside}
   </div>
