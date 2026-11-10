@@ -1,3 +1,4 @@
+import {sumEodAmounts} from '../../utils/eodMoney';
 export type CreditSourceRecord = {id:string;[key:string]:unknown};
 export interface PortfolioReceivable {
  id:string;reference:string;client:string;branchId:string;businessDate:string;
@@ -7,7 +8,7 @@ export interface ReceivableRepayment {
  id:string;receivableId:string;reference:string;businessDate:string;amountUGX:number;
 }
 function money(value:unknown, recordId:string, field:string):number {
- if(typeof value!=='number'||!Number.isSafeInteger(value)||value<0)throw Error(`Invalid UGX amount in ${field} on credit record ${recordId}.`);
+ if(typeof value!=='number'||!Number.isFinite(value)||value>Number.MAX_SAFE_INTEGER||value<0)throw Error(`Invalid UGX amount in ${field} on credit record ${recordId}.`);
  return value;
 }
 export function receivableDate(value:unknown):string {
@@ -38,7 +39,7 @@ export function projectCreditReceivables(tenantId:string,records:readonly Credit
   paymentIds.add(p.id);
   return {id:p.id,receivableId:String(p.receivableId),reference:String(p.reference_number||p.id),businessDate:receivableDate(p.processedAt||p.createdAt),amountUGX:money(p.amount,p.id,'amount')};
  });
- const totalOutstandingUGX=rows.reduce((sum,r)=>sum+r.outstandingUGX,0);
- if(!Number.isSafeInteger(totalOutstandingUGX))throw Error('Receivables balance overflow.');
+ const totalOutstandingUGX=sumEodAmounts(rows.map(row=>row.outstandingUGX));
+ if(totalOutstandingUGX>Number.MAX_SAFE_INTEGER)throw Error('Receivables balance overflow.');
  return {rows,repayments,totalOutstandingUGX};
 }
