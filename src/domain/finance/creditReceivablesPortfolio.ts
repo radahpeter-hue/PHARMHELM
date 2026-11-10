@@ -30,14 +30,14 @@ export function projectCreditReceivables(tenantId:string,records:readonly Credit
   const outstandingUGX=money(raw.outstanding_ugx??(status==='paid'?0:originalUGX),raw.id,'outstanding_ugx');
   if(outstandingUGX>originalUGX)throw Error('Receivable outstanding exceeds its original credit amount.');
   if(status==='paid'&&outstandingUGX!==0)throw Error('Paid receivable has a nonzero outstanding balance.');
-  return {id:raw.id,reference:String(raw.invoice_number||receipt||raw.id),client:String(raw.client_name||raw.institution_name||'Unspecified customer'),
+  return {id:raw.id,reference:String(raw.invoice_number||raw.receiptNumber||'Credit issued'),client:String(raw.client_name||raw.institution_name||'Unspecified customer'),
    branchId:String(raw.branch_id||raw.branchId||''),businessDate:receivableDate(raw.created_at||raw.createdAt),originalUGX,outstandingUGX,status};
  });
  const paymentIds=new Set<string>();
  const repayments:ReceivableRepayment[]=payments.filter(p=>p.receivableId&&ids.has(String(p.receivableId))).map(p=>{
   if(p.tenantId!==tenantId||paymentIds.has(p.id)||p.fromPortfolio!=='receivables')throw Error('Invalid receivable repayment record.');
   paymentIds.add(p.id);
-  return {id:p.id,receivableId:String(p.receivableId),reference:String(p.reference_number||p.id),businessDate:receivableDate(p.processedAt||p.createdAt),amountUGX:money(p.amount,p.id,'amount')};
+  return {id:p.id,receivableId:String(p.receivableId),reference:String(p.reference_number||'Credit repayment'),businessDate:receivableDate(p.processedAt||p.createdAt),amountUGX:money(p.amount,p.id,'amount')};
  });
  const totalOutstandingUGX=sumEodAmounts(rows.map(row=>row.outstandingUGX));
  if(totalOutstandingUGX>Number.MAX_SAFE_INTEGER)throw Error('Receivables balance overflow.');

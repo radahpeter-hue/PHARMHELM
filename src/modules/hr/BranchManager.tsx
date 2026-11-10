@@ -1,3 +1,4 @@
+import {createPortal} from 'react-dom';
 import {BranchCardAccountSetting} from '../../components/finance/BranchCardAccountSetting';
 import { staffMatchesId } from '../../utils/operationalStaff';
 import React, { useState, useEffect } from 'react';
@@ -320,17 +321,18 @@ export const BranchManager: React.FC = () => {
       </div>
 
       {/* Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-          <div className="bg-white rounded-[40px] w-full max-w-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
-            <div className="px-8 py-6 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+      {isModalOpen && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div role="dialog" aria-modal="true" aria-labelledby="branch-editor-title" className="bg-white rounded-2xl sm:rounded-[40px] w-full max-w-2xl max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div className="sticky top-0 z-10 px-4 py-4 sm:px-8 sm:py-6 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
               <div>
-                <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+                <h2 id="branch-editor-title" className="text-2xl font-black text-slate-900 tracking-tight">
                   {editingBranch ? 'Edit Branch' : 'Add New Branch'}
                 </h2>
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Branch Details & Management</p>
               </div>
               <button 
+                aria-label="Close branch editor"
                 onClick={() => setIsModalOpen(false)}
                 className="h-10 w-10 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 hover:text-slate-600 hover:border-slate-300 transition-all shadow-sm"
               >
@@ -338,11 +340,11 @@ export const BranchManager: React.FC = () => {
               </button>
             </div>
 
-            {editingBranch&&<div className="px-6 pb-4"><BranchCardAccountSetting branchId={editingBranch.id}/></div>}
+            {editingBranch&&<div className="px-4 pt-4 sm:px-8"><BranchCardAccountSetting branchId={editingBranch.id}/></div>}
             <form 
               key={editingBranch?.id || 'new'}
               onSubmit={handleSubmit} 
-              className="p-8 space-y-6"
+              className="p-4 sm:p-8 space-y-6 [&_input]:min-w-0 [&_input]:max-w-full [&_select]:min-w-0"
             >
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
@@ -521,7 +523,7 @@ export const BranchManager: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>, document.body
       )}
 
       {/* View Profile Modal */}
