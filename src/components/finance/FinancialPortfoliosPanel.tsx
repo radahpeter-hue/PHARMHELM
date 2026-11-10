@@ -115,7 +115,7 @@ function TreasuryWorkspace(){
    </div></div>
    <div className="flex flex-wrap items-end gap-2">
     {!workspace&&<label className="text-xs font-medium"><CalendarDays size={14} className="mr-1 inline"/>Activity date<input type="date" value={activityDate} onChange={e=>setActivityDate(e.target.value)} className={treasuryField}/></label>}
-    {workspace&&!accountId&&hasPermission('finance','operate')&&<div key={workspace}><TreasuryTransferAction
+    {workspace&&workspace!=='petty'&&!accountId&&hasPermission('finance','operate')&&<div key={workspace}><TreasuryTransferAction
      tenantId={tenantId} actorId={profile!.uid} allowedBranches={canRegister?null:[...(profile!.assigned_branches||[]),profile!.branch_id||'',profile!.default_branch_id||'']}
      accounts={treasury.accounts} portfolios={items} sourceAccountIds={workspaceAccounts.map(a=>a.accountId)}
      sourcePortfolioName={current?.name||customPortfolio?.name||heading} bank={bankRoot} loading={loading} unavailable={!!error} supportsTransfers={!['credit','welfare'].includes(workspace)&&customPortfolio?.allowsTransfersOut!==false} onChanged={changed}/></div>}
@@ -169,7 +169,13 @@ function TreasuryWorkspace(){
     </section>
    </div>
   </>:<>
-   {workspace==='credit'?<>{credit.error?<p role="alert">{credit.error}</p>:credit.data?<CreditReceivablesLedger data={credit.data} branches={branches}/>:<p>Loading receivables…</p>}<p className="text-xs text-zinc-600">{credit.unlinkedCount==null?'POS credit linkage check unavailable or loading.':credit.unlinkedCount>0?`${credit.unlinkedCount} POS credit receipt(s) have no saved receivable and require reconciliation in the Credit Ledger.`:'No unmatched POS credit receipts found.'}</p></>:workspace==='welfare'?<div key={'welfare-'+refresh}><TreasuryWelfareRecords tenantId={tenantId}/></div>:<>
+   {workspace==='credit'?<>{credit.error?<p role="alert">{credit.error}</p>:credit.data?<CreditReceivablesLedger data={credit.data} branches={branches}/>:<p>Loading receivables…</p>}{credit.unlinkedReceipts===null?<p className="text-xs text-zinc-600">POS credit linkage check unavailable or loading.</p>:
+    credit.unlinkedReceipts.length?<details className={surface}><summary className="cursor-pointer font-semibold">{credit.unlinkedReceipts.length} POS credit receipts need matching</summary>
+     <p className="mt-2 text-sm text-zinc-600">Match these receipts against the Credit Ledger before changing a receivable.</p>
+     <ul className="mt-2 space-y-1 text-sm">{credit.unlinkedReceipts.map(receipt=><li key={receipt.id} className="break-words">
+      {receipt.reference} · {branches.find(branch=>branch.id===receipt.branchId)?.name||receipt.branchId||'Branch unavailable'} · {receipt.date||'Date unavailable'}
+     </li>)}</ul>
+    </details>:<p className="text-xs text-zinc-600">No unmatched POS credit receipts found.</p>}</>:workspace==='welfare'?<div key={'welfare-'+refresh}><TreasuryWelfareRecords tenantId={tenantId}/></div>:<>
     {bankRoot&&<nav aria-label="Bank portfolio views" className="flex flex-wrap gap-2 border-b border-zinc-200">
      {['Unified Ledger','Bank Accounts',...(canRegister?['Account Management']:[]),'Reconciliations','Audit Trail'].map(tab=><button key={tab} aria-pressed={bankTab===tab} onClick={()=>setBankTab(tab)} className={`min-h-11 border-b-2 px-3 text-sm font-semibold ${bankTab===tab?'border-emerald-700 text-emerald-800':'border-transparent text-zinc-600'}`}>{tab}</button>)}
     </nav>}
@@ -177,7 +183,21 @@ function TreasuryWorkspace(){
     {bankRoot&&current?.balanceUGX===null&&<p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{current.reason}</p>}
     <div className="space-y-4">
     {bankRoot&&(bankTab!=='Unified Ledger'&&bankTab!=='Audit Trail'||!workspaceLedgers.length)&&bankDirectory}
-    {['cash','petty'].includes(workspace)&&!accountId&&<details open={!ledgerComplete} className={surface+' space-y-3'}><summary className="cursor-pointer font-semibold">Branch accounts and opening reconciliation</summary><div className="grid gap-3 sm:grid-cols-2">{branches.map(b=>{const id=(workspace==='cash'?'system_branch_cash_sales_':'system_petty_cash_')+b.id;const a=treasury.accounts.find(a=>a.accountId===id);return <button key={b.id} onClick={()=>setAccountId(id)} className="rounded-xl border border-zinc-200 p-4 text-left hover:border-emerald-600"><p className="font-semibold">{b.name}</p><p className="mt-2 text-sm">{a?.initialized?money(a.balanceUGX):'Opening reconciliation required'}</p></button>;})}{workspace==='petty'&&treasury.accounts.filter(a=>a.accountId==='management_petty_cash').map(a=><button key={a.id} onClick={()=>setAccountId(a.accountId)} className="rounded-xl border border-zinc-200 p-4 text-left"><p className="font-semibold">{a.name}</p><p className="mt-2 text-sm">{a.initialized?money(a.balanceUGX):'Opening reconciliation required'}</p></button>)}</div>{workspace==='petty'&&canRegister&&<ManagementPaymentAccounts allowedKinds={['petty_cash']}/>}</details>}
+    {workspace==='cash'&&!accountId&&<details open={!ledgerComplete} className={surface+' space-y-3'}>
+     <summary className="cursor-pointer font-semibold">Branch accounts and opening reconciliation</summary>
+     <div className="grid gap-3 sm:grid-cols-2">{branches.map(branch=>{
+      const id='system_branch_cash_sales_'+branch.id;
+      const account=treasury.accounts.find(item=>item.accountId===id);
+      return <button key={branch.id} onClick={()=>setAccountId(id)} className="rounded-xl border border-zinc-200 p-4 text-left hover:border-emerald-600">
+       <p className="font-semibold">{branch.name}</p><p className="mt-2 text-sm">{account?.initialized?money(account.balanceUGX):'Opening reconciliation required'}</p>
+      </button>;
+     })}</div>
+    </details>}
+    {workspace==='petty'&&canRegister&&!accountId&&<>
+     <ManagementPaymentAccounts allowedKinds={['petty_cash']}/>
+     {workspaceAccounts.some(account=>account.accountId==='management_petty_cash'&&account.initialized)&&
+      <button type="button" className={treasuryButton} onClick={()=>setAccountId('management_petty_cash')}>Open Management Petty Cash account</button>}
+    </>}
     {accountId&&workspace!=='bank'&&<button onClick={()=>{setAccountId('');setEntryId('')}} className="min-h-11 text-sm font-medium text-emerald-800">Back to {current?.name||'portfolio'}</button>}
     {(!bankRoot||bankTab==='Unified Ledger'||bankTab==='Audit Trail')&&(
      error?<p className={surface+' text-sm text-amber-900'}>Ledger unavailable until account coverage can be verified.</p>:
@@ -193,7 +213,7 @@ function TreasuryWorkspace(){
 }
 function AccountActions({workspace,accountId,selectedPortfolio,account,accounts,tenantId,actorId,branches,onChanged}:{workspace:string;accountId:string;selectedPortfolio?:FinancialPortfolio;account?:ManagementPaymentAccount;accounts:ManagementPaymentAccount[];tenantId:string;actorId:string;branches:Array<{id:string;name:string}>;onChanged:()=>void}){
  let portfolio:FinancialPortfolio|undefined=selectedPortfolio;
- if(!portfolio){const branch=branches.find(b=>accountId===(workspace==='cash'?'system_branch_cash_sales_':'system_petty_cash_')+b.id);const key=branch?(workspace==='cash'?'branch_cash_sales':'petty_cash'):workspace==='mtn'?'mtn_mobile_money':workspace==='airtel'?'airtel_mobile_money':null;
+ if(!portfolio){const branch=branches.find(b=>workspace==='cash'&&accountId==='system_branch_cash_sales_'+b.id);const key=branch?'branch_cash_sales':workspace==='mtn'?'mtn_mobile_money':workspace==='airtel'?'airtel_mobile_money':null;
   if(key)portfolio=defineBuiltInPortfolio({tenantId,key,branchId:branch?.id,createdBy:actorId,createdAt:'2026-01-01T00:00:00Z'});
  }
  if(account&&(accountId==='management_bank'||accountId==='management_petty_cash'))return <div key={accountId}><TreasuryAccountControls transferOnly portfolio={defineBuiltInPortfolio({tenantId,key:'bank',createdBy:actorId,createdAt:'2026-01-01T00:00:00Z'})} account={account} accounts={accounts} actorId={actorId} onChanged={onChanged}/></div>;
