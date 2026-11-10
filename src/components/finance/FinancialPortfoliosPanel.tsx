@@ -17,7 +17,7 @@ import {DEFAULT_TREASURY_PORTFOLIOS,treasuryPositions,verifiedLiquidPosition} fr
 import {TreasuryLedger} from './TreasuryLedger';
 import {TreasuryAccountControls,treasuryButton,treasuryField} from './TreasuryAccountControls';
 import {TreasuryTransferAction} from './TreasuryTransfers';
-import {TreasuryWelfareRecords} from './TreasuryWelfareRecords';
+import {TreasuryWelfareRecords,useTreasuryWelfareEvidence} from './TreasuryWelfareRecords';
 
 import {TreasuryKpi, treasuryDateTime, treasuryGrid} from './TreasuryPresentation';
 
@@ -36,6 +36,7 @@ function TreasuryWorkspace(){
  const [branches,setBranches]=useState<Array<{id:string;name:string}>>([]),[items,setItems]=useState<FinancialPortfolio[]>([]);
  const [registryError,setRegistryError]=useState(''),[registryLoading,setRegistryLoading]=useState(true),[refresh,setRefresh]=useState(0);
  const credit=useCreditReceivablesPortfolio(refresh);
+ const welfareEvidence=useTreasuryWelfareEvidence(tenantId,refresh);
  const [bankTab,setBankTab]=useState('Unified Ledger');
  const [activityDate,setActivityDate]=useState('');
  const [entryId,setEntryId]=useState('');
@@ -76,13 +77,13 @@ function TreasuryWorkspace(){
  const ledgerComplete=workspaceAccounts.length>0&&workspaceAccounts.every(a=>workspaceLedgers.some(l=>l.account.accountId===a.accountId));
  const heading=accountId?(selectedPortfolio?.name||selectedAccount?.name||accountId):(workspace==='bank'?'Bank Portfolio':current?.name)||customPortfolio?.name||'Global Treasury Overview';
  const open=(id:string)=>{setWorkspace(id);setAccountId('');setCreateOpen(false);setBankTab('Unified Ledger');setEntryId('');};
- const positionText=(id:string,balance:number|null)=>loading?'Loading…':error?'Balance unavailable':id==='credit'?credit.loading?'Loading…':credit.error?'Balance unavailable':'UGX '+credit.data!.totalOutstandingUGX.toLocaleString():id==='welfare'?'Balance unavailable':money(balance);
+ const positionText=(id:string,balance:number|null)=>loading?'Loading…':error?'Balance unavailable':id==='credit'?credit.loading?'Loading…':credit.error?'Balance unavailable':'UGX '+credit.data!.totalOutstandingUGX.toLocaleString():id==='welfare'?(welfareEvidence.historicalNet===null?'Balance unavailable':money(welfareEvidence.historicalNet)):money(balance);
  const positions=model.positions.length?model.positions:DEFAULT_TREASURY_PORTFOLIOS.map(p=>({...p,balanceUGX:null,accounts:[],reason:''}));
  const statusFor=(id:string,balance:number|null)=>{
   if(loading||(id==='credit'&&credit.loading))return 'Loading';
   if(error)return 'Unavailable';
   if(id==='credit')return credit.data?'Non-cash receivables':'Unavailable';
-  if(id==='welfare')return 'Balance unavailable';
+  if(id==='welfare')return welfareEvidence.historicalNet===null?'Balance unavailable':'Historical ledger estimate';
   return balance===null?'Reconciliation required':'Verified';
  };
  const statuses=positions.map(p=>statusFor(p.id,p.balanceUGX));
@@ -175,7 +176,7 @@ function TreasuryWorkspace(){
      <ul className="mt-2 space-y-1 text-sm">{credit.unlinkedReceipts.map(receipt=><li key={receipt.id} className="break-words">
       {receipt.reference} · {branches.find(branch=>branch.id===receipt.branchId)?.name||receipt.branchId||'Branch unavailable'} · {receipt.date||'Date unavailable'}
      </li>)}</ul>
-    </details>:<p className="text-xs text-zinc-600">No unmatched POS credit receipts found.</p>}</>:workspace==='welfare'?<div key={'welfare-'+refresh}><TreasuryWelfareRecords tenantId={tenantId}/></div>:<>
+    </details>:<p className="text-xs text-zinc-600">No unmatched POS credit receipts found.</p>}</>:workspace==='welfare'?<div key={'welfare-'+refresh}><TreasuryWelfareRecords evidence={welfareEvidence}/></div>:<>
     {bankRoot&&<nav aria-label="Bank portfolio views" className="flex flex-wrap gap-2 border-b border-zinc-200">
      {['Unified Ledger','Bank Accounts',...(canRegister?['Account Management']:[]),'Reconciliations','Audit Trail'].map(tab=><button key={tab} aria-pressed={bankTab===tab} onClick={()=>setBankTab(tab)} className={`min-h-11 border-b-2 px-3 text-sm font-semibold ${bankTab===tab?'border-emerald-700 text-emerald-800':'border-transparent text-zinc-600'}`}>{tab}</button>)}
     </nav>}

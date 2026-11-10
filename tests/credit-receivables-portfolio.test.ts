@@ -31,3 +31,13 @@ test('invalid amounts identify the record and field for reconciliation',()=>{
  assert.throws(()=>projectCreditReceivables('tenant_a',[{...row,amount_ugx:'1000'}]),/amount_ugx on credit record debt1/);
  assert.throws(()=>projectCreditReceivables('tenant_a',[{...row,outstanding_ugx:-1}]),/outstanding_ugx on credit record debt1/);
 });
+
+test('Treasury preserves fractional POS credit in the outstanding total',()=>{
+ const records=[
+  {...row,amount_ugx:105000.001,outstanding_ugx:105000.001},
+  {...row,id:'debt2',receipt_id:'sale2',amount_ugx:293000,outstanding_ugx:293000}
+ ];
+ const result=projectCreditReceivables('tenant_a',records);
+ assert.equal(result.rows[0].outstandingUGX,105000.001);
+ assert.equal(result.totalOutstandingUGX,398000.001);
+});
