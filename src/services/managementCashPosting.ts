@@ -77,7 +77,9 @@ export function createManagementFinanceWriteGroup(tenantId: string, actorId: str
   let cashTransferRef: DocumentReference | null = null;
   const add = (path: string, data: Record<string, any>) => {
     if (committed || data.tenantId !== tenantId) throw new Error('Invalid finance posting scope.');
-    const ref = doc(collection(connection,path));
+    const ref = path === 'petty_cash_ledger' && typeof data.externalExpenseId === 'string'
+      ? doc(connection, path, 'logistics_payment_' + data.externalExpenseId)
+      : doc(collection(connection,path));
     const clean = cleanRecord(data);
     if(path === 'petty_cash_ledger') {
       if(cashPosted)throw new Error('Only one cash movement per posting is supported.');

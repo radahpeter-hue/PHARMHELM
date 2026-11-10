@@ -69,23 +69,33 @@ export function compactRuleSymbols(source){
  source=compactCollectionSets(bindWriteSnapshots(source));
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
- const names=new Set(stripped.match(/\b[A-Za-z_]\w*\b/g)||[]),functions=new Map(),variables=new Map();
+ const names=new Set(tokens.filter(token=>/^[A-Za-z_]\w*$/.test(token))),symbols=new Set(),aliases=new Map();
  const reservedPaths=new Set([...stripped.matchAll(/\/([A-Za-z_]\w*)/g)].map(m=>m[1]));
  for(const keyword of ['as','break','const','continue','do','else','for','function','if','in','is','let','match','return','service','true','false','null','rules_version','while'])names.add(keyword);
  const alphabet='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';let serial=0;
  const unique=()=>{for(;;){let index=serial++,name='';do{name=alphabet[index%52]+name;index=Math.floor(index/52)-1;}while(index>=0);if(!names.has(name)){names.add(name);return name;}}};
+ const addBinding=name=>{if(name&&!reservedPaths.has(name))symbols.add(name);};
  for(const m of stripped.matchAll(/\bfunction\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/g)){
-  if(!functions.has(m[1]))functions.set(m[1],unique());
-  for(const name of m[2].split(',').map(s=>s.trim()).filter(Boolean))if(!reservedPaths.has(name)&&!variables.has(name))variables.set(name,unique());
+  symbols.add(m[1]);
+  for(const name of m[2].split(',').map(s=>s.trim()).filter(Boolean))addBinding(name);
  }
- for(const m of stripped.matchAll(/\blet\s+([A-Za-z_]\w*)\s*=/g))if(!reservedPaths.has(m[1])&&!variables.has(m[1]))variables.set(m[1],unique());
- for(const m of stripped.matchAll(/\{([A-Za-z_]\w*)(?:=\*\*)?\}/g))if(!reservedPaths.has(m[1])&&!variables.has(m[1]))variables.set(m[1],unique());
+ for(const m of stripped.matchAll(/\blet\s+([A-Za-z_]\w*)\s*=/g))addBinding(m[1]);
+ for(const m of stripped.matchAll(/\{([A-Za-z_]\w*)(?:=\*\*)?\}/g))addBinding(m[1]);
+ // Frequent bindings such as the database wildcard save more compiled bytes
+ // than declarations visited early. Keep aliases globally unique as before.
+ const counts=new Map();let last='';
+ for(const token of tokens){
+  if(/^\s+$/.test(token)||token.startsWith('//')||token.startsWith('/*'))continue;
+  if(last!=='.'&&symbols.has(token))counts.set(token,(counts.get(token)||0)+1);
+  last=token;
+ }
+ for(const name of [...symbols].sort((a,b)=>(counts.get(b)||0)-(counts.get(a)||0)))aliases.set(name,unique());
  let previous='';const output=[];
  for(const token of tokens){
   if(token.startsWith('//')||token.startsWith('/*')){output.push(' ');continue;}
   if(/^\s+$/.test(token)){output.push(' ');continue;}
   const internal=/^[A-Za-z_]\w*$/.test(token)&&previous!=='.';
-  output.push(internal?(functions.get(token)||variables.get(token)||token):token);previous=token;
+  output.push(internal?(aliases.get(token)||token):token);previous=token;
  }
  return output.join('').trim();
 }

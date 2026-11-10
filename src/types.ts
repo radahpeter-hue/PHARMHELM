@@ -940,7 +940,8 @@ export interface BranchExpense {
   payment_method?: 'Cash' | 'Petty Cash' | 'Bank' | string;
   logged_by?: string;
   created_at?: string;
-  status: 'pending' | 'approved' | 'rejected' | 'Pending' | 'Approved' | 'Rejected';
+  cashPaymentVersion?: 1;
+  status: 'pending' | 'approved' | 'rejected' | 'Pending' | 'Approved' | 'Rejected' | 'paid';
 }
 
 export interface CashRequisition {

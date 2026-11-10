@@ -18,6 +18,7 @@ on:
       - 'tests/eod-portfolio-routing.test.ts'
       - 'scripts/eod-portfolio-settlement-emulator.mjs'
       - 'scripts/portfolio-transfer-emulator.mjs'
+      - 'scripts/cash-outflows-emulator.mjs'
       - 'src/services/eodSubmissionService.ts'
       - 'src/services/eodCorrectionService.ts'
       - 'scripts/eod-automatic-posting-emulator.mjs'
@@ -56,6 +57,8 @@ jobs:
         run: npx firebase emulators:exec --only firestore --project pharmhelm-eod-auto-test "node --import tsx scripts/eod-automatic-posting-emulator.mjs"
       - name: Level 5 authenticated Bank-to-Bank transfer checkpoint
         run: npx firebase emulators:exec --only firestore --project pharmhelm-level5-bank-transfer-test "node --import tsx scripts/portfolio-transfer-emulator.mjs"
+      - name: Authenticated branch and HQ cash outflow acceptance
+        run: npx firebase emulators:exec --only firestore --project pharmhelm-cash-outflows-test "node --import tsx scripts/cash-outflows-emulator.mjs"
       - name: Install portfolio verification browser
         run: |
           npm install --prefix /tmp/portfolio-browser --no-save playwright@1.51.1

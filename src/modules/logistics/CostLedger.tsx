@@ -144,6 +144,7 @@ export const CostLedger: React.FC = () => {
         
         // Auto deduct from petty cash ledger (global)
         await financeWrites.add('petty_cash_ledger', {
+          externalExpenseCollection: 'fuel_logs', externalExpenseId: docRef.id,
           tenantId: profile?.tenantId,
           date: data.date,
           amount: costVal,
@@ -192,6 +193,7 @@ export const CostLedger: React.FC = () => {
 
         // Auto deduct from petty cash ledger
         await financeWrites.add('petty_cash_ledger', {
+          externalExpenseCollection: 'maintenance_logs', externalExpenseId: docRef.id,
           tenantId: profile?.tenantId,
           date: data.date,
           amount: costVal,
@@ -236,6 +238,7 @@ export const CostLedger: React.FC = () => {
 
         // Auto deduct from petty cash ledger
         await financeWrites.add('petty_cash_ledger', {
+          externalExpenseCollection: 'traffic_fine_logs', externalExpenseId: docRef.id,
           tenantId: profile?.tenantId,
           date: data.date,
           amount: costVal,
@@ -280,6 +283,7 @@ export const CostLedger: React.FC = () => {
 
         // Auto deduct from petty cash ledger
         await financeWrites.add('petty_cash_ledger', {
+          externalExpenseCollection: 'logistics_expenses', externalExpenseId: docRef.id,
           tenantId: profile?.tenantId,
           date: data.date,
           amount: costVal,
