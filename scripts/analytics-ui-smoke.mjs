@@ -55,8 +55,12 @@ const { outputFiles: [bundle] } = await build({
             const fixtures = {
               sales: [{ id: 'sale', timestamp: Timestamp.fromMillis(Date.parse('2026-11-11T06:00:00Z')), total: 1000 }],
               product_batches: [{ id: 'batch', expiryDate: { seconds: 1_700_000_000 }, quantity: 2, purchasePrice: 10 }],
-              clients: [{ name: 'Fixture chronic patient', balance: 100, segment_tags: ['diabetes'],
-                next_refill_due_date: Timestamp.fromMillis(Date.parse('2026-11-06T10:00:00Z')) }],
+              clients: [
+                { name: 'Fixture chronic patient', balance: 100, segment_tags: ['diabetes'],
+                  next_refill_due_date: Timestamp.fromMillis(Date.parse('2026-11-06T10:00:00Z')) },
+                { name: 'Upcoming refill', segment_tags: ['diabetes'],
+                  next_refill_due_date: Timestamp.fromMillis(Date.parse('2026-11-16T10:00:00Z')) },
+              ],
               fridge_temp_logs: [{ date: 'malformed', temperature: 5 }],
               premises_licenses: [
                 { licenseName: 'Fixture QA licence', expiryDate: new Date('2027-04-10T06:00:00Z') },
@@ -164,6 +168,10 @@ try {
           await page.getByText(loadedText, { exact: true }).or(errorBoundary).waitFor({ timeout: 5000 });
         }
         assert.equal(await errorBoundary.count(), 0, await page.locator('body').innerText());
+        if (tab === 'CRM') {
+          const adherence = page.getByText('Chronic Adherence Rate', { exact: true }).locator('..');
+          assert.equal(await adherence.getByRole('heading').innerText(), '50%');
+        }
       }
       assert.deepEqual(errors, []);
       console.log(`Analytics initial load, quotation metrics and tab navigation passed on ${label}.`);

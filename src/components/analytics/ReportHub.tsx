@@ -120,7 +120,7 @@ export const ReportHub: React.FC = () => {
   });
 
   const filteredEods = eodReconciliations.filter(e => {
-    const d = eodReportRecord(e).businessDate;
+    const d = analyticsDateText(eodReportRecord(e).businessDate).split('T')[0];
     return d >= startDate && d <= endDate;
   });
 
@@ -206,7 +206,7 @@ export const ReportHub: React.FC = () => {
       headers = ["Business Date", "Shift", "Expected (UGX)", "Declared (UGX)", "Variance (UGX)", "Declared Cash", "Declared MoMo", "Declared Institutional Credit", "Declared Welfare", "Variance Reason", "Status"];
       rows = filteredEods.map(e => {
         const report = eodReportRecord(e);
-        return [report.businessDate, report.shift, String(report.expected), String(report.declared), String(report.variance),
+        return [analyticsDateText(report.businessDate), report.shift, String(report.expected), String(report.declared), String(report.variance),
           String(e.cash_actual ?? 0), String(e.momo_actual ?? 0), String(e.institutional_credit_actual ?? 0),
           String(e.staff_welfare_actual ?? 0), e.variance_reason || '', e.status || 'Not recorded'];
       });

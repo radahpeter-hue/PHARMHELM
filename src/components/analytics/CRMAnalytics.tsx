@@ -88,7 +88,13 @@ export const CRMAnalytics: React.FC = () => {
       )
     );
     const todayStr = new Date().toISOString().split('T')[0];
-    const compliantClients = chronicClients.filter(c => !c.next_refill_due_date || c.next_refill_due_date >= todayStr);
+    const compliantClients = chronicClients.filter(c => {
+      const value: unknown = c.next_refill_due_date;
+      const dueDate = normalizeDateValue(value);
+      if (!dueDate) return true;
+      const dueDateText = typeof value === 'string' ? value : dueDate.toISOString();
+      return dueDateText >= todayStr;
+    });
     const adherenceRate = chronicClients.length > 0
       ? Math.round((compliantClients.length / chronicClients.length) * 100)
       : 0;
