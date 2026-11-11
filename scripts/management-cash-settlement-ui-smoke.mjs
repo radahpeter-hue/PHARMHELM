@@ -38,6 +38,33 @@ try{
  await report.getByText('Verified total · UGX 10,000',{exact:true}).waitFor();
  await report.screenshot({path:path.join(output,'cash-outflows-390.png'),fullPage:true});
  await report.close();
+ for (const viewport of [{width:320,height:480}, {width:844,height:320}, {width:1280,height:560}, {width:1440,height:900}]) {
+  const page = await browser.newPage({ viewport });
+  await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  await page.getByRole('button', { name: 'Log Expense', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Log Management Cash Outflow' });
+  const submit = dialog.getByRole('button', { name: 'Record external payment' });
+  const body = dialog.locator('div.overflow-y-auto');
+  for (const element of [dialog, submit]) {
+   const box = await element.boundingBox();
+   assert.ok(box && box.x >= 0 && box.y >= 0 &&
+     box.x + box.width <= viewport.width && box.y + box.height <= viewport.height, 'Dialog and payment button fit the viewport');
+  }
+  const date = await dialog.getByLabel('Expense Date').boundingBox();
+  const form = await dialog.boundingBox();
+  assert.ok(date && form && date.x + date.width <= form.x + form.width, 'The date input fits the dialog');
+  if (viewport.height < 900) {
+   assert.ok(await body.evaluate(el => el.scrollHeight > el.clientHeight), 'Short viewport has scrollable expense fields');
+   await body.hover();
+   await page.mouse.wheel(0, 1000);
+   await page.waitForFunction(() => document.querySelector('[aria-labelledby="manual-expense-title"] .overflow-y-auto').scrollTop > 0);
+  }
+  await dialog.getByLabel('Cash voucher or receipt reference').fill('RESPONSIVE-TEST');
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await dialog.waitFor({ state: 'hidden' });
+  await page.close();
+  console.log(`Manual expense dialog fits ${viewport.width}×${viewport.height}`);
+ }
  for(const width of [360,390,1280]){
   const page=await browser.newPage({viewport:{width,height:844}});await open(page);
   await page.getByLabel('Supplier payment account',{exact:true}).selectOption('management_petty_cash');

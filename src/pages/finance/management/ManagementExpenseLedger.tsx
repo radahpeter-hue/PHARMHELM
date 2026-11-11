@@ -882,109 +882,119 @@ export const ManagementExpenseLedger: React.FC = () => {
 
       {/* Manual Expense Modal */}
       {isManualModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-[32px] w-full max-w-md overflow-hidden shadow-2xl border border-zinc-100 animate-in zoom-in-95 duration-150">
-            <div className="p-8">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-black text-zinc-950">Log Management Cash Outflow</h3>
-                <button onClick={() => setIsManualModalOpen(false)} className="text-zinc-400 hover:text-zinc-600">
-                  <X size={24} />
-                </button>
-              </div>
-              <form onSubmit={handleLogManual} className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Expense Date</label>
-                  <input
-                    type="date"
-                    required
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none"
-                    value={manualForm.expense_date}
-                    onChange={(e) => setManualForm({ ...manualForm, expense_date: e.target.value })}
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Amount (UGX)</label>
-                  <input
-                    type="number"
-                    required
-                    placeholder="Enter amount..."
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none font-bold text-zinc-950"
-                    value={manualForm.amount}
-                    onChange={(e) => setManualForm({ ...manualForm, amount: e.target.value })}
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Category</label>
-                  <select
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none font-semibold text-zinc-800"
-                    value={manualForm.category}
-                    onChange={(e) => setManualForm({ ...manualForm, category: e.target.value })}
-                  >
-                    <option value="HR & Remunerations">HR & Remunerations</option>
-                    <option value="Procurement & Inventory">Procurement & Inventory</option>
-                    <option value="HQ Operational Cost">HQ Operational Cost</option>
-                    <option value="Rent & Utilities">Rent & Utilities</option>
-                    <option value="Tax Compliance">Tax Compliance</option>
-                    <option value="Legal & Audit">Legal & Audit</option>
-                    <option value="Marketing Expense">Marketing Expense</option>
-                    <option value="Logistics & Fleet">Logistics & Fleet</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Department/Branch</label>
-                  <select
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none font-semibold text-zinc-800"
-                    value={manualForm.department}
-                    onChange={(e) => setManualForm({ ...manualForm, department: e.target.value })}
-                  >
-                    <option value="HQ">HQ Administration</option>
-                    <option value="Logistics">Logistics Fleet</option>
-                    <option value="Marketing">Marketing Agency</option>
-                    <option value="HR">Human Resource Office</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Description</label>
-                  <textarea
-                    rows={3}
-                    required
-                    placeholder="Describe the nature of this expense..."
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none text-xs"
-                    value={manualForm.description}
-                    onChange={(e) => setManualForm({ ...manualForm, description: e.target.value })}
-                  />
-                </div>
-
-                <label className="grid gap-1 text-sm font-semibold">
-                  Cash voucher or receipt reference
-                  <input type="text" required minLength={3} maxLength={100} value={manualForm.voucher}
-                    onChange={e => setManualForm({ ...manualForm, voucher: e.target.value })}
-                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3" />
-                </label>
-                <p className="text-xs text-zinc-600">Record the payment after the recipient has been paid. Reuse the voucher reference if you retry.</p>
-                <div className="flex gap-3 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => setIsManualModalOpen(false)}
-                    className="flex-1 py-3 bg-zinc-100 hover:bg-zinc-250 text-zinc-600 rounded-xl text-xs font-bold uppercase tracking-widest"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={posting}
-                    className="flex-1 py-3 bg-zinc-950 hover:bg-zinc-850 text-white rounded-xl text-xs font-bold uppercase tracking-widest"
-                  >
-                    Record external payment
-                  </button>
-                </div>
-              </form>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm sm:p-4">
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="manual-expense-title"
+            onSubmit={handleLogManual}
+            className="flex max-h-[calc(100dvh-1.5rem)] w-full min-w-0 max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-100 bg-white shadow-2xl sm:max-h-[calc(100dvh-2rem)]"
+          >
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-100 px-4 py-2 sm:px-6">
+              <h3 id="manual-expense-title" className="font-black text-zinc-950 sm:text-xl">Log Management Cash Outflow</h3>
+              <button type="button" aria-label="Close expense form" onClick={() => setIsManualModalOpen(false)}
+                className="flex min-h-11 min-w-11 items-center justify-center rounded-xl text-zinc-600 hover:bg-zinc-100">
+                <X size={24} />
+              </button>
             </div>
-          </div>
+            <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6">
+              <div className="space-y-1">
+                <label htmlFor="manual-expense-date" className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Expense Date</label>
+                <input
+                  id="manual-expense-date"
+                  type="date"
+                  required
+                  className="w-full min-w-0 max-w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none"
+                  value={manualForm.expense_date}
+                  onChange={(e) => setManualForm({ ...manualForm, expense_date: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="manual-expense-amount" className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Amount (UGX)</label>
+                <input
+                  id="manual-expense-amount"
+                  type="number"
+                  required
+                  placeholder="Enter amount..."
+                  className="w-full min-w-0 max-w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none font-bold text-zinc-950"
+                  value={manualForm.amount}
+                  onChange={(e) => setManualForm({ ...manualForm, amount: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="manual-expense-category" className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Category</label>
+                <select
+                  id="manual-expense-category"
+                  className="w-full min-w-0 max-w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none font-semibold text-zinc-800"
+                  value={manualForm.category}
+                  onChange={(e) => setManualForm({ ...manualForm, category: e.target.value })}
+                >
+                  <option value="HR & Remunerations">HR & Remunerations</option>
+                  <option value="Procurement & Inventory">Procurement & Inventory</option>
+                  <option value="HQ Operational Cost">HQ Operational Cost</option>
+                  <option value="Rent & Utilities">Rent & Utilities</option>
+                  <option value="Tax Compliance">Tax Compliance</option>
+                  <option value="Legal & Audit">Legal & Audit</option>
+                  <option value="Marketing Expense">Marketing Expense</option>
+                  <option value="Logistics & Fleet">Logistics & Fleet</option>
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="manual-expense-department" className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Department/Branch</label>
+                <select
+                  id="manual-expense-department"
+                  className="w-full min-w-0 max-w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none font-semibold text-zinc-800"
+                  value={manualForm.department}
+                  onChange={(e) => setManualForm({ ...manualForm, department: e.target.value })}
+                >
+                  <option value="HQ">HQ Administration</option>
+                  <option value="Logistics">Logistics Fleet</option>
+                  <option value="Marketing">Marketing Agency</option>
+                  <option value="HR">Human Resource Office</option>
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="manual-expense-description" className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Description</label>
+                <textarea
+                  id="manual-expense-description"
+                  rows={3}
+                  required
+                  placeholder="Describe the nature of this expense..."
+                  className="w-full min-w-0 max-w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none text-base"
+                  value={manualForm.description}
+                  onChange={(e) => setManualForm({ ...manualForm, description: e.target.value })}
+                />
+              </div>
+
+              <label className="grid gap-1 text-sm font-semibold">
+                Cash voucher or receipt reference
+                <input type="text" required minLength={3} maxLength={100} value={manualForm.voucher}
+                  onChange={e => setManualForm({ ...manualForm, voucher: e.target.value })}
+                  className="w-full min-w-0 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-base" />
+              </label>
+              <p className="text-xs text-zinc-600">Record the payment after the recipient has been paid. Reuse the voucher reference if you retry.</p>
+            </div>
+            <div className="flex shrink-0 gap-2 border-t border-zinc-100 px-4 py-2 sm:px-6">
+              <button
+                type="button"
+                onClick={() => setIsManualModalOpen(false)}
+                className="min-h-11 min-w-0 flex-1 px-2 py-2 bg-zinc-100 hover:bg-zinc-250 text-zinc-600 rounded-xl text-xs font-bold uppercase tracking-widest"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={posting}
+                className="min-h-11 min-w-0 flex-1 px-2 py-2 bg-zinc-950 hover:bg-zinc-850 text-white rounded-xl text-xs font-bold uppercase tracking-widest"
+              >
+                Record external payment
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
