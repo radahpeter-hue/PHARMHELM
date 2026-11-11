@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bindWriteSnapshots,compactRuleSymbols} from '../scripts/build-firestore-release-rules.mjs';
+import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions} from '../scripts/build-firestore-release-rules.mjs';
 test('release compaction renames internal symbols while preserving paths, fields and role literals',()=>{
  const source=`rules_version = '2'; service cloud.firestore { match /databases/{database}/documents {
  // comment must not change quoted text
@@ -46,4 +46,45 @@ test('write snapshot aliases preserve literals, comments, match scope and other 
  assert.ok(result.includes('allow read, write: if resource == null;'));
  assert.ok(result.startsWith('match /documents/{id} {'));
  assert.equal(bindWriteSnapshots(result), result);
+});
+
+
+test('identical grants share a predicate while match-specific variables and local functions stay scoped', () => {
+ const source = `service cloud.firestore {
+  match /databases/{database}/documents {
+    match /first/{id} {
+      function local() { return id == 'first'; }
+      allow get: if isAuthenticated() && resource != null && resource.data.tenantId == 'tenant';
+      allow update: if isAuthenticated() && resource != null && local() && id == 'first';
+    }
+    match /second/{id} {
+      function local() { return id == 'second'; }
+      allow list: if isAuthenticated() && resource != null && resource.data.tenantId == 'tenant';
+      allow update: if isAuthenticated() && resource != null && local() && id == 'first';
+    }
+  }
+ }`;
+ const shared = shareRepeatedAllowConditions(source);
+ const helper = shared.match(/function (releaseSharedAllow\d+)\(\)/)?.[1];
+ assert.ok(helper);
+ assert.equal(shared.match(new RegExp('function ' + helper, 'g'))?.length, 1);
+ assert.ok(shared.includes('allow get: if ' + helper + '();'));
+ assert.ok(shared.includes('allow list: if ' + helper + '();'));
+ assert.equal(shared.match(/allow update: if isAuthenticated\(\) && resource != null && local\(\) && id == 'first';/g)?.length, 2);
+});
+
+test('request paths become lazy calls and strings and comments are preserved', () => {
+ const source = `service cloud.firestore { match /databases/{database}/documents {
+  // request.resource.data is not executable here
+  match /items/{id} { allow get: if resource == null || resource.data.note == 'request.auth.uid';
+  allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+  }
+ } }`;
+ const output = shareRequestExpressions(source);
+ assert.ok(output.includes("// request.resource.data is not executable here"));
+ assert.ok(output.includes("== 'request.auth.uid'"));
+ assert.match(output, /resource == null \|\| releaseRequestPath\d+\(\)\.note/);
+ assert.match(output, /request\.auth != null && releaseRequestPath\d+\(\)\.uid == releaseRequestPath\d+\(\)/);
+ assert.match(output, /return request\.auth\.uid;/);
+ assert.match(output, /return request\.resource\.data;/);
 });

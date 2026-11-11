@@ -893,7 +893,7 @@ export const ManagementExpenseLedger: React.FC = () => {
         </div>
       )}
 
-      {isReviewModalOpen && reviewingExpense && isSupplierDraft(reviewingExpense)&&<div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3"><div className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-lg min-w-0 flex-col overflow-hidden rounded-2xl bg-white text-zinc-900 shadow-2xl"><div className="flex shrink-0 items-center justify-between border-b border-zinc-200 p-4"><h3 className="font-bold text-zinc-950">Supplier payment</h3><button aria-label="Close supplier payment" onClick={()=>setIsReviewModalOpen(false)} className="min-h-11 min-w-11 rounded-xl border border-zinc-300 bg-white text-zinc-900"><X size={20} className="mx-auto"/></button></div><div className="min-h-0 overflow-y-auto overscroll-contain p-4"><SupplierInvoicePaymentPanel draftId={reviewingExpense.id} onRejected={reviewingExpense.source === 'credit_payment' ? handleRejectDraft : undefined} onSettled={()=>{setIsReviewModalOpen(false);setReviewingExpense(null);toast.success('Supplier payment recorded.');setPaymentRefresh(value=>value+1);void fetchData();}}/></div></div></div>}
+      {isReviewModalOpen && reviewingExpense && isSupplierDraft(reviewingExpense)&&<div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3"><div role="dialog" aria-modal="true" aria-label="Supplier payment" className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-lg min-w-0 flex-col overflow-hidden rounded-2xl bg-white text-zinc-900 shadow-2xl"><div className="flex shrink-0 items-center justify-between border-b border-zinc-200 p-4"><h3 className="font-bold text-zinc-950">Supplier payment</h3><button aria-label="Close supplier payment" onClick={()=>setIsReviewModalOpen(false)} className="min-h-11 min-w-11 rounded-xl border border-zinc-300 bg-white text-zinc-900"><X size={20} className="mx-auto"/></button></div><div className="min-h-0 overflow-y-auto overscroll-contain p-4"><SupplierInvoicePaymentPanel draftId={reviewingExpense.id} onRejected={reviewingExpense.source === 'credit_payment' ? handleRejectDraft : undefined} onSettled={()=>{setIsReviewModalOpen(false);setReviewingExpense(null);toast.success('Supplier payment recorded.');setPaymentRefresh(value=>value+1);void fetchData();}}/></div></div></div>}
       {/* Review Draft Modal */}
       {isReviewModalOpen && reviewingExpense && !isSupplierDraft(reviewingExpense) && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -914,7 +914,7 @@ export const ManagementExpenseLedger: React.FC = () => {
                 <AlertTriangle className="text-amber-500 shrink-0 mt-0.5" size={18} />
                 <div className="space-y-1 text-xs text-zinc-600">
                   <span className="font-bold text-zinc-800 block">Original Document Ceilings Applied</span>
-                  <span>This auto draft represents pre-approved capital. You can edit this expense down (creating a partial payment / remaining credit log) but you are **blocked** from issuing more than the ceiling.</span>
+                  <span>The recorded amount must be within the approved ceiling.</span>
                 </div>
               </div>
 
@@ -940,7 +940,6 @@ export const ManagementExpenseLedger: React.FC = () => {
                     value={reviewForm.amount}
                     onChange={(e) => setReviewForm({ ...reviewForm, amount: parseFloat(e.target.value) || 0 })}
                   />
-                  <p className="text-[10px] text-zinc-400">If edited for a lower value, the balance is logged as credit receivable/payable status and invoices are labeled as "partial payments".</p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
