@@ -57,3 +57,34 @@ test('branch and management payments retain account and source; raw logs and unr
   ]);
   assert.deepEqual(rows.filter(row => row.status === 'unverified').map(row => row.sourceId), ['forged', 'old']);
 });
+
+test('posted GRN credit drafts show the linked invoice and issuer while keeping the posting ID', () => {
+  const expenseId = 'credit_payment_liability_1475000_1475000';
+  const postingId = 'expense_payment_' + expenseId;
+  const [row] = collectCashOutflows({
+    tenantId, accounts, supplierPayments: [], creditPayments: [],
+    movements: [debit(postingId, {
+      externalExpenseCollection: 'management_expenses', externalExpenseId: expenseId,
+      reference_number: postingId, amount: 1475000, accountDeltaUGX: -1475000,
+    })],
+    managementExpenses: [{ id: expenseId, tenantId, source: 'credit_payment', invoiceRef: 'INV-010', issuedBy: 'Finance Reviewer' }],
+  });
+  assert.equal(row.displayReference, 'Invoice INV-010');
+  assert.equal(row.postedByName, 'Finance Reviewer');
+  assert.equal(row.reference, postingId);
+  assert.equal(row.amount, 1475000);
+  assert.equal(row.status, 'posted');
+});
+
+test('manual vouchers stay readable and a foreign staff record cannot supply an issuer', () => {
+  const [row] = collectCashOutflows({
+    tenantId, accounts, supplierPayments: [], creditPayments: [],
+    movements: [debit('expense_payment_manual', {
+      externalExpenseCollection: 'management_expenses', externalExpenseId: 'manual',
+      reference_number: 'VOUCHER-42',
+    })],
+    staff: [{ id: 'finance', tenantId: 'foreign', full_name: 'Other tenant staff' }],
+  });
+  assert.equal(row.displayReference, 'VOUCHER-42');
+  assert.equal(row.postedByName, '');
+});

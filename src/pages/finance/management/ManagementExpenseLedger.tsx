@@ -626,7 +626,7 @@ export const ManagementExpenseLedger: React.FC = () => {
 
   return (
     <div className="min-w-0 space-y-6 text-zinc-900">
-      <ManagementPaymentAccounts />
+      <ManagementPaymentAccounts showReconciliationReference={false} />
       {/* Treasury Header */}
       <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 bg-white p-6 border border-zinc-200 rounded-[32px] shadow-sm">
         <div className="space-y-1">
