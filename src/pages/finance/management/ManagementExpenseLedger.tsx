@@ -1,3 +1,4 @@
+import { rejectSupplierCreditDraft } from '../../../services/creditGrnSettlementService';
 import { CashOutflowReport } from '../../../components/finance/CashOutflowReport';
 import { kampalaBusinessDate } from '../../../utils/eodBusinessDate';
 import { ManagementPaymentAccounts, useManagementPaymentAccounts } from '../../../components/finance/ManagementPaymentAccounts';
@@ -26,7 +27,10 @@ import { collection, query, where, getDocs, doc, updateDoc, Timestamp, runTransa
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
 import { exportRecordsToExcel } from '../../../utils/excelExport';
-import { calculateCreditSettlement } from '../../../services/financeRecordNormalization';
+
+function isSupplierDraft(expense: { source?: string; sourceType?: string }) {
+  return expense.source === 'procurement_cash_grn' || expense.source === 'credit_payment';
+}
 
 interface ManagementExpense {
   id: string;
@@ -349,8 +353,9 @@ export const ManagementExpenseLedger: React.FC = () => {
   // Confirm and Issue draft
   const handleConfirmAndIssue = async () => {
     if (!profile?.tenantId || !reviewingExpense || postingLock.current) return;
-    if (reviewingExpense.source === 'procurement_cash_grn') {
-      toast.error('This GRN cash-payment draft requires the dedicated atomic supplier-invoice settlement workflow. Payment is not enabled yet.');
+    if (isSupplierDraft(reviewingExpense) || reviewingExpense.sourceType === 'procurement' ||
+        reviewingExpense.sourceType === 'credit' || reviewingExpense.source === 'cash_grn') {
+      toast.error('Use the linked supplier invoice to record this payment.');
       return;
     }
 
@@ -377,85 +382,6 @@ export const ManagementExpenseLedger: React.FC = () => {
     postingLock.current = true;
     setPosting(true);
     try {
-      if (reviewingExpense.sourceType === 'credit' && reviewingExpense.invoiceId && reviewingExpense.sourceRefId) {
-        const expenseRef = doc(db, 'management_expenses', reviewingExpense.id);
-        const creditRef = doc(db, 'creditLedger', reviewingExpense.sourceRefId);
-        const invoiceRef = doc(db, 'invoices', reviewingExpense.invoiceId);
-        const paymentRef = doc(db, 'creditPayments', reviewingExpense.id);
-        const pettyRef = doc(db, 'petty_cash_ledger', `credit_payment_${reviewingExpense.id}`);
-        const now = Timestamp.now();
-
-        await runTransaction(db, async transaction => {
-          const [expenseSnap, creditSnap, invoiceSnap, paymentSnap] = await Promise.all([
-            transaction.get(expenseRef), transaction.get(creditRef),
-            transaction.get(invoiceRef), transaction.get(paymentRef)
-          ]);
-          if (!expenseSnap.exists() || !creditSnap.exists() || !invoiceSnap.exists()) {
-            throw new Error('The payment draft, supplier liability, or invoice is missing.');
-          }
-          if (expenseSnap.data().tenantId !== profile.tenantId || creditSnap.data().tenantId !== profile.tenantId ||
-              invoiceSnap.data().tenantId !== profile.tenantId) {
-            throw new Error('The payment does not belong to the active tenant.');
-          }
-          if (paymentSnap.exists()) {
-            if (paymentSnap.data().tenantId !== profile.tenantId || paymentSnap.data().amount !== amt)
-              throw new Error('The supplier payment already has a different posted amount.');
-            return;
-          }
-          if (!['draft', 'pending', 'partial'].includes(String(expenseSnap.data().status).toLowerCase()) ||
-              expenseSnap.data().sourceRefId !== reviewingExpense.sourceRefId || expenseSnap.data().invoiceId !== reviewingExpense.invoiceId)
-            throw new Error('The draft changed. Review the current draft before paying.');
-          const remainingBefore = Number(
-            creditSnap.data().remainingCreditBalance ?? creditSnap.data().balance ?? creditSnap.data().amount ?? 0
-          );
-          if (amt > remainingBefore) {
-            throw new Error(`Payment exceeds the current outstanding balance of UGX ${remainingBefore.toLocaleString()}.`);
-          }
-          const { remainingAfter, status: liabilityStatus } = calculateCreditSettlement(remainingBefore, amt);
-          const paymentReference = `CP-${reviewingExpense.id.slice(-10).toUpperCase()}`;
-
-          transaction.update(expenseRef, {
-            amount: amt, amount_ugx: amt, category: reviewForm.category,
-            department: reviewForm.department, description: reviewForm.description,
-            status: 'approved', updatedAt: now, issuedAt: now,
-            issuedBy: profile.fullName || profile.email || 'Authorized Finance',
-            paymentReference, excludeFromOpexRollup: true
-          });
-          stageManagementCashEntry(transaction, pettyRef.id, {
-            tenantId: profile.tenantId, date: now.toDate().toISOString().split('T')[0],
-            amount: amt, source: 'Supplier credit settlement', reference_number: paymentReference,
-            type: 'outgoing', invoiceId: reviewingExpense.invoiceId,
-            creditLedgerId: reviewingExpense.sourceRefId, paymentId: reviewingExpense.id,
-            logged_by: profile.fullName || profile.email || 'SYSTEM',
-            createdAt: now, created_at: now.toDate().toISOString()
-          });
-          transaction.update(creditRef, {
-            remainingCreditBalance: remainingAfter, balance: remainingAfter,
-            status: liabilityStatus,
-            lastProcessedAt: now, updatedAt: now, lastPaymentReference: paymentReference
-          });
-          transaction.update(invoiceRef, {
-            paymentStatus: remainingAfter === 0 ? 'paid' : 'partial',
-            creditBalance: remainingAfter, updatedAt: now,
-            lastPaymentReference: paymentReference
-          });
-          transaction.set(paymentRef, {
-            tenantId: profile.tenantId, creditLedgerId: reviewingExpense.sourceRefId,
-            invoiceId: reviewingExpense.invoiceId, invoiceRef: reviewingExpense.invoiceRef || '',
-            paymentReference, amount: amt, balanceBefore: remainingBefore,
-            balanceAfter: remainingAfter, paymentSource: 'management_petty_cash',
-            processedBy: profile.uid, processedAt: now, expenseId: reviewingExpense.id
-          });
-        });
-
-        setPaymentRefresh(value => value + 1);
-        toast.success('Supplier credit payment issued and liability updated.');
-        setIsReviewModalOpen(false);
-        setReviewingExpense(null);
-        fetchData();
-        return;
-      }
-
       const expRef = doc(db, 'management_expenses', reviewingExpense.id);
       const postingId = 'expense_payment_' + expRef.id;
       await runTransaction(db, async tx => {
@@ -492,43 +418,6 @@ export const ManagementExpenseLedger: React.FC = () => {
           reference_number: postingId, externalExpenseCollection: 'management_expenses', externalExpenseId: expRef.id,
         }, db, MANAGEMENT_CASH_ACCOUNT, profile.uid);
 
-        // Preserve the legacy procurement invoice settlement path.
-        if (reviewingExpense.sourceType === 'procurement' && reviewingExpense.invoiceId) {
-          const invRef = doc(db, 'invoices', reviewingExpense.invoiceId);
-
-          if (amt < origAmt) {
-            // It's a partial payment! Label invoice as 'partial' and note remaining in creditLedger
-            const remainingCredit = origAmt - amt;
-            tx.update(invRef, {
-              paymentStatus: 'partial',
-              creditBalance: remainingCredit,
-              updatedAt: new Date().toISOString()
-            });
-
-            // Create a creditLog / creditLedger document for the balance
-            const credRef = doc(collection(db, 'creditLedger'));
-            tx.set(credRef, {
-              tenantId: profile.tenantId,
-              invoiceId: reviewingExpense.invoiceId,
-              invoiceRef: reviewingExpense.invoiceRef || 'Manual-GRN',
-              originalCreditAmount: origAmt,
-              remainingCreditBalance: remainingCredit,
-              status: 'outstanding',
-              creditAccruedAt: new Date().toISOString(),
-              branchId: reviewingExpense.department || 'HQ',
-              branchName: reviewingExpense.department || 'HQ Branch',
-              supplierName: reviewingExpense.description ? reviewingExpense.description.split(' - ')[0] : 'Supplier',
-              createdAt: new Date().toISOString()
-            });
-          } else {
-            // Fully paid cash GRN
-            tx.update(invRef, {
-              paymentStatus: 'cash',
-              creditBalance: 0,
-              updatedAt: new Date().toISOString()
-            });
-          }
-        }
       });
       setPaymentRefresh(value => value + 1);
       toast.success("Draft reviewed, confirmed, and issued successfully!");
@@ -553,12 +442,18 @@ export const ManagementExpenseLedger: React.FC = () => {
     }
 
     try {
-      // Set status to rejected
-      await updateDoc(doc(db, 'management_expenses', reviewingExpense.id), {
-        status: 'rejected',
-        rejectedAt: new Date().toISOString(),
-        rejectedBy: profile.fullName || profile.email || 'Authorized Finance'
-      });
+      if (reviewingExpense.source === 'credit_payment') {
+        await rejectSupplierCreditDraft({
+          tenantId: profile.tenantId, draftId: reviewingExpense.id,
+          actor: { uid: profile.uid, name: profile.fullName || profile.full_name || profile.uid },
+        });
+      } else {
+        await updateDoc(doc(db, 'management_expenses', reviewingExpense.id), {
+          status: 'rejected',
+          rejectedAt: new Date().toISOString(),
+          rejectedBy: profile.fullName || profile.email || 'Authorized Finance'
+        });
+      }
 
       // Note: If HR source, HRAdmin payroll status can be updated to 'review_needed'
       if (reviewingExpense.sourceType === 'hr' && reviewingExpense.sourceRefId) {
@@ -784,7 +679,7 @@ export const ManagementExpenseLedger: React.FC = () => {
         </div>
       </div>
 
-      <div className="space-y-3 md:hidden">{loading?<p className="text-sm text-zinc-700">Loading expenses…</p>:filteredExpenses.map(exp=><article key={exp.id} className="min-w-0 space-y-3 rounded-2xl border border-zinc-300 bg-white p-4 text-zinc-900"><div className="min-w-0"><p className="break-words font-bold text-zinc-950">{exp.invoiceRef || exp.category}</p><p className="break-words text-sm text-zinc-700">{exp.department} · {exp.status}</p><p className="mt-1 break-words text-sm text-zinc-700">{exp.description}</p></div><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-zinc-700">Invoice / expense</p><p className="font-bold text-zinc-950">UGX {Number(exp.originalAmount||exp.amount||0).toLocaleString()}</p></div><div><p className="text-zinc-700">Paid / issued</p><p className="font-bold text-zinc-950">UGX {Number(exp.source==='procurement_cash_grn'?exp.paidAmountUGX||0:exp.status==='approved'?exp.amount:0).toLocaleString()}</p></div></div>{(['draft','pending','partial'].includes(exp.status.toLowerCase())||exp.source==='procurement_cash_grn')&&<button onClick={()=>handleOpenReview(exp)} className="min-h-11 w-full rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 font-bold text-emerald-950">{exp.source==='procurement_cash_grn'?'Supplier invoice & payments':'Review draft'}</button>}</article>)}</div>
+      <div className="space-y-3 md:hidden">{loading?<p className="text-sm text-zinc-700">Loading expenses…</p>:filteredExpenses.map(exp=><article key={exp.id} className="min-w-0 space-y-3 rounded-2xl border border-zinc-300 bg-white p-4 text-zinc-900"><div className="min-w-0"><p className="break-words font-bold text-zinc-950">{exp.invoiceRef || exp.category}</p><p className="break-words text-sm text-zinc-700">{exp.department} · {exp.status}</p><p className="mt-1 break-words text-sm text-zinc-700">{exp.description}</p></div><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-zinc-700">Invoice / expense</p><p className="font-bold text-zinc-950">UGX {Number(exp.originalAmount||exp.amount||0).toLocaleString()}</p></div><div><p className="text-zinc-700">Paid / issued</p><p className="font-bold text-zinc-950">UGX {Number(isSupplierDraft(exp)?exp.paidAmountUGX??(exp.status==='approved'?exp.amount:0):exp.status==='approved'?exp.amount:0).toLocaleString()}</p></div></div>{(['draft','pending','partial'].includes(exp.status.toLowerCase())||isSupplierDraft(exp))&&<button onClick={()=>handleOpenReview(exp)} className="min-h-11 w-full rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 font-bold text-emerald-950">{isSupplierDraft(exp)?'Supplier invoice & payments':'Review draft'}</button>}</article>)}</div>
       {/* Main Table / Logs Section */}
       <div className="hidden bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden md:block">
         {loading ? (
@@ -840,7 +735,7 @@ export const ManagementExpenseLedger: React.FC = () => {
                       UGX {(exp.originalAmount || exp.amount || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 text-right text-sm font-mono font-black text-zinc-950">
-                      UGX {(exp.source==='procurement_cash_grn'?Number(exp.paidAmountUGX||0):exp.status==='approved'?exp.amount:0).toLocaleString()}
+                      UGX {(isSupplierDraft(exp)?Number(exp.paidAmountUGX??(exp.status==='approved'?exp.amount:0)):exp.status==='approved'?exp.amount:0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 text-center">
                       <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${
@@ -853,13 +748,13 @@ export const ManagementExpenseLedger: React.FC = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-center">
-                      {(exp.status?.toLowerCase() === 'draft' || exp.status?.toLowerCase() === 'pending' || exp.status?.toLowerCase() === 'partial') ? (
+                      {(isSupplierDraft(exp) || exp.status?.toLowerCase() === 'draft' || exp.status?.toLowerCase() === 'pending' || exp.status?.toLowerCase() === 'partial') ? (
                         <button
                           onClick={() => handleOpenReview(exp)}
                           className="px-3 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 text-[10px] font-black uppercase tracking-wider rounded-lg border border-amber-200 transition-all flex items-center gap-1 mx-auto"
                         >
                           <Eye size={12} />
-                          Review Draft
+                          {isSupplierDraft(exp) ? 'Supplier invoice & payments' : 'Review Draft'}
                         </button>
                       ) : (
                         <span className="text-[10px] text-zinc-400 italic">No actions</span>
@@ -998,9 +893,9 @@ export const ManagementExpenseLedger: React.FC = () => {
         </div>
       )}
 
-      {isReviewModalOpen && reviewingExpense?.source==='procurement_cash_grn'&&<div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3"><div className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-lg min-w-0 flex-col overflow-hidden rounded-2xl bg-white text-zinc-900 shadow-2xl"><div className="flex shrink-0 items-center justify-between border-b border-zinc-200 p-4"><h3 className="font-bold text-zinc-950">Supplier payment</h3><button aria-label="Close supplier payment" onClick={()=>setIsReviewModalOpen(false)} className="min-h-11 min-w-11 rounded-xl border border-zinc-300 bg-white text-zinc-900"><X size={20} className="mx-auto"/></button></div><div className="min-h-0 overflow-y-auto overscroll-contain p-4"><SupplierInvoicePaymentPanel draftId={reviewingExpense.id} onSettled={()=>{setIsReviewModalOpen(false);setReviewingExpense(null);toast.success('Supplier payment recorded.');setPaymentRefresh(value=>value+1);void fetchData();}}/></div></div></div>}
+      {isReviewModalOpen && reviewingExpense && isSupplierDraft(reviewingExpense)&&<div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3"><div className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-lg min-w-0 flex-col overflow-hidden rounded-2xl bg-white text-zinc-900 shadow-2xl"><div className="flex shrink-0 items-center justify-between border-b border-zinc-200 p-4"><h3 className="font-bold text-zinc-950">Supplier payment</h3><button aria-label="Close supplier payment" onClick={()=>setIsReviewModalOpen(false)} className="min-h-11 min-w-11 rounded-xl border border-zinc-300 bg-white text-zinc-900"><X size={20} className="mx-auto"/></button></div><div className="min-h-0 overflow-y-auto overscroll-contain p-4"><SupplierInvoicePaymentPanel draftId={reviewingExpense.id} onRejected={reviewingExpense.source === 'credit_payment' ? handleRejectDraft : undefined} onSettled={()=>{setIsReviewModalOpen(false);setReviewingExpense(null);toast.success('Supplier payment recorded.');setPaymentRefresh(value=>value+1);void fetchData();}}/></div></div></div>}
       {/* Review Draft Modal */}
-      {isReviewModalOpen && reviewingExpense && reviewingExpense.source !== 'procurement_cash_grn' && (
+      {isReviewModalOpen && reviewingExpense && !isSupplierDraft(reviewingExpense) && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-[32px] w-full max-w-lg overflow-hidden shadow-2xl border border-zinc-100 animate-in zoom-in-95 duration-150">
             <div className="p-8 space-y-6">

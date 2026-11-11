@@ -1,4 +1,5 @@
 import { collection, doc, getDoc, increment, runTransaction, Timestamp, writeBatch, type Firestore, type Transaction, type WriteBatch, type DocumentReference, type DocumentData } from 'firebase/firestore';
+import { ledgerCollectionForPortfolioKind } from '../domain/finance/portfolioFundingService';
 import { auth, db } from '../firebase';
 
 export const MANAGEMENT_CASH_ACCOUNT = 'management_petty_cash';
@@ -35,20 +36,29 @@ export function cashEntryDelta(data: { amount?: unknown; type?: unknown }) {
 export function stageManagementCashEntry(
   writer: { set(ref: DocumentReference, data: DocumentData): unknown; update(ref: DocumentReference, data: DocumentData): unknown },
   ledgerId: string, data: Record<string, any>, connection: Firestore = db,
-  accountId = MANAGEMENT_CASH_ACCOUNT, actorId = auth.currentUser?.uid || ''
+  accountId = MANAGEMENT_CASH_ACCOUNT, actorId = auth.currentUser?.uid || '',
+  supplierPosting?: { kind: ManagementPaymentAccount['kind']; charge?: { id: string; data: Record<string, any> } }
 ) {
   if (!actorId || !data.tenantId) throw new Error('Authenticated cash posting identity is required.');
   const accountDocumentId = managementAccountDocumentId(data.tenantId, accountId);
-  const delta = cashEntryDelta(data);
-  const ledgerCollection = accountId === MANAGEMENT_BANK_ACCOUNT || accountId === 'system_mtn_mobile_money' || accountId === 'system_airtel_mobile_money' || accountId.startsWith('bank_') ? 'banking_records' : 'petty_cash_ledger';
+  const legacyKind = accountId === MANAGEMENT_BANK_ACCOUNT || accountId === 'system_mtn_mobile_money' ||
+    accountId === 'system_airtel_mobile_money' || accountId.startsWith('bank_') ? 'bank' : 'petty_cash';
+  const ledgerCollection = ledgerCollectionForPortfolioKind(supplierPosting?.kind ?? legacyKind);
   const now = Timestamp.now();
-  const payload = cleanRecord(data);
-  writer.set(doc(connection, ledgerCollection, ledgerId), {
-    ...payload, amount:Math.abs(delta), date:payload.date||now.toDate().toISOString().slice(0,10), accountDocumentId, accountDeltaUGX: delta, postedBy: actorId,
-    createdAt: now, updatedAt: now
-  });
+  const stageMovement = (id: string, movement: Record<string, any>) => {
+    const delta = cashEntryDelta(movement);
+    const payload = cleanRecord(movement);
+    writer.set(doc(connection, ledgerCollection, id), {
+      ...payload, amount: Math.abs(delta), date: payload.date || now.toDate().toISOString().slice(0, 10),
+      accountDocumentId, accountDeltaUGX: delta, postedBy: actorId, createdAt: now, updatedAt: now,
+    });
+    return delta;
+  };
+  const principal = stageMovement(ledgerId, data);
+  const charge = supplierPosting?.charge;
+  const fee = charge ? stageMovement(charge.id, charge.data) : 0;
   writer.update(doc(connection, 'finance_payment_accounts', accountDocumentId), {
-    balanceUGX: increment(delta), lastPostingId: ledgerId, updatedAt: now
+    balanceUGX: increment(principal + fee), lastPostingId: ledgerId, updatedAt: now
   });
 }
 
@@ -75,11 +85,11 @@ export function createManagementFinanceWriteGroup(tenantId: string, actorId: str
   let committed = false;
   let cashLedgerId: string | null = null;
   let cashTransferRef: DocumentReference | null = null;
-  const add = (path: string, data: Record<string, any>) => {
+  const add = (path: string, data: Record<string, any>, id?: string) => {
     if (committed || data.tenantId !== tenantId) throw new Error('Invalid finance posting scope.');
     const ref = path === 'petty_cash_ledger' && typeof data.externalExpenseId === 'string'
       ? doc(connection, path, 'logistics_payment_' + data.externalExpenseId)
-      : doc(collection(connection,path));
+      : id ? doc(connection, path, id) : doc(collection(connection,path));
     const clean = cleanRecord(data);
     if(path === 'petty_cash_ledger') {
       if(cashPosted)throw new Error('Only one cash movement per posting is supported.');
@@ -103,7 +113,7 @@ export function createManagementFinanceWriteGroup(tenantId: string, actorId: str
   };
   return {
     add,
-    addDocument: async(path:string,data:Record<string,any>)=>add(path,data).id,
+    addDocument: async(path:string,data:Record<string,any>,id?:string)=>add(path,data,id).id,
     updateDocument: async(path:string,id:string,data:Record<string,any>)=>{
       if(committed)throw new Error('Posting already committed.');
       batch.update(doc(connection,path,id),{...cleanRecord(data),updatedAt:Timestamp.now()});

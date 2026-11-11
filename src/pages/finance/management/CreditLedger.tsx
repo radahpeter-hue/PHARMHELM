@@ -1,3 +1,5 @@
+import { requestSupplierCreditDraft } from '../../../services/creditGrnSettlementService';
+import { canSettleSupplierInvoices } from '../../../domain/finance/supplierPaymentPolicy';
 import { postManagementReceivablePayment } from '../../../services/managementCashPosting';
 import { isActiveSale } from '../../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
@@ -5,7 +7,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { firestoreService } from '../../../services/firestore';
 import { Search, Filter, Download, CreditCard, ChevronLeft, ChevronRight, X, ArrowRight, Check, Ban } from 'lucide-react';
 import { exportRecordsToExcel } from '../../../utils/excelExport';
-import { collection, query, where, getDocs, Timestamp, writeBatch, addDoc, doc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, doc, setDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
 import { dateInRange, financialDate, normalizeCreditRecord } from '../../../services/financeRecordNormalization';
@@ -27,23 +29,11 @@ interface CreditRecord {
   createdAt: any;
 }
 
-interface ManagementExpenseDraft {
-  id?: string;
-  tenantId: string;
-  source: 'credit_payment';
-  sourceRef: string; // CreditId
-  invoiceRef: string;
-  supplierName: string;
-  branchId: string;
-  amount: number;
-  status: 'draft';
-  createdAt: any;
-  createdBy: string;
-  excludeFromOpexRollup: true;
-}
+
 
 export const CreditLedger: React.FC = () => {
   const { profile } = useAuth();
+  const canPaySuppliers = canSettleSupplierInvoices(profile, profile?.tenantId || '');
   const [activeTab, setActiveTab] = useState<'payables' | 'receivables'>('payables');
   const [credits, setCredits] = useState<CreditRecord[]>([]);
   const [receivables, setReceivables] = useState<any[]>([]);
@@ -301,7 +291,8 @@ export const CreditLedger: React.FC = () => {
 
   // Payment confirmation submission
   const handleConfirmPayment = async (credit: CreditRecord) => {
-    if (amountToProcess <= 0) {
+    if (!canPaySuppliers || !profile?.tenantId || !credit.invoiceId) return;
+    if (!Number.isSafeInteger(amountToProcess) || amountToProcess <= 0) {
       toast.error("Amount must be greater than zero");
       return;
     }
@@ -312,50 +303,17 @@ export const CreditLedger: React.FC = () => {
 
     setIsSubmittingPayment(true);
     try {
-      // 1. Create DRAFT document in standardized management_expenses collection
-      const draftPayload = {
-        tenantId: profile?.tenantId || '',
-        date: new Date().toISOString().split('T')[0],
-        expense_date: new Date().toISOString().split('T')[0],
-        amount: amountToProcess,
-        originalAmount: credit.remainingCreditBalance, // the approved ceiling
-        category: 'Procurement & Logistics',
-        department: credit.branchName || 'HQ',
-        description: `Credit payment to ${credit.supplierName || 'Supplier'} - Ref: ${credit.invoiceRef}`,
-        status: 'draft',
-        sourceType: 'credit',
-        source: 'credit_payment',
-        excludeFromOpexRollup: true,
-        invoiceId: credit.invoiceId || '',
-        invoiceRef: credit.invoiceRef || '',
-        sourceRefId: credit.id,
-        logged_by: profile?.fullName || profile?.email || 'Authorized Finance',
-        created_at: new Date().toISOString(),
-        createdBy: profile?.uid || 'SYSTEM'
-      };
-
-      const draftId = `credit_payment_${credit.id}_${credit.remainingCreditBalance}_${amountToProcess}`.replace(/[^a-zA-Z0-9_-]/g, '_');
-      const batch = writeBatch(db);
-      batch.set(doc(db, 'management_expenses', draftId), {
-        ...draftPayload,
-        sourceRef: credit.id,
-        createdAt: Timestamp.now()
-      }, { merge: true });
-
-      // 2. Mark the liability as processing in the same atomic write.
-      const creditDocRef = doc(db, 'creditLedger', credit.id);
-      batch.update(creditDocRef, {
-        status: 'processing',
-        lastProcessedAt: Timestamp.now()
+      await requestSupplierCreditDraft({
+        tenantId: profile.tenantId, creditLedgerId: credit.id, amountUGX: amountToProcess,
+        requestId: crypto.randomUUID(), actor: { uid: profile.uid, name: profile.fullName || profile.full_name || profile.uid },
       });
-      await batch.commit();
 
       toast.success('Payment draft sent to Management Cash Outflows for review and issuance.');
       setProcessingId(null);
       fetchCredits(); // Refresh list
     } catch (e: any) {
       console.error("Error submitting credit payment:", e);
-      toast.error("Failed to process payment. Try again.");
+      toast.error(e instanceof Error ? e.message : "Failed to prepare the payment draft.");
     } finally {
       setIsSubmittingPayment(false);
     }
@@ -384,7 +342,7 @@ export const CreditLedger: React.FC = () => {
       fetchCredits(); // Refresh list
     } catch (e: any) {
       console.error("Error submitting receivable payment:", e);
-      toast.error("Failed to process payment. Try again.");
+      toast.error(e instanceof Error ? e.message : "Failed to prepare the payment draft.");
     } finally {
       setIsSubmittingPayment(false);
     }
@@ -632,7 +590,7 @@ export const CreditLedger: React.FC = () => {
                             {getStatusBadge(credit.status)}
                           </td>
                           <td className="px-6 py-4 text-center">
-                            {(credit.status === 'outstanding' || credit.status === 'partial') ? (
+                            {canPaySuppliers && (credit.status === 'outstanding' || credit.status === 'partial') ? (
                               <button
                                 onClick={() => {
                                   setProcessingId(credit.id);

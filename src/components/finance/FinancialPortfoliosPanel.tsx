@@ -3,6 +3,7 @@ import {ArrowLeft,ArrowUpRight,Wallet,Smartphone,Landmark,CreditCard,Coins,Users
 import {collection,getDocs,query,where} from 'firebase/firestore';
 import {db} from '../../firebase';
 import {useAuth} from '../../contexts/AuthContext';
+import {canSettleSupplierInvoices} from '../../domain/finance/supplierPaymentPolicy';
 import {hasAnyRole} from '../../utils/roles';
 import {kampalaBusinessDate} from '../../utils/eodBusinessDate';
 import type {ManagementPaymentAccount} from '../../services/managementCashPosting';
@@ -32,8 +33,9 @@ export function FinancialPortfoliosPanel(){
 function TreasuryWorkspace(){
  const {profile,hasPermission}=useAuth();const tenantId=profile!.tenantId;
  const canRegister=hasPermission('finance','operate')&&hasAnyRole(profile,['owner','CEO','CEO / MD']);
+ const allPortfolioScopes=canRegister||canSettleSupplierInvoices(profile,tenantId);
  const treasury=useManagementPaymentAccounts(true);
- const [branches,setBranches]=useState<Array<{id:string;name:string}>>([]),[items,setItems]=useState<FinancialPortfolio[]>([]);
+ const [branches,setBranches]=useState<Array<{id:string;name:string;active:boolean}>>([]),[items,setItems]=useState<FinancialPortfolio[]>([]);
  const [registryError,setRegistryError]=useState(''),[registryLoading,setRegistryLoading]=useState(true),[refresh,setRefresh]=useState(0);
  const credit=useCreditReceivablesPortfolio(refresh);
  const welfareEvidence=useTreasuryWelfareEvidence(tenantId,refresh);
@@ -45,11 +47,11 @@ function TreasuryWorkspace(){
  const [ledgerRevision,setLedgerRevision]=useState<unknown>(null);
  const changed=()=>setRefresh(n=>n+1);
  useEffect(()=>{let live=true;setRegistryLoading(true);setRegistryError('');
-  Promise.all([getDocs(query(collection(db,'branches'),where('tenantId','==',tenantId))),listFinancialPortfolios(tenantId)])
-   .then(([rows,portfolios])=>{if(live){setBranches(rows.docs.map(d=>({id:d.id,name:String(d.data().name||d.id)})));setItems(portfolios);}})
+  Promise.all([getDocs(query(collection(db,'branches'),where('tenantId','==',tenantId))),listFinancialPortfolios(tenantId,allPortfolioScopes?null:undefined)])
+   .then(([rows,portfolios])=>{if(live){setBranches(rows.docs.map(d=>({id:d.id,name:String(d.data().name||d.id),active:!['Inactive','Closed'].includes(d.data().status)})));setItems(portfolios);}})
    .catch(()=>{if(live)setRegistryError('Unable to load branch or portfolio coverage. Refresh to retry. Consolidated balances are unavailable.');})
    .finally(()=>{if(live)setRegistryLoading(false);});return()=>{live=false;};
- },[tenantId,refresh]);
+ },[tenantId,refresh,allPortfolioScopes]);
  const model=useMemo(()=>{try{
   const positions=treasuryPositions({tenantId,branches,portfolios:items,accounts:treasury.accounts});
   const custom=items.filter(p=>p.origin==='custom'&&!p.bankParentId);
@@ -146,7 +148,7 @@ function TreasuryWorkspace(){
      </button>;
     })}
    </div>
-   {createOpen&&canRegister&&<TreasuryRegistration tenantId={tenantId} actorId={profile!.uid} onChanged={changed}/>}
+   {createOpen&&canRegister&&<TreasuryRegistration tenantId={tenantId} actorId={profile!.uid} branches={branches.filter(branch=>branch.active)} onChanged={changed}/>}
    {model.custom.length>0&&<section className="space-y-3"><h3 className="font-semibold">Additional portfolios</h3><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{model.custom.map(p=><button key={p.id} onClick={()=>open(p.id)} className={surface+' text-left hover:border-emerald-600'}><p className="font-semibold">{p.name}</p><p className="mt-2 text-xl font-semibold">{loading?'Loading…':error?'Balance unavailable':money(model.views.find(v=>v.portfolioId===p.id)?.balanceUGX??null)}</p><p className="mt-2 text-xs text-zinc-500">{p.classification.replaceAll('_',' ')} · {p.status} · Open portfolio</p></button>)}</div></section>}
    <div className="grid gap-4 @min-[920px]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
     <section className={surface}>
@@ -221,13 +223,75 @@ function AccountActions({workspace,accountId,selectedPortfolio,account,accounts,
  const effective=account||accounts.find(a=>a.accountId===portfolio?.id);
  return portfolio?<div key={portfolio.id}><TreasuryAccountControls portfolio={portfolio} account={effective} accounts={accounts} actorId={actorId} onChanged={onChanged}/></div>:null;
 }
-function TreasuryRegistration({bank=false,tenantId,actorId,onChanged}:{bank?:boolean;tenantId:string;actorId:string;onChanged:()=>void}){
- const [name,setName]=useState(''),[classification,setClassification]=useState<FinancialPortfolioClassification>('restricted_internal_fund');
- const [institution,setInstitution]=useState(''),[reference,setReference]=useState(''),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
- async function submit(e:React.FormEvent){e.preventDefault();if(busy)return;setBusy(true);setMessage('');try{
-  if(bank)await registerPortfolioBankIdentity({tenantId,actorId,institution,accountReference:reference,displayName:name,createdAt:new Date().toISOString()});
-  else await createCustomFinancialPortfolio({id:'custom_'+crypto.randomUUID().replaceAll('-',''),tenantId,name,classification,description:'CEO-registered financial portfolio',scope:{kind:'organisation'},currency:'UGX',origin:'custom',supportsChildAccounts:false,allowsTransfersIn:true,allowsTransfersOut:true,createdBy:actorId,createdAt:new Date().toISOString()});
-  setName('');setInstitution('');setReference('');setMessage('Registered. Open the account to confirm its verified opening reconciliation.');onChanged();
- }catch(e){setMessage(e instanceof Error?e.message:'Registration failed.');}finally{setBusy(false);}}
- return <form onSubmit={submit} className={surface+' grid gap-3 sm:grid-cols-2'}><h4 className="font-semibold sm:col-span-2">{bank?'Bank account registration':'Custom portfolio registration'}</h4><label className="text-sm">{bank?'Account name':'Portfolio name'}<input required maxLength={120} value={name} onChange={e=>setName(e.target.value)} className={treasuryField}/></label>{bank?<><label className="text-sm">Bank institution<input required maxLength={100} value={institution} onChange={e=>setInstitution(e.target.value)} className={treasuryField}/></label><label className="text-sm">Bank account reference<input required maxLength={60} value={reference} onChange={e=>setReference(e.target.value)} className={treasuryField}/></label></>:<label className="text-sm">Portfolio classification<select value={classification} onChange={e=>setClassification(e.target.value as FinancialPortfolioClassification)} className={treasuryField}><option value="restricted_internal_fund">Internal fund</option><option value="other_financial_asset">Other financial asset</option><option value="cash_equivalent">Cash equivalent</option></select></label>}<p className="text-xs text-zinc-500 sm:col-span-2">Organisation scope. Registration establishes identity only; no funds are added.</p><button disabled={busy} className={treasuryButton}>{busy?'Registering…':bank?'Register bank account':'Create portfolio'}</button>{message&&<p role="status" className="break-words text-sm sm:col-span-2">{message}</p>}</form>;
+function TreasuryRegistration({ bank = false, tenantId, actorId, branches = [], onChanged }: {
+  bank?: boolean; tenantId: string; actorId: string; branches?: { id: string; name: string }[]; onChanged: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [classification, setClassification] = useState<FinancialPortfolioClassification | 'branch_cash_safe'>('restricted_internal_fund');
+  const [branchId, setBranchId] = useState('');
+  const [institution, setInstitution] = useState('');
+  const [reference, setReference] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const cashSafe = classification === 'branch_cash_safe';
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy || (cashSafe && !branchId)) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      const createdAt = new Date().toISOString();
+      if (bank) {
+        await registerPortfolioBankIdentity({ tenantId, actorId, institution, accountReference: reference, displayName: name, createdAt });
+      } else {
+        const id = (cashSafe ? 'custom_cash_safe_' : 'custom_') + crypto.randomUUID().replaceAll('-', '');
+        await createCustomFinancialPortfolio({
+          id, tenantId, name, classification: cashSafe ? 'cash_equivalent' : classification,
+          description: cashSafe ? 'Branch cash safe' : 'CEO-registered financial portfolio',
+          scope: cashSafe ? { kind: 'branch', branchId } : { kind: 'organisation' }, currency: 'UGX',
+          origin: 'custom', supportsChildAccounts: false, allowsTransfersIn: true, allowsTransfersOut: true,
+          createdBy: actorId, createdAt,
+        });
+      }
+      setName('');
+      setInstitution('');
+      setReference('');
+      setMessage('Registered. Open the account to confirm its verified opening reconciliation.');
+      onChanged();
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'Registration failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <form onSubmit={submit} className={surface + ' grid gap-3 sm:grid-cols-2'}>
+    <h4 className="font-semibold sm:col-span-2">{bank ? 'Bank account registration' : 'Custom portfolio registration'}</h4>
+    <label className="text-sm">{bank ? 'Account name' : 'Portfolio name'}
+      <input required maxLength={120} value={name} onChange={e => setName(e.target.value)} className={treasuryField}/>
+    </label>
+    {bank ? <>
+      <label className="text-sm">Bank institution<input required maxLength={100} value={institution} onChange={e => setInstitution(e.target.value)} className={treasuryField}/></label>
+      <label className="text-sm">Bank account reference<input required maxLength={60} value={reference} onChange={e => setReference(e.target.value)} className={treasuryField}/></label>
+    </> : <>
+      <label className="text-sm">Portfolio classification
+        <select value={classification} onChange={e => setClassification(e.target.value as typeof classification)} className={treasuryField}>
+          <option value="restricted_internal_fund">Internal fund</option>
+          <option value="other_financial_asset">Other financial asset</option>
+          <option value="cash_equivalent">Cash equivalent</option>
+          <option value="branch_cash_safe">Branch cash safe</option>
+        </select>
+      </label>
+      {cashSafe && <label className="text-sm">Funding branch
+        <select required value={branchId} onChange={e => setBranchId(e.target.value)} className={treasuryField}>
+          <option value="">Select an active branch</option>
+          {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+        </select>
+      </label>}
+    </>}
+    <p className="text-xs text-zinc-500 sm:col-span-2">Reconcile the opening balance after registering the portfolio.</p>
+    <button disabled={busy} className={treasuryButton}>{busy ? 'Registering…' : bank ? 'Register bank account' : 'Create portfolio'}</button>
+    {message && <p role="status" className="break-words text-sm sm:col-span-2">{message}</p>}
+  </form>;
 }

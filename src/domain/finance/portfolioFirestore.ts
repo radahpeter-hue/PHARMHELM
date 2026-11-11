@@ -9,10 +9,12 @@ const accounts='finance_portfolio_accounts_v1';
 export const portfolioRef=(database:Firestore,tenantId:string,id:string)=>doc(database,portfolios,tenantId+'__'+id);
 export const accountRef=(database:Firestore,tenantId:string,id:string)=>doc(database,accounts,tenantId+'__'+id);
 export async function listFinancialPortfolios(
- tenantId:string,branchId?:string,database:Firestore=db
+ tenantId:string,branchId?:string|null,database:Firestore=db
 ):Promise<FinancialPortfolio[]>{
  const base=collection(database,portfolios);
- const requests=[getDocs(query(base,where('tenantId','==',tenantId),where('scope.kind','==','organisation')))];
+ // Null requests tenant-wide coverage. The registry Rules authorize each scope.
+ const tenant = where('tenantId', '==', tenantId);
+ const requests = [getDocs(branchId === null ? query(base, tenant) : query(base, tenant, where('scope.kind', '==', 'organisation')))];
  if(branchId)requests.push(getDocs(query(base,where('tenantId','==',tenantId),where('scope.kind','==','branch'),where('scope.branchId','==',branchId))));
  const snapshots=await Promise.all(requests);
  const seen=new Set<string>();

@@ -2,16 +2,20 @@
 import assert from 'node:assert/strict';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, setDoc, getDoc, getDocs, collection, updateDoc, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, getDoc, getDocs, collection, query, where, updateDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { build } from 'esbuild';
 if(!process.env.FIRESTORE_EMULATOR_HOST)throw new Error('FIRESTORE_EMULATOR_HOST is required.');
 mkdirSync('node_modules/.cache/finance-emulator',{recursive:true});
-await build({entryPoints:['src/services/cashGrnSettlementService.ts','src/services/managementCashPosting.ts','src/services/managementPaymentAccountService.ts'],outdir:'node_modules/.cache/finance-emulator',bundle:true,platform:'node',format:'esm',packages:'external',plugins:[{name:'isolated-firebase',setup(b){b.onResolve({filter:/\/firebase$/},()=>({path:'firebase',namespace:'stub'}));b.onLoad({filter:/.*/,namespace:'stub'},()=>({contents:'export const db={};export const auth={currentUser:null};',loader:'js'}));}}]});
+await build({entryPoints:['src/services/cashGrnSettlementService.ts','src/services/creditGrnSettlementService.ts','src/domain/finance/cashOutflows.ts','src/domain/finance/portfolioFirestore.ts','src/domain/finance/portfolioFunding.ts','src/services/managementCashPosting.ts','src/services/managementPaymentAccountService.ts'],outdir:'node_modules/.cache/finance-emulator',entryNames:'[name]',bundle:true,platform:'node',format:'esm',packages:'external',plugins:[{name:'isolated-firebase',setup(b){b.onResolve({filter:/\/firebase$/},()=>({path:'firebase',namespace:'stub'}));b.onLoad({filter:/.*/,namespace:'stub'},()=>({contents:'export const db={};export const auth={currentUser:null};',loader:'js'}));}}]});
 const {settleCashGrnDraft}=await import('../node_modules/.cache/finance-emulator/cashGrnSettlementService.js');
+const {settleSupplierCreditDraft,requestSupplierCreditDraft,rejectSupplierCreditDraft}=await import('../node_modules/.cache/finance-emulator/creditGrnSettlementService.js');
+const {collectCashOutflows}=await import('../node_modules/.cache/finance-emulator/cashOutflows.js');
+const {createCustomFinancialPortfolio}=await import('../node_modules/.cache/finance-emulator/portfolioFirestore.js');
+const {registerPortfolioFunding}=await import('../node_modules/.cache/finance-emulator/portfolioFunding.js');
 const {postManagementCashEntry,createManagementFinanceWriteGroup,postManagementReceivablePayment}=await import('../node_modules/.cache/finance-emulator/managementCashPosting.js');
 const {registerManagementPaymentAccount}=await import('../node_modules/.cache/finance-emulator/managementPaymentAccountService.js');
 const tenantId='finance-test',financeUid='finance-secondary';
-const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-settlement-rules',firestore:{rules:readFileSync('firestore.rules','utf8')}});
+const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-settlement-rules',firestore:{rules:readFileSync(process.env.PHARMHELM_SETTLEMENT_RULES || 'firestore.rules','utf8')}});
 const actor=uid=>env.authenticatedContext(uid).firestore();
 const finance=actor(financeUid);
 const accountId=kind=>`${tenantId}_management_${kind==='bank'?'bank':'petty_cash'}`;
@@ -115,8 +119,8 @@ try {
  await assertFails(updateDoc(doc(actor('foreign-finance'),'credit_receivables','receivable'),{outstanding_ugx:999999}));
  await assertFails(updateDoc(doc(finance,'credit_receivables','receivable'),{tenantId:'other'}));
  await seed('denied');
- await assertFails(settleCashGrnDraft({...input('denied','wrong-role'),actor:{uid:'procurement-only',name:'Procurement'}},actor('procurement-only')));
- await assertFails(settleCashGrnDraft({...input('denied','foreign'),actor:{uid:'foreign-finance',name:'Other Finance'}},actor('foreign-finance')));
+ await assert.rejects(settleCashGrnDraft({...input('denied','wrong-role'),actor:{uid:'procurement-only',name:'Procurement'}},actor('procurement-only')), /HQ Finance/);
+ await assert.rejects(settleCashGrnDraft({...input('denied','foreign'),actor:{uid:'foreign-finance',name:'Other Finance'}},actor('foreign-finance')), /HQ Finance/);
  await assertFails(setDoc(doc(finance,'petty_cash_ledger','unlinked-write'),{tenantId,amount:1,type:'outgoing'}));
  await assertFails(updateDoc(doc(finance,'finance_payment_accounts',accountId('petty_cash')),{balanceUGX:999999}));
  await assertFails(updateDoc(doc(finance,'invoices',refs('denied').invoiceId),{paidAmountUGX:38000,paymentStatus:'Paid'}));
@@ -135,6 +139,216 @@ try {
  await assertSucceeds(postManagementCashEntry({tenantId,amount:1,type:'outgoing'},actor('custom-cash'),'custom-cash-post','custom-cash'));
  await assertFails(postManagementCashEntry({tenantId,amount:1,type:'outgoing'},actor('custom-foreign'),'foreign-realm-cannot-post','custom-foreign'));
  console.log('PASS compact Finance view and custom cash access preserve functional and tenant boundaries.');
+ // Cash and credit GRN creation use the same tenant-scoped links as the procurement writers.
+ const newGrn = async (key, paymentType) => {
+   const r = refs(key);
+   const liabilityId = 'supplier_credit_' + key;
+   const invoice = {tenantId,grnId:r.grnId,invoiceValue:38000,invoiceRef:'INV-' + key,paidAmountUGX:0,creditBalance:38000,
+     paymentType,paymentStatus:paymentType==='cash'?'Pending Payment':'Outstanding'};
+   const operator = actor('procurement-only');
+   const batch = writeBatch(operator);
+   batch.set(doc(operator,'grn_records',r.grnId),{tenantId,inventoryClass:'SELLABLE',status:'completed',
+     invoice_id:r.invoiceId,procurement_invoice_id:r.legacyId,credit_ledger_id:paymentType==='credit'?liabilityId:null,
+     payment_type:paymentType,payment_status:paymentType==='cash'?'pending_payment':'outstanding'});
+   batch.set(doc(operator,'invoices',r.invoiceId),invoice);
+   batch.set(doc(operator,'procurement_invoices',r.legacyId),{...invoice,paid_amount_ugx:0,status:'Unpaid'});
+   if (paymentType==='credit') {
+     batch.set(doc(operator,'creditLedger',liabilityId),{tenantId,grnId:r.grnId,invoiceId:r.invoiceId,
+       originalCreditAmount:38000,remainingCreditBalance:38000,amount:38000,balance:38000,
+       status:'outstanding',paymentHistoryIds:[]});
+   } else {
+     batch.set(doc(operator,'management_expenses',r.draftId),{tenantId,grnId:r.grnId,invoiceId:r.invoiceId,
+       amount:38000,amount_ugx:38000,paidAmountUGX:0,source:'procurement_cash_grn',excludeFromOpexRollup:true,
+       status:'draft',paymentStatus:'pending_payment',createdBy:'procurement-only'});
+   }
+   await assertSucceeds(batch.commit());
+   return {...r, liabilityId};
+ };
+ const cashBeforeGrns = await count('petty_cash_ledger');
+ const bankBeforeGrns = await count('banking_records');
+ await newGrn('level8-cash','cash');
+ const credit = await newGrn('level8-credit','credit');
+ assert.equal(await count('petty_cash_ledger'),cashBeforeGrns);
+ assert.equal(await count('banking_records'),bankBeforeGrns);
+ assert.equal((await value('creditLedger',credit.liabilityId)).balance,38000);
+ const branchId = 'masaka';
+ const cashSales = 'system_branch_cash_sales_' + branchId;
+ const mobile = 'system_mtn_mobile_money';
+ const airtel = 'system_airtel_mobile_money';
+ const registeredBank = 'bank_' + 'a'.repeat(64);
+ const cashSafe = 'custom_cash_safe_' + 'a'.repeat(32);
+ const fundingId = key => tenantId + '_' + key;
+ const addFunding = async (db, key, kind, classification, scope, balance) => {
+   await setDoc(doc(db,'finance_payment_accounts',fundingId(key)),{tenantId,accountId:key,portfolioId:key,
+     name:key,kind,currency:'UGX',initialized:true,portfolioClassification:classification,scope,balanceUGX:balance});
+ };
+ await admin(async db=>{
+   await setDoc(doc(db,'branches',branchId),{tenantId,name:'Masaka',status:'Active'});
+   await setDoc(doc(db,'staff','branch-manager'),{tenantId,role:'Branch Manager',secondaryRoles:['Finance Officer'],
+     status:'active',assigned_branches:[branchId]});
+   await setDoc(doc(db,'staff','inactive-finance'),{tenantId,role:'Finance Head',status:'inactive',active:true});
+   const hq = {kind:'organisation'};
+   const masaka = {kind:'branch',branchId};
+   await addFunding(db,cashSales,'petty_cash','cash_equivalent',masaka,20000);
+   await addFunding(db,mobile,'bank','mobile_money',hq,20000);
+   await addFunding(db,airtel,'bank','mobile_money',hq,15000);
+   await addFunding(db,registeredBank,'bank','bank',hq,25000);
+   await setDoc(doc(db,'staff','treasury-owner'),{tenantId,role:'owner',status:'active'});
+   await setDoc(doc(db,'finance_portfolios_v1',tenantId+'__'+registeredBank),{tenantId,id:registeredBank,status:'active',
+     origin:'custom',classification:'bank',scope:hq,currency:'UGX',bankParentId:'system_bank'});
+ });
+ const owner = actor('treasury-owner');
+ const cashSafeRegistration = {tenantId,id:cashSafe,status:'active',origin:'custom',name:'Masaka Cash Safe',
+   classification:'cash_equivalent',scope:{kind:'branch',branchId},currency:'UGX',description:'Branch cash safe',
+   supportsChildAccounts:false,allowsTransfersIn:true,allowsTransfersOut:true,createdAt:new Date().toISOString()};
+ await assertFails(createCustomFinancialPortfolio({...cashSafeRegistration,createdBy:financeUid},finance));
+ const safe = await assertSucceeds(createCustomFinancialPortfolio({...cashSafeRegistration,createdBy:'treasury-owner'},owner));
+ await assertSucceeds(registerPortfolioFunding({portfolio:safe,actorId:'treasury-owner',name:safe.name,
+   openingBalanceUGX:20000,reconciliationReference:'Masaka safe opening count'},owner));
+ const visible = await assertSucceeds(getDocs(query(collection(finance,'finance_portfolios_v1'),where('tenantId','==',tenantId))));
+ assert.ok(visible.docs.some(row=>row.id===tenantId+'__'+cashSafe));
+ const hqActor = {uid:financeUid,name:'Test Finance'};
+ const fundCash = (key,requestId,amountUGX,paymentAccountId,chargeUGX=0) =>
+   ({...input(key,requestId,amountUGX),paymentAccountId,chargeUGX});
+ const cashPart = await assertSucceeds(settleCashGrnDraft(fundCash('level8-cash','cash-branch',10000,cashSales,1000),finance));
+ assert.equal(cashPart.remainingUGX,28000);
+ assert.equal((await value('finance_payment_accounts',fundingId(cashSales))).balanceUGX,9000);
+ const cashPosted = await value('cash_grn_payments',cashPart.paymentId);
+ assert.equal(cashPosted.fundingBranchName,'Masaka');
+ assert.equal(cashPosted.totalDebitUGX,11000);
+ assert.equal((await value('petty_cash_ledger',cashPart.paymentId+'_fee')).expenseCategory,'Financial service expenses');
+ const ledgerSize = await count('banking_records');
+ await assert.rejects(settleCashGrnDraft(fundCash('level8-cash','mtn-insufficient',20000,mobile,1),finance),/Insufficient/);
+ assert.equal(await count('banking_records'),ledgerSize);
+ assert.equal((await value('invoices',refs('level8-cash').invoiceId)).creditBalance,28000);
+ const mobilePart = await assertSucceeds(settleCashGrnDraft(fundCash('level8-cash','cash-mtn',18000,mobile,500),finance));
+ assert.equal((await value('finance_payment_accounts',fundingId(mobile))).balanceUGX,1500);
+ const airtelPart = await assertSucceeds(settleCashGrnDraft(fundCash('level8-cash','cash-airtel',10000,airtel),finance));
+ assert.equal(airtelPart.remainingUGX,0);
+ assert.equal(await value('banking_records',airtelPart.paymentId+'_fee'),undefined);
+ assert.equal((await value('invoices',refs('level8-cash').invoiceId)).paidAmountUGX,38000);
+ console.log('PASS cash GRN with three portfolios, separate charges, exact debit and atomic insufficient-funds rejection.');
+
+ const approval = {tenantId,creditLedgerId:credit.liabilityId,amountUGX:38000,requestId:'level8-approval',actor:hqActor};
+ const creditDraft = await assertSucceeds(requestSupplierCreditDraft(approval,finance));
+ assert.equal(await requestSupplierCreditDraft(approval,finance),creditDraft);
+ await assert.rejects(requestSupplierCreditDraft({...approval,requestId:'second-approval'},finance),/already has/);
+ const creditInput = (requestId,amountUGX,paymentAccountId,chargeUGX=0) =>
+   ({tenantId,draftId:creditDraft,requestId,externalReference:'CREDIT-'+requestId,amountUGX,paymentAccountId,chargeUGX,actor:hqActor});
+ const request = creditInput('credit-bank',20000,registeredBank,2500);
+ const creditRace = await Promise.all([settleSupplierCreditDraft(request,finance),settleSupplierCreditDraft(request,finance)]);
+ assert.equal(creditRace.filter(result=>!result.alreadyProcessed).length,1);
+ const creditPart = creditRace[0];
+ const postedCredit = await value('creditPayments',creditPart.paymentId);
+ assert.equal(postedCredit.invoiceId,credit.invoiceId);
+ assert.equal(postedCredit.creditLedgerId,credit.liabilityId);
+ assert.equal(postedCredit.grnId,credit.grnId);
+ assert.equal(postedCredit.balanceAfter,18000);
+ assert.equal(postedCredit.totalDebitUGX,22500);
+ assert.equal((await value('finance_payment_accounts',fundingId(registeredBank))).balanceUGX,2500);
+ assert.equal((await value('creditLedger',credit.liabilityId)).remainingCreditBalance,18000);
+ assert.equal((await value('creditLedger',credit.liabilityId)).status,'processing');
+ await assert.rejects(settleSupplierCreditDraft({...request,chargeUGX:2501},finance),/different payment/);
+ await assert.rejects(settleSupplierCreditDraft(creditInput('overpay',18001,cashSafe),finance),/approved draft|outstanding/);
+ const attempts = await Promise.allSettled([
+   settleSupplierCreditDraft(creditInput('credit-safe-a',18000,cashSafe,1000),finance),
+   settleSupplierCreditDraft(creditInput('credit-safe-b',18000,cashSafe,1000),finance),
+ ]);
+ assert.equal(attempts.filter(result=>result.status==='fulfilled').length,1);
+ const last = attempts.find(result=>result.status==='fulfilled').value;
+ assert.equal(last.remainingUGX,0);
+ assert.equal((await value('finance_payment_accounts',fundingId(cashSafe))).balanceUGX,1000);
+ assert.equal((await value('invoices',credit.invoiceId)).paidAmountUGX,38000);
+ assert.equal((await value('procurement_invoices',credit.legacyId)).creditBalance,0);
+ assert.equal((await value('grn_records',credit.grnId)).payment_status,'paid');
+ assert.deepEqual((await value('creditLedger',credit.liabilityId)).paymentHistoryIds,[creditPart.paymentId,last.paymentId]);
+ console.log('PASS credit approval, multi-account installment settlement, concurrent retries, GRN references and liability history.');
+
+ const rejected = await newGrn('level8-rejected','credit');
+ const rejection = {...approval,creditLedgerId:rejected.liabilityId,requestId:'reject-draft'};
+ const rejectedDraft = await requestSupplierCreditDraft(rejection,finance);
+ await assertSucceeds(rejectSupplierCreditDraft({tenantId,draftId:rejectedDraft,actor:hqActor},finance));
+ assert.equal((await value('management_expenses',rejectedDraft)).status,'rejected');
+ assert.equal((await value('creditLedger',rejected.liabilityId)).status,'outstanding');
+ await assertSucceeds(requestSupplierCreditDraft({...rejection,requestId:'replacement-draft'},finance));
+ assert.equal((await value('creditLedger',rejected.liabilityId)).remainingCreditBalance,38000);
+ console.log('PASS credit draft rejection releases the unchanged liability for approval.');
+
+ const directPayment = {...postedCredit,processedAt:serverTimestamp(),processedBy:'branch-manager'};
+ const branchDb = actor('branch-manager');
+ await assert.rejects(settleSupplierCreditDraft({...request,actor:{uid:'branch-manager',name:'Branch Manager'}},branchDb),/HQ Finance/);
+ await assert.rejects(settleCashGrnDraft({...fundCash('denied','inactive',1,cashSales),actor:{uid:'inactive-finance',name:'Inactive'}},actor('inactive-finance')),/HQ Finance/);
+ await assertFails(setDoc(doc(branchDb,'creditPayments','branch-fabricated-payment'),directPayment));
+ await assertFails(updateDoc(doc(branchDb,'creditLedger',rejected.liabilityId),{remainingCreditBalance:0,status:'paid'}));
+ await assertFails(updateDoc(doc(branchDb,'invoices',rejected.invoiceId),{creditBalance:0,paymentStatus:'paid'}));
+ await assertFails(updateDoc(doc(branchDb,'grn_records',rejected.grnId),{payment_status:'paid'}));
+ await assertFails(setDoc(doc(finance,'creditPayments','supplier_credit_settlement_missing_fake'),{
+   ...postedCredit,draftId:'missing',requestId:'fake',processedAt:serverTimestamp(),
+ }));
+ await assertFails(setDoc(doc(finance,'petty_cash_ledger','unlinked-supplier-charge'),{
+   tenantId,amount:1000,type:'outgoing',supplierCharge:true,supplierPosting:'credit',paymentId:creditPart.paymentId,
+   accountDocumentId:fundingId(cashSafe),accountDeltaUGX:-1000,postedBy:financeUid,
+ }));
+ // Replay a complete posting directly through the SDK so denials exercise Rules,
+ // including cases that bypass every service-side validation.
+ const raw = await newGrn('level8-raw','cash');
+ const rawRequest = 'raw-rules';
+ const rawId = `procurement_cash_settlement_${tenantId}_${raw.draftId}_${rawRequest}`;
+ const rawCharge = rawId + '_fee';
+ const principal = await value('petty_cash_ledger',cashPart.paymentId);
+ const fee = await value('petty_cash_ledger',cashPart.paymentId+'_fee');
+ const rawBalance = (await value('finance_payment_accounts',fundingId(cashSales))).balanceUGX;
+ const rawCommit = (connection, uid, { omitCharge = false, wrongCharge = false, wrongInvoiceBalance = false } = {}) => {
+   const batch = writeBatch(connection);
+   const reference = 'PAY-GRN-' + rawRequest;
+   const links = {invoiceId:raw.invoiceId,grnId:raw.grnId,externalReference:'RAW-VOUCHER-123'};
+   batch.set(doc(connection,'cash_grn_payments',rawId),{...cashPosted,...links,requestId:rawRequest,
+     draftId:raw.draftId,procurementInvoiceId:raw.legacyId,processedBy:uid,processedAt:serverTimestamp(),
+     reference,movementId:rawId,chargeMovementId:rawCharge,amountUGX:1000,chargeUGX:100,totalDebitUGX:1100,remainingUGX:37000});
+   batch.set(doc(connection,'petty_cash_ledger',rawId),{...principal,...links,paymentId:rawId,
+     postedBy:uid,reference_number:reference,amount:1000,accountDeltaUGX:-1000});
+   if (!omitCharge) batch.set(doc(connection,'petty_cash_ledger',rawCharge),{...fee,...links,paymentId:rawId,
+     postedBy:uid,reference_number:reference,amount:wrongCharge?99:100,accountDeltaUGX:wrongCharge?-99:-100});
+   batch.update(doc(connection,'finance_payment_accounts',fundingId(cashSales)),{balanceUGX:rawBalance-1100,lastPostingId:rawId});
+   const invoiceUpdate = {paidAmountUGX:1000,paymentStatus:'Partially Paid',creditBalance:37000,
+     lastPaymentId:rawId,lastPaymentReference:links.externalReference};
+   batch.update(doc(connection,'invoices',raw.invoiceId),{...invoiceUpdate,creditBalance:wrongInvoiceBalance?36900:37000});
+   batch.update(doc(connection,'procurement_invoices',raw.legacyId),{...invoiceUpdate,paid_amount_ugx:1000,status:'Partial'});
+   batch.update(doc(connection,'grn_records',raw.grnId),{payment_status:'partial',lastPaymentId:rawId});
+   batch.update(doc(connection,'management_expenses',raw.draftId),{status:'partial',paymentStatus:'partial',
+     paidAmountUGX:1000,balanceUGX:37000,lastPaymentId:rawId});
+   return batch.commit();
+ };
+ await assertFails(rawCommit(finance,financeUid,{omitCharge:true}));
+ await assertFails(rawCommit(finance,financeUid,{wrongCharge:true}));
+ await assertFails(rawCommit(finance,financeUid,{wrongInvoiceBalance:true}));
+ await assertFails(rawCommit(branchDb,'branch-manager'));
+ assert.equal((await value('finance_payment_accounts',fundingId(cashSales))).balanceUGX,rawBalance);
+ assert.equal(await value('cash_grn_payments',rawId),undefined);
+ await assertSucceeds(rawCommit(finance,financeUid));
+ assert.equal((await value('finance_payment_accounts',fundingId(cashSales))).balanceUGX,rawBalance-1100);
+ console.log('PASS Rules independently require the exact charge, liability update and HQ authority in a complete atomic batch.');
+
+ await admin(db=>updateDoc(doc(db,'finance_portfolios_v1',tenantId+'__'+cashSafe),{status:'inactive'}));
+ await assert.rejects(settleCashGrnDraft(fundCash('denied','inactive-funding',1,cashSafe),finance),/eligible/);
+ await admin(db=>updateDoc(doc(db,'branches',branchId),{status:'Closed'}));
+ await assert.rejects(settleCashGrnDraft(fundCash('denied','closed-branch',1,cashSales),finance),/active branch/);
+ console.log('PASS raw Rules deny fabricated payments, unlinked charges and direct liability mutations; service rejects branch or inactive users and accounts.');
+
+ const readAll = name => admin(async db=>(await getDocs(collection(db,name))).docs.map(row=>({id:row.id,...row.data()})));
+ const [accounts, cashPayments, creditPayments, petty, bank] = await Promise.all(
+   ['finance_payment_accounts','cash_grn_payments','creditPayments','petty_cash_ledger','banking_records'].map(readAll));
+ const outflows = collectCashOutflows({tenantId,accounts,supplierPayments:cashPayments,creditPayments,
+   movements:[...petty.map(row=>({...row,collection:'petty_cash_ledger'})),...bank.map(row=>({...row,collection:'banking_records'}))]});
+ const paymentIds = new Set([cashPart.paymentId,mobilePart.paymentId,airtelPart.paymentId,creditPart.paymentId,last.paymentId]);
+ const level8 = outflows.filter(row=>paymentIds.has(row.sourceId));
+ assert.equal(level8.length,9);
+ assert.ok(level8.every(row=>row.status==='posted'));
+ assert.equal(level8.filter(row=>row.category==='Financial service expenses').reduce((sum,row)=>sum+row.amount,0),5000);
+ assert.equal(level8.filter(row=>row.category!=='Financial service expenses').reduce((sum,row)=>sum+row.amount,0),76000);
+ assert.equal(level8.filter(row=>row.branchId===branchId).length,4);
+ console.log('PASS Global Cash Outflows shows five supplier payments and four fees with no double counting.');
+
  await admin(db=>updateDoc(doc(db,'system_settings',tenantId),{managementCashSettlementV1:false,managementCashAccountControlV1:false}));
  await seed('unreleased');
  await assert.rejects(settleCashGrnDraft(input('unreleased','release-gate'),finance),/release activation/);
