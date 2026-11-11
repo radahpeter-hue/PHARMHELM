@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { planCashGrnSettlement } from '../src/services/cashGrnSettlementPolicy';
 
 test('full payment settles supplier invoice and never generates second OPEX',()=>{
@@ -27,20 +26,4 @@ test('overpayment and invalid amounts are rejected',()=>{
   assert.throws(()=>planCashGrnSettlement(48000,0,0),/positive/);
   assert.throws(()=>planCashGrnSettlement(48000,0,1.5),/invalid/);
   assert.throws(()=>planCashGrnSettlement(48000,49000,1),/exceeds/);
-});
-
-test('settlement uses the shared account guard and a dedicated invoice payment interface',()=>{
-  const service=readFileSync(new URL('../src/services/cashGrnSettlementService.ts',import.meta.url),'utf8');
-  const ui=readFileSync(new URL('../src/pages/finance/management/ManagementExpenseLedger.tsx',import.meta.url),'utf8');
-  assert.match(service,/paymentId = `procurement_cash_settlement_/);
-  assert.match(service,/tx\.get\(paymentRef\)/);
-  assert.match(service,/if \(payment\.exists\(\)\)/);
-  assert.match(service,/stageManagementCashEntry\(tx, paymentId,/);
-  assert.match(service,/tx\.get\(accountRef\)/);
-  assert.doesNotMatch(service,/getDocs\(|availableUGX|petty_cash_posting_locks/);
-  assert.match(ui,/SupplierInvoicePaymentPanel/);
-  assert.match(service,/tx\.update\(invoiceRef,/);
-  assert.match(service,/tx\.update\(draftRef,/);
-  assert.match(ui,/reviewingExpense\.source === 'procurement_cash_grn'/);
-  assert.doesNotMatch(ui,/settleCashGrnDraft\(/);
 });

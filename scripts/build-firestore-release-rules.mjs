@@ -65,8 +65,80 @@ export function bindWriteSnapshots(source) {
  return source;
 }
 
+const quotedOrComment = /'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
+const maskRulesTrivia = source => source.replace(quotedOrComment, token => ' '.repeat(token.length));
+const databaseScope = /\bmatch\s+\/databases\/\{\w+\}\/documents\s*\{/;
+
+function insertDatabaseHelpers(source, helpers) {
+ const root = databaseScope.exec(maskRulesTrivia(source));
+ if (!root || !helpers.length) return source;
+ const offset = root.index + root[0].length;
+ return source.slice(0, offset) + '\n' + helpers.join('\n') + '\n' + source.slice(offset);
+}
+
+/** Move identical direct grants into shared predicates. Keep every allow at its
+ * original path and method. Expressions capturing a match variable or a local
+ * function stay in place so the shared predicate has the same lexical scope.
+ */
+export function shareRepeatedAllowConditions(source) {
+ const masked = maskRulesTrivia(source);
+ if (!databaseScope.test(masked)) return source;
+ const groups = new Map();
+ const tokens = new RegExp(quotedOrComment.source + '|[A-Za-z_0-9]+|\\S', 'g');
+ for (const match of masked.matchAll(/^    match \/[A-Za-z0-9_]+\/\{(\w+)\} \{\n([\s\S]*?)\n    }/gm)) {
+  const [, wildcard, body] = match;
+  const localNames = [wildcard, ...Array.from(body.matchAll(/\bfunction\s+(\w+)\s*\(/g), fn => fn[1])];
+  const start = match.index + match[0].indexOf('\n') + 1;
+  for (const grant of body.matchAll(/^      allow\s+[a-z, ]+:\s*if\s+([^;]+);/gm)) {
+   const predicate = grant[1];
+   if (localNames.some(name => new RegExp('(?<!\\.)\\b' + name + '\\b').test(predicate))) continue;
+   const from = start + grant.index + grant[0].indexOf(predicate);
+   const text = source.slice(from, from + predicate.length);
+   const key = (text.match(tokens) || []).filter(token => !token.startsWith('//') && !token.startsWith('/*')).join(' ');
+   if (key.length <= 65) continue;
+   if (!groups.has(key)) groups.set(key, []);
+   groups.get(key).push({ from, text });
+  }
+ }
+ const helpers = [], replacements = [];
+ let serial = 0;
+ for (const grants of groups.values()) {
+  if (grants.length < 2) continue;
+  let name;
+  do { name = 'releaseSharedAllow' + serial++; } while (source.includes(name));
+  helpers.push('function ' + name + '() { return ' + grants[0].text + '; }');
+  for (const grant of grants) replacements.push({ ...grant, name });
+ }
+ for (const { from, text, name } of replacements.sort((a, b) => b.from - a.from)) {
+  source = source.slice(0, from) + name + '()' + source.slice(from + text.length);
+ }
+ return insertDatabaseHelpers(source, helpers);
+}
+
+/** Share frequently compiled request paths without binding them eagerly.
+ * This preserves short-circuit evaluation when a read has no write snapshot or
+ * a request has no auth object.
+ */
+export function shareRequestExpressions(source) {
+ const masked = maskRulesTrivia(source);
+ if (!databaseScope.test(masked)) return source;
+ const paths = [...masked.matchAll(/(?<![.\w])(?:request\.resource\.data|resource\.data|request\.auth\.uid|request\.time)\b/g)];
+ const helpers = new Map();
+ let serial = 0;
+ for (const match of paths.reverse()) {
+  const [path] = match;
+  if (!helpers.has(path)) {
+   let name;
+   do { name = 'releaseRequestPath' + serial++; } while (source.includes(name));
+   helpers.set(path, name);
+  }
+  source = source.slice(0, match.index) + helpers.get(path) + '()' + source.slice(match.index + path.length);
+ }
+ return insertDatabaseHelpers(source, [...helpers].map(([path, name]) => 'function ' + name + '() { return ' + path + '; }'));
+}
+
 export function compactRuleSymbols(source){
- source=compactCollectionSets(bindWriteSnapshots(source));
+ source=shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(shareRepeatedAllowConditions(source))));
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(tokens.filter(token=>/^[A-Za-z_]\w*$/.test(token))),symbols=new Set(),aliases=new Map();

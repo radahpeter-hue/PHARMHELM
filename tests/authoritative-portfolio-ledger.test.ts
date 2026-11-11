@@ -33,3 +33,17 @@ test('complete linked posting history reconciles independently funded bank and b
  assert.throws(()=>assertAuthoritativePostingBalance(bank,[...entries,entries[0]]),/duplicate/);
  assert.throws(()=>assertAuthoritativePostingBalance(bank,[{...entries[0],tenantId:'foreign'}]),/Invalid or duplicate/);
 });
+
+
+test('supplier debits expose the business reference and retain the immutable payment link', () => {
+  const bank = account(MANAGEMENT_BANK_ACCOUNT, 'bank');
+  const paymentId = 'supplier_credit_settlement_' + 'a'.repeat(64);
+  const entry = mapAuthoritativeMovement('credit_payment_' + paymentId + '_fee', {
+    tenantId: bank.tenantId, accountDocumentId: bank.id, amount: 100, accountDeltaUGX: -100,
+    date: '2026-11-11', postedBy: 'finance', supplierPosting: 'credit', supplierCharge: true,
+    paymentId, externalReference: 'BANK-0451', reference_number: 'CP-' + 'a'.repeat(64),
+  }, bank);
+  assert.equal(entry.reference, 'BANK-0451');
+  assert.equal(entry.linkedRecordId, paymentId);
+  assert.equal(entry.transferClass, undefined);
+});

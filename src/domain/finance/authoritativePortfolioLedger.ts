@@ -41,13 +41,17 @@ export function mapAuthoritativeMovement(id:string,raw:Record<string,unknown>,ac
  const stamp=raw.createdAt;
  const occurredAt=stamp&&typeof stamp==='object'&&'toDate' in stamp&&typeof stamp.toDate==='function'
   ?stamp.toDate().toISOString():businessDate+'T00:00:00.000Z';
+ const supplierPayment=typeof raw.paymentId==='string'&&raw.paymentId
+  && (raw.supplierPosting==='cash'||raw.supplierPosting==='credit'||raw.source==='Procurement Cash GRN settlement');
+ const supplierReference=supplierPayment&&typeof raw.externalReference==='string'?raw.externalReference.trim():'';
  return {id,tenantId:account.tenantId,portfolioId:account.accountId,accountId:account.accountId,
-  businessDate,occurredAt,reference:String(raw.reference_number||raw.transferId||id),
+  businessDate,occurredAt,reference:supplierReference||String(raw.reference_number||raw.transferId||id),
   description:String(raw.source||raw.type||'Posted management transaction'),
   source:managementLedgerCollection(account),direction:delta>0?'inflow':'outflow',
   amountUGX:Math.abs(delta),actorId:String(raw.postedBy||''),status:'posted',
    ...(transferClass?{transferClass}:{}),
-  ...(typeof raw.transferId==='string'&&raw.transferId?{linkedRecordId:raw.transferId}:{}),
+  ...(supplierPayment?{linkedRecordId:String(raw.paymentId)}:
+   typeof raw.transferId==='string'&&raw.transferId?{linkedRecordId:raw.transferId}:{}),
   ...(typeof raw.branchId==='string'&&raw.branchId?{branchId:raw.branchId}:account.scope?.kind==='branch'?{branchId:account.scope.branchId}:{}),
   ...(typeof raw.eodReconciliationId==='string'&&raw.eodReconciliationId?{eodReconciliationId:raw.eodReconciliationId,shiftId:raw.eodReconciliationId.split('~')[4]}:{}),
   ...(typeof raw.eodChannel==='string'&&raw.eodChannel?{eodChannel:raw.eodChannel}:{})};

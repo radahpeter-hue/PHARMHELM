@@ -61,6 +61,7 @@ export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branch
   const [sales, setSales] = useState<any[]>([]);
   const [branchExpenses, setBranchExpenses] = useState<BranchExpense[]>([]);
   const [mgmtExpenses, setMgmtExpenses] = useState<ManagementExpense[]>([]);
+  const [supplierFees, setSupplierFees] = useState<{ tenantId: string; branchId: string; date: string; amount: number }[]>([]);
   const [quarantineLogs, setQuarantineLogs] = useState<any[]>([]);
   const [logisticsExpenses, setLogisticsExpenses] = useState<any[]>([]);
   const [marketingExpenses, setMarketingExpenses] = useState<any[]>([]);
@@ -86,7 +87,7 @@ export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branch
     if (!profile?.tenantId) return;
     setLoading(true);
     try {
-      const [salesSnap, bExpSnap, mExpSnap, quarSnap, fuelSnap, maintenanceSnap, fineSnap, logisticsSnap, marketingSnap] = await Promise.all([
+      const [salesSnap, bExpSnap, mExpSnap, quarSnap, fuelSnap, maintenanceSnap, fineSnap, logisticsSnap, marketingSnap, cashFees, bankFees] = await Promise.all([
         getDocs(query(collection(db, 'sales'), where('tenantId', '==', profile.tenantId))),
         getDocs(query(collection(db, 'branch_expenses'), where('tenantId', '==', profile.tenantId))),
         getDocs(query(collection(db, 'management_expenses'), where('tenantId', '==', profile.tenantId))),
@@ -95,11 +96,17 @@ export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branch
         getDocs(query(collection(db, 'maintenance_logs'), where('tenantId', '==', profile.tenantId))),
         getDocs(query(collection(db, 'traffic_fine_logs'), where('tenantId', '==', profile.tenantId))),
         getDocs(query(collection(db, 'logistics_expenses'), where('tenantId', '==', profile.tenantId))),
-        getDocs(query(collection(db, 'marketing_expenses'), where('tenantId', '==', profile.tenantId)))
+        getDocs(query(collection(db, 'marketing_expenses'), where('tenantId', '==', profile.tenantId))),
+        ...['petty_cash_ledger', 'banking_records'].map(name => getDocs(query(collection(db, name),
+          where('tenantId', '==', profile.tenantId), where('supplierCharge', '==', true))))
       ]);
       setSales(salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })).filter(isActiveSale));
       setBranchExpenses(bExpSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
-      setMgmtExpenses(mExpSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+      setMgmtExpenses(mExpSnap.docs.map(row => ({ id: row.id, ...row.data() as any })));
+      setSupplierFees([...cashFees.docs, ...bankFees.docs].map(row => {
+        const { tenantId, fundingBranchId, date, amount } = row.data();
+        return { tenantId, branchId: fundingBranchId, date, amount };
+      }));
       setQuarantineLogs(quarSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
       setLogisticsExpenses([
         ...fuelSnap.docs.map(doc => ({ id: doc.id, kind: 'fuel', ...doc.data() as any })),
@@ -188,6 +195,8 @@ export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branch
     return filteredMgmtExpenses.reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
   }, [filteredMgmtExpenses]);
 
+  const totalSupplierFees = filterByPeriod(supplierFees).reduce((sum, fee) => sum + fee.amount, 0);
+
   const totalLogisticsExp = useMemo(() => {
     return filterByPeriod(logisticsExpenses).reduce((sum, e) => sum + (e.cost_ugx || e.fine_amount_ugx || e.amount || 0), 0);
   }, [logisticsExpenses, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
@@ -201,8 +210,8 @@ export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branch
   }, [filteredQuarantine]);
 
   const totalExpenses = useMemo(() => {
-    return totalBranchExp + totalLogisticsExp + totalMarketingExp + totalMgmtExp + totalWastage;
-  }, [totalBranchExp, totalLogisticsExp, totalMarketingExp, totalMgmtExp, totalWastage]);
+    return totalBranchExp + totalLogisticsExp + totalMarketingExp + totalMgmtExp + totalSupplierFees + totalWastage;
+  }, [totalBranchExp, totalLogisticsExp, totalMarketingExp, totalMgmtExp, totalSupplierFees, totalWastage]);
 
   const netProfit = useMemo(() => {
     return grossProfit - totalExpenses;
@@ -218,6 +227,7 @@ export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branch
       { 'Metric Label': 'Logistics and Transport Expenses', 'Value (UGX)': totalLogisticsExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalLogisticsExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Marketing Expenses', 'Value (UGX)': totalMarketingExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalMarketingExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Corporate HQ & Management Cash Outflows', 'Value (UGX)': totalMgmtExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalMgmtExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
+      { 'Metric Label': 'Supplier payment charges', 'Value (UGX)': totalSupplierFees, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalSupplierFees / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Wastage & Quarantine Loss', 'Value (UGX)': totalWastage, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalWastage / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Total Consolidated Expenses', 'Value (UGX)': totalExpenses, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalExpenses / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
       { 'Metric Label': 'Net Profit Payout Baseline', 'Value (UGX)': netProfit, 'Percentage of Revenue': totalRevenue > 0 ? `${((netProfit / totalRevenue) * 100).toFixed(1)}%` : '0.0%' }
@@ -359,6 +369,10 @@ export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branch
             <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
               <span className="font-bold text-zinc-600 text-sm">Management/HQ Cash Outflows</span>
               <span className="font-black text-red-500 font-mono text-sm">- UGX {totalMgmtExp.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
+              <span className="font-bold text-zinc-600 text-sm">Supplier payment charges</span>
+              <span className="font-black text-red-500 font-mono text-sm">- UGX {totalSupplierFees.toLocaleString()}</span>
             </div>
             <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
               <span className="font-bold text-zinc-600 text-sm">Inventory Wastage & Recalls (Loss)</span>

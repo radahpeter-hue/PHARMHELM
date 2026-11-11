@@ -512,7 +512,7 @@ service cloud.firestore {
         'finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
         'credit_receivables', 'supplier_payables', 'banking_records',
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
-        'petty_cash_ledger', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
+        'petty_cash_ledger', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditLedger', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
         'audit_logs', 'sale_revisions', 'pos_sale_revision_requests', 'pos_payment_reversals', 'pos_welfare_reversals', 'pos_credit_reversals', 'pos_quotation_reversals'
       ] || collectionName.matches('finance_.*_v1');
     }
@@ -619,6 +619,82 @@ service cloud.firestore {
                 && id == 'logistics_payment_' + sourceId && !exists(path)
                 && expense.get('cost_ugx', expense.get('fine_amount_ugx', 0)) == data.amount));
     }
+    function canSettleSupplier(tenantId) {
+      let staff = get(/databases/$(database)/documents/staff/$(request.auth.uid)).data;
+      let financeRoles = ['Finance Head', 'Finance Officer'];
+      return isAuthenticated() && staff.tenantId == tenantId && !staff.get('is_duplicate', false) && staff.get('active', true)
+        && staff.get('status', staff.get('active', false) ? 'active' : '') == 'active'
+        && !staff.role.lower().matches('^(branch manager|cashier|dispenser|pharmacist|branch pharmacist)$')
+        && (staff.role in financeRoles || staff.get('secondaryRoles', []).hasAny(financeRoles));
+    }
+    function activeSupplierFundingBranch(tenantId, branchId) {
+      let branch = getAfter(/databases/$(database)/documents/branches/$(branchId)).data;
+      return branch.tenantId == tenantId && !(branch.get('status', 'Active') in ['Inactive', 'Closed']);
+    }
+    function eligibleSupplierAccount(account, branchId) {
+      let key = account.accountId;
+      let scope = account.get('scope', {'kind': 'organisation'});
+      let classification = account.get('portfolioClassification', '');
+      let path = /databases/$(database)/documents/finance_portfolios_v1/$(account.tenantId + '__' + key);
+      let registered = key.matches('^(bank_[a-f0-9]{64}|custom_[A-Za-z0-9_-]+)$');
+      let portfolio = registered ? getAfter(path).data : {};
+      return account.initialized && account.currency == 'UGX'
+        && account.get('status', 'active') == 'active' && account.get('active', true)
+        && scope.kind == (branchId == '' ? 'organisation' : 'branch') && scope.get('branchId', '') == branchId
+        && (branchId == '' || activeSupplierFundingBranch(account.tenantId, branchId))
+        && (key in ['management_petty_cash', 'management_bank']
+          ? branchId == '' && account.kind == (key == 'management_bank' ? 'bank' : 'petty_cash')
+          : account.portfolioId == key
+            && (registered
+              ? portfolio.status == 'active' && portfolio.tenantId == account.tenantId && portfolio.id == key
+                && portfolio.origin == 'custom' && portfolio.currency == 'UGX'
+                && portfolio.scope == scope && portfolio.classification == classification
+                && account.kind == (classification in ['bank', 'mobile_money'] ? 'bank' : 'petty_cash')
+                && (key.matches('^bank_.*') ? branchId == '' && classification == 'bank' && portfolio.bankParentId == 'system_bank'
+                  : portfolio.allowsTransfersOut && classification in ['bank','mobile_money','cash_equivalent','petty_cash'])
+              : (branchId == '' && key in ['system_mtn_mobile_money','system_airtel_mobile_money']
+                  && account.kind == 'bank' && classification == 'mobile_money')
+                || (branchId != '' && account.kind == 'petty_cash'
+                  && ((key == 'system_branch_cash_sales_' + branchId && classification == 'cash_equivalent')
+                    || (key == 'system_petty_cash_' + branchId && classification == 'petty_cash')))));
+    }
+    function supplierPaymentPath(id, credit) {
+      let name = credit ? 'creditPayments' : 'cash_grn_payments';
+      return /databases/$(database)/documents/$(name)/$(id);
+    }
+    function supplierMovement(id, data, before, after) {
+      let credit = data.supplierPosting == 'credit';
+      let path = supplierPaymentPath(data.paymentId, credit);
+      let payment = getAfter(path).data;
+      let fee = data.supplierCharge;
+      let chargePath = managementMovementPath(before.kind, payment.movementId + '_fee');
+      return data.supplierPosting in ['cash', 'credit'] && !exists(path) && payment.processedAt == request.time
+        && data.tenantId == payment.tenantId && data.postedBy == payment.processedBy
+        && data.invoiceId == payment.invoiceId && data.grnId == payment.grnId
+        && (!credit || data.creditLedgerId == payment.creditLedgerId)
+        && data.externalReference == payment.externalReference
+        && data.reference_number == (credit ? payment.paymentReference : payment.reference)
+        && before.tenantId == payment.tenantId && before.accountId == payment.paymentAccountId
+        && data.paymentAccountId == before.accountId && before.kind == payment.paymentAccountKind
+        && payment.fundingAccountName == before.name
+        && data.accountDocumentId == payment.tenantId + '_' + before.accountId
+        && data.fundingBranchId == payment.fundingBranchId
+        && data.get('branchId', '') == payment.fundingBranchId
+        && data.type == 'outgoing' && after.lastPostingId == payment.movementId
+        && after.balanceUGX == before.balanceUGX - payment.totalDebitUGX
+        && (fee == true
+          ? id == payment.chargeMovementId && id == payment.movementId + '_fee'
+            && data.amount == payment.chargeUGX && data.expenseCategory == 'Financial service expenses'
+            && data.excludeFromOpexRollup == false
+          : fee == false && id == payment.movementId && data.excludeFromOpexRollup
+            && data.amount == (credit ? payment.amount : payment.amountUGX)
+            && (payment.chargeUGX == 0 || (!exists(chargePath) && getAfter(chargePath).data.paymentId == data.paymentId)));
+    }
+    function isSupplierMovement(id, data) {
+      return id.matches('^(procurement_cash_settlement_|credit_payment_).*')
+        || data.keys().hasAny(['supplierPosting','supplierCharge','paymentId','creditLedgerId'])
+        || data.get('source', '') in ['Procurement Cash GRN settlement', 'Supplier credit settlement', 'Supplier payment transaction charge'];
+    }
     function validManagementMovement(id, data, kind) {
       let accountPath = /databases/$(database)/documents/finance_payment_accounts/$(data.accountDocumentId);
       let before = get(accountPath).data;
@@ -629,9 +705,12 @@ service cloud.firestore {
         && data.accountDeltaUGX == (data.type in ['incoming','deposit','topup'] ? data.amount : -data.amount)
         && before.kind == kind
         && (!data.keys().hasAny(['externalExpenseCollection','externalExpenseId']) || linkedExternalExpense(id, data, before))
-        && (id.matches('^pt_.*') || data.keys().hasAny(['portfolioTransferId','movementClass'])
-          ? linkedPortfolioTransfer(id, data, before, after)
-          : (after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX));
+        && (isSupplierMovement(id, data)
+          ? !data.keys().hasAny(['portfolioTransferId','movementClass','transferId','externalExpenseCollection','externalExpenseId','eodChannel'])
+            && supplierMovement(id, data, before, after)
+          : (id.matches('^pt_.*') || data.keys().hasAny(['portfolioTransferId','movementClass'])
+            ? linkedPortfolioTransfer(id, data, before, after)
+            : (after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX)));
     }
     // Canonical built-ins and legacy Management accounts have no custom registry.
     // getAfter prevents a posting from racing with lifecycle closure in the same batch.
@@ -643,48 +722,69 @@ service cloud.firestore {
       let movementPath = managementMovementPath(before.kind, after.lastPostingId);
       let movement = getAfter(movementPath).data;
       let transferDebit = movement.get('movementClass', '') == 'transfer_out';
-      return isTenantMember(before.tenantId)
-        && activePortfolioAccount(before)
-        && (movement.get('externalExpenseCollection', '') == 'branch_expenses'
-          ? before.accountId == 'system_petty_cash_' + before.scope.branchId
-          : ((movement.get('eodChannel', '') != '' && validBranchEodMovement(after.lastPostingId, movement))
-            || isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash())))
+      let supplier = movement.get('supplierPosting', '') in ['cash', 'credit'];
+      return (supplier
+          ? canSettleSupplier(before.tenantId) && eligibleSupplierAccount(before, movement.fundingBranchId)
+          : isTenantMember(before.tenantId) && activePortfolioAccount(before)
+            && (movement.get('externalExpenseCollection', '') == 'branch_expenses'
+              ? before.accountId == 'system_petty_cash_' + before.scope.branchId
+              : ((movement.get('eodChannel', '') != '' && validBranchEodMovement(after.lastPostingId, movement))
+                || isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash()))))
         // Every ledger create requires this paired update; authorize cash credits once here.
         && (movement.accountDeltaUGX <= 0 || before.accountId != 'management_petty_cash' || isFinance() || isHR())
         && after.diff(before).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
         && after.balanceUGX is int && after.balanceUGX >= 0 && after.balanceUGX <= 9007199254740991
         && !exists(movementPath)
         && movement.tenantId == before.tenantId && movement.accountDocumentId == accountId
-        && (transferDebit || after.balanceUGX == before.balanceUGX + movement.accountDeltaUGX);
+        && (supplier || transferDebit || after.balanceUGX == before.balanceUGX + movement.accountDeltaUGX);
     }
-    function supplierPaymentPath(id) {
-      return /databases/$(database)/documents/cash_grn_payments/$(id);
+    function validSupplierPaymentBase(id, data, credit) {
+      let path = managementMovementPath(data.paymentAccountKind, data.movementId);
+      let movement = getAfter(path).data;
+      let amount = credit ? data.amount : data.amountUGX;
+      return canSettleSupplier(data.tenantId) && data.processedBy == request.auth.uid
+        && data.processedAt == request.time && data.status == 'posted' && data.excludeFromOpexRollup
+        && amount is int && amount > 0
+        && data.chargeUGX is int && data.chargeUGX >= 0
+        && data.totalDebitUGX == amount + data.chargeUGX && data.totalDebitUGX <= 9007199254740991
+        && data.movementId == (credit ? 'credit_payment_' + id : id)
+        && data.chargeMovementId == (data.chargeUGX == 0 ? '' : data.movementId + '_fee')
+        && data.requestId.matches('^[A-Za-z0-9_-]{1,150}$')
+        && data.externalReference is string && data.externalReference.size() >= 3 && data.externalReference.size() <= 150
+        && !exists(path) && movement.paymentId == id && movement.supplierCharge == false
+        && movement.supplierPosting == (credit ? 'credit' : 'cash');
     }
-    function linkedSupplierPayment(data) {
-      let paymentPath = supplierPaymentPath(data.lastPaymentId);
-      let payment = getAfter(paymentPath).data;
-      return isFinance() && isTenantMember(data.tenantId)
-        && !exists(paymentPath) && payment.tenantId == data.tenantId
+    function freshSupplierLink(data, payment, path) {
+      return !exists(path) && payment.processedAt == request.time && payment.tenantId == data.tenantId
         && payment.processedBy == request.auth.uid;
     }
     function validSupplierInvoiceUpdate(id, before, after, legacy) {
-      let payment = getAfter(supplierPaymentPath(after.lastPaymentId)).data;
-      return linkedSupplierPayment(after)
+      let credit = before.get('paymentType', '') != 'cash';
+      let path = supplierPaymentPath(after.lastPaymentId, credit);
+      let payment = getAfter(path).data;
+      let remaining = credit ? payment.balanceAfter : payment.remainingUGX;
+      let amount = credit ? payment.amount : payment.amountUGX;
+      return freshSupplierLink(after, payment, path)
         && (legacy ? payment.procurementInvoiceId == id : payment.invoiceId == id)
         && after.diff(before).affectedKeys().hasOnly(legacy
           ? ['paid_amount_ugx','paidAmountUGX','creditBalance','status','paymentStatus','updatedAt','lastPaymentReference','lastPaymentId']
           : ['paidAmountUGX','paymentStatus','creditBalance','updatedAt','lastPaymentReference','lastPaymentId'])
-        && (legacy ? after.paid_amount_ugx : after.paidAmountUGX) == payment.previouslyPaidUGX + payment.amountUGX
-        && after.paymentStatus == (payment.remainingUGX == 0 ? 'Paid' : 'Partially Paid')
-        && after.creditBalance == payment.remainingUGX
-        && (!legacy || after.paidAmountUGX == after.paid_amount_ugx);
+        && after.paidAmountUGX == payment.previouslyPaidUGX + amount
+        && after.paymentStatus == (credit ? (remaining == 0 ? 'paid' : 'partial') : (remaining == 0 ? 'Paid' : 'Partially Paid'))
+        && after.creditBalance == remaining && after.lastPaymentReference == payment.externalReference
+        && (!legacy || (after.paidAmountUGX == after.paid_amount_ugx
+          && after.status == (remaining == 0 ? 'Paid' : 'Partial')));
     }
     function validSupplierGrnPayment(id, before, after) {
-      let payment = getAfter(supplierPaymentPath(after.lastPaymentId)).data;
-      return linkedSupplierPayment(after) && payment.grnId == id
-        && before.payment_type == 'cash'
+      let credit = after.lastPaymentId.matches('^supplier_credit_settlement_.*');
+      let path = supplierPaymentPath(after.lastPaymentId, credit);
+      let payment = getAfter(path).data;
+      let remaining = credit ? payment.balanceAfter : payment.remainingUGX;
+      return freshSupplierLink(after, payment, path) && payment.grnId == id
+        && before.get('invoice_id', payment.invoiceId) == payment.invoiceId
+        && before.get('procurement_invoice_id', payment.get('procurementInvoiceId', '')) == payment.get('procurementInvoiceId', '')
         && after.diff(before).affectedKeys().hasOnly(['payment_status','lastPaymentId','updatedAt'])
-        && after.payment_status == (payment.remainingUGX == 0 ? 'paid' : 'partial');
+        && after.payment_status == (remaining == 0 ? 'paid' : 'partial');
     }
     match /finance_payment_accounts/{accountId} {
       function eligiblePortfolioAccount(data) {
@@ -724,13 +824,9 @@ service cloud.firestore {
         let grn = getAfter(/databases/$(database)/documents/grn_records/$(data.grnId)).data;
         let draft = getAfter(/databases/$(database)/documents/management_expenses/$(data.draftId)).data;
         let legacy = getAfter(/databases/$(database)/documents/procurement_invoices/$(data.procurementInvoiceId)).data;
-        let movement = getAfter(managementMovementPath(data.paymentAccountKind, paymentId)).data;
-        return isFinance() && isTenantMember(data.tenantId)
+        return validSupplierPaymentBase(paymentId, data, false)
           && get(/databases/$(database)/documents/system_settings/$(data.tenantId)).data.managementCashSettlementV1
-          && data.processedBy == request.auth.uid
           && paymentId == 'procurement_cash_settlement_' + data.tenantId + '_' + data.draftId + '_' + data.requestId
-          && data.amountUGX is int && data.amountUGX > 0
-          && data.externalReference is string && data.externalReference.size() >= 3 && data.externalReference.size() <= 150
           && data.previouslyPaidUGX == before.get('paidAmountUGX', 0)
           && data.totalInvoiceUGX == before.invoiceValue
           && data.remainingUGX == data.totalInvoiceUGX - data.previouslyPaidUGX - data.amountUGX && data.remainingUGX >= 0
@@ -739,12 +835,7 @@ service cloud.firestore {
           && grn.tenantId == data.tenantId && grn.invoice_id == data.invoiceId && grn.procurement_invoice_id == data.procurementInvoiceId && grn.lastPaymentId == paymentId
           && draft.tenantId == data.tenantId && draft.source == 'procurement_cash_grn'
           && draft.invoiceId == data.invoiceId && draft.grnId == data.grnId && draft.lastPaymentId == paymentId
-          && legacy.tenantId == data.tenantId && legacy.lastPaymentId == paymentId
-          && movement.externalReference == data.externalReference
-          && movement.paymentId == paymentId && movement.invoiceId == data.invoiceId && movement.grnId == data.grnId
-          && movement.amount == data.amountUGX && movement.type == 'outgoing'
-          && movement.accountDocumentId == data.tenantId + '_' + data.paymentAccountId
-          && data.excludeFromOpexRollup;
+          && legacy.tenantId == data.tenantId && legacy.grnId == data.grnId && legacy.lastPaymentId == paymentId;
       }
       allow get: if (canOperateBranchFinance() || canViewFinance()) && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if canViewFinance() && isTenantMember(resource.data.tenantId);
@@ -1356,7 +1447,9 @@ service cloud.firestore {
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
         && !hasOperationalSourceOrder(resource.data)
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['payment_status','lastPaymentId']) || resource.data.get('payment_type','') != 'cash')
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'payment_status','lastPaymentId','payment_type','invoice_id','procurement_invoice_id','credit_ledger_id'
+        ])
         && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
         && (!('inventoryClass' in resource.data) || resource.data.inventoryClass != 'OPERATIONAL')
         && validGrnInventoryClass(request.resource.data);
@@ -1370,7 +1463,9 @@ service cloud.firestore {
       allow list: if isTenantMember(resource.data.tenantId) && (canViewFinance() || isProcurement());
       allow create: if isTenantMember(request.resource.data.tenantId) && (isFinance() || isProcurement());
       allow update: if isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
-        && ((resource.data.get('paymentType','') == 'cash' && resource.data.get('grnId','') != '')
+        && ((resource.data.get('paymentType','') == 'credit' || resource.data.get('creditBalance', 0) > 0 ||
+            resource.data.get('lastPaymentId', '') != '' ||
+            (resource.data.get('paymentType','') == 'cash' && resource.data.get('grnId','') != ''))
           ? validSupplierInvoiceUpdate(invoiceId, resource.data, request.resource.data, false)
           : (isFinance() || isProcurement()));
       allow delete: if false;
@@ -1380,13 +1475,66 @@ service cloud.firestore {
       allow list: if isTenantMember(resource.data.tenantId) && (canViewFinance() || isProcurement());
       allow create: if isTenantMember(request.resource.data.tenantId) && (isFinance() || isProcurement());
       allow update: if isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
-        && ((resource.data.get('paymentType','') == 'cash' && resource.data.get('grnId','') != '')
+        && ((resource.data.get('paymentType','') == 'credit' || resource.data.get('creditBalance', 0) > 0 ||
+            resource.data.get('lastPaymentId', '') != '' ||
+            (resource.data.get('paymentType','') == 'cash' && resource.data.get('grnId','') != ''))
           ? validSupplierInvoiceUpdate(invoiceId, resource.data, request.resource.data, true)
           : (isFinance() || isProcurement()));
       allow delete: if false;
     }
     match /creditLedger/{entryId} {
+      function validCreditLiability(data) {
+        let invoicePath = /databases/$(database)/documents/invoices/$(data.invoiceId);
+        let invoice = getAfter(invoicePath).data;
+        let expectedId = 'supplier_credit_' + data.grnId.replace('^grn_', '');
+        return (isProcurement() || isFinance()) && isTenantMember(data.tenantId)
+          && !exists(invoicePath) && invoice.tenantId == data.tenantId
+          && data.originalCreditAmount == invoice.invoiceValue
+          && data.remainingCreditBalance == data.originalCreditAmount && data.remainingCreditBalance > 0
+          && data.status == 'outstanding' && invoice.paymentType == 'credit'
+          && data.grnId == invoice.grnId && entryId == expectedId;
+      }
+      function validCreditLiabilitySettlement(before, after) {
+        let path = supplierPaymentPath(after.lastPaymentId, true);
+        let payment = getAfter(path).data;
+        let draft = getAfter(/databases/$(database)/documents/management_expenses/$(payment.draftId)).data;
+        let priorIds = before.get('paymentHistoryIds', []);
+        let open = draft.status == 'partial';
+        return freshSupplierLink(after, payment, path) && payment.creditLedgerId == entryId
+          && after.diff(before).affectedKeys().hasOnly(['remainingCreditBalance','balance','status','paymentHistoryIds',
+            'lastProcessedAt','updatedAt','lastPaymentReference','lastPaymentId','pendingDraftId'])
+          && after.remainingCreditBalance == payment.balanceAfter && after.balance == payment.balanceAfter
+          && after.status == (payment.balanceAfter == 0 ? 'paid' : (open ? 'processing' : 'partial'))
+          && after.pendingDraftId == (open ? payment.draftId : '')
+          && after.paymentHistoryIds == priorIds.concat([after.lastPaymentId])
+          && after.lastPaymentReference == payment.externalReference;
+      }
+      function opensCreditDraft(before, after) {
+        let path = /databases/$(database)/documents/management_expenses/$(after.pendingDraftId);
+        let draft = getAfter(path).data;
+        return canSettleSupplier(before.tenantId)
+          && before.get('status', 'outstanding').lower() in ['outstanding', 'partial', 'unpaid', 'pending']
+          && before.get('pendingDraftId', '') == ''
+          && after.diff(before).affectedKeys().hasOnly(['status','lastProcessedAt','pendingDraftId'])
+          && after.status == 'processing' && after.lastProcessedAt == request.time
+          && !exists(path) && draft.sourceRefId == entryId && draft.tenantId == before.tenantId;
+      }
+      function rejectsCreditDraft(before, after) {
+        let path = /databases/$(database)/documents/management_expenses/$(after.rejectedDraftId);
+        let draft = getAfter(path).data;
+        let balance = before.get('remainingCreditBalance', before.get('balance', before.get('amount_ugx', 0)));
+        return canSettleSupplier(before.tenantId)
+          && before.get('pendingDraftId', '') in ['', after.rejectedDraftId] && after.pendingDraftId == ''
+          && after.diff(before).affectedKeys().hasOnly(['status','lastProcessedAt','pendingDraftId','rejectedDraftId'])
+          && after.status == (balance == 0 ? 'paid' : (balance < before.get('originalCreditAmount', before.get('amount', before.get('amount_ugx', 0))) ? 'partial' : 'outstanding'))
+          && after.lastProcessedAt == request.time && draft.rejectedAt == request.time
+          && draft.sourceRefId == entryId && draft.status == 'rejected' && draft.tenantId == before.tenantId;
+      }
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isTenantMember(resource.data.tenantId);
+      allow create: if validCreditLiability(request.resource.data);
+      allow update: if validCreditLiabilitySettlement(resource.data, request.resource.data)
+        || opensCreditDraft(resource.data, request.resource.data) || rejectsCreditDraft(resource.data, request.resource.data);
     }
     match /petty_cash_ledger/{entryId} {
       allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
@@ -1520,7 +1668,40 @@ service cloud.firestore {
     match /creditPayments/{paymentId} {
       allow get: if isAuthenticated() && isFinance() && (resource == null || isTenantMember(resource.data.tenantId));
       allow list: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow create: if isAuthenticated() && isFinance() && isTenantMember(request.resource.data.tenantId);
+      function validCreditSettlement(data) {
+        let invoicePath = /databases/$(database)/documents/invoices/$(data.invoiceId);
+        let liabilityPath = /databases/$(database)/documents/creditLedger/$(data.creditLedgerId);
+        let before = get(invoicePath).data;
+        let liability = get(liabilityPath).data;
+        let draft = getAfter(/databases/$(database)/documents/management_expenses/$(data.draftId)).data;
+        let grn = data.grnId == '' ? {} : getAfter(/databases/$(database)/documents/grn_records/$(data.grnId)).data;
+        let register = data.procurementInvoiceId == '' ? {}
+          : getAfter(/databases/$(database)/documents/procurement_invoices/$(data.procurementInvoiceId)).data;
+        return validSupplierPaymentBase(paymentId, data, true)
+          && paymentId == 'supplier_credit_settlement_' + data.tenantId + '_' + data.requestId
+          && data.expenseId == data.draftId && data.paymentSource == data.paymentAccountId
+          && before.tenantId == data.tenantId && before.get('paymentType', 'credit') == 'credit'
+          && before.get('grnId', '') == data.grnId && data.totalInvoiceUGX == before.invoiceValue
+          && (before.get('lastPaymentId', '') == '' || data.previouslyPaidUGX == before.paidAmountUGX)
+          && liability.tenantId == data.tenantId && liability.get('invoiceId', liability.get('invoice_id', '')) == data.invoiceId
+          && liability.get('grnId', liability.get('grn_id', data.grnId)) == data.grnId
+          && liability.get('pendingDraftId', '') in ['', data.draftId]
+          && data.balanceBefore == liability.get('remainingCreditBalance', liability.get('balance', liability.get('amount_ugx', liability.get('amount', 0))))
+          && data.balanceBefore == before.creditBalance && data.previouslyPaidUGX == data.totalInvoiceUGX - data.balanceBefore
+          && data.previouslyPaidUGX >= 0
+          && data.balanceAfter == data.balanceBefore - data.amount && data.balanceAfter >= 0
+          && getAfter(invoicePath).data.lastPaymentId == paymentId
+          && getAfter(liabilityPath).data.lastPaymentId == paymentId
+          && draft.tenantId == data.tenantId && draft.source == 'credit_payment' && draft.sourceType == 'credit'
+          && draft.invoiceId == data.invoiceId && draft.sourceRefId == data.creditLedgerId && draft.lastPaymentId == paymentId
+          && grn.get('procurement_invoice_id', '') == data.procurementInvoiceId
+          && (data.grnId == '' || (grn.tenantId == data.tenantId && grn.lastPaymentId == paymentId
+            && grn.get('credit_ledger_id', data.creditLedgerId) == data.creditLedgerId
+            && (before.get('paymentType', '') == '' || grn.payment_type == 'credit')))
+          && (data.procurementInvoiceId == '' || (register.tenantId == data.tenantId
+            && register.grnId == data.grnId && register.lastPaymentId == paymentId));
+      }
+      allow create: if validCreditSettlement(request.resource.data);
       allow update, delete: if false;
     }
 
@@ -1544,7 +1725,8 @@ service cloud.firestore {
         return isFinance() && data.cashOutflowPostingId == postingId && !exists(path)
           && movement.externalExpenseCollection == 'management_expenses' && movement.externalExpenseId == expenseId;
       }
-      allow get: if isFinance() && resource == null && expenseId.matches('^mcpay_[A-Za-z0-9]+$');
+      allow get: if isFinance() && resource == null
+        && expenseId.matches('^(mcpay_[A-Za-z0-9]+|credit_payment_[A-Za-z0-9_-]+)$');
       // Procurement can only read deterministic GRN cash drafts for atomic
       // collision checks. Ordinary management expenses remain Finance/HR only.
       allow get: if isProcurement()
@@ -1560,11 +1742,59 @@ service cloud.firestore {
           && invoice.paymentStatus == 'Pending Payment';
       }
       function validGrnDraftSettlement(data) {
-        let payment = getAfter(supplierPaymentPath(data.lastPaymentId)).data;
-        return linkedSupplierPayment(data) && payment.draftId == expenseId
+        let path = supplierPaymentPath(data.lastPaymentId, false);
+        let payment = getAfter(path).data;
+        let paid = payment.remainingUGX == 0;
+        return freshSupplierLink(data, payment, path) && payment.draftId == expenseId
+          && resource.data.status in ['draft', 'partial']
+          && resource.data.amount == payment.totalInvoiceUGX && resource.data.get('paidAmountUGX', 0) == payment.previouslyPaidUGX
           && data.diff(resource.data).affectedKeys().hasOnly(['status','paymentStatus','paidAmountUGX','balanceUGX','excludeFromOpexRollup','updatedAt','issuedAt','issuedBy','lastPaymentId'])
           && data.paidAmountUGX == payment.previouslyPaidUGX + payment.amountUGX
-          && data.balanceUGX == payment.remainingUGX && data.excludeFromOpexRollup;
+          && data.balanceUGX == payment.remainingUGX && data.excludeFromOpexRollup
+          && data.status == (paid ? 'approved' : 'partial') && data.paymentStatus == (paid ? 'paid' : 'partial')
+          && (!paid || (data.issuedAt == request.time && data.issuedBy == request.auth.uid));
+      }
+      function validCreditDraft(data) {
+        let credit = getAfter(/databases/$(database)/documents/creditLedger/$(data.sourceRefId)).data;
+        let outstanding = credit.get('remainingCreditBalance', credit.get('balance', credit.get('amount_ugx', 0)));
+        return canSettleSupplier(data.tenantId) && data.source == 'credit_payment' && data.sourceType == 'credit'
+          && credit.tenantId == data.tenantId && credit.get('invoiceId', credit.get('invoice_id', '')) == data.invoiceId && credit.status == 'processing'
+          && credit.pendingDraftId == expenseId && credit.lastProcessedAt == request.time
+          && data.originalAmount == outstanding && data.amount is int && data.amount > 0 && data.amount <= outstanding
+          && data.requestId.matches('^[A-Za-z0-9_-]{1,150}$')
+          && expenseId == 'credit_payment_' + data.sourceRefId + '_' + data.requestId
+          && data.status == 'draft' && data.excludeFromOpexRollup && data.createdBy == request.auth.uid
+          && !data.keys().hasAny(['cashOutflowPostingId','lastPaymentId','paidAmountUGX','balanceUGX']);
+      }
+      function validCreditDraftSettlement(data) {
+        let before = resource.data;
+        let path = supplierPaymentPath(data.lastPaymentId, true);
+        let payment = getAfter(path).data;
+        let remaining = before.amount - before.get('paidAmountUGX', 0) - payment.amount;
+        let balance = remaining < payment.balanceAfter ? remaining : payment.balanceAfter;
+        let paid = balance == 0;
+        return freshSupplierLink(data, payment, path) && payment.draftId == expenseId
+          && before.status in ['draft','pending','partial'] && before.amount <= before.get('originalAmount', before.amount)
+          && data.diff(before).affectedKeys().hasOnly(['status','paymentStatus','paidAmountUGX','balanceUGX','paymentReference',
+            'excludeFromOpexRollup','updatedAt','issuedAt','issuedBy','lastPaymentId'])
+          && data.paidAmountUGX == before.get('paidAmountUGX', 0) + payment.amount
+          && balance >= 0 && data.balanceUGX == balance && data.excludeFromOpexRollup
+          && data.paymentReference == payment.externalReference
+          && data.status == (paid ? 'approved' : 'partial') && data.paymentStatus == (paid ? 'paid' : 'partial')
+          && (!paid || (data.issuedAt == request.time && data.issuedBy == request.auth.uid));
+      }
+      function validCreditDraftRejection(data) {
+        let before = resource.data;
+        let credit = getAfter(/databases/$(database)/documents/creditLedger/$(before.sourceRefId)).data;
+        return canSettleSupplier(before.tenantId) && before.status in ['draft','pending','partial']
+          && data.status == 'rejected' && data.rejectedAt == request.time && data.rejectedBy == request.auth.uid
+          && data.diff(before).affectedKeys().hasOnly(['status','rejectedAt','rejectedBy'])
+          && credit.tenantId == before.tenantId && credit.get('invoiceId', credit.get('invoice_id', '')) == before.invoiceId
+          && credit.rejectedDraftId == expenseId && credit.lastProcessedAt == request.time;
+      }
+      function supplierDraft(data) {
+        return data.get('source', '') in ['procurement_cash_grn', 'credit_payment', 'cash_grn']
+          || data.get('sourceType', '') in ['credit', 'procurement'];
       }
       // A cash GRN creates a payment draft tied to the GRN and invoice in the same commit.
       allow create: if isProcurement()
@@ -1579,13 +1809,19 @@ service cloud.firestore {
         && request.resource.data.amount == request.resource.data.amount_ugx
         && request.resource.data.amount > 0
         && validGrnDraftSource(request.resource.data);
+      allow create: if validCreditDraft(request.resource.data);
       allow create: if isTenantMember(request.resource.data.tenantId) && (isFinance() || isHR())
+        && !supplierDraft(request.resource.data)
         && (!('cashOutflowPostingId' in request.resource.data) || freshManagementExpensePayment(request.resource.data));
-      allow update: if isFinance() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId)
+      allow update: if isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
         && !('cashOutflowPostingId' in resource.data)
-        && (!('cashOutflowPostingId' in request.resource.data) || freshManagementExpensePayment(request.resource.data))
-        && (resource.data.get('source','') != 'procurement_cash_grn' || validGrnDraftSettlement(request.resource.data));
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId) && !('cashOutflowPostingId' in resource.data);
+        && (resource.data.get('source','') == 'procurement_cash_grn' ? validGrnDraftSettlement(request.resource.data)
+          : resource.data.get('source','') == 'credit_payment'
+            ? (validCreditDraftSettlement(request.resource.data) || validCreditDraftRejection(request.resource.data))
+            : isFinance() && !supplierDraft(resource.data) && !supplierDraft(request.resource.data)
+              && (!('cashOutflowPostingId' in request.resource.data) || freshManagementExpensePayment(request.resource.data)));
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId) && !('cashOutflowPostingId' in resource.data)
+        && !supplierDraft(resource.data);
     }
 
     match /campaigns/{campaignId} {
@@ -3421,7 +3657,7 @@ service cloud.firestore {
     match /finance_portfolios_v1/{portfolioId} {
       function canReadPortfolio(data) {
         return canViewFinance() && isTenantMember(data.tenantId)
-          && (data.scope.kind == 'organisation' || isAssignedToBranch(data.scope.branchId));
+          && (canSettleSupplier(data.tenantId) || isCEO() || data.scope.kind == 'organisation' || isAssignedToBranch(data.scope.branchId));
       }
       allow get, list: if canReadPortfolio(resource.data);
       function validPortfolioRegistration(data) {
@@ -3432,7 +3668,11 @@ service cloud.firestore {
         && data.origin == 'custom'
         && data.status == 'active'
         && data.currency == 'UGX'
-        && data.scope.kind == 'organisation'
+        && (data.scope.kind == 'organisation'
+          || (data.scope.kind == 'branch' && data.id.matches('^custom_cash_safe_[a-f0-9]{32}$')
+            && data.classification == 'cash_equivalent' && !data.supportsChildAccounts
+            && data.allowsTransfersIn && data.allowsTransfersOut
+            && activeSupplierFundingBranch(data.tenantId, data.scope.branchId)))
         && !('balanceUGX' in data);
       }
       function validLifecycleUpdate() {

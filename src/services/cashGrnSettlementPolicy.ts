@@ -1,5 +1,5 @@
 /**
- * Pure validation for GRN-generated Management Petty Cash settlements.
+ * Pure validation for a supplier invoice installment.
  * The payable was recognized at GRN. A payment is a balance movement,
  * NEVER a second inventory or Operational OPEX recognition.
  */

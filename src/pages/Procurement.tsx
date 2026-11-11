@@ -2655,102 +2655,67 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     }
 
     try {
-      const financeMessages: {kind:'success'|'info';message:string}[] = [];
-      const financeWrites = createManagementFinanceWriteGroup(profile?.tenantId || '', profile?.uid || '');
+      if (!profile?.tenantId) throw new Error('An authenticated tenant is required.');
+      const { tenantId, uid } = profile;
+      const financeWrites = createManagementFinanceWriteGroup(tenantId, uid);
       const grnNumber = `MGRN-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
       const supplier = suppliers.find(s => s.id === selectedSupplierId);
       const targetBranch = branches.find(b => b.id === selectedBranchId);
-      
       const totalValue = items.reduce((sum, item) => sum + (item.qty * item.unit_cost_ugx), 0);
+      if (!Number.isSafeInteger(totalValue) || totalValue <= 0) throw new Error('The GRN requires a positive total in whole UGX.');
+      const key = doc(collection(db, 'grn_records')).id;
+      const grnId = 'grn_' + key;
+      const invoiceId = 'procurement_invoice_' + key;
+      const registerId = 'procurement_register_' + key;
+      const creditId = 'supplier_credit_' + key;
+      const invoiceRef = invoiceNumber.trim() || grnNumber;
+      const branchName = targetBranch?.name || targetBranch?.branch_name || 'Branch Store';
+      const supplierName = supplier?.supplier_name || 'Manual Supplier';
+      const now = new Date().toISOString();
 
-      const grnRecord: any = {
-        tenantId: profile?.tenantId,
-        grn_number: grnNumber,
-        manual_ref: refNumber,
-        supplier_id: selectedSupplierId,
-        supplier_name: supplier?.supplier_name || 'Manual Supplier',
-        invoice_number: invoiceNumber,
-        invoice_date: invoiceDate,
-        receivedAt: new Date().toISOString(),
-        receivedBy: profile?.uid,
-        status: 'completed',
-        payment_type: paymentType,
-        total_value_ugx: totalValue,
-        items
+      await financeWrites.addDocument('grn_records', {
+        tenantId, inventoryClass: 'SELLABLE', grn_number: grnNumber, manual_ref: refNumber,
+        invoice_id: invoiceId, procurement_invoice_id: registerId,
+        credit_ledger_id: paymentType === 'credit' ? creditId : null,
+        supplier_id: selectedSupplierId, supplier_name: supplierName,
+        invoice_number: invoiceRef, invoice_date: invoiceDate, receivedAt: now, receivedBy: uid,
+        status: 'completed', payment_type: paymentType,
+        payment_status: paymentType === 'cash' ? 'pending_payment' : 'outstanding',
+        total_value_ugx: totalValue, items,
+      }, grnId);
+
+      const invoice = {
+        tenantId, invoiceId, invoiceRef, supplierInvoiceNumber: invoiceRef, grnId, grnRef: grnNumber,
+        branchId: selectedBranchId, branchName, supplierId: selectedSupplierId, supplierName,
+        invoiceValue: totalValue, paymentType, paymentStatus: paymentType === 'cash' ? 'Pending Payment' : 'Outstanding',
+        paidAmountUGX: 0, creditBalance: totalValue, type: 'payable', createdAt: now, updatedAt: now,
       };
-
-      const grnId = await financeWrites.addDocument('grn_records', grnRecord);
-
-      // Write corresponding document to 'invoices' collection
-      const todayStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
-      const seq = Math.floor(1000 + Math.random() * 9000);
-      const invoiceRef = `INV-${todayStr}-${seq}`;
-
-      const invoiceId = await financeWrites.addDocument('invoices', {
-        tenantId: profile?.tenantId,
-        invoiceRef,
-        grnId: grnId,
-        branchId: selectedBranchId,
-        branchName: targetBranch?.branch_name || 'Branch Store',
-        supplierId: selectedSupplierId,
-        supplierName: supplier?.supplier_name || 'Manual Supplier',
-        invoiceValue: totalValue,
-        paymentStatus: paymentType, // 'cash' | 'credit'
-        creditBalance: paymentType === 'credit' ? totalValue : 0,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
+      await financeWrites.addDocument('invoices', invoice, invoiceId);
+      await financeWrites.addDocument('procurement_invoices', {
+        ...invoice, branch_id: selectedBranchId, branch_name: branchName, supplier_id: selectedSupplierId,
+        supplier_name: supplierName, invoice_number: invoiceRef, grn_number: grnNumber, invoice_date: invoiceDate,
+        due_date: new Date(new Date(invoiceDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        amount: totalValue, total_amount_ugx: totalValue, paid_amount_ugx: 0, status: 'Unpaid', created_at: now,
+      }, registerId);
 
       if (paymentType === 'credit') {
         await financeWrites.addDocument('creditLedger', {
-          tenantId: profile?.tenantId,
-          invoiceId,
-          invoiceRef,
-          supplierId: selectedSupplierId,
-          supplierName: supplier?.supplier_name || 'Manual Supplier',
-          branchId: selectedBranchId,
-          branchName: targetBranch?.branch_name || 'Branch Store',
-          originalCreditAmount: totalValue,
-          remainingCreditBalance: totalValue,
-          status: 'outstanding',
-          creditAccruedAt: new Date().toISOString(),
-          lastProcessedAt: null,
-          createdAt: new Date().toISOString()
-        });
-      }
-
-      // Add to Procurement Invoices Ledger for Finance Module
-      await financeWrites.addDocument('procurement_invoices', {
-        tenantId: profile?.tenantId,
-        branch_id: selectedBranchId,
-        branch_name: targetBranch?.branch_name || 'Branch Store',
-        supplier_id: selectedSupplierId,
-        supplier_name: supplier?.supplier_name || 'Manual Supplier',
-        invoice_number: invoiceNumber || grnNumber,
-        grn_number: grnNumber,
-        invoice_date: invoiceDate,
-        due_date: new Date(new Date(invoiceDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        amount: totalValue,
-        total_amount_ugx: totalValue,
-        paid_amount_ugx: paymentType === 'cash' ? totalValue : 0,
-        status: paymentType === 'cash' ? 'Paid' : 'Credit',
-        created_at: new Date().toISOString()
-      });
-
-      if (paymentType === 'cash') {
-        // Log in Petty Cash Ledger (Outgoing) for cash stock purchase
-        await financeWrites.addDocument('petty_cash_ledger', {
-          tenantId: profile?.tenantId,
-          date: new Date().toISOString(),
-          amount: totalValue,
-          source: 'Petty Cash Reserve',
-          reference_number: invoiceNumber || grnNumber,
-          type: 'outgoing',
-          branch_id: selectedBranchId,
-          logged_by: profile?.uid || 'SYSTEM',
-          notes: `Cash stock purchase (Manual) - GRN ${grnNumber} - Supplier: ${supplier?.supplier_name || 'Manual Supplier'}`,
-          created_at: new Date().toISOString()
-        });
+          tenantId, invoiceId, invoiceRef, grnId, grnRef: grnNumber, supplierId: selectedSupplierId, supplierName,
+          branchId: selectedBranchId, branchName, originalCreditAmount: totalValue, remainingCreditBalance: totalValue,
+          amount: totalValue, balance: totalValue, status: 'outstanding', creditAccruedAt: now,
+          lastProcessedAt: null, paymentHistoryIds: [],
+        }, creditId);
+      } else {
+        await financeWrites.addDocument('management_expenses', {
+          tenantId, source: 'procurement_cash_grn', sourceType: 'procurement', sourceRef: grnId, sourceRefId: grnId,
+          grnId, invoiceId, invoiceRef, supplierId: selectedSupplierId, supplierName, branchId: selectedBranchId,
+          branch_id: selectedBranchId, inventoryClass: 'SELLABLE', department: 'HQ', category: 'Procurement Cash Invoice',
+          description: `Manual cash GRN awaiting Finance settlement: ${invoiceRef} / ${grnNumber}`,
+          amount: totalValue, amount_ugx: totalValue, originalAmount: totalValue, expense_date: invoiceDate,
+          status: 'draft', paymentStatus: 'pending_payment', paidAmountUGX: 0, balanceUGX: totalValue,
+          excludeFromOpexRollup: true, createdBy: uid, logged_by: profile.fullName || profile.full_name || uid,
+          created_at: now,
+        }, 'management_payment_draft_' + grnId);
       }
 
       // Inventory Update logic...
@@ -2805,7 +2770,6 @@ const ManualGRNModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         });
       }
       await financeWrites.commit();
-      financeMessages.forEach(({kind,message})=>toast[kind](message));
 
       toast.success('Manual GRN recorded and inventory updated');
       onClose();

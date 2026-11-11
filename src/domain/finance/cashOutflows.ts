@@ -85,11 +85,34 @@ export function collectCashOutflows(input: {
     let reference = str(movement.reference_number);
     let invoiceRef = '';
     let postedByName = '';
+    let charge = false;
 
     if (movement.movementClass === 'transfer_charge' && movement.id === movement.portfolioTransferId + '_fee' && movement.portfolioTransferId) {
       sourceCollection = 'finance_transfers_v1';
       sourceId = str(movement.portfolioTransferId);
       category = 'Transfer fee';
+    } else if (movement.supplierPosting === 'cash' || movement.supplierPosting === 'credit') {
+      const isCredit = movement.supplierPosting === 'credit';
+      const payment = isCredit ? credit : supplier;
+      charge = movement.supplierCharge === true;
+      const movementId = isCredit ? 'credit_payment_' + paymentId : paymentId;
+      if (payment && payment.status !== 'posted') continue;
+      if (payment && payment.movementId === movementId &&
+        (charge ? movement.id === movementId + '_fee' && payment.chargeMovementId === movement.id &&
+          payment.chargeUGX === amount && movement.expenseCategory === 'Financial service expenses'
+          : movement.supplierCharge === false && movement.id === movementId && (isCredit ? payment.amount : payment.amountUGX) === amount) &&
+        payment.processedBy === actorId && payment.paymentAccountId === accountId && movement.paymentAccountId === accountId &&
+        payment.paymentAccountKind === account?.kind && payment.fundingBranchId === branchId && movement.fundingBranchId === branchId &&
+        payment.externalReference === movement.externalReference && payment.invoiceId === movement.invoiceId &&
+        payment.grnId === movement.grnId && (!isCredit || payment.creditLedgerId === movement.creditLedgerId)) {
+        sourceCollection = isCredit ? 'creditPayments' : 'cash_grn_payments';
+        sourceId = paymentId;
+        category = charge ? 'Financial service expenses' : isCredit ? 'Supplier credit payment' : 'Supplier invoice payment';
+        postedByName = str(payment.processedByName);
+        invoiceRef = str(payment.invoiceRef);
+        reference = str(payment.externalReference) || reference;
+        date = businessDate(payment.processedAt) || date;
+      }
     } else if (!movement.portfolioTransferId && !movement.movementClass) {
       if (supplier && movement.id === paymentId && supplier.amountUGX === amount &&
         supplier.processedBy === actorId && supplier.paymentAccountId === accountId &&
@@ -132,7 +155,7 @@ export function collectCashOutflows(input: {
       account?.id === tenantId + '_' + accountId && account.initialized === true && account.currency === 'UGX' &&
       account.kind === (movement.collection === 'banking_records' ? 'bank' : 'petty_cash') &&
       movement.accountDeltaUGX === -(amount as number));
-    const id = verified ? sourceCollection + '/' + sourceId : movement.collection + '/' + movement.id;
+    const id = verified ? sourceCollection + '/' + sourceId + (charge ? '/fee' : '') : movement.collection + '/' + movement.id;
     const actor = staff.get(actorId);
     postedByName = [postedByName, str(actor?.full_name), str(actor?.fullName), str(movement.logged_by)]
       .map(name => name.trim())
