@@ -5,12 +5,12 @@ import { Clock, ArrowRightLeft, ShieldCheck, User, DollarSign } from 'lucide-rea
 import { cn } from '../../utils/cn';
 import { useAuth } from '../../contexts/AuthContext';
 import { firestoreService } from '../../services/firestore';
+import { normalizeDateValue } from '../../utils/dateValue';
 
 const amount = (...values: any[]) => Number(values.find(value => Number.isFinite(Number(value))) || 0);
-const dateValue = (value: any) => value?.toDate?.() || (value ? new Date(value) : null);
-const daysUntil = (value: any) => {
-  const date = dateValue(value);
-  return date && !Number.isNaN(date.getTime()) ? Math.ceil((date.getTime() - Date.now()) / 86400000) : null;
+const daysUntil = (value: unknown) => {
+  const date = normalizeDateValue(value);
+  return date ? Math.ceil((date.getTime() - Date.now()) / 86400000) : null;
 };
 
 export const LogisticsAnalytics: React.FC = () => {
@@ -76,8 +76,8 @@ export const LogisticsAnalytics: React.FC = () => {
 
     const completedTrips = trips.filter(trip => trip.status === 'completed' && trip.departure_time && trip.arrival_time);
     const tatHours = completedTrips.map(trip => {
-      const start = dateValue(trip.departure_time);
-      const end = dateValue(trip.arrival_time);
+      const start = normalizeDateValue(trip.departure_time);
+      const end = normalizeDateValue(trip.arrival_time);
       return start && end ? Math.max(0, (end.getTime() - start.getTime()) / 3600000) : 0;
     }).filter(Boolean);
     const averageTat = tatHours.length ? tatHours.reduce((sum, value) => sum + value, 0) / tatHours.length : 0;
@@ -115,8 +115,8 @@ export const LogisticsAnalytics: React.FC = () => {
       const person = staffMap.get(id);
       const current = drivers.get(id) || { name: trip.driver_name || person?.full_name || id, trips: 0, hours: 0, timedTrips: 0, incidents: 0 };
       current.trips += 1;
-      const start = dateValue(trip.departure_time);
-      const end = dateValue(trip.arrival_time);
+      const start = normalizeDateValue(trip.departure_time);
+      const end = normalizeDateValue(trip.arrival_time);
       if (start && end) { current.hours += Math.max(0, (end.getTime() - start.getTime()) / 3600000); current.timedTrips += 1; }
       drivers.set(id, current);
     });

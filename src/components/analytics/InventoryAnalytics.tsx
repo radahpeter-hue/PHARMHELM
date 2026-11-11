@@ -11,6 +11,7 @@ import {
 import { cn } from '../../utils/cn';
 import { useAuth } from '../../contexts/AuthContext';
 import { firestoreService } from '../../services/firestore';
+import { normalizeDateValue } from '../../utils/dateValue';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
@@ -58,7 +59,12 @@ export const InventoryAnalytics: React.FC = () => {
 
   const metrics = useMemo(() => {
     const inventoryValue = batches.reduce((sum, b) => sum + (b.quantity || 0) * (b.purchasePrice || 0), 0);
-    const expiredBatches = batches.filter(b => b.batch_status === 'expired' || (b.expiryDate && new Date(b.expiryDate) < new Date()));
+    const now = new Date();
+    const expiredBatches = batches.filter(b => {
+      if (b.batch_status === 'expired') return true;
+      const expiry = normalizeDateValue(b.expiryDate);
+      return expiry !== null && expiry < now;
+    });
     const expiredCount = expiredBatches.length;
     const expiredValue = expiredBatches.reduce((sum, b) => sum + (b.quantity || 0) * (b.purchasePrice || 0), 0);
 
