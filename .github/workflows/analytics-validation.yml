@@ -1,0 +1,37 @@
+name: Analytics validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/pages/Analytics.tsx'
+      - 'src/components/analytics/**'
+      - 'src/utils/dateValue.ts'
+      - 'tests/analytics-date-regression.test.ts'
+      - 'scripts/analytics-ui-smoke.mjs'
+      - '.github/workflows/analytics-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Install isolated browser verification runtime
+        run: |
+          npm install --prefix /tmp/analytics-browser --no-save playwright@1.58.2
+          /tmp/analytics-browser/node_modules/.bin/playwright install --with-deps chromium webkit
+      - name: Open Analytics on desktop Chromium and mobile WebKit
+        env:
+          PLAYWRIGHT_MODULE: /tmp/analytics-browser/node_modules/playwright
+        run: node scripts/analytics-ui-smoke.mjs

@@ -1,0 +1,70 @@
+name: Release Analytics hotfix to Firebase Hosting
+
+on:
+  push:
+    branches:
+      - release/analytics-hotfix-118
+
+concurrency:
+  group: analytics-hotfix-118-hosting
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      FIREBASE_PROJECT_ID: gen-lang-client-0911422817
+      FIRESTORE_DATABASE_ID: ai-studio-f7d8654b-e089-425a-a506-38159afe1e75
+      CURRENT_HOSTING_BUILD: 49a9014533980a60517b21503b58bb1cf578c213
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install and audit dependencies
+        run: |
+          npm ci
+          npm install @tailwindcss/oxide-linux-x64-gnu --save-optional --no-save
+          npm audit --omit=dev --audit-level=low
+      - name: Test and build the hotfix
+        env:
+          VITE_BUILD_SHA: ${{ github.sha }}
+          VITE_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+          node scripts/build-firestore-release-rules.mjs
+      - name: Authenticate to Firebase
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Verify the live Hosting baseline and active Firestore rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          host=https://mp.pharmhelm.com
+          curl -fsSL --max-time 30 "$host/?release-check=$GITHUB_SHA" -o /tmp/analytics-live-index.html
+          bundle=$(sed -nE 's@.*src="(/assets/[^"]+\.js)".*@\1@p' /tmp/analytics-live-index.html)
+          test -n "$bundle"
+          curl -fsSL --max-time 30 "$host$bundle" -o /tmp/analytics-live-bundle.js
+          if ! grep -Fq "\"$CURRENT_HOSTING_BUILD\"" /tmp/analytics-live-bundle.js &&
+             ! grep -Fq "\"${CURRENT_HOSTING_BUILD:0:7}\"" /tmp/analytics-live-bundle.js; then
+            echo "::error::Live Hosting is no longer on the verified hotfix baseline."
+            exit 1
+          fi
+          bash scripts/verify-active-firestore-rules.sh
+          node scripts/verify-pos-v2-revision-indexes.mjs
+      - name: Deploy Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          channelId: live
+          projectId: gen-lang-client-0911422817

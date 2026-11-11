@@ -9,7 +9,8 @@ import {
 import { cn } from '../../utils/cn';
 import { useAuth } from '../../contexts/AuthContext';
 import { firestoreService } from '../../services/firestore';
-import { format } from 'date-fns';
+import { formatDateValue, normalizeDateValue } from '../../utils/dateValue';
+import { analyticsDateText } from './analyticsDateText';
 
 export const QAAnalytics: React.FC = () => {
   const { profile, activeBranch } = useAuth();
@@ -30,7 +31,8 @@ export const QAAnalytics: React.FC = () => {
       });
       
       const unsubFridge = firestoreService.subscribeToCollection('fridge_temp_logs', profile.tenantId, (data: any) => {
-        const sorted = [...data].sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        const sortTime = (value: unknown) => normalizeDateValue(value)?.getTime() ?? -Infinity;
+        const sorted = [...data].sort((a: any, b: any) => sortTime(a.date) - sortTime(b.date));
         setFridgeLogs(sorted);
       });
 
@@ -72,7 +74,7 @@ export const QAAnalytics: React.FC = () => {
     
     // Cold chain data line chart (dynamic from fridge_temp_logs)
     const coldChainData = fridgeLogs.slice(-12).map(log => ({
-      time: log.time || log.readingPeriod || format(new Date(log.date), 'HH:mm'),
+      time: log.time || log.readingPeriod || formatDateValue(log.date, 'HH:mm', 'N/A'),
       temp: log.temperature
     }));
 
@@ -89,29 +91,29 @@ export const QAAnalytics: React.FC = () => {
     // CME Compliance KPI
     const cmePct = cmeSessions.length > 0 ? `${Math.min(cmeSessions.length * 20, 100)}%` : '0%';
 
-    // Premises licence alert (nearest license to expire)
-    let licenceExpiry = 'No active licenses';
-    const sortedLicenses = [...licenses].sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
-    if (sortedLicenses.length > 0) {
-      const diffTime = new Date(sortedLicenses[0].expiryDate).getTime() - new Date().getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      licenceExpiry = diffDays > 0 ? `${diffDays} days` : 'Expired';
-    }
-
-    // License Status list (premises_licenses)
+    const now = Date.now();
+    let nearestExpiryDays = Infinity;
     const complianceList = licenses.map(lic => {
-      const diffTime = new Date(lic.expiryDate).getTime() - new Date().getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      const expiry = normalizeDateValue(lic.expiryDate);
+      const days = expiry ? Math.ceil((expiry.getTime() - now) / 86_400_000) : null;
+      if (days !== null) nearestExpiryDays = Math.min(nearestExpiryDays, days);
+
       let status = 'Normal';
-      if (diffDays <= 30) status = 'Critical';
-      else if (diffDays <= 90) status = 'Warning';
+      if (days === null) status = 'Unknown';
+      else if (days <= 30) status = 'Critical';
+      else if (days <= 90) status = 'Warning';
       return {
         name: lic.licenseName || lic.name || 'Unnamed License',
-        expiry: lic.expiryDate ? lic.expiryDate.split('T')[0] : 'N/A',
-        days: diffDays > 0 ? diffDays : 0,
+        expiry: expiry ? analyticsDateText(lic.expiryDate).split('T')[0] : 'N/A',
+        days,
         status
       };
     });
+
+    let licenceExpiry = licenses.length ? 'Expiry not recorded' : 'No active licenses';
+    if (nearestExpiryDays !== Infinity) {
+      licenceExpiry = nearestExpiryDays > 0 ? `${nearestExpiryDays} days` : 'Expired';
+    }
 
     // Controlled Drug Register Summary list (controlled_drug_register)
     const registerList = controlledDrugs.map(drug => ({
@@ -283,9 +285,9 @@ export const QAAnalytics: React.FC = () => {
                       "h-3 w-3 rounded-full ml-auto mb-1",
                       lic.status === 'Critical' ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" :
                       lic.status === 'Warning' ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" :
-                      "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+                      lic.status === 'Unknown' ? "bg-zinc-300" : "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
                     )} />
-                    <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">{lic.days} days left</p>
+                    <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">{lic.days === null ? 'Expiry not recorded' : `${Math.max(0, lic.days)} days left`}</p>
                   </div>
                 </div>
               ))

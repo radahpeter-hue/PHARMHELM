@@ -1,9 +1,11 @@
-import { format } from 'date-fns';
+import { format, isValid, parseISO } from 'date-fns';
 
 type TimestampLike = {
-  toDate?: () => Date;
-  seconds?: number;
-  nanoseconds?: number;
+  toDate?: unknown;
+  seconds?: unknown;
+  nanoseconds?: unknown;
+  _seconds?: unknown;
+  _nanoseconds?: unknown;
 };
 
 export function normalizeDateValue(value: unknown): Date | null {
@@ -14,6 +16,12 @@ export function normalizeDateValue(value: unknown): Date | null {
   }
 
   if (typeof value === 'string' || typeof value === 'number') {
+    if (typeof value === 'string') {
+      const text = value.trim();
+      if (!text || /^[+-]?\d{1,3}$/.test(text)) return null;
+      // Native parsing can roll impossible ISO calendar dates into the next month.
+      if (/^\d{4}-\d{2}-\d{2}/.test(text) && !isValid(parseISO(text))) return null;
+    }
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
@@ -29,11 +37,13 @@ export function normalizeDateValue(value: unknown): Date | null {
       }
     }
 
-    if (typeof timestamp.seconds === 'number') {
-      const milliseconds = timestamp.seconds * 1000 + Math.floor((timestamp.nanoseconds || 0) / 1_000_000);
-      const parsed = new Date(milliseconds);
-      return Number.isNaN(parsed.getTime()) ? null : parsed;
-    }
+    const seconds = timestamp.seconds ?? timestamp._seconds;
+    const nanoseconds = timestamp.seconds != null ? timestamp.nanoseconds : timestamp._nanoseconds;
+    if (typeof seconds !== 'number' || !Number.isInteger(seconds)) return null;
+    const nanos = nanoseconds === undefined ? 0 : nanoseconds;
+    if (typeof nanos !== 'number' || !Number.isInteger(nanos) || nanos < 0 || nanos >= 1_000_000_000) return null;
+    const parsed = new Date(seconds * 1000 + Math.floor(nanos / 1_000_000));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
 
   return null;

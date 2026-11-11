@@ -1,4 +1,5 @@
 import { eodReportRecord } from '../../utils/eodReport';
+import { analyticsDateText } from './analyticsDateText';
 import { isActiveSale } from '../../utils/activeSales';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -94,32 +95,32 @@ export const ReportHub: React.FC = () => {
 
   // Filter lists based on selected retrieval period
   const filteredSales = sales.filter(s => {
-    const d = (s.date || s.timestamp || '').split('T')[0];
+    const d = analyticsDateText(s.date || s.timestamp).split('T')[0];
     return d >= startDate && d <= endDate;
   });
 
   const filteredBranchExpenses = branchExpenses.filter(e => {
-    const d = (e.expense_date || '').split('T')[0];
+    const d = analyticsDateText(e.expense_date).split('T')[0];
     return d >= startDate && d <= endDate;
   });
 
   const filteredMgmtExpenses = managementExpenses.filter(e => {
-    const d = (e.expense_date || '').split('T')[0];
+    const d = analyticsDateText(e.expense_date).split('T')[0];
     return d >= startDate && d <= endDate;
   });
 
   const filteredCreditReceivables = creditReceivables.filter(r => {
-    const d = (r.created_at || r.due_date || '').split('T')[0];
+    const d = analyticsDateText(r.created_at || r.due_date).split('T')[0];
     return d && d >= startDate && d <= endDate;
   });
 
   const filteredSupplierPayables = supplierPayables.filter(p => {
-    const d = (p.created_at || p.due_date || '').split('T')[0];
+    const d = analyticsDateText(p.created_at || p.due_date).split('T')[0];
     return d && d >= startDate && d <= endDate;
   });
 
   const filteredEods = eodReconciliations.filter(e => {
-    const d = eodReportRecord(e).businessDate;
+    const d = analyticsDateText(eodReportRecord(e).businessDate).split('T')[0];
     return d >= startDate && d <= endDate;
   });
 
@@ -138,7 +139,7 @@ export const ReportHub: React.FC = () => {
     if (reportName.includes('Revenue') || reportName.includes('Sales')) {
       headers = ["Date/Time", "Receipt-Invoice ID", "Client/Institution", "Subtotal (UGX)", "Total Paid (UGX)", "Payment Method", "Status"];
       rows = filteredSales.map(s => [
-        s.timestamp || s.date || 'N/A',
+        analyticsDateText(s.timestamp || s.date) || 'N/A',
         s.receipt_id || s.invoice_number || s.id || 'N/A',
         s.client_name || s.client_id || 'Walk-in Customer',
         (s.subtotal || s.total_amount || s.amount || 0).toString(),
@@ -151,7 +152,7 @@ export const ReportHub: React.FC = () => {
       rows = filteredSales
         .filter(s => s.prescriber || s.referred_by || s.prescriber_name)
         .map(s => [
-          s.date || '',
+          analyticsDateText(s.date),
           s.prescriber_name || s.prescriber || 'Dr. Unknown',
           s.prescriber_specialization || 'General',
           (s.total || 0).toString(),
@@ -164,7 +165,7 @@ export const ReportHub: React.FC = () => {
     } else if (reportName.includes('Expense') || reportName.includes('Valuation')) {
       headers = ["Transaction Date", "Category", "Description/Narration", "Amount Paid (UGX)", "Source Department", "Status"];
       const bRows = filteredBranchExpenses.map(e => [
-        e.expense_date || e.created_at || '',
+        analyticsDateText(e.expense_date || e.created_at),
         e.category || 'Operations',
         e.description || '',
         (e.amount_ugx || e.amount || 0).toString(),
@@ -172,7 +173,7 @@ export const ReportHub: React.FC = () => {
         "Posted"
       ]);
       const mRows = filteredMgmtExpenses.map(e => [
-        e.expense_date || '',
+        analyticsDateText(e.expense_date),
         e.category || 'Management',
         e.description || '',
         (e.amount_ugx || e.amount || 0).toString(),
@@ -183,29 +184,29 @@ export const ReportHub: React.FC = () => {
     } else if (reportName.includes('Receivables') || reportName.includes('Owed Us')) {
       headers = ["Created Date", "Debtor/Client Name", "Invoice No", "Original Amount (UGX)", "Outstanding Owed", "Due Date", "Status"];
       rows = filteredCreditReceivables.map(r => [
-        (r.created_at || '').split('T')[0],
+        analyticsDateText(r.created_at).split('T')[0],
         r.client_name || 'Walk-in Client',
         r.invoice_number || r.receipt_id || 'N/A',
         r.amount_ugx.toString(),
         r.outstanding_ugx.toString(),
-        r.due_date || '',
+        analyticsDateText(r.due_date),
         r.status
       ]);
     } else if (reportName.includes('Payables') || reportName.includes('We Owe')) {
       headers = ["Created Date", "Supplier/Creditor Name", "Total Invoice UGX", "Outstanding Payable", "Due Date", "Status"];
       rows = filteredSupplierPayables.map(r => [
-        (r.created_at || '').split('T')[0],
+        analyticsDateText(r.created_at).split('T')[0],
         r.supplier_name || 'N/A',
         r.amount_ugx.toString(),
         (r.outstanding_ugx !== undefined ? r.outstanding_ugx : r.amount_ugx).toString(),
-        r.due_date || '',
+        analyticsDateText(r.due_date),
         r.status
       ]);
     } else if (reportName.includes('Reconciliation') || reportName.includes('EOD')) {
       headers = ["Business Date", "Shift", "Expected (UGX)", "Declared (UGX)", "Variance (UGX)", "Declared Cash", "Declared MoMo", "Declared Institutional Credit", "Declared Welfare", "Variance Reason", "Status"];
       rows = filteredEods.map(e => {
         const report = eodReportRecord(e);
-        return [report.businessDate, report.shift, String(report.expected), String(report.declared), String(report.variance),
+        return [analyticsDateText(report.businessDate), report.shift, String(report.expected), String(report.declared), String(report.variance),
           String(e.cash_actual ?? 0), String(e.momo_actual ?? 0), String(e.institutional_credit_actual ?? 0),
           String(e.staff_welfare_actual ?? 0), e.variance_reason || '', e.status || 'Not recorded'];
       });
