@@ -8,11 +8,12 @@ export async function loadCashOutflows(tenantId: string, database: Firestore = d
     const snapshot = await getDocs(query(collection(database, path), where('tenantId', '==', tenantId)));
     return snapshot.docs.map(row => ({ ...row.data(), id: row.id }));
   };
-  const [accounts, cash, bank, supplierPayments, creditPayments] = await Promise.all([
+  const [accounts, cash, bank, supplierPayments, creditPayments, managementExpenses, staff] = await Promise.all([
     read('finance_payment_accounts'), read('petty_cash_ledger'), read('banking_records'),
     read('cash_grn_payments'), read('creditPayments'),
+    read('management_expenses').catch(() => []), read('staff').catch(() => []),
   ]);
-  return collectCashOutflows({ tenantId, accounts, supplierPayments, creditPayments, movements: [
+  return collectCashOutflows({ tenantId, accounts, supplierPayments, creditPayments, managementExpenses, staff, movements: [
     ...cash.map(row => ({ ...row, collection: 'petty_cash_ledger' as const })),
     ...bank.map(row => ({ ...row, collection: 'banking_records' as const })),
   ] });

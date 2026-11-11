@@ -39,7 +39,7 @@ export function CashOutflowReport({ management = false, refresh = 0 }: { managem
     (!row.date || ((!from || row.date >= from) && (!to || row.date <= to))) &&
     (!category || row.category === category) &&
     (!scope || (scope === 'hq' ? !row.branchId : row.branchId === scope)) &&
-    (!term || [row.description, row.category, row.accountName, row.reference, row.sourceId, row.actorId]
+    (!term || [row.description, row.category, row.accountName, row.displayReference, row.postedByName, row.reference, row.sourceId, row.actorId]
       .some(value => value.toLowerCase().includes(term)))) : [];
   const verified = matching.filter(row => row.status === 'posted');
   const unverified = matching.filter(row => row.status === 'unverified');
@@ -104,7 +104,18 @@ export function CashOutflowReport({ management = false, refresh = 0 }: { managem
                 <td className="p-3">{row.branchId || (row.accountId ? 'HQ' : 'Unresolved')}</td>
                 <td className="p-3"><strong>{row.category}</strong><div>{row.description}</div></td>
                 <td className="p-3"><strong>{row.accountName || 'Unresolved'}</strong><div className="break-all">{row.portfolioId}</div></td>
-                <td className="p-3 break-all"><strong>{row.reference}</strong><div>{row.sourceCollection}/{row.sourceId}</div>{row.actorId && <div>Posted by {row.actorId}</div>}</td>
+                <td className="max-w-64 p-3 [overflow-wrap:anywhere]">
+                  <strong>{row.displayReference}</strong>
+                  {row.postedByName && <div className="text-zinc-600">Posted by {row.postedByName}</div>}
+                  <details className="mt-1 text-xs text-zinc-600">
+                    <summary className="cursor-pointer">Audit details</summary>
+                    <div className="mt-1 space-y-1">
+                      <div>Posting reference {row.reference}</div>
+                      <div>Source {row.sourceCollection}/{row.sourceId}</div>
+                      {row.actorId && <div>Posted by ID {row.actorId}</div>}
+                    </div>
+                  </details>
+                </td>
                 <td className="p-3 font-semibold">{row.amount ? row.amount.toLocaleString() : 'Unknown'}</td>
               </tr>)}
               {!displayed.length && <tr><td colSpan={6} className="p-4 text-zinc-600">{showUnverified ? 'No unverified debits match this filter.' : 'No verified payments match this filter.'}</td></tr>}

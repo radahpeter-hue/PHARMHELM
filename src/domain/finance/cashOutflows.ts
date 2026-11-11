@@ -14,6 +14,8 @@ export type CashOutflow = {
   description: string;
   category: string;
   reference: string;
+  displayReference: string;
+  postedByName: string;
   accountId: string;
   accountName: string;
   portfolioId: string;
@@ -43,12 +45,16 @@ export function collectCashOutflows(input: {
   movements: CashMovementEvidence[];
   supplierPayments: CashOutflowEvidence[];
   creditPayments: CashOutflowEvidence[];
+  managementExpenses?: CashOutflowEvidence[];
+  staff?: CashOutflowEvidence[];
 }): CashOutflow[] {
   const { tenantId } = input;
   const index = (rows: CashOutflowEvidence[]) => new Map(rows.filter(row => row.tenantId === tenantId).map(row => [row.id, row]));
   const accounts = index(input.accounts);
   const suppliers = index(input.supplierPayments);
   const credits = index(input.creditPayments);
+  const expenses = index(input.managementExpenses ?? []);
+  const staff = index(input.staff ?? []);
   const rows = new Map<string, CashOutflow>();
 
   for (const movement of input.movements) {
@@ -77,6 +83,8 @@ export function collectCashOutflows(input: {
     let category = '';
     let date = businessDate(movement.date) || businessDate(movement.createdAt);
     let reference = str(movement.reference_number);
+    let invoiceRef = '';
+    let postedByName = '';
 
     if (movement.movementClass === 'transfer_charge' && movement.id === movement.portfolioTransferId + '_fee' && movement.portfolioTransferId) {
       sourceCollection = 'finance_transfers_v1';
@@ -89,6 +97,7 @@ export function collectCashOutflows(input: {
         sourceCollection = 'cash_grn_payments';
         sourceId = paymentId;
         category = 'Supplier invoice payment';
+        postedByName = str(supplier.processedByName);
         reference = str(supplier.externalReference) || reference;
         date = businessDate(supplier.processedAt) || date;
       } else if (credit && movement.id === 'credit_payment_' + paymentId && credit.amount === amount &&
@@ -97,13 +106,19 @@ export function collectCashOutflows(input: {
         sourceCollection = 'creditPayments';
         sourceId = paymentId;
         category = 'Supplier credit payment';
+        invoiceRef = str(credit.invoiceRef);
+        reference = str(credit.paymentReference) || reference;
         date = businessDate(credit.processedAt) || date;
       } else if (expenseId && movement.id === 'expense_payment_' + expenseId &&
         ((collection === 'branch_expenses' && branchId && movement.branchId === branchId && accountId === 'system_petty_cash_' + branchId) ||
          (collection === 'management_expenses' && accountId === 'management_petty_cash'))) {
         sourceCollection = collection;
         sourceId = expenseId;
-        category = str(movement.expenseCategory) || (branchId ? 'Branch expense' : 'Management expense');
+        const expense = collection === 'management_expenses' ? expenses.get(expenseId) : undefined;
+        category = expense?.source === 'credit_payment' ? 'Supplier credit payment'
+          : str(movement.expenseCategory) || (branchId ? 'Branch expense' : 'Management expense');
+        invoiceRef = str(expense?.invoiceRef);
+        postedByName = str(expense?.issuedBy);
       } else if (expenseId && movement.id === 'logistics_payment_' + expenseId && accountId === 'management_petty_cash' &&
         LOGISTICS_EXPENSE_COLLECTIONS.some(source => source === collection)) {
         sourceCollection = collection;
@@ -118,9 +133,17 @@ export function collectCashOutflows(input: {
       account.kind === (movement.collection === 'banking_records' ? 'bank' : 'petty_cash') &&
       movement.accountDeltaUGX === -(amount as number));
     const id = verified ? sourceCollection + '/' + sourceId : movement.collection + '/' + movement.id;
+    const actor = staff.get(actorId);
+    postedByName = [postedByName, str(actor?.full_name), str(actor?.fullName), str(movement.logged_by)]
+      .map(name => name.trim())
+      .find(name => name && name !== actorId && !name.includes('@') && !/^(system|authorized finance|corporate user)$/i.test(name)) || '';
+    const businessReference = reference.trim();
+    const displayReference = invoiceRef.trim() && invoiceRef !== sourceId ? 'Invoice ' + invoiceRef.trim()
+      : businessReference && businessReference !== movement.id && businessReference !== sourceId ? businessReference
+      : 'Reference unavailable';
     rows.set(id, {
       id, tenantId, date, amount: validAmount ? amount : 0, description: description || 'Ledger debit',
-      category: category || 'Unverified debit', reference: reference || movement.id, accountId,
+      category: category || 'Unverified debit', reference: reference || movement.id, displayReference, postedByName, accountId,
       accountName: str(account?.name), portfolioId, branchId, actorId,
       sourceCollection: sourceCollection || movement.collection, sourceId: sourceId || movement.id,
       status: verified ? 'posted' : 'unverified',
