@@ -15,6 +15,8 @@ import { firestoreService } from '../../services/firestore';
 import { db } from '../../firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { PosV2GlobalRevisionAnalytics } from './PosV2GlobalRevisionAnalytics';
+import { analyticsDateText } from './analyticsDateText';
+import { buildQuotationAnalytics, type QuotationAnalyticsRecord } from './quotationAnalytics';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
@@ -34,7 +36,7 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
     }
   }, [profile?.tenantId]);
 
-  const [quotations, setQuotations] = useState<any[]>([]);
+  const [quotations, setQuotations] = useState<QuotationAnalyticsRecord[]>([]);
 
   useEffect(() => {
     if (profile?.tenantId && (isGlobalView || activeBranch?.id)) {
@@ -44,7 +46,7 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
         ...(isGlobalView ? [] : [where('branchId', '==', activeBranch!.id)])
       );
       getDocs(q).then((snap) => {
-        setQuotations(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setQuotations(snap.docs.map(d => d.data()));
       }).catch(err => console.warn('Failed to load quotations for analytics:', err));
     }
   }, [profile?.tenantId, activeBranch?.id, isGlobalView]);
@@ -52,7 +54,7 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
   // Aggregate stats
   // Check daily vs cumulative
   const todayStr = new Date().toISOString().split('T')[0];
-  const salesToday = sales.filter(s => (s.date || s.timestamp || '').startsWith(todayStr));
+  const salesToday = sales.filter(s => analyticsDateText(s.date || s.timestamp).startsWith(todayStr));
   
   // Use today's sales if present, otherwise fallback to all system sales for custom trial visibility
   const sourceList = salesToday.length > 0 ? salesToday : sales;
@@ -129,7 +131,7 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
   };
 
   sourceList.forEach(s => {
-    const sTimestamp = s.timestamp || s.created_at || s.date || '';
+    const sTimestamp = analyticsDateText(s.timestamp || s.created_at || s.date);
     const shiftKey = classifyShift(sTimestamp, activeShifts) as 'dayShift' | 'eveningShift' | 'nightShift';
     const amount = s.total || s.total_amount || s.amount || 0;
     
@@ -150,7 +152,7 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
   };
 
   sales.forEach(s => {
-    const time = s.timestamp || s.date || 'T12:00';
+    const time = analyticsDateText(s.timestamp || s.date);
     const hourPart = parseInt(time.split('T')[1]?.split(':')[0] || '12', 10);
     let slot = '12:00';
     if (hourPart < 9) slot = '08:00';
@@ -229,55 +231,10 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
     { name: 'Walk-In Customer Standard Prescription', units: sales.length, revenue: totalSalesVal, profit: Math.round(totalSalesVal * 0.4) }
   ];
 
-  // Quote performance calculations
-  const quotesCount = quotations.length;
-  const converted = quotations.filter(q => q.status === 'Converted');
-  const expired = quotations.filter(q => q.status === 'Expired' || (q.status === 'Draft' && q.validityDate?.toDate() < new Date()));
-  const totalResolved = converted.length + expired.length;
-  const conversionRate = totalResolved > 0 ? Math.round((converted.length / totalResolved) * 100) : 0;
-
-  let totalConvertDays = 0;
-  let convertCount = 0;
-  converted.forEach(q => {
-    const start = q.createdAt?.toDate();
-    const end = q.convertedAt?.toDate() || (q.convertedAt ? new Date(q.convertedAt) : null);
-    if (start && end) {
-      const diffTime = Math.abs(end.getTime() - start.getTime());
-      const diffDays = diffTime / (1000 * 60 * 60 * 24);
-      totalConvertDays += diffDays;
-      convertCount++;
-    }
-  });
-  const avgTimeToConvert = convertCount > 0 ? (totalConvertDays / convertCount).toFixed(1) : 'N/A';
-
-  const totalQuotedValue = converted.reduce((sum, q) => sum + (q.grandTotal || 0), 0);
-  const totalConvertedValue = converted.reduce((sum, q) => sum + (q.convertedValue || q.grandTotal || 0), 0);
-
-  const staffQuotesMap: Record<string, { total: number; converted: number; name: string }> = {};
-  quotations.forEach(q => {
-    const author = q.createdBy || 'unknown';
-    const authorName = q.createdByName || 'Staff';
-    if (!staffQuotesMap[author]) {
-      staffQuotesMap[author] = { total: 0, converted: 0, name: authorName };
-    }
-    const displayStatus = (q.status === 'Draft' && q.validityDate?.toDate() < new Date()) ? 'Expired' : q.status;
-    if (displayStatus === 'Converted') {
-      staffQuotesMap[author].converted++;
-      staffQuotesMap[author].total++;
-    } else if (displayStatus === 'Expired') {
-      staffQuotesMap[author].total++;
-    }
-  });
-  const staffRankings = Object.values(staffQuotesMap)
-    .map(item => ({
-      name: item.name,
-      rate: item.total > 0 ? Math.round((item.converted / item.total) * 100) : 0,
-      total: item.total,
-      converted: item.converted
-    }))
-    .sort((a, b) => b.rate - a.rate);
-
-  const totalExpiredValue = expired.reduce((sum, q) => sum + (q.grandTotal || 0), 0);
+  const {
+    quotesCount, conversionRate, avgTimeToConvert, totalQuotedValue,
+    totalConvertedValue, staffRankings, totalExpiredValue,
+  } = buildQuotationAnalytics(quotations, new Date());
 
   return (
     <div className="space-y-8 animate-in fade-in">

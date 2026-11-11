@@ -11,6 +11,7 @@ import {
 import { cn } from '../../utils/cn';
 import { useAuth } from '../../contexts/AuthContext';
 import { firestoreService } from '../../services/firestore';
+import { normalizeDateValue } from '../../utils/dateValue';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
@@ -113,12 +114,11 @@ export const CRMAnalytics: React.FC = () => {
       const bal = c.balance || 0;
       if (bal <= 0) return;
 
-      if (!c.next_refill_due_date) {
+      const dueDate = normalizeDateValue(c.next_refill_due_date);
+      if (!dueDate) {
         b0_30 += bal;
         return;
       }
-
-      const dueDate = new Date(c.next_refill_due_date);
       const diffTime = today.getTime() - dueDate.getTime();
       const overdueDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
@@ -223,8 +223,8 @@ export const CRMAnalytics: React.FC = () => {
     const list: any[] = [];
 
     metrics.chronicClients.forEach(c => {
-      if (!c.next_refill_due_date) return;
-      const dueDate = new Date(c.next_refill_due_date);
+      const dueDate = normalizeDateValue(c.next_refill_due_date);
+      if (!dueDate) return;
       const diffTime = today.getTime() - dueDate.getTime();
       const overdueDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 

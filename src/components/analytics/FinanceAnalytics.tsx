@@ -12,6 +12,7 @@ import {
 import { cn } from '../../utils/cn';
 import { useAuth } from '../../contexts/AuthContext';
 import { firestoreService } from '../../services/firestore';
+import { normalizeDateValue } from '../../utils/dateValue';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
@@ -107,11 +108,8 @@ export const FinanceAnalytics: React.FC = () => {
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const map = days.reduce((acc, d) => ({ ...acc, [d]: 0 }), {} as Record<string, number>);
     sales.forEach(s => {
-      try {
-        const d = new Date(s.timestamp || s.created_at);
-        const dayName = days[d.getDay()];
-        map[dayName] += (s.total || s.totalAmount || 0);
-      } catch (e) {}
+      const date = normalizeDateValue(s.timestamp || s.created_at);
+      if (date) map[days[date.getDay()]] += (s.total || s.totalAmount || 0);
     });
     const revenueVsTarget = days.map(d => ({
       day: d,
