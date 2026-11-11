@@ -274,6 +274,21 @@ try {
  assert.equal((await value('creditLedger',rejected.liabilityId)).remainingCreditBalance,38000);
  console.log('PASS credit draft rejection releases the unchanged liability for approval.');
 
+ // One provider reference can never be replayed through a later approval for
+ // the same invoice. The first draft is fully used while the liability remains.
+ const multiDraft = await newGrn('level8-two-approvals','credit');
+ const firstDraft = await requestSupplierCreditDraft({...approval,creditLedgerId:multiDraft.liabilityId,
+   amountUGX:500,requestId:'approval-a'},finance);
+ const firstVoucher = {tenantId,draftId:firstDraft,requestId:'one-invoice-one-voucher',amountUGX:500,
+   externalReference:'DUPLICATE-VOUCHER',paymentAccountId:mobile,actor:hqActor};
+ await assertSucceeds(settleSupplierCreditDraft(firstVoucher,finance));
+ const secondDraft = await requestSupplierCreditDraft({...approval,creditLedgerId:multiDraft.liabilityId,
+   amountUGX:500,requestId:'approval-b'},finance);
+ await assert.rejects(settleSupplierCreditDraft({...firstVoucher,draftId:secondDraft},finance),/different payment/);
+ assert.equal((await value('creditLedger',multiDraft.liabilityId)).remainingCreditBalance,37500);
+ assert.equal((await value('finance_payment_accounts',fundingId(mobile))).balanceUGX,1000);
+ console.log('PASS credit payment identity prevents a second debit when a voucher is reused across approvals.');
+
  const directPayment = {...postedCredit,processedAt:serverTimestamp(),processedBy:'branch-manager'};
  const branchDb = actor('branch-manager');
  await assert.rejects(settleSupplierCreditDraft({...request,actor:{uid:'branch-manager',name:'Branch Manager'}},branchDb),/HQ Finance/);

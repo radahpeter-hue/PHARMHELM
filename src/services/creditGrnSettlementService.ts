@@ -74,7 +74,7 @@ export async function rejectSupplierCreditDraft(input: {
 export async function settleSupplierCreditDraft(input: SupplierPaymentInput, connection: Firestore = db) {
   const payment = validateSupplierPayment(input);
   const { tenantId, draftId, requestId, amountUGX, externalReference, actor } = payment;
-  const paymentId = `supplier_credit_settlement_${draftId}_${requestId}`;
+  const paymentId = `supplier_credit_settlement_${tenantId}_${requestId}`;
   const paymentRef = doc(connection, 'creditPayments', paymentId);
   try {
     return await runTransaction(connection, async tx => {

@@ -9,7 +9,7 @@ import { settleSupplierCreditDraft } from '../../services/creditGrnSettlementSer
 import { useManagementPaymentAccounts } from './ManagementPaymentAccounts';
 
 type Payable = {
-  invoiceRef: string; grnRef: string; supplierName: string; total: number; paid: number; remaining: number;
+  invoiceId: string; invoiceRef: string; grnRef: string; supplierName: string; total: number; paid: number; remaining: number;
   limit: number; kind: 'cash' | 'credit'; draftStatus: string;
 };
 type PaymentHistory = {
@@ -104,6 +104,7 @@ export function SupplierInvoicePaymentPanel({ draftId, onSettled, onRejected }: 
         };
       }).sort((a, b) => (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0)));
       setPayable({
+        invoiceId: draft.invoiceId,
         invoiceRef: invoice.supplierInvoiceNumber || invoice.invoiceRef || draft.invoiceRef || 'Reference unavailable',
         grnRef: invoice.grnRef || invoice.grnId || 'Reference unavailable', supplierName: invoice.supplierName || 'Supplier',
         total, paid, remaining, limit, kind, draftStatus: draft.status,
@@ -131,7 +132,9 @@ export function SupplierInvoicePaymentPanel({ draftId, onSettled, onRejected }: 
     setBusy(true);
     setError('');
     try {
-      const identity = JSON.stringify([tenantId, draftId, externalReference.trim().toUpperCase()]);
+      // An external voucher stays bound to the invoice even when a later
+      // credit installment is authorized through a different draft.
+      const identity = JSON.stringify([tenantId, payable.invoiceId, externalReference.trim().toUpperCase()]);
       const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity));
       const requestId = Array.from(new Uint8Array(hash), value => value.toString(16).padStart(2, '0')).join('');
       const settle = payable.kind === 'cash' ? settleCashGrnDraft : settleSupplierCreditDraft;

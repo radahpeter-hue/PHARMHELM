@@ -1678,7 +1678,7 @@ service cloud.firestore {
         let register = data.procurementInvoiceId == '' ? {}
           : getAfter(/databases/$(database)/documents/procurement_invoices/$(data.procurementInvoiceId)).data;
         return validSupplierPaymentBase(paymentId, data, true)
-          && paymentId == 'supplier_credit_settlement_' + data.draftId + '_' + data.requestId
+          && paymentId == 'supplier_credit_settlement_' + data.tenantId + '_' + data.requestId
           && data.expenseId == data.draftId && data.paymentSource == data.paymentAccountId
           && before.tenantId == data.tenantId && before.get('paymentType', 'credit') == 'credit'
           && before.get('grnId', '') == data.grnId && data.totalInvoiceUGX == before.invoiceValue
