@@ -142,22 +142,6 @@ export const Recalls = () => {
         await firestoreService.addDocument('quarantine_logs', quarantineEntry);
       }
       
-      // Feed to finance as an expense (wastage/recall loss)
-      if (recall.totalCost && recall.totalCost > 0) {
-        await firestoreService.addDocument('branch_expenses', {
-          tenantId,
-          branch_id: activeBranch.id,
-          expense_date: format(new Date(), 'yyyy-MM-dd'),
-          category: 'wastage',
-          description: `Recall Loss: ${recall.productName} (Batch: ${recall.batchNumber})`,
-          amount_ugx: recall.totalCost,
-          payment_method: 'System Adjustment',
-          logged_by: profile?.name || user?.email || 'System',
-          status: 'Approved',
-          created_at: new Date().toISOString()
-        });
-      }
-
       await firestoreService.updateDocument('recalls', recall.id, {
         status: 'Quarantined',
         productId: quarantineResult.productId,

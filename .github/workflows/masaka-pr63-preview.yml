@@ -40,8 +40,8 @@ jobs:
       # Hosting preview only. This workflow MUST NOT deploy Firestore rules,
       # write tenant data, or update the Firebase live Hosting channel.
       - name: Publish isolated Hosting preview channel
-        # Level 8 requires explicit approval before any Hosting deployment.
-        if: github.head_ref != 'feature/finance-level8-supplier-payments'
+        # These finance changes require explicit approval for Hosting, including preview channels.
+        if: github.head_ref != 'feature/finance-level8-supplier-payments' && github.head_ref != 'feature/finance-level9-profitability'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'

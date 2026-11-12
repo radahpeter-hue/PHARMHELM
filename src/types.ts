@@ -455,6 +455,8 @@ export interface InventoryMovementEvent {
 
   effectiveAt: any; // Firestore Timestamp
   dateKey: string;
+  valuationUnitCostUGX?: number;
+  valuationReference?: string;
 
   createdBy: string;
   createdAt: any; // Firestore Timestamp

@@ -1,270 +1,81 @@
-import { matchesProfitabilityBranch } from '../../../utils/profitabilityScope';
-import { profitabilityPeriodRange, type ProfitabilityPeriod } from '../../../utils/profitabilityPeriod';
-import { financeDateKey } from '../../../utils/financeDateFilters';
-import { FinanceDateRangeFields } from '../../../components/finance/FinanceDateRangeFields';
-import { getSaleCostOfGoods } from '../../../utils/salePresentation';
-import { isActiveSale } from '../../../utils/activeSales';
-import React, { useState, useEffect, useMemo } from 'react';
-import { useAuth } from '../../../contexts/AuthContext';
-import { firestoreService } from '../../../services/firestore';
-import { 
-  Download, 
-  RefreshCw,
-  TrendingUp,
-  TrendingDown,
-  Percent,
-  Layers,
-  BarChart3,
-  Calendar,
-  AlertTriangle
-} from 'lucide-react';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../../firebase';
+import React, { useMemo, useState } from 'react';
+import { AlertTriangle, Download, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '../../../contexts/AuthContext';
+import { useProfitabilityData } from '../../../hooks/useProfitabilityData';
+import { calculateProfitability, profitabilityExportRows, profitabilityStatement } from '../../../domain/finance/profitability';
+import { profitabilityPeriodRange, type ProfitabilityPeriod } from '../../../utils/profitabilityPeriod';
+import { kampalaBusinessDate } from '../../../utils/eodBusinessDate';
+import { FinanceDateRangeFields } from '../../../components/finance/FinanceDateRangeFields';
 import { exportRecordsToExcel } from '../../../utils/excelExport';
-import { isExcludedFromOpex } from '../../../utils/finance';
 
-interface BranchExpense {
-  id: string;
-  tenantId: string;
-  branch_id: string;
-  expense_date: string;
-  category: string;
-  amount_ugx: number;
-  description: string;
-}
-
-interface ManagementExpense {
-  id: string;
-  tenantId: string;
-  expense_date?: string;
-  date?: string;
-  category: string;
-  amount: number;
-  amount_ugx?: number;
-  status: string;
-  logged_by: string;
-  description: string;
-  department: string;
-  source?: string;
-  sourceType?: string;
-  excludeFromOpexRollup?: boolean;
-}
+const ugx = (amount: number | null) => amount === null ? 'Unavailable' : `UGX ${amount.toLocaleString('en-UG', { maximumFractionDigits: 2 })}`;
 
 export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branchOnly = false }) => {
   const { profile, activeBranchId, assignedBranches } = useAuth();
-  const branchChoices = assignedBranches.filter(b => b.tenantId === profile?.tenantId);
+  const tenantId = profile?.tenantId;
+  const branchChoices = assignedBranches.filter(branch => branch.tenantId === tenantId);
   const [selectedBranchId, setSelectedBranchId] = useState(activeBranchId || '');
-  const selectedBranch = branchChoices.find(b => b.id === selectedBranchId) || branchChoices[0];
+  const selectedBranch = branchChoices.find(branch => branch.id === selectedBranchId) || branchChoices[0];
   const reportBranchId = selectedBranch?.id || '';
-  const inScope = (record: any) => !branchOnly || matchesProfitabilityBranch(record, profile?.tenantId || '', reportBranchId);
-  const [sales, setSales] = useState<any[]>([]);
-  const [branchExpenses, setBranchExpenses] = useState<BranchExpense[]>([]);
-  const [mgmtExpenses, setMgmtExpenses] = useState<ManagementExpense[]>([]);
-  const [supplierFees, setSupplierFees] = useState<{ tenantId: string; branchId: string; date: string; amount: number }[]>([]);
-  const [quarantineLogs, setQuarantineLogs] = useState<any[]>([]);
-  const [logisticsExpenses, setLogisticsExpenses] = useState<any[]>([]);
-  const [marketingExpenses, setMarketingExpenses] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // Date Range Ledger Filter (defaults to Today)
+  const { result, refresh } = useProfitabilityData(tenantId);
   const [isDateFilterActive, setIsDateFilterActive] = useState(true);
   const [period, setPeriod] = useState<ProfitabilityPeriod | 'custom'>('today');
-  const [periodAnchor, setPeriodAnchor] = useState(() => financeDateKey(new Date()));
+  const [periodAnchor, setPeriodAnchor] = useState(kampalaBusinessDate);
   const [dateRange, setDateRange] = useState(() => profitabilityPeriodRange('today'));
+  const invalidRange = isDateFilterActive && !!dateRange.start && !!dateRange.end && dateRange.start > dateRange.end;
+  const report = useMemo(() => result && tenantId && (!branchOnly || reportBranchId) && !invalidRange
+    ? calculateProfitability(result.data, {
+      tenantId, branchId: branchOnly ? reportBranchId : undefined, range: isDateFilterActive ? dateRange : undefined,
+    }) : null, [result, tenantId, branchOnly, reportBranchId, dateRange, isDateFilterActive, invalidRange]);
+  const completeSources = result?.unavailable.length === 0;
 
   const selectPeriod = (value: ProfitabilityPeriod | 'custom') => {
     setPeriod(value);
     setIsDateFilterActive(true);
     if (value !== 'custom') {
-      const anchor = value === 'today' ? financeDateKey(new Date()) : periodAnchor;
+      const anchor = value === 'today' ? kampalaBusinessDate() : periodAnchor;
       setPeriodAnchor(anchor);
       setDateRange(profitabilityPeriodRange(value, anchor));
     }
   };
 
-  const fetchData = async () => {
-    if (!profile?.tenantId) return;
-    setLoading(true);
-    try {
-      const [salesSnap, bExpSnap, mExpSnap, quarSnap, fuelSnap, maintenanceSnap, fineSnap, logisticsSnap, marketingSnap, cashFees, bankFees] = await Promise.all([
-        getDocs(query(collection(db, 'sales'), where('tenantId', '==', profile.tenantId))),
-        getDocs(query(collection(db, 'branch_expenses'), where('tenantId', '==', profile.tenantId))),
-        getDocs(query(collection(db, 'management_expenses'), where('tenantId', '==', profile.tenantId))),
-        getDocs(query(collection(db, 'quarantine_logs'), where('tenantId', '==', profile.tenantId))),
-        getDocs(query(collection(db, 'fuel_logs'), where('tenantId', '==', profile.tenantId))),
-        getDocs(query(collection(db, 'maintenance_logs'), where('tenantId', '==', profile.tenantId))),
-        getDocs(query(collection(db, 'traffic_fine_logs'), where('tenantId', '==', profile.tenantId))),
-        getDocs(query(collection(db, 'logistics_expenses'), where('tenantId', '==', profile.tenantId))),
-        getDocs(query(collection(db, 'marketing_expenses'), where('tenantId', '==', profile.tenantId))),
-        ...['petty_cash_ledger', 'banking_records'].map(name => getDocs(query(collection(db, name),
-          where('tenantId', '==', profile.tenantId), where('supplierCharge', '==', true))))
-      ]);
-      setSales(salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })).filter(isActiveSale));
-      setBranchExpenses(bExpSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
-      setMgmtExpenses(mExpSnap.docs.map(row => ({ id: row.id, ...row.data() as any })));
-      setSupplierFees([...cashFees.docs, ...bankFees.docs].map(row => {
-        const { tenantId, fundingBranchId, date, amount } = row.data();
-        return { tenantId, branchId: fundingBranchId, date, amount };
-      }));
-      setQuarantineLogs(quarSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
-      setLogisticsExpenses([
-        ...fuelSnap.docs.map(doc => ({ id: doc.id, kind: 'fuel', ...doc.data() as any })),
-        ...maintenanceSnap.docs.map(doc => ({ id: doc.id, kind: 'maintenance', ...doc.data() as any })),
-        ...fineSnap.docs.map(doc => ({ id: doc.id, kind: 'fine', ...doc.data() as any })),
-        ...logisticsSnap.docs.map(doc => ({ id: doc.id, kind: 'general', ...doc.data() as any }))
-      ]);
-      setMarketingExpenses(marketingSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
-    } catch (e: any) {
-      console.error("Error fetching profitability metrics:", e);
-      toast.error("Failed to fetch profitability metrics.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchData();
-  }, [profile?.tenantId]);
-
-  // Filter items globally based on Date Range
-  const filteredSales = useMemo(() => {
-    return sales.filter(s => {
-      if (!inScope(s)) return false;
-      if (s.status === 'voided') return false; // Exclude voided sales
-      if (!isDateFilterActive) return true;
-      const d = (s.timestamp || s.date || '').split('T')[0];
-      return d && d >= dateRange.start && d <= dateRange.end;
-    });
-  }, [sales, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
-
-  const filteredBranchExpenses = useMemo(() => {
-    return branchExpenses.filter(e => {
-      if (!inScope(e)) return false;
-      if (!isDateFilterActive) return true;
-      const d = (e.expense_date || '').split('T')[0];
-      return d && d >= dateRange.start && d <= dateRange.end;
-    });
-  }, [branchExpenses, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
-
-  const filteredMgmtExpenses = useMemo(() => {
-    return mgmtExpenses.filter(e => {
-      if (!inScope(e)) return false;
-      if (!['approved', 'issued'].includes((e.status || '').toLowerCase())) return false;
-      if (isExcludedFromOpex(e)) return false;
-      if (!isDateFilterActive) return true;
-      const d = (e.expense_date || e.date || '').split('T')[0];
-      return d && d >= dateRange.start && d <= dateRange.end;
-    });
-  }, [mgmtExpenses, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
-
-  const filterByPeriod = (items: any[]) => items.filter(item => {
-    if (!inScope(item)) return false;
-    if (!isDateFilterActive) return true;
-    const d = (item.date || item.expense_date || item.created_at || '').split('T')[0];
-    return d && d >= dateRange.start && d <= dateRange.end;
-  });
-
-  const filteredQuarantine = useMemo(() => {
-    return quarantineLogs.filter(q => {
-      if (!inScope(q)) return false;
-      if (!isDateFilterActive) return true;
-      const d = (q.dateLogged || q.date || q.created_at || '').split('T')[0];
-      return d && d >= dateRange.start && d <= dateRange.end;
-    });
-  }, [quarantineLogs, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
-
-  // Calculations
-  const totalRevenue = useMemo(() => {
-    return filteredSales.reduce((sum, s) => sum + (s.total || s.total_amount || s.amount || 0), 0);
-  }, [filteredSales]);
-
-  const totalCOGS = useMemo(() => {
-    return filteredSales.reduce((sum, s) => sum + getSaleCostOfGoods(s), 0);
-  }, [filteredSales]);
-
-  const grossProfit = useMemo(() => {
-    return totalRevenue - totalCOGS;
-  }, [totalRevenue, totalCOGS]);
-
-  const totalBranchExp = useMemo(() => {
-    return filteredBranchExpenses.reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
-  }, [filteredBranchExpenses]);
-
-  const totalMgmtExp = useMemo(() => {
-    return filteredMgmtExpenses.reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
-  }, [filteredMgmtExpenses]);
-
-  const totalSupplierFees = filterByPeriod(supplierFees).reduce((sum, fee) => sum + fee.amount, 0);
-
-  const totalLogisticsExp = useMemo(() => {
-    return filterByPeriod(logisticsExpenses).reduce((sum, e) => sum + (e.cost_ugx || e.fine_amount_ugx || e.amount || 0), 0);
-  }, [logisticsExpenses, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
-
-  const totalMarketingExp = useMemo(() => {
-    return filterByPeriod(marketingExpenses).reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
-  }, [marketingExpenses, isDateFilterActive, dateRange, branchOnly, reportBranchId, profile?.tenantId]);
-
-  const totalWastage = useMemo(() => {
-    return filteredQuarantine.reduce((sum, q) => sum + (q.totalCost || q.total_cost || q.estimatedValue || q.cost || 0), 0);
-  }, [filteredQuarantine]);
-
-  const totalExpenses = useMemo(() => {
-    return totalBranchExp + totalLogisticsExp + totalMarketingExp + totalMgmtExp + totalSupplierFees + totalWastage;
-  }, [totalBranchExp, totalLogisticsExp, totalMarketingExp, totalMgmtExp, totalSupplierFees, totalWastage]);
-
-  const netProfit = useMemo(() => {
-    return grossProfit - totalExpenses;
-  }, [grossProfit, totalExpenses]);
-
-  // Export spreadsheet report through the shared hardened exporter
+  const title = branchOnly ? 'Branch P&L' : 'Consolidated Organisation P&L';
+  const periodLabel = isDateFilterActive ? `${dateRange.start || 'Earliest'} to ${dateRange.end || 'Latest'}` : 'All dates';
   const handleExport = async () => {
-    const reportData = [
-      { 'Metric Label': 'Gross Sales Revenue', 'Value (UGX)': totalRevenue, 'Percentage of Revenue': '100.0%' },
-      { 'Metric Label': 'Cost of Goods Sold (COGS)', 'Value (UGX)': totalCOGS, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalCOGS / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
-      { 'Metric Label': 'Gross Profit Margin', 'Value (UGX)': grossProfit, 'Percentage of Revenue': totalRevenue > 0 ? `${((grossProfit / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
-      { 'Metric Label': 'Branch Operational Expenses', 'Value (UGX)': totalBranchExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalBranchExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
-      { 'Metric Label': 'Logistics and Transport Expenses', 'Value (UGX)': totalLogisticsExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalLogisticsExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
-      { 'Metric Label': 'Marketing Expenses', 'Value (UGX)': totalMarketingExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalMarketingExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
-      { 'Metric Label': 'Corporate HQ & Management Cash Outflows', 'Value (UGX)': totalMgmtExp, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalMgmtExp / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
-      { 'Metric Label': 'Supplier payment charges', 'Value (UGX)': totalSupplierFees, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalSupplierFees / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
-      { 'Metric Label': 'Wastage & Quarantine Loss', 'Value (UGX)': totalWastage, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalWastage / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
-      { 'Metric Label': 'Total Consolidated Expenses', 'Value (UGX)': totalExpenses, 'Percentage of Revenue': totalRevenue > 0 ? `${((totalExpenses / totalRevenue) * 100).toFixed(1)}%` : '0.0%' },
-      { 'Metric Label': 'Net Profit Payout Baseline', 'Value (UGX)': netProfit, 'Percentage of Revenue': totalRevenue > 0 ? `${((netProfit / totalRevenue) * 100).toFixed(1)}%` : '0.0%' }
-    ];
-
-    const formattedFrom = dateRange.start.split('-').reverse().join('-');
-    const formattedTo = dateRange.end.split('-').reverse().join('-');
-    await exportRecordsToExcel(
-      reportData,
-      branchOnly ? 'Branch P&L' : 'Consolidated Organisation P&L',
-      `${branchOnly ? `Branch_PnL_${reportBranchId}` : 'Consolidated_Organisation_PnL'}_${formattedFrom}_to_${formattedTo}.xlsx`
-    );
-    toast.success("Profitability excel ledger downloaded successfully!");
+    if (!report || !completeSources) return;
+    const rows = profitabilityExportRows(report);
+    rows.push({ Metric: 'Reporting scope', 'Value (UGX)': '', Margin: '', Notes: selectedBranch && branchOnly ? selectedBranch.name : 'Organisation' });
+    rows.push({ Metric: 'Reporting period (Kampala)', 'Value (UGX)': '', Margin: '', Notes: periodLabel });
+    try {
+      const periodSuffix = isDateFilterActive ? `${dateRange.start || 'earliest'}_to_${dateRange.end || 'latest'}` : 'all_dates';
+      await exportRecordsToExcel(rows, title, `${branchOnly ? 'Branch_PnL' : 'Consolidated_Organisation_PnL'}_${periodSuffix}.xlsx`);
+      toast.success('Profitability statement downloaded.');
+    } catch (error) {
+      console.error('Unable to export profitability statement', error);
+      toast.error('Unable to download the profitability statement.');
+    }
   };
 
   return (
     <div className="space-y-6">
-      {branchOnly && <div className="space-y-3">
-        <h2 className="text-2xl font-bold text-zinc-900">Branch P&L</h2>
-        <label className="block text-sm text-zinc-700">Branch
+      <div className="space-y-3">
+        <h2 className="text-2xl font-bold text-zinc-900">{title}</h2>
+        {branchOnly && <label className="block text-sm text-zinc-700">Branch
           <select aria-label="P&L branch" value={reportBranchId} onChange={e => setSelectedBranchId(e.target.value)}
             className="block w-full sm:w-auto max-w-full bg-white text-zinc-900 border border-zinc-200 rounded-xl p-2">
             {!branchChoices.length && <option value="">No assigned branch</option>}
-            {branchChoices.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            {branchChoices.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
           </select>
-        </label>
-        <p className="text-xs text-zinc-500">Includes only records explicitly tagged to this branch. Untagged and HQ outflows remain in the consolidated view. Current P&L accounting logic is unchanged.</p>
-      </div>}
-      {!branchOnly && <div className="space-y-2">
-        <h2 className="text-2xl font-bold text-zinc-900">Consolidated Organisation P&L</h2>
-        <p className="text-xs text-zinc-500">Organisation-wide results for the current tenant, including HQ outflows. Current reporting data and accounting formulas are retained; the later P&L accounting redesign is not included.</p>
-      </div>}
-      {/* Date presets only: current accounting dataset and formulas are unchanged. */}
+        </label>}
+        <p className="text-xs text-zinc-500">{branchOnly
+          ? 'Includes transactions attributable to the selected branch.'
+          : 'Includes all branches, HQ and expenses without a branch allocation.'} Sales use recorded net receipt values.</p>
+      </div>
       <div className="bg-zinc-50 border border-zinc-200 p-4 sm:p-6 rounded-3xl flex flex-col gap-4 shadow-sm">
         <div>
           <h4 className="font-extrabold text-zinc-950 text-sm">P&L Reporting Period</h4>
-          <p className="text-xs text-zinc-500">Month is month-to-date; Monthly is a full calendar month. Week runs Monday to Sunday. Bi-Annual uses January–June or July–December.</p>
+          <p className="text-xs text-zinc-500">Month is month to date. Monthly, Quarterly and Bi-Annual use full calendar periods. Weeks start on Monday.</p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-xs text-zinc-700">Period
@@ -272,7 +83,7 @@ export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branch
               className="block rounded-xl border border-zinc-200 bg-white text-zinc-900 p-2">
               <option value="today">Today</option><option value="week">Week</option>
               <option value="month">Month (to date)</option><option value="custom">Custom</option>
-              <option value="monthly">Monthly</option><option value="biannual">Bi-Annual</option><option value="annual">Annual</option>
+              <option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="biannual">Bi-Annual</option><option value="annual">Annual</option>
             </select>
           </label>
           {period !== 'custom' && period !== 'today' && <label className="text-xs text-zinc-700">Date within period
@@ -288,111 +99,73 @@ export const ProfitabilityLedger: React.FC<{ branchOnly?: boolean }> = ({ branch
           onChange={range => { setPeriod('custom'); setDateRange(range); }} />}
       </div>
 
-      {/* Margins Dashboard */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-emerald-500 p-6 rounded-3xl text-white shadow-xl shadow-emerald-500/20">
-          <p className="text-xs font-bold opacity-60 uppercase tracking-widest mb-1">Gross Profit</p>
-          <h3 className="text-3xl font-black">UGX {grossProfit.toLocaleString()}</h3>
-          <p className="text-[10px] mt-2 font-bold bg-white/20 inline-block px-2 py-1 rounded">
-            Margin: {totalRevenue > 0 ? ((grossProfit / totalRevenue) * 100).toFixed(1) : 0}%
-          </p>
-        </div>
-        <div className="bg-zinc-900 p-6 rounded-3xl text-white shadow-xl shadow-zinc-900/20">
-          <p className="text-xs font-bold opacity-60 uppercase tracking-widest mb-1">Total Expenses</p>
-          <h3 className="text-3xl font-black">UGX {totalExpenses.toLocaleString()}</h3>
-          <p className="text-[10px] mt-2 font-bold bg-white/20 inline-block px-2 py-1 rounded">Incl. Wastage</p>
-        </div>
-        <div className={`p-6 rounded-3xl text-white shadow-xl ${
-          netProfit >= 0 ? "bg-blue-600 shadow-blue-600/20" : "bg-red-600 shadow-red-600/20"
-        }`}>
-          <p className="text-xs font-bold opacity-60 uppercase tracking-widest mb-1">Net Profit</p>
-          <h3 className="text-3xl font-black">UGX {netProfit.toLocaleString()}</h3>
-          <p className="text-[10px] mt-2 font-bold bg-white/20 inline-block px-2 py-1 rounded">Bottom Line</p>
-        </div>
-        <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Wastage / Recalls Loss</p>
-          <h3 className="text-3xl font-black text-red-500 font-mono">UGX {totalWastage.toLocaleString()}</h3>
-          <p className="text-[10px] mt-2 font-bold text-zinc-400">Recall & Quarantine</p>
-        </div>
-      </div>
 
-      {/* Profitability breakdown statement */}
-      <div className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm space-y-6">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-zinc-150 pb-4">
-          <div>
-            <h3 className="font-extrabold text-zinc-900 text-base">Profitability Breakdown Statement</h3>
-            <p className="text-xs text-zinc-500">A detailed breakdown of revenue, cost of sales, operating expenses, and final profit margins.</p>
-          </div>
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-[#1A5E38] hover:bg-[#124227] text-white rounded-xl shadow-sm transition-all"
-          >
-            <Download size={14} /> Download Excel Statement
-          </button>
-        </div>
+      {invalidRange && <p role="alert" className="text-sm text-red-700">Choose an end date on or after the start date.</p>}
+      {!result && <p role="status" className="text-sm text-zinc-500">Loading profitability records…</p>}
+      {result && !completeSources && <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">
+        This statement is incomplete. These sources could not be loaded: {result.unavailable.join(', ')}.
+      </p>}
+      {report && completeSources && <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {([
+          ['Gross Profit', report.grossProfit, 'bg-emerald-600'],
+          ['Total Recognized Expenses', report.totalExpenses, 'bg-zinc-900'],
+          ['Net Profit Before Tax', report.netProfit, report.netProfit !== null && report.netProfit < 0 ? 'bg-red-600' : 'bg-blue-600'],
+          ['Confirmed Inventory Losses', report.totals.inventoryLoss, 'bg-zinc-700'],
+        ] as const).map(([label, amount, color]) => <div key={label} className={`rounded-3xl p-5 text-white ${color}`}>
+          <p className="text-xs font-bold uppercase tracking-wider">{label}</p>
+          <p className="mt-1 break-words text-2xl font-black">{ugx(amount)}</p>
+        </div>)}
+      </div>}
 
-        {loading ? (
-          <div className="p-12 text-center text-zinc-500 font-bold flex flex-col items-center gap-2">
-            <RefreshCw className="animate-spin text-zinc-400" size={24} />
-            Recalculating bottom line statement...
+      <div className="space-y-4 rounded-3xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-extrabold text-zinc-900">Profitability Breakdown Statement</h3>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={refresh} className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 px-3 py-2 text-xs font-bold">
+              <RefreshCw size={14} /> Refresh
+            </button>
+            <button onClick={handleExport} disabled={!report || !completeSources}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[#1A5E38] px-3 py-2 text-xs font-bold text-white disabled:opacity-50">
+              <Download size={14} /> Download Excel Statement
+            </button>
           </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
-              <span className="font-bold text-zinc-600 text-sm">Total Sales Revenue</span>
-              <span className="font-black text-zinc-950 font-mono text-sm">UGX {totalRevenue.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
-              <span className="font-bold text-zinc-600 text-sm">Cost of Goods Sold (COGS)</span>
-              <span className="font-black text-red-500 font-mono text-sm">- UGX {totalCOGS.toLocaleString()}</span>
-            </div>
-            <div className="h-px bg-zinc-200 my-2" />
-            <div className="flex justify-between items-center p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
-              <span className="font-bold text-emerald-700 text-sm flex items-center gap-1.5"><BarChart3 size={16} /> Gross Profit Margin</span>
-              <div className="text-right">
-                <span className="font-black text-emerald-700 font-mono text-sm">UGX {grossProfit.toLocaleString()}</span>
-                <span className="text-[10px] font-bold text-emerald-600 block">{totalRevenue > 0 ? ((grossProfit / totalRevenue) * 100).toFixed(1) : 0}% margin</span>
-              </div>
-            </div>
-            <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
-              <span className="font-bold text-zinc-600 text-sm">Branch Operational Expenses</span>
-              <span className="font-black text-red-500 font-mono text-sm">- UGX {totalBranchExp.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
-              <span className="font-bold text-zinc-600 text-sm">Logistics and Transport Expenses</span>
-              <span className="font-black text-red-500 font-mono text-sm">- UGX {totalLogisticsExp.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
-              <span className="font-bold text-zinc-600 text-sm">Marketing Expenses</span>
-              <span className="font-black text-red-500 font-mono text-sm">- UGX {totalMarketingExp.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
-              <span className="font-bold text-zinc-600 text-sm">Management/HQ Cash Outflows</span>
-              <span className="font-black text-red-500 font-mono text-sm">- UGX {totalMgmtExp.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
-              <span className="font-bold text-zinc-600 text-sm">Supplier payment charges</span>
-              <span className="font-black text-red-500 font-mono text-sm">- UGX {totalSupplierFees.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between items-center p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100/50 transition-colors">
-              <span className="font-bold text-zinc-600 text-sm">Inventory Wastage & Recalls (Loss)</span>
-              <span className="font-black text-red-500 font-mono text-sm">- UGX {totalWastage.toLocaleString()}</span>
-            </div>
-            <div className="h-px bg-zinc-200 my-2" />
-            <p className="text-[10px] text-zinc-500 px-2">Total Operating Expenses excludes stock purchase and supplier credit repayment amounts, which are already reflected in Cost of Goods Sold.</p>
-            <div className={`flex justify-between items-center p-6 rounded-2xl border ${
-              netProfit >= 0 ? "bg-blue-50 border-blue-100" : "bg-red-50 border-red-100"
-            }`}>
-              <span className={`text-base font-black ${netProfit >= 0 ? "text-blue-700" : "text-red-700"}`}>Net Profit Baseline</span>
-              <div className="text-right">
-                <span className={`text-xl font-black font-mono block ${netProfit >= 0 ? "text-blue-700" : "text-red-700"}`}>UGX {netProfit.toLocaleString()}</span>
-                <span className={`text-[10px] font-bold ${netProfit >= 0 ? "text-blue-600" : "text-red-600"}`}>
-                  {totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : 0}% net return
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
+        </div>
+        {report && <>
+          {report.limitations.length > 0 && <div role="status" className="flex gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+            <ul className="space-y-1">{report.limitations.map(note => <li key={note}>{note}</li>)}</ul>
+          </div>}
+          <dl className="space-y-2">
+            {profitabilityStatement(report)
+              .filter(row => completeSources || row.sales && !result?.unavailable.includes('Sales'))
+              .map(row => <div key={row.label}
+              className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl p-3 text-sm ${row.total ? 'bg-emerald-50 font-extrabold text-zinc-900' : 'bg-zinc-50 text-zinc-700'}`}>
+              <dt>{row.label}</dt>
+              <dd className="text-right font-bold">{ugx(row.amount)}
+                {row.percentage != null && <span className="ml-2 whitespace-nowrap text-xs text-zinc-600">({row.percentage.toFixed(1)}% margin)</span>}
+              </dd>
+            </div>)}
+          </dl>
+          <details className="rounded-xl border border-zinc-200 p-3 text-sm">
+            <summary className="cursor-pointer font-bold">Recorded cost and expense evidence</summary>
+            <p className="mt-2 text-zinc-600">Checkout COGS {ugx(report.verifiedCogs)} · Recovered historical COGS {ugx(report.recoveredCogs)}</p>
+            <ul className="mt-2 max-h-72 divide-y divide-zinc-100 overflow-y-auto">
+              {report.expenses.map(entry => <li key={entry.key} className="flex flex-wrap justify-between gap-x-3 py-2">
+                <span>{entry.date || 'Date unavailable'} · {entry.description}{entry.reference ? ` · ${entry.reference}` : ''}</span>
+                <span className="font-bold">{ugx(entry.amount)}</span>
+              </li>)}
+            </ul>
+            <h4 className="mt-3 font-bold">Sales and returns</h4>
+            <ul className="mt-2 max-h-72 divide-y divide-zinc-100 overflow-y-auto">
+              {report.sales.slice(0, 100).map((entry, index) => <li key={index} className="flex flex-wrap justify-between gap-x-3 py-2">
+                <span>{entry.date || 'Date unavailable'} · {entry.adjustment ? 'Return or refund' : 'Sale'} · {entry.reference || 'Receipt reference unavailable'}</span>
+                <span>Net {ugx(entry.net)} · COGS {ugx(entry.cost.amount)}</span>
+              </li>)}
+            </ul>
+            {report.sales.length > 100 && <p className="mt-2 text-xs text-zinc-500">Showing 100 of {report.sales.length} sales and returns. Narrow the reporting period to review more receipts.</p>}
+          </details>
+          <p className="text-xs text-zinc-500">Payroll is recognized at the recorded period end. Legacy payroll uses the recorded month end.</p>
+        </>}
       </div>
     </div>
   );

@@ -112,7 +112,10 @@ export async function logMovementAndAggregateInTx(
     createdBy: string;
     effectiveAt: Date;
     stockAlreadyApplied?: boolean;
+    usableQuantityDeltaBaseUnits?: number;
     timezone?: string;
+    valuationUnitCostUGX?: number;
+    valuationReference?: string;
   }
 ) {
   const {
@@ -131,6 +134,7 @@ export async function logMovementAndAggregateInTx(
     createdBy,
     effectiveAt,
     stockAlreadyApplied = false,
+    usableQuantityDeltaBaseUnits = quantityDeltaBaseUnits,
     timezone = 'Africa/Kampala'
   } = eventData;
 
@@ -171,11 +175,11 @@ export async function logMovementAndAggregateInTx(
   }
 
   const openingUsableStock = stockAlreadyApplied
-    ? currentUsableStock - quantityDeltaBaseUnits
+    ? currentUsableStock - usableQuantityDeltaBaseUnits
     : currentUsableStock;
   const closingUsableStock = stockAlreadyApplied
     ? currentUsableStock
-    : currentUsableStock + quantityDeltaBaseUnits;
+    : currentUsableStock + usableQuantityDeltaBaseUnits;
 
   // 4. Load or initialize daily summary
   const summaryId = `${tenantId}_${branchId}_${productId}_${dateKey}`;
@@ -287,6 +291,8 @@ export async function logMovementAndAggregateInTx(
     effectiveAt: Timestamp.fromDate(effectiveAt),
     dateKey,
     createdBy,
+    ...(eventData.valuationUnitCostUGX !== undefined ? { valuationUnitCostUGX: eventData.valuationUnitCostUGX } : {}),
+    ...(eventData.valuationReference ? { valuationReference: eventData.valuationReference } : {}),
     createdAt: serverTimestamp()
   };
 
