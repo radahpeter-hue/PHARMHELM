@@ -1,3 +1,4 @@
+import { calculateProfitability } from '../../domain/finance/profitability';
 import { isActiveSale } from '../../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
@@ -189,39 +190,18 @@ export const CRMAnalytics: React.FC = () => {
 
   // Prescriber Referral Yield Calculation
   const prescriberReferralData = useMemo(() => {
-    const prescriberRevenueMap: Record<string, { prescriptions: number; revenue: number; profit: number }> = {};
-    
-    // Process live sales
-    sales.forEach(s => {
-      if (s.prescriberName) {
-        const pName = s.prescriberName;
-        if (!prescriberRevenueMap[pName]) {
-          prescriberRevenueMap[pName] = { prescriptions: 0, revenue: 0, profit: 0 };
-        }
-        prescriberRevenueMap[pName].prescriptions += 1;
-        prescriberRevenueMap[pName].revenue += (s.total || s.totalAmount || 0);
-        prescriberRevenueMap[pName].profit += (s.total || s.totalAmount || 0) * 0.2; // Estimated 20% pharmacy profit margin
-      }
-    });
-
-    if (Object.keys(prescriberRevenueMap).length > 0) {
-      return Object.entries(prescriberRevenueMap).map(([name, data]) => ({
-        name,
-        prescriptions: data.prescriptions,
-        revenue: data.revenue,
-        profit: Math.round(data.profit)
-      })).sort((a, b) => b.revenue - a.revenue);
+    const byPrescriber = new Map<string, typeof sales>();
+    for (const sale of sales) {
+      if (!sale.prescriberName) continue;
+      const receipts = byPrescriber.get(sale.prescriberName) ?? [];
+      receipts.push(sale);
+      byPrescriber.set(sale.prescriberName, receipts);
     }
-
-    // Default authentic fallback
-    return sales.length > 0 ? [
-      { name: 'Dr. Sarah Nabatanzi', prescriptions: 145, revenue: 12500000, profit: 2500000 },
-      { name: 'Dr. James Okello', prescriptions: 98, revenue: 8400000, profit: 1680000 },
-      { name: 'Dr. Mary Atwine', prescriptions: 85, revenue: 7200000, profit: 1440000 },
-      { name: 'Dr. Robert Kato', prescriptions: 62, revenue: 5100000, profit: 1020000 },
-      { name: 'Dr. Alice Namono', prescriptions: 45, revenue: 3800000, profit: 760000 },
-    ] : [];
-  }, [sales]);
+    return [...byPrescriber].map(([name, receipts]) => {
+      const report = calculateProfitability({ sales: receipts }, { tenantId: profile?.tenantId || '' });
+      return { name, prescriptions: receipts.length, revenue: report.netSales, profit: report.grossProfit };
+    }).sort((left, right) => right.revenue - left.revenue);
+  }, [sales, profile?.tenantId]);
 
   // Chronic Churn Risk List Calculation
   const chronicChurnRiskList = useMemo(() => {
@@ -396,7 +376,7 @@ export const CRMAnalytics: React.FC = () => {
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-black text-zinc-900">UGX {doc.revenue.toLocaleString()}</p>
-                  <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest">Est. Margin: UGX {doc.profit.toLocaleString()}</p>
+                  <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest">Gross profit: {doc.profit === null ? 'Unavailable' : `UGX ${doc.profit.toLocaleString()}`}</p>
                 </div>
               </div>
             ))}

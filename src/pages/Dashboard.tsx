@@ -1,3 +1,6 @@
+import { calculateProfitability } from '../domain/finance/profitability';
+import { lastSevenFinanceDays } from '../utils/financeDateFilters';
+import { kampalaBusinessDate } from '../utils/eodBusinessDate';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -50,7 +53,7 @@ const Dashboard: React.FC = () => {
       const unsubSales = firestoreService.subscribeToCollection<Sale>(
         'sales',
         profile.tenantId,
-        data => setSales(data.filter(isActiveSale))
+        setSales
       );
       
       let unsubBatches = () => {};
@@ -71,15 +74,17 @@ const Dashboard: React.FC = () => {
     }
   }, [profile?.tenantId, activeBranch?.id]);
 
-  const today = new Date().toISOString().split('T')[0];
-  const todaySales = sales.filter(s => s.timestamp.startsWith(today));
-  const totalSalesToday = todaySales.reduce((sum, s) => sum + (s.total || s.totalAmount || 0), 0);
-  
+  const today = kampalaBusinessDate();
+  const todayReport = calculateProfitability({ sales: sales.map(sale => ({ ...sale })) }, {
+    tenantId: profile?.tenantId || '', range: { start: today, end: today },
+  });
+  const totalSalesToday = todayReport.netSales;
+
   // Calculate inventory value dynamically
   const inventoryValue = batches.reduce((sum, b) => sum + (b.quantity || 0) * (b.purchasePrice || 0), 0);
 
   // Calculate receivables dynamically
-  const outstandingReceivables = sales.filter(s => s.paymentMethod === 'Credit' || s.paymentMethod === 'Insurance').reduce((sum, s) => sum + (s.total || s.totalAmount || 0), 0);
+  const outstandingReceivables = sales.filter(isActiveSale).filter(s => s.paymentMethod === 'Credit' || s.paymentMethod === 'Insurance').reduce((sum, s) => sum + (s.total || s.totalAmount || 0), 0);
 
   // Calculate stock alerts dynamically
   const zeroStockCount = products.filter(p => (p.stock ?? p.quantityInStock ?? 0) === 0).length;
@@ -92,20 +97,20 @@ const Dashboard: React.FC = () => {
   const isManagement = userRoles.some(r => ['ceo', 'CEO', 'CEO / MD', 'finance_head', 'Finance Head', 'IT Head', 'owner'].includes(r));
 
   const chartData = React.useMemo(() => {
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const map = days.reduce((acc, d) => ({ ...acc, [d]: 0 }), {} as Record<string, number>);
-    
-    // Group sales from the last 7 days
-    sales.forEach(s => {
-      try {
-        const d = new Date(s.timestamp);
-        const dayName = days[d.getDay()];
-        map[dayName] += (s.total || s.totalAmount || 0);
-      } catch (e) {}
+    const report = calculateProfitability({ sales: sales.map(sale => ({ ...sale })) }, {
+      tenantId: profile?.tenantId || '', range: lastSevenFinanceDays(),
     });
-
-    return days.map(d => ({ name: d, sales: map[d] }));
-  }, [sales]);
+    const byDay = new Map<string, { sales: number; cogs: number | null }>();
+    for (const entry of report.sales) {
+      const day = byDay.get(entry.date) ?? { sales: 0, cogs: 0 };
+      day.sales += entry.net ?? 0;
+      day.cogs = day.cogs === null || entry.cost.amount === null ? null : day.cogs + entry.cost.amount;
+      byDay.set(entry.date, day);
+    }
+    return [...byDay].sort(([left], [right]) => left.localeCompare(right)).map(([date, amounts]) => ({
+      name: date.slice(5), ...amounts,
+    }));
+  }, [sales, profile?.tenantId]);
 
   return (
     <div className="space-y-8 pb-12">
@@ -318,7 +323,7 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
             <div className="space-y-4">
-              <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">COGS vs Sales</h3>
+              <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">COGS vs Sales · Last 7 Days</h3>
               <div className="h-48 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData}>
@@ -326,10 +331,12 @@ const Dashboard: React.FC = () => {
                     <XAxis dataKey="name" hide />
                     <YAxis hide />
                     <Tooltip />
-                    <Bar dataKey="sales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Bar name="Net sales" dataKey="sales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Bar name="Recorded COGS" dataKey="cogs" fill="#10b981" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+              {chartData.some(day => day.cogs === null) && <p className="text-xs text-zinc-500">Some days have incomplete COGS evidence.</p>}
             </div>
             <div className="space-y-4">
               <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">Receivables Aging</h3>

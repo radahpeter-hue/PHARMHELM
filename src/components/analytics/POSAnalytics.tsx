@@ -1,4 +1,6 @@
-import { getSaleCostOfGoods } from '../../utils/salePresentation';
+import { calculateProfitability, profitabilityDate } from '../../domain/finance/profitability';
+import { kampalaBusinessDate } from '../../utils/eodBusinessDate';
+import { matchesProfitabilityBranch } from '../../utils/profitabilityScope';
 import { isActiveSale } from '../../utils/activeSales';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -29,7 +31,7 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
     if (profile?.tenantId) {
       setLoading(true);
       const unsubscribe = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
-        setSales(data.filter(isActiveSale));
+        setSales(data);
         setLoading(false);
       });
       return () => unsubscribe();
@@ -53,19 +55,22 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
 
   // Aggregate stats
   // Check daily vs cumulative
-  const todayStr = new Date().toISOString().split('T')[0];
-  const salesToday = sales.filter(s => analyticsDateText(s.date || s.timestamp).startsWith(todayStr));
-  
-  // Use today's sales if present, otherwise fallback to all system sales for custom trial visibility
-  const sourceList = salesToday.length > 0 ? salesToday : sales;
-  const isFallbackAllTime = salesToday.length === 0;
-
-  const totalSalesVal = sourceList.reduce((sum, s) => sum + (s.total || s.total_amount || s.amount || 0), 0);
-  const totalCogsVal = sourceList.reduce((sum, s) => sum + getSaleCostOfGoods(s), 0);
-  const totalProfitVal = totalSalesVal - totalCogsVal;
+  const todayStr = kampalaBusinessDate();
+  const scopedSales = sales.filter(sale => sale.tenantId === profile?.tenantId &&
+    (isGlobalView || matchesProfitabilityBranch(sale, profile?.tenantId || '', activeBranch?.id || '')));
+  const activeSales = scopedSales.filter(isActiveSale);
+  const salesToday = activeSales.filter(sale => profitabilityDate(sale.businessDate, sale.timestamp, sale.date) === todayStr);
+  const scope = { tenantId: profile?.tenantId || '', branchId: isGlobalView ? undefined : activeBranch?.id || '' };
+  const todayReport = calculateProfitability({ sales: scopedSales }, { ...scope, range: { start: todayStr, end: todayStr } });
+  const isFallbackAllTime = todayReport.sales.length === 0;
+  const sourceList = isFallbackAllTime ? activeSales : salesToday;
+  const report = isFallbackAllTime ? calculateProfitability({ sales: scopedSales }, scope) : todayReport;
+  const totalSalesVal = report.netSales;
+  const totalCogsVal = report.knownCogs;
+  const totalProfitVal = report.grossProfit;
   const transactionCount = sourceList.length;
   const avgBasketVal = transactionCount > 0 ? Math.round(totalSalesVal / transactionCount) : 0;
-  const grossMarginPct = totalSalesVal > 0 ? Math.round((totalProfitVal / totalSalesVal) * 100) : 0;
+  const grossMarginPct = report.grossMargin?.toFixed(1);
 
   // Classify a transaction into one of the shifts (Day, Evening, Night) based on its timestamp and branch config
   const classifyShift = (saleTimestamp: string, branchShifts: any) => {
@@ -151,7 +156,7 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
     '18:00': { sales: 0, transactions: 0 },
   };
 
-  sales.forEach(s => {
+  sourceList.forEach(s => {
     const time = analyticsDateText(s.timestamp || s.date);
     const hourPart = parseInt(time.split('T')[1]?.split(':')[0] || '12', 10);
     let slot = '12:00';
@@ -176,7 +181,7 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
 
   // Payment portfolio split based on live data split
   const paymentMethodsMap: { [key: string]: number } = {};
-  sales.forEach(s => {
+  sourceList.forEach(s => {
     const method = s.payment_method || 'Cash';
     paymentMethodsMap[method] = (paymentMethodsMap[method] || 0) + 1;
   });
@@ -193,7 +198,7 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
 
   // Top products Sold based on live items list
   const productsMap: { [key: string]: { name: string; units: number; revenue: number } } = {};
-  sales.forEach(s => {
+  sourceList.forEach(s => {
     const items = s.items || s.products || [];
     if (Array.isArray(items)) {
       items.forEach((item: any) => {
@@ -252,6 +257,9 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
         {loading && <RefreshCw size={14} className="animate-spin text-zinc-500" />}
       </div>
 
+      {report.limitations.length > 0 && <ul className="space-y-1 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+        {report.limitations.map(note => <li key={note}>{note}</li>)}
+      </ul>}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm relative overflow-hidden">
           <p className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded w-fit uppercase tracking-widest mb-2">Revenue Current</p>
@@ -262,16 +270,16 @@ export const POSAnalytics: React.FC<{ isGlobalView?: boolean }> = ({ isGlobalVie
 
         <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm relative overflow-hidden">
           <p className="text-[10px] font-black text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded w-fit uppercase tracking-widest mb-2">Cost of Sales</p>
-          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Total COGS</p>
+          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">COGS with Recorded Evidence</p>
           <h3 className="text-xl font-black text-zinc-900">UGX {totalCogsVal.toLocaleString()}</h3>
-          <p className="text-[10px] text-zinc-400 mt-1">Gross Margin Ratio: {grossMarginPct}%</p>
+          <p className="text-[10px] text-zinc-400 mt-1">Gross margin: {grossMarginPct == null ? 'Unavailable' : `${grossMarginPct}%`}</p>
         </div>
 
         <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm relative overflow-hidden">
           <p className="text-[10px] font-black text-amber-600 bg-amber-50 px-2.5 py-0.5 rounded w-fit uppercase tracking-widest mb-2">Margins</p>
-          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Estimated Profit</p>
-          <h3 className="text-xl font-black text-zinc-900">UGX {totalProfitVal.toLocaleString()}</h3>
-          <p className="text-[10px] text-zinc-400 mt-1">Gross Margins minus stock values</p>
+          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Gross Profit</p>
+          <h3 className="text-xl font-black text-zinc-900">{totalProfitVal === null ? 'Unavailable' : `UGX ${totalProfitVal.toLocaleString()}`}</h3>
+          <p className="text-[10px] text-zinc-400 mt-1">Net sales less recorded COGS</p>
         </div>
 
         <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm relative overflow-hidden">

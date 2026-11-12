@@ -1,323 +1,150 @@
-import { getSaleCostOfGoods } from '../../utils/salePresentation';
-import { isActiveSale } from '../../utils/activeSales';
-import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  LineChart, Line, PieChart, Pie, Cell, Legend, AreaChart, Area, ComposedChart
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
-import { 
-  TrendingUp, TrendingDown, DollarSign, Wallet, 
-  PieChart as PieChartIcon, ShieldAlert, Target, BarChart3
-} from 'lucide-react';
-import { cn } from '../../utils/cn';
+import { PieChart as PieChartIcon, RefreshCw, TrendingUp, Wallet } from 'lucide-react';
+import { collection, getDocsFromServer, query, where } from 'firebase/firestore';
+import { db } from '../../firebase';
+import type { EODReconciliation } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
-import { firestoreService } from '../../services/firestore';
-import { normalizeDateValue } from '../../utils/dateValue';
+import { useProfitabilityData } from '../../hooks/useProfitabilityData';
+import { calculateProfitability, operatingExpenseLabels, profitabilityStatement } from '../../domain/finance/profitability';
+import type { FinanceDateRange } from '../../utils/financeDateFilters';
 
-const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
+const colors = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#0891b2', '#64748b'];
+const money = (amount: number | null) => amount === null ? 'Unavailable' : `UGX ${amount.toLocaleString('en-UG', { maximumFractionDigits: 2 })}`;
 
-const REVENUE_VS_TARGET_MOCK = [
-  { day: 'Mon', revenue: 4200000, target: 4000000 },
-  { day: 'Tue', revenue: 3800000, target: 4000000 },
-  { day: 'Wed', revenue: 4500000, target: 4000000 },
-  { day: 'Thu', revenue: 4100000, target: 4000000 },
-  { day: 'Fri', revenue: 5200000, target: 4500000 },
-  { day: 'Sat', revenue: 5800000, target: 5000000 },
-  { day: 'Sun', revenue: 3500000, target: 3000000 },
-];
-
-const EXPENSE_CATEGORIES_MOCK = [
-  { name: 'Rent', value: 2500000 },
-  { name: 'Salaries', value: 4500000 },
-  { name: 'Utilities', value: 850000 },
-  { name: 'Cleaning', value: 350000 },
-  { name: 'Stationery', value: 250000 },
-];
-
-export const FinanceAnalytics: React.FC = () => {
-  const { profile } = useAuth();
-  const [sales, setSales] = useState<any[]>([]);
-  const [branchExpenses, setBranchExpenses] = useState<any[]>([]);
-  const [mgmtExpenses, setMgmtExpenses] = useState<any[]>([]);
-  const [payroll, setPayroll] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
+function ReconciliationSummary({ tenantId, branchId, range }: { tenantId: string; branchId?: string; range: FinanceDateRange }) {
+  const [records, setRecords] = useState<EODReconciliation[] | 'unavailable'>();
   useEffect(() => {
-    if (profile?.tenantId) {
-      setLoading(true);
-      const unsubscribeSales = firestoreService.subscribeToCollection('sales', profile.tenantId, (data) => {
-        setSales(data.filter(isActiveSale));
-      });
-      const unsubscribeBranch = firestoreService.subscribeToCollection('branch_expenses', profile.tenantId, (data) => {
-        setBranchExpenses(data);
-      });
-      const unsubscribeMgmt = firestoreService.subscribeToCollection('management_expenses', profile.tenantId, (data) => {
-        setMgmtExpenses(data);
-      });
-      const unsubscribePayroll = firestoreService.subscribeToCollection('payroll', profile.tenantId, (data) => {
-        setPayroll(data);
-        setLoading(false);
-      });
-      return () => {
-        unsubscribeSales();
-        unsubscribeBranch();
-        unsubscribeMgmt();
-        unsubscribePayroll();
-      };
-    }
-  }, [profile?.tenantId]);
+    let current = true;
+    setRecords(undefined);
+    const scope = branchId ? [where('branch_id', '==', branchId)] : [];
+    void getDocsFromServer(query(collection(db, 'eod_reconciliations'), where('tenantId', '==', tenantId), ...scope))
+      .then(snapshot => { if (current) setRecords(snapshot.docs.map(doc => doc.data() as EODReconciliation)); })
+      .catch(() => { if (current) setRecords('unavailable'); });
+    return () => { current = false; };
+  }, [tenantId, branchId]);
+  const summary = Array.isArray(records) ? records.reduce((total, row) => {
+    if (row.tenantId !== tenantId || (branchId && row.branch_id !== branchId) || row.reconciliation_date < range.start ||
+        row.reconciliation_date > range.end || !Number.isFinite(row.total_expected) || !Number.isFinite(row.total_actual)) return total;
+    return { expected: total.expected + row.total_expected, declared: total.declared + row.total_actual, count: total.count + 1 };
+  }, { expected: 0, declared: 0, count: 0 }) : records;
+  return <div className="space-y-3 rounded-3xl border border-zinc-200 bg-white p-4 sm:p-8">
+    <h3 className="text-lg font-bold text-zinc-900">EOD Reconciliation Summary</h3>
+    {summary === 'unavailable' ? <p className="text-sm text-zinc-500">EOD reconciliation records could not be loaded.</p>
+      : !summary ? <p className="text-sm text-zinc-500">Loading EOD records…</p>
+      : !summary.count ? <p className="text-sm text-zinc-500">No reconciliations recorded in this period.</p>
+      : <dl className="space-y-2 text-sm">
+        <div className="flex justify-between gap-2"><dt>Recorded reconciliations</dt><dd>{summary.count}</dd></div>
+        <div className="flex justify-between gap-2"><dt>Expected</dt><dd>{money(summary.expected)}</dd></div>
+        <div className="flex justify-between gap-2"><dt>Declared</dt><dd>{money(summary.declared)}</dd></div>
+        <div className="flex justify-between gap-2"><dt>Variance</dt><dd>{money(summary.declared - summary.expected)}</dd></div>
+      </dl>}
+  </div>;
+}
 
-  const metrics = useMemo(() => {
-    const totalRevenue = sales.reduce((sum, s) => sum + (s.total || s.totalAmount || 0), 0);
-    const totalCogs = sales.reduce((sum, s) => sum + getSaleCostOfGoods(s), 0);
-    
-    // Compute dynamic OpEx from real expenses database
-    const totalBranchOpex = branchExpenses.reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
-    const totalMgmtOpex = mgmtExpenses.reduce((sum, e) => sum + (e.amount_ugx || e.amount || 0), 0);
-    const totalPayroll = payroll.filter(p => p.status === 'paid').reduce((sum, p) => sum + (p.net_salary || 0), 0);
-    const totalOpex = totalBranchOpex + totalMgmtOpex + totalPayroll;
+export const FinanceAnalytics: React.FC<{ isGlobalView: boolean; range: FinanceDateRange }> = ({ isGlobalView, range }) => {
+  const { profile, activeBranch, assignedBranches } = useAuth();
+  const tenantId = profile?.tenantId;
+  const branchId = isGlobalView ? undefined : assignedBranches.find(branch => branch.id === activeBranch?.id && branch.tenantId === tenantId)?.id;
+  const { result, refresh } = useProfitabilityData(tenantId);
+  const invalidRange = !range.start || !range.end || range.start > range.end;
+  const report = useMemo(() => {
+    if (!result || !tenantId || (!isGlobalView && !branchId) || invalidRange) return null;
+    return calculateProfitability(result.data, { tenantId, branchId, range });
+  }, [result, tenantId, isGlobalView, branchId, range, invalidRange]);
 
-    const grossProfit = totalRevenue - totalCogs;
-    const netProfit = grossProfit - totalOpex;
-    
-    const netMarginPct = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : '0.0';
-    const expenseRatio = totalRevenue > 0 ? ((totalOpex / totalRevenue) * 100).toFixed(1) : '0.0';
-    
-    // Dynamic statutory liability (typically 18% VAT or standard fallback)
-    const statutoryLiability = Math.round(totalRevenue * 0.18);
-    
-    // Group actual categories
-    const catMap = new Map<string, number>();
-    branchExpenses.forEach(e => {
-      const cat = e.category || 'General';
-      catMap.set(cat, (catMap.get(cat) || 0) + (e.amount_ugx || e.amount || 0));
-    });
-    mgmtExpenses.forEach(e => {
-      const cat = e.category || 'General';
-      catMap.set(cat, (catMap.get(cat) || 0) + (e.amount_ugx || e.amount || 0));
-    });
-    if (totalPayroll > 0) {
-      catMap.set('Payroll', totalPayroll);
+  const revenueTrend = useMemo(() => {
+    const dailyRevenue = new Map<string, number>();
+    for (const entry of report?.sales ?? []) {
+      if (entry.net !== null) dailyRevenue.set(entry.date, (dailyRevenue.get(entry.date) ?? 0) + entry.net);
     }
-    const expenseCategories = Array.from(catMap.entries()).map(([name, value]) => ({ name, value }));
-    if (expenseCategories.length === 0) {
-      expenseCategories.push({ name: 'Operational Costs', value: 0 });
-    }
+    return [...dailyRevenue].sort(([left], [right]) => left.localeCompare(right)).map(([day, revenue]) => ({ day, revenue }));
+  }, [report]);
 
-    // Weekly sales vs Target pace
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const map = days.reduce((acc, d) => ({ ...acc, [d]: 0 }), {} as Record<string, number>);
-    sales.forEach(s => {
-      const date = normalizeDateValue(s.timestamp || s.created_at);
-      if (date) map[days[date.getDay()]] += (s.total || s.totalAmount || 0);
-    });
-    const revenueVsTarget = days.map(d => ({
-      day: d,
-      revenue: map[d],
-      target: 4000000
-    }));
-    
-    return {
-      totalRevenue,
-      totalCogs,
-      totalOpex,
-      grossProfit,
-      netProfit,
-      netMarginPct,
-      expenseRatio,
-      statutoryLiability,
-      revenueVsTarget,
-      expenseCategories
-    };
-  }, [sales, branchExpenses, mgmtExpenses, payroll]);
+  const completeSources = result?.unavailable.length === 0;
+  const expenseCategories = report && completeSources ? Object.entries(operatingExpenseLabels)
+    .map(([category, name]) => ({ name, value: report.totals[category as keyof typeof operatingExpenseLabels] }))
+    .filter(category => category.value > 0) : [];
 
   return (
     <div className="space-y-8">
-      {/* Live KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="h-10 w-10 bg-emerald-50 rounded-xl flex items-center justify-center">
-              <TrendingUp className="text-emerald-600" size={20} />
-            </div>
-            <div className="text-emerald-600 text-xs font-bold">{metrics.netMarginPct}%</div>
-          </div>
-          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Net Margin (Period)</p>
-          <h3 className="text-2xl font-black text-zinc-900">{metrics.netMarginPct}%</h3>
-          <p className="text-[10px] text-zinc-400 mt-1">Sales - COGS - OpEx</p>
-        </div>
-
-        <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="h-10 w-10 bg-blue-50 rounded-xl flex items-center justify-center">
-              <Wallet className="text-blue-600" size={20} />
-            </div>
-            <div className="text-blue-600 text-xs font-bold">{sales.length > 0 ? "+3%" : "0%"}</div>
-          </div>
-          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Total OpEx (Period)</p>
-          <h3 className="text-2xl font-black text-zinc-900">UGX {metrics.totalOpex.toLocaleString()}</h3>
-          <p className="text-[10px] text-zinc-400 mt-1">vs last month: {sales.length > 0 ? "+3%" : "0%"}</p>
-        </div>
-
-        <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="h-10 w-10 bg-amber-50 rounded-xl flex items-center justify-center">
-              <PieChartIcon className="text-amber-600" size={20} />
-            </div>
-            <div className="text-amber-600 text-xs font-bold">{metrics.expenseRatio}%</div>
-          </div>
-          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Branch Expense Ratio</p>
-          <h3 className="text-2xl font-black text-zinc-900">{metrics.expenseRatio}%</h3>
-          <p className="text-[10px] text-zinc-400 mt-1">OpEx ÷ Revenue</p>
-        </div>
-
-        <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="h-10 w-10 bg-red-50 rounded-xl flex items-center justify-center">
-              <ShieldAlert className="text-red-600" size={20} />
-            </div>
-            <div className="text-red-600 text-xs font-bold">UGX {(metrics.statutoryLiability / 1000000).toFixed(2)}M</div>
-          </div>
-          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Statutory Liability</p>
-          <h3 className="text-2xl font-black text-zinc-900">UGX {metrics.statutoryLiability.toLocaleString()}</h3>
-          <p className="text-[10px] text-zinc-400 mt-1">PAYE + NSSF accrued</p>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-zinc-600">
+          {isGlobalView ? 'Organisation' : branchId ? activeBranch?.name : 'No assigned branch selected'} · {range.start} to {range.end} · Kampala
+        </p>
+        <button type="button" onClick={refresh} className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 px-3 py-2 text-sm">
+          <RefreshCw size={14} /> Refresh
+        </button>
       </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Revenue vs Target Tracking */}
-        <div className="lg:col-span-2 bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm">
-          <h3 className="text-lg font-bold text-zinc-900 mb-8">Revenue vs Target Tracking</h3>
-          <div className="h-[300px] w-full">
-            {metrics.revenueVsTarget.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-zinc-400 text-sm">
-                No revenue records generated yet.
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={metrics.revenueVsTarget}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis 
-                    dataKey="day" 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{ fontSize: 12, fill: '#64748b' }} 
-                  />
-                  <YAxis 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{ fontSize: 12, fill: '#64748b' }} 
-                    tickFormatter={(value) => `UGX ${value / 1000000}M`}
-                  />
-                  <Tooltip 
-                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                  />
-                  <Bar dataKey="revenue" fill="#10b981" radius={[4, 4, 0, 0]} />
-                  <Line type="monotone" dataKey="target" stroke="#3b82f6" strokeWidth={3} dot={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            )}
+      {invalidRange && <p role="alert" className="text-sm text-red-700">Choose a valid start and end date.</p>}
+      {!result && <p role="status" className="text-sm text-zinc-500">Loading profitability records…</p>}
+      {!!result?.unavailable.length && <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">
+        This statement is incomplete. These sources could not be loaded: {result.unavailable.join(', ')}.
+      </p>}
+      {report && <>
+        {report.limitations.length > 0 && <ul role="status" className="space-y-1 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+          {report.limitations.map(note => <li key={note}>{note}</li>)}
+        </ul>}
+        {completeSources && <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {[
+            { label: 'Net Profit Margin', value: report.netMargin == null ? 'Unavailable' : `${report.netMargin.toFixed(1)}%`, icon: TrendingUp },
+            { label: 'Total Operating Expenses', value: money(report.operatingExpenses), icon: Wallet },
+            { label: 'Financial Charges', value: money(report.totals.financialCharges), icon: PieChartIcon },
+          ].map(({ label, value, icon: Icon }) => <div key={label} className="space-y-2 rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <Icon className="text-emerald-600" size={20} />
+            <p className="text-xs font-bold uppercase tracking-wider text-zinc-500">{label}</p>
+            <p className="text-2xl font-black text-zinc-900">{value}</p>
+          </div>)}
+        </div>}
+        {!result?.unavailable.includes('Sales') && <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="min-w-0 rounded-3xl border border-zinc-200 bg-white p-4 sm:p-8 lg:col-span-2">
+            <h3 className="mb-4 font-bold text-zinc-900">Net Sales Revenue by Day</h3>
+            {revenueTrend.length === 0 ? <p className="text-sm text-zinc-500">No sales recorded for this period.</p> :
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={revenueTrend}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="day" tickFormatter={day => day.slice(5)} />
+                    <YAxis tickFormatter={value => value.toLocaleString('en-UG')} />
+                    <Tooltip formatter={value => money(Number(value))} />
+                    <Bar name="Net Sales Revenue" dataKey="revenue" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>}
           </div>
-        </div>
-
-        {/* Expense Category Breakdown */}
-        <div className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm">
-          <h3 className="text-lg font-bold text-zinc-900 mb-2">Expense Category Breakdown</h3>
-          <p className="text-sm text-zinc-500 mb-8">Split of operational expenses</p>
-          <div className="h-[250px] w-full">
-            {metrics.expenseCategories.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-zinc-400 text-sm">
-                No expenses logged in this period.
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={metrics.expenseCategories}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {metrics.expenseCategories.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend verticalAlign="bottom" height={36} />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
+          <div className="min-w-0 rounded-3xl border border-zinc-200 bg-white p-4 sm:p-8">
+            <h3 className="mb-4 font-bold text-zinc-900">Expense Category Breakdown</h3>
+            {!completeSources ? <p className="text-sm text-zinc-500">Complete expense data is unavailable.</p> : expenseCategories.length === 0 ? <p className="text-sm text-zinc-500">No recognized operating expenses for this period.</p> :
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={expenseCategories} dataKey="value" nameKey="name" innerRadius={42} outerRadius={65}>
+                      {expenseCategories.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}
+                    </Pie>
+                    <Tooltip formatter={value => money(Number(value))} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>}
           </div>
+        </div>}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="space-y-3 rounded-3xl border border-zinc-200 bg-white p-4 sm:p-8">
+          <h3 className="text-lg font-bold text-zinc-900">{isGlobalView ? 'Organisation P&L Summary' : 'Branch P&L Summary'}</h3>
+          <dl className="space-y-2">
+            {profitabilityStatement(report)
+              .filter(row => completeSources || row.sales && !result?.unavailable.includes('Sales'))
+              .map(row => <div key={row.label}
+              className={`flex flex-wrap justify-between gap-2 rounded-xl p-3 text-sm ${row.total ? 'bg-emerald-50 font-extrabold' : 'bg-zinc-50'}`}>
+              <dt>{row.label}</dt><dd className="font-bold">{money(row.amount)}</dd>
+            </div>)}
+          </dl>
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Branch P&L Summary */}
-        <div className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm">
-          <h3 className="text-lg font-bold text-zinc-900 mb-6">Branch P&L Summary</h3>
-          <div className="space-y-4">
-            {[
-              { label: 'Gross Revenue', value: metrics.totalRevenue, color: 'text-zinc-900' },
-              { label: 'Cost of Goods Sold (COGS)', value: -metrics.totalCogs, color: 'text-red-600' },
-              { label: 'Gross Profit', value: metrics.grossProfit, color: 'text-emerald-600', bold: true },
-              { label: 'Operating Expenses (OpEx)', value: -metrics.totalOpex, color: 'text-red-600' },
-              { label: 'Logistics Costs', value: sales.length > 0 ? -850000 : 0, color: 'text-red-600' },
-              { label: 'Net Profit (Before Tax)', value: metrics.netProfit - (sales.length > 0 ? 850000 : 0), color: 'text-emerald-600', bold: true, highlight: true },
-            ].map((item, i) => (
-              <div key={i} className={cn(
-                "flex items-center justify-between p-4 rounded-2xl border",
-                item.highlight ? "bg-emerald-50 border-emerald-100" : "bg-zinc-50 border-zinc-100"
-              )}>
-                <span className={cn("text-sm", item.bold ? "font-black" : "font-medium text-zinc-600")}>{item.label}</span>
-                <span className={cn("text-sm font-black", item.color)}>
-                  {item.value < 0 ? `(UGX ${Math.abs(item.value).toLocaleString()})` : `UGX ${item.value.toLocaleString()}`}
-                </span>
-              </div>
-            ))}
-          </div>
+        {tenantId && <ReconciliationSummary tenantId={tenantId} branchId={branchId} range={range} />}
         </div>
-
-        {/* EOD Reconciliation Summary */}
-        <div className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm">
-          <h3 className="text-lg font-bold text-zinc-900 mb-6">EOD Reconciliation Summary</h3>
-          <div className="space-y-4">
-            {(() => {
-              const eodList = sales.length > 0 ? [
-                { date: 'Today', expected: metrics.totalRevenue, actual: metrics.totalRevenue, variance: 0, status: 'Balanced' }
-              ] : [];
-
-              if (eodList.length === 0) {
-                return (
-                  <div className="p-12 text-center text-zinc-400 text-sm">
-                    No EOD reconciliations logged yet.
-                  </div>
-                );
-              }
-
-              return eodList.map((eod, i) => (
-                <div key={i} className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
-                  <div>
-                    <p className="text-sm font-bold text-zinc-900">{eod.date}</p>
-                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-medium">Expected: UGX {eod.expected.toLocaleString()}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className={cn(
-                      "text-sm font-bold",
-                      eod.variance < 0 ? "text-red-600" : "text-emerald-600"
-                    )}>
-                      {eod.variance === 0 ? 'Balanced' : `UGX ${eod.variance.toLocaleString()}`}
-                    </p>
-                    <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Actual: UGX {eod.actual.toLocaleString()}</p>
-                  </div>
-                </div>
-              ));
-            })()}
-          </div>
-        </div>
-      </div>
+      </>}
     </div>
   );
 };

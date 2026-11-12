@@ -11,6 +11,8 @@ import { DateRangePicker, DateRangeOption } from '../components/analytics/DateRa
 import { POSAnalytics } from '../components/analytics/POSAnalytics';
 import { InventoryAnalytics } from '../components/analytics/InventoryAnalytics';
 import { CRMAnalytics } from '../components/analytics/CRMAnalytics';
+import { FinanceDateRangeFields } from '../components/finance/FinanceDateRangeFields';
+import { analyticsProfitabilityRange } from '../utils/profitabilityPeriod';
 import { FinanceAnalytics } from '../components/analytics/FinanceAnalytics';
 import { QAAnalytics } from '../components/analytics/QAAnalytics';
 import { LogisticsAnalytics } from '../components/analytics/LogisticsAnalytics';
@@ -35,6 +37,7 @@ const Analytics = () => {
   const [activeDomain, setActiveDomain] = useState<AnalyticsDomain>('POS & Sales');
   const [dateRange, setDateRange] = useState<DateRangeOption>('This Month');
   const [isGlobalView, setIsGlobalView] = useState(false);
+  const [customFinanceRange, setCustomFinanceRange] = useState(() => analyticsProfitabilityRange('This Month'));
 
   const canSeeGlobalView = profile
     ? canViewGlobalPosV2RevisionAnalytics(
@@ -86,7 +89,11 @@ const Analytics = () => {
       case 'POS & Sales': return <POSAnalytics isGlobalView={isGlobalView} />;
       case 'Inventory & Stock': return <InventoryAnalytics />;
       case 'CRM': return <CRMAnalytics />;
-      case 'Finance & OpEx': return <FinanceAnalytics />;
+      case 'Finance & OpEx': return <>
+        {dateRange === 'Custom Range' && <FinanceDateRangeFields label="Finance Analytics dates" value={customFinanceRange} onChange={setCustomFinanceRange} />}
+        <FinanceAnalytics isGlobalView={isGlobalView && canSeeGlobalView}
+          range={dateRange === 'Custom Range' ? customFinanceRange : analyticsProfitabilityRange(dateRange)} />
+      </>;
       case 'QA & Compliance': return <QAAnalytics />;
       case 'Logistics & Transport': return <LogisticsAnalytics />;
       case 'HR & Personnel': return <HRAnalytics />;

@@ -1,3 +1,4 @@
+import { historicalSaleLineCost } from '../domain/finance/profitabilitySales';
 import { createScopedIdentity, type ScopedIdentityCollection } from '../services/systemIdentityService';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
@@ -1177,13 +1178,19 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
 
   // Supplier Accounts Performance (COGS and Profits)
   const supplierPerformance = useMemo(() => {
-    const supMap: { [key: string]: { name: string; cogs: number; revenue: number; profit: number; itemsCount: number } } = {};
+    const supMap: { [key: string]: { name: string; cogs: number; revenue: number; profit: number; itemsCount: number; hasUnknownCost: boolean } } = {};
 
     filteredSalesInPeriod.forEach(s => {
       (s.items || []).forEach((item: any) => {
         // Try to find batch to extract supplier
-        const batch = productBatches.find(b => b.id === item.batchId);
-        const supplierName = batch?.supplierName || batch?.supplier || item.supplierName || 'General Sourced';
+        const allocationIds: string[] = Array.isArray(item.batchAllocations)
+          ? item.batchAllocations.map(allocation => allocation.batchId) : [];
+        const batchIds = allocationIds.length ? allocationIds : [item.batchId];
+        const suppliers = batchIds.map(batchId => {
+          const batch = productBatches.find(candidate => candidate.id === batchId);
+          return batch?.supplierName || batch?.supplier || item.supplierName;
+        });
+        const supplierName = suppliers[0] && suppliers.every(name => name === suppliers[0]) ? suppliers[0] : 'Supplier attribution unavailable';
         
         if (!supMap[supplierName]) {
           supMap[supplierName] = {
@@ -1191,17 +1198,20 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
             cogs: 0,
             revenue: 0,
             profit: 0,
-            itemsCount: 0
+            itemsCount: 0,
+            hasUnknownCost: false
           };
         }
 
         const rev = item.total || (item.quantity * (item.unitPrice || 0));
-        const costPrice = item.costPrice || item.purchasePrice || 0;
-        const cogsVal = item.quantity * costPrice;
+        const cogsVal = historicalSaleLineCost(item);
 
         supMap[supplierName].revenue += rev;
-        supMap[supplierName].cogs += cogsVal;
-        supMap[supplierName].profit += (rev - cogsVal);
+        supMap[supplierName].hasUnknownCost ||= cogsVal === null;
+        if (cogsVal !== null) {
+          supMap[supplierName].cogs += cogsVal;
+          supMap[supplierName].profit += rev - cogsVal;
+        }
         supMap[supplierName].itemsCount += item.quantity;
       });
     });
@@ -1303,13 +1313,13 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
       const rows = prescriberPerformance.map(p => [p.name, p.clinic, p.revenue, p.referrals]);
       downloadReport("Prescriber_Accounts_Performance", headers, rows);
     } else {
-      const headers = ['Supplier Account Name', 'COGS Contributed (UGX)', 'Sales Revenue Generated (UGX)', 'Profits Realized (UGX)', 'Margin %'];
+      const headers = ['Supplier Account Name', 'COGS Contributed (UGX)', 'Gross Line Sales (UGX)', 'Gross Line Profit Before Receipt Discounts (UGX)', 'Margin %'];
       const rows = supplierPerformance.map(s => [
         s.name,
-        s.cogs,
+        s.hasUnknownCost ? 'Unavailable' : s.cogs,
         s.revenue,
-        s.profit,
-        s.revenue > 0 ? `${((s.profit / s.revenue) * 100).toFixed(1)}%` : '0%'
+        s.hasUnknownCost ? 'Unavailable' : s.profit,
+        !s.hasUnknownCost && s.revenue > 0 ? `${((s.profit / s.revenue) * 100).toFixed(1)}%` : 'Unavailable'
       ]);
       downloadReport("Supplier_Accounts_Performance", headers, rows);
     }
@@ -1657,8 +1667,8 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
                     <tr className="bg-zinc-50 border-b border-zinc-100">
                       <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Supplier Name</th>
                       <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Cost of Goods (COGS)</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Sales Revenue</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Realized Net Profits</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Gross Line Sales</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Gross Line Profit Before Receipt Discounts</th>
                       <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Margin %</th>
                     </tr>
                   </thead>
@@ -1668,10 +1678,10 @@ const ReportsHub: React.FC<{ patients: Client[]; institutions: InstitutionRegist
                       return (
                         <tr key={i} className="hover:bg-zinc-50/50 transition-colors">
                           <td className="px-6 py-4 font-bold text-zinc-900">{s.name}</td>
-                          <td className="px-6 py-4 text-xs font-medium text-right text-zinc-600">{s.cogs.toLocaleString()} UGX</td>
+                          <td className="px-6 py-4 text-xs font-medium text-right text-zinc-600">{s.hasUnknownCost ? 'Unavailable' : `${s.cogs.toLocaleString()} UGX`}</td>
                           <td className="px-6 py-4 text-xs font-medium text-right text-zinc-800">{s.revenue.toLocaleString()} UGX</td>
-                          <td className="px-6 py-4 text-xs font-black text-right text-emerald-600">{s.profit.toLocaleString()} UGX</td>
-                          <td className="px-6 py-4 text-xs font-black text-right text-zinc-900">{marginPct.toFixed(1)}%</td>
+                          <td className="px-6 py-4 text-xs font-black text-right text-emerald-600">{s.hasUnknownCost ? 'Unavailable' : `${s.profit.toLocaleString()} UGX`}</td>
+                          <td className="px-6 py-4 text-xs font-black text-right text-zinc-900">{s.hasUnknownCost || !s.revenue ? 'Unavailable' : `${marginPct.toFixed(1)}%`}</td>
                         </tr>
                       );
                     })}

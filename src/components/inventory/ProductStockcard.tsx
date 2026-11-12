@@ -1,3 +1,4 @@
+import { adjustSellableStock } from '../../services/stockAdjustmentService';
 import React, { useState, useEffect } from 'react';
 import { X, Package, TrendingUp, History, Activity, Edit3, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Product, ProductBatch, InventoryMovement, SystemSettings } from '../../types';
@@ -80,57 +81,17 @@ const ProductStockcard: React.FC<ProductStockcardProps> = ({ product, onClose })
     
     setIsSubmitting(true);
     try {
-      const diff = adjustmentQty - adjustingBatch.quantity;
-      if (diff === 0) {
-        setAdjustingBatch(null);
-        return;
-      }
-
-      const timestamp = new Date().toISOString();
-      const adjustmentId = `ADJ-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-
-      // 1. Update Batch Quantity
-      await firestoreService.updateDocument(
-        'product_batches',
-        adjustingBatch.id,
-        { 
-          quantity: adjustmentQty,
-          lastUpdated: timestamp
-        }
-      );
-
-      // 2. Create Movement Record
-      const movement: Omit<InventoryMovement, 'id'> = {
-        tenantId: profile.tenantId,
-        branchId: activeBranchId,
-        productId: product.id,
-        batchId: adjustingBatch.id,
-        timestamp,
-        reference: adjustmentId,
-        movementClass: 'adjustment',
-        class: 'adjustment',
-        type: diff > 0 ? 'in' : 'out',
-        initiator: profile.full_name || profile.username || 'System',
-        initiatorId: profile.uid,
-        receiver: 'System Adjustment',
-        amount: Math.abs(diff),
-        amountAttached: (adjustingBatch.purchasePrice || 0) * Math.abs(diff),
-        batchNumber: adjustingBatch.batchNumber,
-        notes: adjustmentReason || 'Manual stock adjustment'
-      };
-
-      const movementId = await firestoreService.addDocument('inventory_movements', movement);
-
-      // 3. Update local state
-      setBatches(prev => prev.map(b => b.id === adjustingBatch.id ? { ...b, quantity: adjustmentQty } : b));
-      setMovements(prev => [{ id: movementId, ...movement } as InventoryMovement, ...prev]);
-      
-      toast.success('Stock adjusted successfully');
+      const changed = await adjustSellableStock({
+        tenantId: profile.tenantId, branchId: activeBranchId, productId: product.id, batchId: adjustingBatch.id,
+        quantity: adjustmentQty, expectedQuantity: adjustingBatch.quantity, reason: adjustmentReason,
+        actorId: profile.uid, actorName: profile.full_name || profile.username || 'System',
+      });
+      if (changed) toast.success('Stock adjusted successfully');
       setAdjustingBatch(null);
       setAdjustmentReason('');
     } catch (error) {
       console.error('Error adjusting stock:', error);
-      toast.error('Failed to adjust stock');
+      toast.error(error instanceof Error ? error.message : 'Failed to adjust stock');
     } finally {
       setIsSubmitting(false);
     }

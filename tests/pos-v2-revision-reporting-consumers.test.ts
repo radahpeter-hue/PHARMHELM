@@ -15,10 +15,17 @@ test('corrected receipt replaces original revenue, units and order count in repo
 });
 
 test('every sales-fed analytics screen excludes superseded receipts before aggregation', () => {
- for (const name of ['POSAnalytics', 'FinanceAnalytics', 'InventoryAnalytics', 'CRMAnalytics',
+ for (const name of ['InventoryAnalytics', 'CRMAnalytics',
  'HRAnalytics', 'LogisticsAnalytics', 'PredictivePanel', 'ReportHub']) {
    const source = readFileSync(new URL('../src/components/analytics/' + name + '.tsx', import.meta.url), 'utf8');
    assert.match(source, /data\.filter\(isActiveSale\)/, name);
    assert.doesNotMatch(source, /setSales\(data\);/, name);
  }
+ const pos = readFileSync(new URL('../src/components/analytics/POSAnalytics.tsx', import.meta.url), 'utf8');
+ const finance = readFileSync(new URL('../src/components/analytics/FinanceAnalytics.tsx', import.meta.url), 'utf8');
+ const accounting = readFileSync(new URL('../src/domain/finance/profitabilitySales.ts', import.meta.url), 'utf8');
+ assert.match(pos, /scopedSales.filter\(isActiveSale\)/);
+ assert.match(pos, /calculateProfitability\(/);
+ assert.match(finance, /calculateProfitability\(/);
+ assert.match(accounting, /if \(!isActiveSale\(/);
 });

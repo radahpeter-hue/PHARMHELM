@@ -113,6 +113,8 @@ export async function logMovementAndAggregateInTx(
     effectiveAt: Date;
     stockAlreadyApplied?: boolean;
     timezone?: string;
+    valuationUnitCostUGX?: number;
+    valuationReference?: string;
   }
 ) {
   const {
@@ -287,6 +289,8 @@ export async function logMovementAndAggregateInTx(
     effectiveAt: Timestamp.fromDate(effectiveAt),
     dateKey,
     createdBy,
+    ...(eventData.valuationUnitCostUGX !== undefined ? { valuationUnitCostUGX: eventData.valuationUnitCostUGX } : {}),
+    ...(eventData.valuationReference ? { valuationReference: eventData.valuationReference } : {}),
     createdAt: serverTimestamp()
   };
 
