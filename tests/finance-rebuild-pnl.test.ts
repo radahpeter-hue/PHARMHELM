@@ -246,3 +246,36 @@ test('ISO and Firestore instant boundaries use Kampala while business dates stay
   assert.deepEqual(analyticsProfitabilityRange('Last Month', '2026-11-12'), { start: '2026-10-01', end: '2026-10-31' });
   assert.deepEqual(analyticsProfitabilityRange('This Quarter', '2026-11-12'), { start: '2026-10-01', end: '2026-12-31' });
 });
+
+test('confirmed stock loss records valuation without reducing usable stock twice', async () => {
+  const { logMovementAndAggregateInTx } = await import('../src/services/consumptionService');
+  const { stockAdjustmentEventType } = await import('../src/services/stockAdjustmentService');
+  assert.equal(stockAdjustmentEventType(-10, 'Quarantined damaged stock pending supplier return'), 'NEGATIVE_ADJUSTMENT');
+  assert.equal(stockAdjustmentEventType(-10, 'Disposed expired stock'), 'EXPIRY');
+  const writes = new Map<string, any>();
+  const transaction = {
+    async get(ref: { path: string }) {
+      assert.equal(writes.size, 0, 'all transaction reads must precede writes');
+      const data = ref.path === 'product_batches/expired' ? { quantity: 10, expiryDate: '2001-10-31', batch_status: 'active' }
+        : ref.path === 'product_batches/sellable' ? { quantity: 25, expiryDate: '2099-01-01', batch_status: 'active' }
+        : undefined;
+      return { exists: () => !!data, data: () => data };
+    },
+    set(ref: { path: string }, data: unknown) { writes.set(ref.path, data); },
+  };
+  await logMovementAndAggregateInTx(transaction, [
+    { ref: { path: 'product_batches/expired' }, id: 'expired' },
+    { ref: { path: 'product_batches/sellable' }, id: 'sellable' },
+  ], {
+    tenantId, branchId, productId: 'product', eventType: 'EXPIRY', quantityDeltaBaseUnits: -10,
+    usableQuantityDeltaBaseUnits: 0, consumptionDeltaBaseUnits: 0, isExceptional: false, exceptionalReason: null,
+    sourceCollection: 'product_batches', sourceDocumentId: 'expired', sourceLineId: 'adjustment',
+    reversalOfEventId: null, createdBy: 'operator', effectiveAt: new Date('2026-11-11T08:00:00Z'),
+    valuationUnitCostUGX: 500, valuationReference: 'ADJ-001',
+  });
+  const summary = writes.get(`branchConsumptionDaily/${tenantId}_${branchId}_product_2026-11-11`);
+  assert.equal(summary.closingUsableStock, 25);
+  assert.equal(summary.unitsWrittenOff, 10);
+  const loss = writes.get('inventoryMovementEvents/product_batches_expired_product_adjustment');
+  assert.equal(statement({ inventoryMovementEvents: [{ id: 'loss', ...loss }] }).totals.inventoryLoss, 5000);
+});

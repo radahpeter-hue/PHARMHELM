@@ -1,7 +1,7 @@
 import { collection, doc, runTransaction } from 'firebase/firestore';
 import { db } from '../firebase';
 import type { InventoryMovement, InventoryMovementEvent, ProductBatch } from '../types';
-import { getBranchProductBatchRefs, logMovementAndAggregateInTx } from './consumptionService';
+import { getBranchProductBatchRefs, isInventoryBatchUnexpired, logMovementAndAggregateInTx } from './consumptionService';
 
 export function stockAdjustmentEventType(quantityDelta: number, reason: string): InventoryMovementEvent['eventType'] {
   if (quantityDelta > 0) return 'POSITIVE_ADJUSTMENT';
@@ -41,9 +41,11 @@ export async function adjustSellableStock(input: {
 
     const eventType = stockAdjustmentEventType(quantityDelta, reason);
     const isLoss = ['EXPIRY', 'DAMAGE', 'WRITE_OFF'].includes(eventType);
+    const affectsUsableStock = batch.batch_status === 'active' && isInventoryBatchUnexpired(batch.expiryDate, effectiveAt);
     const unitCost = Number.isFinite(batch.purchasePrice) && batch.purchasePrice > 0 ? batch.purchasePrice : undefined;
     await logMovementAndAggregateInTx(transaction, batchRefs, {
       tenantId, branchId, productId, eventType, quantityDeltaBaseUnits: quantityDelta,
+      usableQuantityDeltaBaseUnits: affectsUsableStock ? quantityDelta : 0,
       consumptionDeltaBaseUnits: 0, isExceptional: false, exceptionalReason: null,
       sourceCollection: 'product_batches', sourceDocumentId: batchId, sourceLineId: movementRef.id,
       reversalOfEventId: null, createdBy: actorId, effectiveAt,
