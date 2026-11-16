@@ -46,7 +46,7 @@ import { createOperationalBranchReturn, receiveOperationalTransferLine } from '.
 import { OpeningStockTab } from '../components/inventory/OpeningStockTab';
 import { isScopeAllowedForOrderCategory, scopesForOrderCategory } from '../services/operationalOrderScopes';
 
-import { persistNewManualStockOrder, persistManualStockOrderDraft } from '../services/manualStockOrderService';
+import { persistNewManualStockOrder, persistManualStockOrderDraft, loadManualStockOrderDraft } from '../services/manualStockOrderService';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -390,6 +390,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   // New states for loading saved draft orders
   const [drafts, setDrafts] = useState<StockOrder[]>([]);
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
+  const selectedDraftRevision = useRef<string | null>(null);
   const [selectedDraftDate, setSelectedDraftDate] = useState<string>('');
 
   useEffect(() => {
@@ -425,38 +426,40 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   }, [profile?.tenantId, activeBranchId]);
 
   const handleSelectDraft = async (draftId: string) => {
-    const draft = drafts.find(d => d.id === draftId);
-    if (!draft) return;
-    if (draft.category === 'non_sellable' && !operationalInventoryEnabled) {
+    const listedDraft = drafts.find(d => d.id === draftId);
+    if (!listedDraft || isSubmitting) return;
+    if (listedDraft.category === 'non_sellable' && !operationalInventoryEnabled) {
       toast.error('Operational Inventory is disabled in System Settings.');
       return;
     }
 
     setIsGenerating(true);
     try {
+      const { draft, lines, pending, revision } = await loadManualStockOrderDraft(draftId);
+      pendingNewOrder.current = null;
+      selectedDraftRevision.current = revision;
       setSelectedDraftId(draft.id);
       setOrderType(draft.order_type);
       setCategory(draft.category);
       setGenMethod(draft.generation_method);
 
-      // Fetch the draft lines
-      const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: draft.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       setOrderLines(draft.category === 'non_sellable'
         ? lines.map(line => ({
             ...line,
             masterItemId: line.masterItemId || operationalInventory.find(item => item.id === line.product_id)?.masterItemId
           }))
         : lines);
-      toast.success(`Draft loaded: ${draft.order_number}`);
+      toast.success(pending ? 'Unfinished order loaded. Save or submit to finish it.' : `Draft loaded: ${draft.order_number}`);
     } catch (error) {
       console.error(error);
-      toast.error("Failed to load draft lines.");
+      toast.error(error instanceof Error ? error.message : 'Failed to load draft lines.');
     } finally {
       setIsGenerating(false);
     }
   };
 
   const handleClearDraft = () => {
+    pendingNewOrder.current = null;
     setSelectedDraftId(null);
     setOrderLines([]);
     setCategory('sellable_non_cosmetic');
@@ -696,7 +699,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       return;
     }
 
-    if (isSubmitting) return;
+    if (isSubmitting || isGenerating) return;
 
     const branchId = activeBranchId || profile?.branchId || branches[0]?.id;
     if (!branchId) {
@@ -731,39 +734,6 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         orderData.submitted_at = new Date().toISOString();
       }
 
-      if (expectedClass === 'OPERATIONAL') {
-        let orderId = selectedDraftId;
-        if (!orderId) {
-          pendingNewOrder.current ||= {
-            id: doc(collection(db, 'stock_orders')).id,
-            orderNumber: `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
-            createdAt: new Date().toISOString()
-          };
-          const pending = pendingNewOrder.current;
-          await persistNewManualStockOrder(pending.id, {
-            ...orderData,
-            order_number: pending.orderNumber,
-            requesting_branch_id: branchId,
-            requesting_branch_name: activeBranch?.name || branches.find(b => b.id === branchId)?.name || 'Unknown Branch',
-            createdAt: pending.createdAt,
-            updatedAt: new Date().toISOString()
-          }, orderLines.map(line => ({ ...line, tenantId: profile.tenantId, inventoryClass: expectedClass })));
-          pendingNewOrder.current = null;
-          toast.success(`Order ${status === 'submitted' ? 'submitted' : 'saved as draft'}.`);
-          setOrderLines([]);
-          setSelectedDraftId(null);
-          return;
-        }
-        const existingLines = await firestoreService.getDocumentsByQuery<any>('stock_order_lines', [{ field: 'order_id', operator: '==', value: orderId }, { field: 'tenantId', operator: '==', value: profile.tenantId }]);
-        await persistManualStockOrderDraft(orderId, orderData, existingLines,
-          orderLines.map(line => ({ ...line, tenantId: profile.tenantId, inventoryClass: expectedClass })));
-        toast.success(`Order ${status === 'submitted' ? 'submitted' : 'saved as draft'}.`);
-        setOrderLines([]);
-        setSelectedDraftId(null);
-        return;
-      }
-      // Sellable orders must use the same atomic draft lifecycle as Operational orders.
-      // In particular, do NOT update the header to submitted before replacing draft lines.
       const requestedLines = orderLines.map(line => ({
         ...line, tenantId: profile.tenantId, inventoryClass: expectedClass
       }));
@@ -773,15 +743,10 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
           || selected.requesting_branch_id !== branchId) {
           throw new Error('The selected draft is no longer available for this branch. Refresh before submitting.');
         }
-        const existingLines = await firestoreService.getDocumentsByQuery<StockOrderLine>(
-          'stock_order_lines', [
-            { field: 'order_id', operator: '==', value: selectedDraftId },
-            { field: 'tenantId', operator: '==', value: profile.tenantId }
-          ]);
-        await persistManualStockOrderDraft(selectedDraftId, orderData, existingLines, requestedLines);
+        await persistManualStockOrderDraft(selectedDraftId, orderData, requestedLines, selectedDraftRevision.current);
       } else {
         pendingNewOrder.current ||= {
-          id: doc(collection(db, 'stock_orders')).id,
+          id: `manual_${doc(collection(db, 'stock_orders')).id}`,
           orderNumber: `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
           createdAt: new Date().toISOString()
         };
@@ -1024,16 +989,19 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               <button type="button" disabled={orderReviewPage >= orderReviewPageCount} onClick={() => setOrderReviewPage(p => Math.min(orderReviewPageCount, p + 1))} className="border rounded-lg px-3 py-1 disabled:opacity-40">Next</button>
             </div>
           </div>
-          <div className="p-6 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/30">
+          <div className="p-6 border-t border-zinc-100 flex flex-wrap items-center justify-end gap-3 bg-zinc-50/30">
+            {isSubmitting && <p role="status" className="w-full text-sm text-zinc-600">Saving order lines. Large orders may take a moment.</p>}
             <button 
               onClick={() => handleSubmit('draft')}
-              className="px-6 py-2 border border-zinc-200 rounded-xl font-medium text-zinc-600 hover:bg-zinc-50 transition-colors text-xs uppercase tracking-wider font-bold"
+              disabled={isSubmitting || isGenerating}
+              className="disabled:opacity-50 px-6 py-2 border border-zinc-200 rounded-xl font-medium text-zinc-600 hover:bg-zinc-50 transition-colors text-xs uppercase tracking-wider font-bold"
             >
               Save as Draft
             </button>
             <button 
               onClick={() => handleSubmit('submitted')}
-              className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-medium transition-colors shadow-lg shadow-emerald-500/20 text-xs uppercase tracking-wider font-bold animate-pulse-subtle"
+              disabled={isSubmitting || isGenerating}
+              className="disabled:opacity-50 px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-medium transition-colors shadow-lg shadow-emerald-500/20 text-xs uppercase tracking-wider font-bold animate-pulse-subtle"
             >
               Submit to Procurement
             </button>
@@ -1052,7 +1020,8 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
             {selectedDraftId && (
               <button 
                 onClick={handleClearDraft}
-                className="text-xs text-rose-500 hover:text-rose-700 font-bold uppercase tracking-wider"
+                disabled={isSubmitting || isGenerating}
+                className="disabled:opacity-50 text-xs text-rose-500 hover:text-rose-700 font-bold uppercase tracking-wider"
               >
                 Clear / New Order
               </button>

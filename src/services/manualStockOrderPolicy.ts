@@ -1,7 +1,7 @@
-// The caller retains orderId until acknowledgement. Stable line IDs make an
-// identical retry overwrite the same batch, never append another requisition.
+// Stable line IDs let a retried save reuse the same requisition.
 export function manualStockOrderWrites(orderId: string, order: Record<string, any>, lines: Record<string, any>[]): { id: string; data: Record<string, any> }[] {
-  if (!orderId || !order.tenantId || !lines.length || lines.length > 100) throw new Error('A manual order requires between 1 and 100 lines.');
+  if (!orderId || !order.tenantId || !['draft', 'submitted'].includes(order.status)) throw new Error('Invalid stock order.');
+  if (!lines.length || lines.length > 500) throw new Error('A stock order requires between 1 and 500 products.');
   const seen = new Set<string>();
   return lines.map(line => {
     if (!line.product_id || seen.has(line.product_id)) throw new Error('Order items must be unique.');
@@ -10,6 +10,7 @@ export function manualStockOrderWrites(orderId: string, order: Record<string, an
     if (order.inventoryClass === 'OPERATIONAL' && !line.masterItemId) throw new Error('Operational items must have a tenant-wide identity.');
     if (!Number.isFinite(line.qty_ordered) || line.qty_ordered <= 0 || !Number.isFinite(line.unit_cost_ugx) || line.unit_cost_ugx < 0 || !Number.isFinite(line.line_total_ugx) || line.line_total_ugx !== line.qty_ordered * line.unit_cost_ugx) throw new Error('Invalid order quantity or cost.');
     const { id, ...fields } = line;
-    return { id: `${orderId}_${encodeURIComponent(line.product_id)}`, data: { ...fields, order_id: orderId, line_status: 'ordered' } };
+    const definedFields = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
+    return { id: `${orderId}_${encodeURIComponent(line.product_id)}`, data: { ...definedFields, order_id: orderId, line_status: 'ordered' } };
   });
 }

@@ -2831,6 +2831,8 @@ service cloud.firestore {
         && ((resource == null && isProcurement()
             && orderId.matches('^op_hq_buffer_[A-Za-z0-9_-]{1,120}$')
             && isOperationalInventoryEnabled(getUserData().tenantId))
+          || (resource == null && orderId.matches('^manual_[A-Za-z0-9]{20}$')
+            && (isBranchManager() || isProcurement()))
           || (resource != null && isTenantMember(resource.data.tenantId)
             && (isBranchManager() || canViewProcurement())));
       allow list: if isTenantMember(resource.data.tenantId) && (isBranchManager() || canViewProcurement());
@@ -2849,6 +2851,8 @@ service cloud.firestore {
         && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.tenantId == resource.data.tenantId
         && request.resource.data.category == resource.data.category
+        && (!('manualOrderSave' in resource.data) || request.resource.data.status == 'draft'
+          || resource.data.manualOrderSave.next == resource.data.manualOrderSave.writes.size())
         && ((!('inventoryClass' in resource.data) && !('inventoryClass' in request.resource.data))
           || request.resource.data.inventoryClass == resource.data.inventoryClass
           || (!('inventoryClass' in resource.data)
