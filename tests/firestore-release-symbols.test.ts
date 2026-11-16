@@ -88,3 +88,23 @@ test('request paths become lazy calls and strings and comments are preserved', (
  assert.match(output, /return request\.auth\.uid;/);
  assert.match(output, /return request\.resource\.data;/);
 });
+
+test('local bindings cannot rename Firestore rule methods', () => {
+ const source = `service cloud.firestore { match /databases/{database}/documents {
+  function isAllowed() { let write = true; return write; }
+  match /items/{id} { allow read, write: if isAllowed(); }
+ } }`;
+ assert.match(compactRuleSymbols(source), /allow read, write: if /);
+});
+
+test('frequent snapshot fields share their full lazy paths', () => {
+ const source = `service cloud.firestore { match /databases/{database}/documents {
+  match /items/{id} { allow get: if resource == null || resource.data.tenantId == 't';
+  allow create: if request.resource.data.tenantId == 't' && request.resource.data.branchId == 'b'; }
+ } }`;
+ const output = shareRequestExpressions(source);
+ for (const path of ['resource.data.tenantId','request.resource.data.tenantId','request.resource.data.branchId']) {
+  assert.ok(output.includes('return ' + path + ';'));
+ }
+ assert.match(output, /resource == null \|\| releaseRequestPath\d+\(\) == 't'/);
+});

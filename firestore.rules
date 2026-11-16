@@ -2846,12 +2846,12 @@ service cloud.firestore {
         && validOrderClass(request.resource.data)
         && (!isOperationalOrderData(request.resource.data) || isAssignedToBranch(request.resource.data.requesting_branch_id) || isProcurement());
       function advancesApproval(save, next) {
-        let write = save.writes[save.next];
-        let line = getAfter(/databases/$(database)/documents/stock_order_lines/$(write.lineId)).data;
+        let plannedLine = save.writes[save.next];
+        let line = getAfter(/databases/$(database)/documents/stock_order_lines/$(plannedLine.lineId)).data;
         return next.diff(save).affectedKeys().hasOnly(['next']) && next.next == save.next + 1
           && line.order_id == orderId && line.tenantId == resource.data.tenantId
-          && line.approval_operation_id == save.id && line.line_status == write.data.line_status
-          && line.qty_ordered == write.data.qty_ordered && line.line_total_ugx == write.data.line_total_ugx;
+          && line.approval_operation_id == save.id && line.line_status == plannedLine.data.line_status
+          && line.qty_ordered == plannedLine.data.qty_ordered && line.line_total_ugx == plannedLine.data.line_total_ugx;
       }
       function validApprovalUpdate() {
         let old = resource.data.get('approvalSave', null);
@@ -3614,21 +3614,6 @@ service cloud.firestore {
     }
 
 
-
-    match /unsupplied_lines/{unsuppliedId} {
-      function validStagedApprovalShortfall(data) {
-        let order = get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data;
-        let staged = order.approvalSave;
-        let write = staged.writes[staged.next];
-        return isProcurement() && isTenantMember(order.tenantId)
-          && data.tenantId == order.tenantId && order.status == 'awaiting_finance_approval'
-          && data.approval_audit_id == 'approval_' + data.order_id
-          && unsuppliedId == data.approval_audit_id + '_' + write.lineId
-          && data == write.unsupplied;
-      }
-      allow create: if 'approval_audit_id' in request.resource.data
-        && validStagedApprovalShortfall(request.resource.data);
-    }
 
     // Write-once financial approval history. Only an authenticated procurement
     // operator can create it alongside the order's atomic approved transition.
