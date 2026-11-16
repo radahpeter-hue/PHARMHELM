@@ -51,6 +51,23 @@ test('strip and pack packaging multipliers are enforced only when those tiers ar
   assert.ok(stripError.some(error => error.includes('Units per Strip')));
 });
 
+for (const [dosageForm, unitsPerPack] of [['Syrup', 1], ['Powder/Granule', 10]] as const) {
+  test(`${dosageForm} can configure Unit and Pack prices with no strip count`, () => {
+    const draft = product({
+      dosageForm, unitsPerPack, unitsPerStrip: undefined, unit: undefined, baseUnit: undefined,
+      sellingTiers: { unit: { enabled: true, price: 500 }, pack: { enabled: true, price: 4000 } },
+      defaultSellingTierCode: 'pack'
+    });
+    assert.deepEqual(validateSellingTierConfiguration(draft), []);
+
+    const errors = validateSellingTierConfiguration({
+      ...draft,
+      sellingTiers: { ...draft.sellingTiers, strip: { enabled: true, price: 1000 } }
+    });
+    assert.match(errors[0], /Units per Strip/);
+  });
+}
+
 test('default tier must be enabled', () => {
   const errors = validateSellingTierConfiguration(product({
     sellingTiers: {

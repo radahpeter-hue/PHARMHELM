@@ -41,32 +41,24 @@ export function isMultiTierSellingEnabled(
   return settings?.features?.multiTierSellingEnabled === true;
 }
 
-export function getTierMultiplier(product: Product, tierCode: SellingTierCode): number | null {
+export function getTierMultiplier(product: Partial<Product>, tierCode: SellingTierCode): number | null {
   if (tierCode === 'unit') return 1;
-  if (tierCode === 'strip') return positiveNumber(product.unitsPerStrip);
-  return positiveNumber(product.unitsPerPack);
+  const pack = positiveNumber(product.unitsPerPack);
+  const count = tierCode === 'strip' ? positiveNumber(product.unitsPerStrip) : pack;
+  if (count === null || !Number.isSafeInteger(count)) return null;
+  return tierCode === 'strip' && pack !== null && count > pack ? null : count;
 }
 
-export function getMultiTierEligibility(product: Product): MultiTierEligibility {
+export function getMultiTierEligibility(product: Partial<Product>): MultiTierEligibility {
   const dosageForm = normalise(product.dosageForm).replace(/[^a-z]/g, '');
   if (['tablet', 'tablets', 'capsule', 'capsules'].includes(dosageForm)) {
     return { eligible: true, reason: 'tablet-or-capsule' };
   }
 
-  const unitsPerStrip = positiveNumber(product.unitsPerStrip);
-  const unitsPerPack = positiveNumber(product.unitsPerPack);
-  const baseUnit = product.baseUnit || product.unit || '';
-
-  const hasUnitStripPackHierarchy =
-    unitsPerStrip !== null &&
-    unitsPerPack !== null &&
-    unitsPerPack > 1 &&
-    unitsPerPack >= unitsPerStrip &&
-    Boolean(normalise(baseUnit)) &&
-    !isPackWord(baseUnit);
-
-  if (hasUnitStripPackHierarchy) {
-    return { eligible: true, reason: 'unit-strip-pack-hierarchy' };
+  const unitsPerPack = getTierMultiplier(product, 'pack');
+  if (unitsPerPack !== null && !isPackWord(product.baseUnit || product.unit)) {
+    const hasStrip = unitsPerPack > 1 && getTierMultiplier(product, 'strip') !== null;
+    return { eligible: true, reason: hasStrip ? 'unit-strip-pack-hierarchy' : 'unit-pack' };
   }
 
   return { eligible: false, reason: 'not-eligible' };
@@ -78,7 +70,8 @@ export function isMultiTierEligibleProduct(product: Product): boolean {
 
 export function resolveLegacySellingTier(product: Product): ResolvedSellingTier {
   const code = normaliseLegacyTierCode(product.unitOfSell || product.unit);
-  const multiplier = getTierMultiplier(product, code) || 1;
+  const packagingCount = code === 'strip' ? product.unitsPerStrip : product.unitsPerPack;
+  const multiplier = code === 'unit' ? 1 : positiveNumber(packagingCount) ?? 1;
 
   return {
     code,

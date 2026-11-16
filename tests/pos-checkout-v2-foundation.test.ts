@@ -5,6 +5,7 @@ import type { CheckoutBatchCandidate } from '../src/services/posCheckoutTierServ
 import { calculateCheckoutV2, isV2SellableBatch } from '../src/services/pos-v2/posCheckoutV2Calculator';
 import { PosCheckoutV2Error } from '../src/services/pos-v2/posCheckoutV2Errors';
 import { resolvePosCheckoutV2Mode } from '../src/services/pos-v2/posCheckoutV2FeatureService';
+import { buildSaleTierSnapshot, resolveSellingTiers } from '../src/services/sellingTierService';
 
 const product: Product = {
   id: 'p1', tenantId: 't1', productId: 'PRD-1', sku: 'SKU-1', name: 'Panadol 500 mg',
@@ -70,6 +71,33 @@ test('V2 calculation reuses tier validation and FEFO while producing immutable a
   assert.equal(result.productDeductions.get('p1'), 10);
   assert.equal(result.batchDeductions.get('p1')?.get('b2'), 4);
 });
+
+for (const [dosageForm, unitsPerPack] of [['Syrup', 1], ['Powder/Granule', 10]] as const) {
+  test(`V2 sells ${dosageForm} by Unit or Pack and deducts the correct stock without a Strip tier`, () => {
+    const liveProduct: Product = {
+      ...product, dosageForm, unitsPerPack, unitsPerStrip: undefined, unit: '', baseUnit: '', unitOfSell: 'unit',
+      defaultSellingTierCode: 'pack',
+      sellingTiers: { unit: { enabled: true, price: 300 }, pack: { enabled: true, price: unitsPerPack * 250 } }
+    };
+    const resolution = resolveSellingTiers(liveProduct, settings);
+    assert.equal(resolution.defaultTier.code, 'pack');
+    assert.deepEqual(resolution.tiers.map(tier => tier.code), ['unit', 'pack']);
+
+    const items = resolution.tiers.map(tier => ({
+      ...stripItem,
+      ...buildSaleTierSnapshot({ product: liveProduct, tier, commercialQuantity: 1, actualUnitPrice: tier.configuredPrice! }),
+      unitPrice: tier.configuredPrice!,
+    }));
+    const result = calculateCheckoutV2({
+      tenantId: 't1', branchId: 'br1', items, liveProducts: new Map([['p1', liveProduct]]), settings, now,
+      batchesByProduct: new Map([['p1', [batch()]]])
+    });
+
+    assert.deepEqual(result.demands.map(demand => demand.baseQuantity), [1, unitsPerPack]);
+    assert.equal(result.batchDeductions.get('p1')?.get('b1'), 1 + unitsPerPack);
+    assert.equal(result.productDeductions.get('p1'), 1 + unitsPerPack);
+  });
+}
 
 test('V2 rejects a product whose available stock exists only in another branch', () => {
   assert.throws(() => calculateCheckoutV2({

@@ -34,6 +34,7 @@ export interface ResolvedSellingTier {
 export type MultiTierEligibilityReason =
   | 'tablet-or-capsule'
   | 'unit-strip-pack-hierarchy'
+  | 'unit-pack'
   | 'not-eligible';
 
 export interface MultiTierEligibility {

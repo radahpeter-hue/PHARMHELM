@@ -39,14 +39,12 @@ export function validateSellingTierConfiguration(product: Partial<Product>): str
   if (!hasConfiguredSellingTiers(product)) return [];
 
   const errors: string[] = [];
-  const eligibility = getMultiTierEligibility(product as Product);
-  if (!eligibility.eligible) {
-    errors.push('Multi-tier selling is only available for tablets, capsules, or products with a valid Unit → Strip → Pack packaging hierarchy.');
+  if (!getMultiTierEligibility(product).eligible) {
+    errors.push('For this product, enter Units per Pack and track stock in individual units to enable selling tiers.');
     return errors;
   }
 
   const enabledCodes = SELLING_TIER_CODES.filter(code => product.sellingTiers?.[code]?.enabled === true);
-  if (enabledCodes.length === 0) return errors;
 
   for (const code of enabledCodes) {
     const tier = product.sellingTiers?.[code] as SellingTierConfiguration | undefined;
@@ -55,32 +53,18 @@ export function validateSellingTierConfiguration(product: Partial<Product>): str
       errors.push(`${SELLING_TIER_LABELS[code]} tier requires a selling price greater than zero.`);
     }
 
-    if (code === 'strip') {
-      const unitsPerStrip = Number(product.unitsPerStrip);
-      if (!Number.isFinite(unitsPerStrip) || unitsPerStrip <= 0) {
-        errors.push('Strip tier requires Units per Strip greater than zero.');
-      }
+    if (code === 'strip' && getTierMultiplier(product, code) === null) {
+      errors.push('Strip tier requires a positive whole number for Units per Strip, up to Units per Pack when provided.');
     }
 
-    if (code === 'pack') {
-      const unitsPerPack = Number(product.unitsPerPack);
-      if (!Number.isFinite(unitsPerPack) || unitsPerPack <= 0) {
-        errors.push('Pack tier requires Units per Pack greater than zero.');
-      }
+    if (code === 'pack' && getTierMultiplier(product, code) === null) {
+      errors.push('Pack tier requires a positive whole number for Units per Pack.');
     }
   }
 
   const defaultTier = product.defaultSellingTierCode;
   if (!defaultTier || !enabledCodes.includes(defaultTier)) {
     errors.push('Select one enabled tier as the default selling tier.');
-  }
-
-  if (enabledCodes.includes('strip') && enabledCodes.includes('pack')) {
-    const stripMultiplier = getTierMultiplier(product as Product, 'strip');
-    const packMultiplier = getTierMultiplier(product as Product, 'pack');
-    if (stripMultiplier && packMultiplier && packMultiplier < stripMultiplier) {
-      errors.push('Units per Pack cannot be lower than Units per Strip.');
-    }
   }
 
   return Array.from(new Set(errors));

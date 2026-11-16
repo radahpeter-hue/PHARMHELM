@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { deleteField } from 'firebase/firestore';
 import { Plus, X } from 'lucide-react';
 import { Product, SystemSettings } from '../../types';
 import type { SellingTierCode } from '../../types/sellingTier';
 import { getMultiTierEligibility, getTierMultiplier } from '../../services/sellingTierService';
-import { applyLegacySellingTierMirror, normaliseSellingTiers, SELLING_TIER_CODES, SELLING_TIER_LABELS, validateSellingTierConfiguration } from '../../services/sellingTierConfigurationService';
+import { applyLegacySellingTierMirror, hasConfiguredSellingTiers, normaliseSellingTiers, SELLING_TIER_CODES, SELLING_TIER_LABELS, validateSellingTierConfiguration } from '../../services/sellingTierConfigurationService';
 import { 
   PRODUCT_CATEGORIES, 
   THERAPEUTIC_CLASSES,
@@ -16,6 +17,7 @@ import {
 import { firestoreService } from '../../services/firestore';
 import { createScopedIdentity } from '../../services/systemIdentityService';
 import { useAuth } from '../../contexts/AuthContext';
+import { omitUndefinedDeep } from '../../utils/firestoreData';
 import { toast } from 'sonner';
 
 interface ProductModalProps {
@@ -80,6 +82,10 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
       toast.error('Add the specific diluent and reconstitution instructions for this lyophilized product.');
       return;
     }
+    if (formData.unitOfSell === 'strip' && getTierMultiplier(formData, 'strip') === null) {
+      toast.error('To sell per strip, enter a valid Units per Strip count or select Per Unit or Per Pack.');
+      return;
+    }
 
     const tierDraft: Partial<Product> = {
       ...formData,
@@ -105,16 +111,24 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
     try {
       // Never send the synthetic document id or server-managed timestamps back
       // to Firestore. Existing products include these fields after subscription.
-      const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...editableFields } = mirroredDraft as any;
-      const productData = {
+      const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...editableFields } = mirroredDraft as Partial<Product> & {
+        createdAt?: unknown;
+        updatedAt?: unknown;
+      };
+      const productData = omitUndefinedDeep({
         ...editableFields,
         inventoryClass: 'SELLABLE' as const,
         tenantId: profile.tenantId,
         ...(product?.id ? { productId: product.productId, sku: product.sku } : {}),
-      };
+      });
 
       if (product?.id) {
-        await firestoreService.updateDocument('products', product.id, productData);
+        await firestoreService.updateDocument('products', product.id, {
+          ...productData,
+          ...(product.defaultSellingTierCode && !mirroredDraft.defaultSellingTierCode
+            ? { defaultSellingTierCode: deleteField() }
+            : {})
+        });
         toast.success('Product updated successfully');
       } else {
         await createScopedIdentity('products', profile.tenantId, productData);
@@ -223,6 +237,7 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
         <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider">Units per Pack</label>
         <input
           type="number"
+          placeholder="e.g. 1 bottle or 10 sachets"
           className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm"
           value={isNaN(formData.unitsPerPack as number) ? '' : formData.unitsPerPack || 0}
           onChange={e => setFormData({ ...formData, unitsPerPack: parseFloat(e.target.value) || 0 })}
@@ -233,8 +248,10 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
         <input
           type="number"
           required={formData.unitOfSell === 'strip'}
+          min="1"
+          placeholder="Leave blank if selling without strips"
           className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none text-sm"
-          value={isNaN(formData.unitsPerStrip as number) ? '' : formData.unitsPerStrip || 0}
+          value={formData.unitsPerStrip || ''}
           onChange={e => setFormData({ ...formData, unitsPerStrip: parseFloat(e.target.value) || 0 })}
         />
       </div>
@@ -312,9 +329,11 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
         <label className="text-[10px] font-black text-pink-700 uppercase tracking-wider">Units per Strip</label>
         <input
           type="number"
-          min="0"
+          required={formData.unitOfSell === 'strip'}
+          min="1"
+          placeholder="Leave blank if selling without strips"
           className="w-full px-3 py-2 bg-white border border-pink-200 rounded-xl focus:ring-2 focus:ring-pink-500/20 outline-none text-sm"
-          value={isNaN(formData.unitsPerStrip as number) ? '' : formData.unitsPerStrip || 0}
+          value={formData.unitsPerStrip || ''}
           onChange={e => setFormData({ ...formData, unitsPerStrip: parseFloat(e.target.value) || 0 })}
         />
       </div>
@@ -354,16 +373,18 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
         <label className="text-[10px] font-black text-blue-700 uppercase tracking-wider">Units per Strip</label>
         <input
           type="number"
-          min="0"
+          required={formData.unitOfSell === 'strip'}
+          min="1"
+          placeholder="Leave blank if selling without strips"
           className="w-full px-3 py-2 bg-white border border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none text-sm"
-          value={isNaN(formData.unitsPerStrip as number) ? '' : formData.unitsPerStrip || 0}
+          value={formData.unitsPerStrip || ''}
           onChange={e => setFormData({ ...formData, unitsPerStrip: parseFloat(e.target.value) || 0 })}
         />
       </div>
     </div>
   );
 
-  const tierEligibility = getMultiTierEligibility(formData as Product);
+  const tierEligibility = getMultiTierEligibility(formData);
 
   const updateTier = (code: SellingTierCode, patch: Partial<{ enabled: boolean; price: number }>) => {
     setFormData(current => {
@@ -381,7 +402,7 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
   };
 
   const renderSellingTierConfiguration = () => {
-    if (!tierEligibility.eligible) return null;
+    if (!tierEligibility.eligible && !hasConfiguredSellingTiers(formData)) return null;
     const tiers = normaliseSellingTiers(formData);
     const featureEnabled = systemSettings?.features?.multiTierSellingEnabled === true;
 
@@ -401,21 +422,21 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
         <div className="grid grid-cols-1 gap-2">
           {SELLING_TIER_CODES.map(code => {
             const config = tiers[code]!;
-            const multiplier = getTierMultiplier(formData as Product, code);
-            const multiplierValid = code === 'unit' || Boolean(multiplier && multiplier > 0);
+            const multiplier = getTierMultiplier(formData, code);
+            const canConfigure = tierEligibility.eligible && multiplier !== null;
+            if (!canConfigure && !config.enabled) return null;
             return (
               <div key={code} className="grid grid-cols-12 items-center gap-3 bg-white border border-emerald-100 rounded-2xl px-4 py-3">
                 <div className="col-span-12 sm:col-span-3 flex items-center gap-3">
                   <input
                     type="checkbox"
                     checked={config.enabled}
-                    disabled={!multiplierValid}
                     onChange={e => updateTier(code, { enabled: e.target.checked })}
                     className="h-4 w-4 rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500"
                   />
                   <div>
                     <p className="text-xs font-black text-zinc-900">{SELLING_TIER_LABELS[code]}</p>
-                    <p className="text-[9px] text-zinc-400">{code === 'unit' ? '1 base unit' : multiplierValid ? String(multiplier) + ' base units' : 'Packaging multiplier required'}</p>
+                    <p className="text-[9px] text-zinc-400">{multiplier === null ? 'Enter a valid packaging count' : `${multiplier} ${multiplier === 1 ? 'base unit' : 'base units'}`}</p>
                   </div>
                 </div>
                 <div className="col-span-8 sm:col-span-6">
@@ -423,7 +444,7 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
                   <input
                     type="number"
                     min="0"
-                    disabled={!config.enabled}
+                    disabled={!config.enabled || !canConfigure}
                     value={Number.isFinite(Number(config.price)) ? config.price : 0}
                     onChange={e => updateTier(code, { price: Number(e.target.value || 0) })}
                     className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold disabled:opacity-40"
@@ -434,7 +455,7 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
                     type="radio"
                     name="default-selling-tier"
                     checked={formData.defaultSellingTierCode === code}
-                    disabled={!config.enabled}
+                    disabled={!config.enabled || !canConfigure}
                     onChange={() => setFormData(current => ({ ...current, defaultSellingTierCode: code }))}
                   />
                   Default
@@ -508,7 +529,7 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
               >
                 <option value="unit">Per Unit</option>
                 <option value="pack">Per Pack</option>
-                {tierEligibility.eligible && (
+                {((tierEligibility.eligible && getTierMultiplier(formData, 'strip') !== null) || formData.unitOfSell === 'strip') && (
                   <option value="strip">Per Strip</option>
                 )}
               </select>
@@ -527,8 +548,6 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
             </div>
           </div>
 
-          {renderSellingTierConfiguration()}
-
           {/* Pricing & Tax */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 p-6 bg-zinc-50 rounded-3xl border border-zinc-100">
             <div className="space-y-1">
@@ -542,7 +561,7 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
               />
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">Legacy Selling Price *</label>
+              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">Base-unit Selling Price *</label>
               <input
                 required
                 type="number"
@@ -598,6 +617,7 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
               </div>
             )}
           </div>
+          {renderSellingTierConfiguration()}
         </form>
 
         <div className="px-8 py-6 border-t border-zinc-100 flex justify-end gap-3">
