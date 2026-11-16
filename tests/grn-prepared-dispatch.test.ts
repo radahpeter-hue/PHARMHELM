@@ -11,7 +11,8 @@ const rules=readFileSync(new URL('../firestore.rules',import.meta.url),'utf8');
 test('GRN finalization prepares transfer but does not pretend to dispatch',()=>{
   assert.match(grn,/dispatch_status: 'ready_for_dispatch', reception_status: 'not_dispatched'/);
   assert.match(grn,/status: 'ready_for_dispatch', grn_id: ids\.grnId/);
-  assert.match(grn,/status: 'ready_for_dispatch',\s*preparedAt/);
+  assert.match(grn,/status: 'posting'/);
+  assert.match(grn,/transaction\.update\(transferRef, \{ status: 'ready_for_dispatch'/);
   assert.match(grn,/line_status: 'ready_for_dispatch'/);
 });
 

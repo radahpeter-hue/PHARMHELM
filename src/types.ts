@@ -1142,6 +1142,8 @@ export interface StockOrder {
   approved_at?: string;
   approved_by?: string;
   approval_audit_id?: string;
+  grn_id?: string;
+  sellableGrnSave?: { next: number; steps: number };
   approvalSave?: {
     next: number;
     audit: { initiatedBy: string };
@@ -1201,7 +1203,7 @@ export interface GRNRecord {
   financial_posting_status?: string;
   receivedAt: string;
   receivedBy: string;
-  status: 'draft' | 'completed' | 'verified';
+  status: 'draft' | 'posting' | 'completed' | 'verified';
   payment_type?: 'cash' | 'credit';
   payment_status?: 'pending' | 'paid';
   total_value_ugx: number;
@@ -1232,6 +1234,7 @@ export interface GRNLine {
 
 export interface UnsuppliedLine {
   approval_audit_id?: string;
+  staged_central_grn?: boolean;
   id: string;
   tenantId: string;
   order_id: string;
@@ -1260,6 +1263,7 @@ export interface CreditLedgerEntry {
 
 export interface TransferInvoice {
   id: string;
+  receiptSelections?: Record<string, { accepted: number; queried: number; reason: string }>;
   tenantId: string;
   inventoryClass?: 'SELLABLE' | 'OPERATIONAL';
   transfer_number: string;

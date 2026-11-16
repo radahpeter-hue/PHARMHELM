@@ -1,9 +1,8 @@
 import {
-  doc,
-  runTransaction,
-  Timestamp
+  deleteField, doc, getDocFromServer, runTransaction, Timestamp,
+  type DocumentData, type Firestore
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db as defaultDb } from '../firebase';
 import { StockOrder, StockOrderLine } from '../types';
 import { planCentralGrnFinance } from './centralGrnFinanceContract';
 
@@ -55,20 +54,34 @@ const toTimestamp = (date: string) => {
 };
 
 
+type PendingSellableGrn = { input: ProcessGrnInput; next: number; steps: number };
+const grnChanged = 'The order changed during Central GRN. Reopen it to review its status.';
+
+export async function resumeSellableCentralGrn(order: StockOrder, tenantId: string, user: ProcessGrnInput['user'], db: Firestore = defaultDb) {
+  const live = (await getDocFromServer(doc(db, 'stock_orders', order.id))).data();
+  const pending = live?.sellableGrnSave as PendingSellableGrn | undefined;
+  if (live?.tenantId !== tenantId || !pending) throw new Error(grnChanged);
+  return processProcurementGrn({ ...pending.input, user }, db, true);
+}
+
 /**
  * Posts a procurement GRN, its Finance representation and its dispatch as one
  * idempotent Firestore transaction. Deterministic document IDs make a retry a
  * no-op after success and allow a missing member of an older partial posting to
  * be repaired without creating a second liability.
  */
-export async function processProcurementGrn(input: ProcessGrnInput): Promise<ProcessGrnResult> {
+export async function processProcurementGrn(input: ProcessGrnInput, db: Firestore = defaultDb, resume = false): Promise<ProcessGrnResult> {
   const { tenantId, order, lines, editedLines, paymentType, user } = input;
   if (!tenantId || !order.id) throw new Error('The tenant and stock order are required.');
   if (order.inventoryClass === 'OPERATIONAL' || order.category === 'non_sellable') {
     throw new Error('Operational orders must use the Operational GRN workflow; the sellable procurement processor is blocked for this order.');
   }
   if (!input.invoiceNumber.trim()) throw new Error('The supplier invoice number is required.');
-  if (lines.length > 150) throw new Error('This GRN is too large for one atomic posting. Split it into GRNs of 150 product lines or fewer.');
+  if (lines.length > 550 || new Set(lines.map(line => line.id)).size !== lines.length) {
+    throw new Error('A Central GRN supports up to 550 distinct order lines.');
+  }
+  const staged = lines.length > 1;
+  const orderRef = doc(db, 'stock_orders', order.id);
 
   const invoiceTimestamp = toTimestamp(input.invoiceDate);
   const dueDate = Timestamp.fromDate(new Date(invoiceTimestamp.toDate().getTime() + 30 * 86400000));
@@ -104,7 +117,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
     }
     if (!edit.batch.trim()) throw new Error(`Batch number is required for ${line.product_name || line.product_id}.`);
     if (!edit.expiry) throw new Error(`Expiry date is required for ${line.product_name || line.product_id}.`);
-    if (new Date(`${edit.expiry}T23:59:59`).getTime() <= Date.now()) {
+    if (!resume && new Date(`${edit.expiry}T23:59:59`).getTime() <= Date.now()) {
       throw new Error(`Expiry date must be in the future for ${line.product_name || line.product_id}.`);
     }
 
@@ -182,6 +195,114 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
     throw new Error('Supplier invoice total does not reconcile to the GRN received lines.');
   }
 
+  const invoiceRefValue = input.invoiceNumber.trim();
+  const transferData = {
+    tenantId, inventoryClass: 'SELLABLE', transfer_number: `TI-${grnNumber}`, order_id: order.id, grn_id: ids.grnId,
+    invoice_id: financeValue > 0 ? ids.invoiceId : null, invoice_ref: invoiceRefValue,
+    source_branch_id: isHqDestination ? 'PROCUREMENT' : 'HQ',
+    source_branch_name: isHqDestination ? supplierName : 'Central HQ',
+    destination_branch_id: branchId, destination_branch_name: branchName,
+    transfer_type: isHqDestination ? 'procurement_grn' : 'central_to_branch',
+    preparedAt: now, prepared_by: user.uid, prepared_by_name: user.name,
+    total_items: receivedItems.length, total_value_ugx: transferValue, createdAt: now, updatedAt: now
+  };
+  const transferRows = receivedItems.map(item => ({
+    id: `${ids.transferId}_${stablePart(item.line_id)}`,
+    data: {
+      tenantId, inventoryClass: 'SELLABLE', transfer_id: ids.transferId, grn_id: ids.grnId, invoice_id: ids.invoiceId,
+      source_line_id: item.line_id, product_id: item.product_id, product_name: item.product_name,
+      qty_dispatched: item.qty_received, unit_cost_ugx: item.unit_cost_ugx,
+      total_cost_ugx: item.total_cost_ugx, batch_number: item.batch_number,
+      expiry_date: item.expiry_date, line_status: 'ready_for_dispatch', createdAt: now, updatedAt: now
+    }
+  }));
+  const grnData = {
+    tenantId, inventoryClass: 'SELLABLE', id: ids.grnId, grn_number: grnNumber, order_id: order.id,
+    invoice_id: financeValue > 0 ? ids.invoiceId : null,
+    procurement_invoice_id: financeValue > 0 ? ids.procurementInvoiceId : null,
+    credit_ledger_id: paymentType === 'credit' && financeValue > 0 ? ids.creditId : null,
+    transfer_id: ids.transferId,
+    supplier_id: supplierId, supplier_name: supplierName,
+    destination_branch_id: branchId, destination_branch_name: branchName,
+    invoice_number: invoiceRefValue, invoice_date: input.invoiceDate,
+    receivedAt: now, receivedBy: user.uid, status: 'completed',
+    grn_status: 'completed', dispatch_status: 'ready_for_dispatch', reception_status: 'not_dispatched',
+    financial_posting_status: financeValue > 0 ? 'posted' : 'not_applicable',
+    payment_type: paymentType, payment_status: paymentType === 'cash' ? 'pending_payment' : 'outstanding',
+    total_value_ugx: financeValue, transfer_value_ugx: transferValue,
+    inputVat: input.inputVat, whtAmount: input.whtAmount, items: receivedItems,
+    notes: input.notes, createdAt: now, updatedAt: now
+  };
+  const transferRef = doc(db, 'transfer_invoices', ids.transferId);
+  const grnRef = doc(db, 'grn_records', ids.grnId);
+  const steps = transferRows.length + lineUpdates.length + unsupplied.length;
+  if (staged && !resume) {
+    // Persist precisely the form that was confirmed, including zero/removed
+    // quantities. A refresh can resume even after source lines change status.
+    const stagedInput = { ...input, order: { ...order } };
+    delete stagedInput.order.sellableGrnSave;
+    const payload = JSON.stringify(stagedInput);
+    if (new TextEncoder().encode(payload).length > 600_000) throw new Error('This GRN contains too much line data.');
+    await runTransaction(db, async transaction => {
+      const [snapshot, prior] = await Promise.all([transaction.get(orderRef), transaction.get(grnRef)]);
+      const current = snapshot.data();
+      if (current?.tenantId !== tenantId) throw new Error(grnChanged);
+      if (prior.data()?.grn_status === 'completed') return;
+      if (current.status !== 'approved' || current.sellableGrnSave) throw new Error('An existing receipt must be resumed from Central GRN.');
+      const sourceSnapshots = await Promise.all(lines.map(line => transaction.get(doc(db, 'stock_order_lines', line.id))));
+      for (const [index, source] of sourceSnapshots.entries()) {
+        assertGrnSource(source.data(), lines[index], input);
+      }
+      transaction.update(orderRef, { sellableGrnSave: { input: JSON.parse(payload), next: 0, steps, grnId: ids.grnId } });
+    });
+  }
+
+  if (staged) {
+    const mutations = [
+      ...transferRows.map(row => ({ collection: 'transfer_invoice_lines', ...row })),
+      ...lineUpdates.map(row => ({ collection: 'stock_order_lines', ...row })),
+      ...unsupplied.map(row => ({ collection: 'unsupplied_lines', ...row, data: { ...row.data, staged_central_grn: true } }))
+    ];
+    const sources = new Map(lines.map(line => [line.id, line]));
+    for (;;) {
+      const done = await runTransaction(db, async transaction => {
+        const [snapshot, grn, transfer] = await Promise.all([
+          transaction.get(orderRef), transaction.get(grnRef), transaction.get(transferRef)
+        ]);
+        const live = snapshot.data();
+        if (live?.tenantId !== tenantId) throw new Error(grnChanged);
+        if (grn.data()?.grn_status === 'completed') return true;
+        const pending = live.sellableGrnSave as PendingSellableGrn | undefined;
+        if (!pending || live.status !== 'approved' || pending.steps !== steps) throw new Error(grnChanged);
+        if (pending.input.invoiceNumber !== input.invoiceNumber) throw new Error(grnChanged);
+        if (!grn.exists()) {
+          transaction.set(grnRef, {
+            tenantId, inventoryClass: 'SELLABLE', order_id: order.id, transfer_id: ids.transferId,
+            status: 'posting', grn_status: 'posting', financial_posting_status: 'posting',
+            dispatch_status: 'posting', createdAt: now
+          });
+          return false;
+        }
+        if (!transfer.exists()) {
+          transaction.set(transferRef, { ...transferData, status: 'posting' });
+          return false;
+        }
+        if (pending.next === mutations.length) return true;
+        const mutation = mutations[pending.next];
+        const ref = doc(db, mutation.collection, mutation.id);
+        if (mutation.collection === 'stock_order_lines') {
+          assertGrnSource((await transaction.get(ref)).data(), sources.get(mutation.id)!, input);
+          transaction.update(ref, mutation.data);
+        } else {
+          transaction.set(ref, mutation.data);
+        }
+        transaction.update(orderRef, { 'sellableGrnSave.next': pending.next + 1 });
+        return false;
+      });
+      if (done) break;
+    }
+  }
+
   const result = await runTransaction(db, async transaction => {
     const refs = {
       grn: doc(db, 'grn_records', ids.grnId),
@@ -193,14 +314,14 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
       audit: doc(db, 'financial_posting_audit', ids.auditId),
       order: doc(db, 'stock_orders', order.id)
     };
-    const lineRefs = lineUpdates.map(line => doc(db, 'stock_order_lines', line.id));
+    const lineRefs = (staged ? [] : lineUpdates).map(line => doc(db, 'stock_order_lines', line.id));
     const reads = await Promise.all([
       transaction.get(refs.grn), transaction.get(refs.invoice), transaction.get(refs.credit),
       transaction.get(refs.cashDraft), transaction.get(refs.transfer), transaction.get(refs.order),
       ...lineRefs.map(ref => transaction.get(ref))
     ]);
     const existingGrn = reads[0];
-    if (existingGrn.exists() && existingGrn.data().financial_posting_status === 'posted') {
+    if (existingGrn.exists() && (existingGrn.data().grn_status === 'completed' || existingGrn.data().financial_posting_status === 'posted')) {
       return { alreadyProcessed: true };
     }
     const existingInvoice = reads[1].exists() ? reads[1].data() : null;
@@ -209,7 +330,18 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
     if (existingCredit && existingCredit.tenantId !== tenantId) throw new Error('Credit ID collision across tenants.');
     if (reads[3].exists()) throw new Error('A cash payment draft already exists without a completed GRN. Reconcile before retrying.');
 
-    const invoiceRefValue = input.invoiceNumber.trim();
+    const liveOrder = reads[5].data();
+    if (liveOrder?.tenantId !== tenantId || liveOrder.status !== 'approved') throw new Error(grnChanged);
+    if (staged) {
+      const pending = liveOrder.sellableGrnSave as PendingSellableGrn | undefined;
+      if (pending?.next !== steps || pending.steps !== steps) throw new Error(grnChanged);
+    } else {
+      if (liveOrder.sellableGrnSave) throw new Error(grnChanged);
+      for (const [index, snapshot] of reads.slice(6).entries()) {
+        assertGrnSource(snapshot.data(), lines.find(line => line.id === lineUpdates[index].id)!, input);
+      }
+    }
+
     const invoiceData = {
       tenantId, invoiceId: ids.invoiceId, invoiceRef: invoiceRefValue,
       supplierInvoiceNumber: invoiceRefValue, grnId: ids.grnId, grnRef: grnNumber,
@@ -225,23 +357,7 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
       status: 'Unpaid', created_at: now.toDate().toISOString()
     };
 
-    transaction.set(refs.grn, {
-      tenantId, inventoryClass: 'SELLABLE', id: ids.grnId, grn_number: grnNumber, order_id: order.id,
-      invoice_id: financeValue > 0 ? ids.invoiceId : null,
-      procurement_invoice_id: financeValue > 0 ? ids.procurementInvoiceId : null,
-      credit_ledger_id: paymentType === 'credit' && financeValue > 0 ? ids.creditId : null,
-      transfer_id: receivedItems.length ? ids.transferId : null,
-      supplier_id: supplierId, supplier_name: supplierName,
-      destination_branch_id: branchId, destination_branch_name: branchName,
-      invoice_number: invoiceRefValue, invoice_date: input.invoiceDate,
-      receivedAt: now, receivedBy: user.uid, status: 'completed',
-      grn_status: 'completed', dispatch_status: 'ready_for_dispatch', reception_status: 'not_dispatched',
-      financial_posting_status: financeValue > 0 ? 'posted' : 'not_applicable',
-      payment_type: paymentType, payment_status: paymentType === 'cash' ? 'pending_payment' : 'outstanding',
-      total_value_ugx: financeValue, transfer_value_ugx: transferValue,
-      inputVat: input.inputVat, whtAmount: input.whtAmount, items: receivedItems,
-      notes: input.notes, createdAt: now, updatedAt: now
-    }, { merge: true });
+    transaction.set(refs.grn, grnData, { merge: true });
 
     if (financeValue > 0) {
       transaction.set(refs.invoice, invoiceData, { merge: true });
@@ -287,34 +403,15 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
       }
     }
 
-    unsupplied.forEach(item => transaction.set(doc(db, 'unsupplied_lines', item.id), item.data, { merge: true }));
-    lineUpdates.forEach((line, index) => transaction.update(lineRefs[index], line.data));
-    transaction.update(refs.order, {
-      status: 'ready_for_dispatch', grn_id: ids.grnId, transfer_id: ids.transferId,
-      financial_posting_status: financeValue > 0 ? 'posted' : 'not_applicable', updatedAt: now
-    });
-
-    if (receivedItems.length) {
-      transaction.set(refs.transfer, {
-        tenantId, inventoryClass: 'SELLABLE', transfer_number: `TI-${grnNumber}`, order_id: order.id, grn_id: ids.grnId,
-        invoice_id: financeValue > 0 ? ids.invoiceId : null, invoice_ref: invoiceRefValue,
-        source_branch_id: isHqDestination ? 'PROCUREMENT' : 'HQ',
-        source_branch_name: isHqDestination ? supplierName : 'Central HQ',
-        destination_branch_id: branchId, destination_branch_name: branchName,
-        transfer_type: isHqDestination ? 'procurement_grn' : 'central_to_branch', status: 'ready_for_dispatch',
-        preparedAt: now, prepared_by: user.uid, prepared_by_name: user.name,
-        total_items: receivedItems.length, total_value_ugx: transferValue, createdAt: now, updatedAt: now
-      }, { merge: true });
-      receivedItems.forEach(item => {
-        const lineId = `${ids.transferId}_${stablePart(item.line_id)}`;
-        transaction.set(doc(db, 'transfer_invoice_lines', lineId), {
-          tenantId, inventoryClass: 'SELLABLE', transfer_id: ids.transferId, grn_id: ids.grnId, invoice_id: ids.invoiceId,
-          source_line_id: item.line_id, product_id: item.product_id, product_name: item.product_name,
-          qty_dispatched: item.qty_received, unit_cost_ugx: item.unit_cost_ugx,
-          total_cost_ugx: item.total_cost_ugx, batch_number: item.batch_number,
-          expiry_date: item.expiry_date, line_status: 'ready_for_dispatch', createdAt: now, updatedAt: now
-        }, { merge: true });
+    if (!staged) {
+      unsupplied.forEach(item => transaction.set(doc(db, 'unsupplied_lines', item.id), item.data, { merge: true }));
+      lineUpdates.forEach((line, index) => transaction.update(lineRefs[index], line.data));
+      transaction.update(refs.order, {
+        status: 'ready_for_dispatch', grn_id: ids.grnId, transfer_id: ids.transferId,
+        financial_posting_status: financeValue > 0 ? 'posted' : 'not_applicable', updatedAt: now
       });
+      transaction.set(refs.transfer, { ...transferData, status: 'ready_for_dispatch' }, { merge: true });
+      transferRows.forEach(row => transaction.set(doc(db, 'transfer_invoice_lines', row.id), row.data, { merge: true }));
     }
 
     transaction.set(refs.audit, {
@@ -326,6 +423,20 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
     }, { merge: true });
     return { alreadyProcessed: false };
     });
+  if (staged) {
+    await runTransaction(db, async transaction => {
+      const current = (await transaction.get(orderRef)).data();
+      if (current?.tenantId !== tenantId) throw new Error(grnChanged);
+      if (!current.sellableGrnSave && current.grn_id === ids.grnId) return;
+      if (current.status !== 'approved' || current.sellableGrnSave?.next !== steps) throw new Error(grnChanged);
+      transaction.update(transferRef, { status: 'ready_for_dispatch', updatedAt: now });
+      transaction.update(orderRef, {
+        status: 'ready_for_dispatch', grn_id: ids.grnId, transfer_id: ids.transferId,
+        financial_posting_status: financeValue > 0 ? 'posted' : 'not_applicable',
+        sellableGrnSave: deleteField(), updatedAt: now
+      });
+    });
+  }
   return {
     grnId: ids.grnId, grnNumber,
     invoiceId: financeValue > 0 ? ids.invoiceId : null,
@@ -333,4 +444,13 @@ export async function processProcurementGrn(input: ProcessGrnInput): Promise<Pro
     transferId: receivedItems.length ? ids.transferId : null,
     alreadyProcessed: result.alreadyProcessed
   };
+}
+
+function assertGrnSource(data: DocumentData | undefined, line: StockOrderLine, input: ProcessGrnInput) {
+  if (!data || data.tenantId !== input.tenantId || data.order_id !== input.order.id ||
+      data.line_status !== 'approved' || data.product_id !== line.product_id || data.qty_ordered !== line.qty_ordered ||
+      data.unit_cost_ugx !== line.unit_cost_ugx || data.supplier_type !== line.supplier_type ||
+      data.supplier_id !== line.supplier_id || data.inventoryClass === 'OPERATIONAL') {
+    throw new Error(grnChanged);
+  }
 }

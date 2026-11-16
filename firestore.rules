@@ -1453,6 +1453,12 @@ service cloud.firestore {
         && (!('inventoryClass' in resource.data) || request.resource.data.inventoryClass == resource.data.inventoryClass)
         && (!('inventoryClass' in resource.data) || resource.data.inventoryClass != 'OPERATIONAL')
         && validGrnInventoryClass(request.resource.data);
+      allow update: if resource.data.status == 'posting' && resource.data.inventoryClass == 'SELLABLE'
+        && isProcurement() && isTenantMember(resource.data.tenantId)
+        && request.resource.data.tenantId == resource.data.tenantId
+        && request.resource.data.order_id == resource.data.order_id
+        && request.resource.data.transfer_id == resource.data.transfer_id
+        && request.resource.data.status == 'completed';
       allow update: if validSupplierGrnPayment(recordId, resource.data, request.resource.data);
       allow delete: if resource.data.inventoryClass != 'OPERATIONAL'
         && !hasOperationalSourceOrder(resource.data)
@@ -2876,7 +2882,26 @@ service cloud.firestore {
       allow update: if ('approvalSave' in resource.data || 'approvalSave' in request.resource.data)
         && isTenantMember(resource.data.tenantId)
         && validApprovalUpdate();
-      allow update: if !('approvalSave' in resource.data || 'approvalSave' in request.resource.data)
+      function validSellableGrnSave() {
+        let before = resource.data;
+        let data = request.resource.data;
+        let old = before.get('sellableGrnSave', null);
+        let next = data.get('sellableGrnSave', null);
+        let changed = data.diff(before).affectedKeys();
+        return isProcurement() && isTenantMember(before.tenantId)
+          && before.status == 'approved' && !isOperationalOrderData(before)
+          && (next == null
+            ? old.next == old.steps && data.status == 'ready_for_dispatch'
+              && changed.hasOnly(['status','grn_id','transfer_id','financial_posting_status','sellableGrnSave','updatedAt'])
+              && get(/databases/$(database)/documents/grn_records/$(old.grnId)).data.status == 'completed'
+            : changed.hasOnly(['sellableGrnSave'])
+              && (old == null ? next.next == 0 && next.steps > 0
+                : next.next == old.next + 1 && next.next <= old.steps && next.diff(old).affectedKeys().hasOnly(['next'])));
+      }
+      allow update: if ('sellableGrnSave' in resource.data || 'sellableGrnSave' in request.resource.data)
+        && validSellableGrnSave();
+      allow update: if !('approvalSave' in resource.data || 'approvalSave' in request.resource.data
+          || 'sellableGrnSave' in resource.data || 'sellableGrnSave' in request.resource.data)
         && isAuthenticated()
         && (isBranchManager() || isProcurement())
         && isTenantMember(resource.data.tenantId)
@@ -3064,11 +3089,18 @@ service cloud.firestore {
           && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id)).data.tenantId == request.resource.data.tenantId
           && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id)).data.order_id == request.resource.data.order_id
           && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id)).data.transfer_id == invoiceId
-          && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id)).data.financial_posting_status in ['posted', 'not_applicable']
+          && getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id)).data.financial_posting_status in ['posted', 'not_applicable', 'posting']
+          && (request.resource.data.status == 'posting'
+            || getAfter(/databases/$(database)/documents/grn_records/$(request.resource.data.grn_id)).data.status != 'posting')
         ))
         && isTenantMember(request.resource.data.tenantId)
         && (!isOperationalTransfer(request.resource.data) || isOperationalInventoryEnabled(request.resource.data.tenantId))
         && hasValidTransferClass(request.resource.data, true);
+      allow update: if resource.data.status == 'posting' && resource.data.inventoryClass == 'SELLABLE'
+        && isProcurement() && isTenantMember(resource.data.tenantId)
+        && request.resource.data.status == 'ready_for_dispatch'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && get(/databases/$(database)/documents/grn_records/$(resource.data.grn_id)).data.status == 'completed';
       // Only the canonical GRN dispatch action can advance a prepared transfer.
       allow update: if isProcurement()
         && isTenantMember(resource.data.tenantId)
@@ -3515,6 +3547,11 @@ service cloud.firestore {
         (resource == null || (isTenantMember(resource.data.tenantId) && isAssignedToBranch(resource.data.branchId)));
       allow list: if isStockOperator() && isTenantMember(resource.data.tenantId)
         && isAssignedToBranch(resource.data.branchId);
+      function validReceivingMovement(data) {
+        let line = getAfter(/databases/$(database)/documents/transfer_invoice_lines/$(data.lineId)).data;
+        return line.tenantId == data.tenantId && line.transfer_id == data.transferId
+          && line.product_id == data.productId && line.qty_accepted_base_units == data.quantityBaseUnits;
+      }
       allow create: if isStockOperator() && isInventoryOperator()
         && isTenantMember(request.resource.data.tenantId)
         && isAssignedToBranch(request.resource.data.branchId)
@@ -3528,7 +3565,9 @@ service cloud.firestore {
         && existsAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId))
         && getAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId)).data.tenantId == request.resource.data.tenantId
         && getAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId)).data.destination_branch_id == request.resource.data.branchId
-        && getAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId)).data.status in ['fully_accepted', 'queried'];
+        && getAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId)).data.status in ['fully_accepted', 'queried', 'receiving']
+        && (getAfter(/databases/$(database)/documents/transfer_invoices/$(request.resource.data.transferId)).data.status != 'receiving'
+          || validReceivingMovement(request.resource.data));
       allow update: if isStockOperator() && isInventoryOperator()
         && isTenantMember(resource.data.tenantId)
         && isAssignedToBranch(resource.data.branchId)
