@@ -23,7 +23,7 @@ import {
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { processProcurementGrn } from '../services/procurementFinanceService';
+import { processProcurementGrn, resumeSellableCentralGrn } from '../services/procurementFinanceService';
 import { dispatchPreparedSellableGrn } from '../services/grnDispatchService';
 import { grnReceivedDateKey } from '../utils/grnDates';
 import { processOperationalGrn } from '../services/operationalGrnService';
@@ -2148,6 +2148,7 @@ const GRNTab: React.FC = () => {
   const { profile } = useAuth();
   const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [grns, setGrns] = useState<GRNRecord[]>([]);
+  const [resumingGrn, setResumingGrn] = useState(false);
   const [approvedOrders, setApprovedOrders] = useState<StockOrder[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
@@ -2161,7 +2162,7 @@ const GRNTab: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId) {
       const unsubscribeGrns = firestoreService.subscribeToCollection<GRNRecord>('grn_records', profile.tenantId, (data) => {
-        setGrns(data.filter(grn => operationalInventoryEnabled || !isOperationalInventoryRecord(grn))
+        setGrns(data.filter(grn => grn.status !== 'posting' && (operationalInventoryEnabled || !isOperationalInventoryRecord(grn)))
           .sort((a, b) => (grnReceivedDateKey(b.receivedAt) || '').localeCompare(grnReceivedDateKey(a.receivedAt) || '')));
       });
       const unsubscribeOrders = firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
@@ -2302,6 +2303,22 @@ const GRNTab: React.FC = () => {
 
     return matchesSearch && matchesStart && matchesEnd;
   });
+
+  const handleResumeGrn = async (order: StockOrder) => {
+    if (resumingGrn || !profile?.tenantId || !profile.uid) return;
+    setResumingGrn(true);
+    try {
+      await resumeSellableCentralGrn(order, profile.tenantId, {
+        uid: profile.uid, name: profile.fullName || profile.displayName || profile.email || 'Staff User'
+      });
+      toast.success('Central GRN completed and ready for dispatch.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'The receipt is still pending. Try resuming it again.');
+    } finally {
+      setResumingGrn(false);
+    }
+  };
+
   const displayedGRNItems = selectedGRN && isOperationalInventoryRecord(selectedGRN)
     ? (operationalGRNItems.length ? operationalGRNItems : (selectedGRN.items || []))
     : (selectedGRN?.items || []);
@@ -2322,7 +2339,7 @@ const GRNTab: React.FC = () => {
                 {isOperationalInventoryRecord(order) && <p className="mt-1 text-[10px] font-black uppercase tracking-wide text-emerald-700">Operational Inventory</p>}
               </div>
               <div className="flex gap-2">
-                {!isOperationalInventoryRecord(order) && <button
+                {!order.sellableGrnSave && !isOperationalInventoryRecord(order) && <button
                   onClick={async () => {
                     if (window.confirm(`Are you sure you want to revert order ${order.order_number || ''} back to the Financial Approval tab?`)) {
                       try {
@@ -2348,7 +2365,12 @@ const GRNTab: React.FC = () => {
                 >
                   Revert
                 </button>}
-                <button 
+                {order.sellableGrnSave ? (
+                  <button type="button" disabled={resumingGrn} onClick={() => handleResumeGrn(order)}
+                    className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50">
+                    {resumingGrn ? 'Posting…' : 'Resume GRN'}
+                  </button>
+                ) : <button
                   onClick={() => {
                     setSelectedOrder(order);
                     setIsProcessModalOpen(true);
@@ -2356,7 +2378,7 @@ const GRNTab: React.FC = () => {
                   className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors"
                 >
                   Process GRN
-                </button>
+                </button>}
               </div>
             </div>
           ))}
@@ -3767,6 +3789,7 @@ const UnsuppliedTab: React.FC = () => {
   const { profile } = useAuth();
   const [unsupplied, setUnsupplied] = useState<UnsuppliedLine[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [publishedGrns, setPublishedGrns] = useState<Set<string>>(new Set());
   const [approvalAudits, setApprovalAudits] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -3784,6 +3807,7 @@ const UnsuppliedTab: React.FC = () => {
     if (!profile?.tenantId) return;
     return firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, orders => {
       setApprovalAudits(new Set(orders.flatMap(order => order.approval_audit_id ? [order.approval_audit_id] : [])));
+      setPublishedGrns(new Set(orders.flatMap(order => order.grn_id ? [order.grn_id] : [])));
     });
   }, [profile?.tenantId]);
 
@@ -3842,6 +3866,7 @@ const UnsuppliedTab: React.FC = () => {
   const search = searchTerm.toLowerCase();
   const filtered = unsupplied.filter(item =>
     (!item.approval_audit_id || approvalAudits.has(item.approval_audit_id))
+    && (!item.staged_central_grn || publishedGrns.has(item.grn_id || ''))
     && (item.product_name.toLowerCase().includes(search) || item.reason.toLowerCase().includes(search))
   );
 

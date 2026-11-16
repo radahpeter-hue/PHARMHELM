@@ -122,7 +122,7 @@ export function shareRepeatedAllowConditions(source) {
 export function shareRequestExpressions(source) {
  const masked = maskRulesTrivia(source);
  if (!databaseScope.test(masked)) return source;
- const paths = [...masked.matchAll(/(?<![.\w])(?:(?:request\.)?resource\.data(?:\.(?:tenantId|branchId))?|request\.auth\.uid|request\.time)\b/g)];
+ const paths = [...masked.matchAll(/(?<![.\w])(?:isTenantMember\((?:request\.)?resource\.data\.tenantId\)|(?:(?:request\.)?resource\.data(?:\.(?:tenantId|branchId|status|inventoryClass))?|request\.auth\.uid|request\.time)\b)/g)];
  const helpers = new Map();
  let serial = 0;
  for (const match of paths.reverse()) {
