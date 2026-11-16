@@ -30,7 +30,7 @@ jobs:
       - name: Install isolated browser verification runtime
         run: |
           npm install --prefix /tmp/browser-check --no-save playwright@1.51.1
-          /tmp/browser-check/node_modules/.bin/playwright install --with-deps chromium
+          /tmp/browser-check/node_modules/.bin/playwright install --with-deps chromium webkit
       - name: Check actual registration and catalogue components
         env:
           PLAYWRIGHT_MODULE: /tmp/browser-check/node_modules/playwright
@@ -40,6 +40,7 @@ jobs:
           node scripts/operational-receipt-identity-ui-smoke.mjs
           node scripts/stock-in-register-ui-smoke.mjs
           node scripts/inventory-mobile-ui-smoke.mjs
+          INVENTORY_BROWSER_ENGINE=webkit node scripts/inventory-mobile-ui-smoke.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
