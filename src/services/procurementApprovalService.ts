@@ -1,5 +1,6 @@
 import {
-  collection, doc, getDocs, query, runTransaction, where, type Firestore
+  collection, deleteField, doc, getDocFromServer, getDocsFromServer, query, runTransaction, where,
+  type DocumentData, type Firestore
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import type { StockOrder, StockOrderLine } from '../types';
@@ -23,11 +24,110 @@ export interface ConfirmProcurementApprovalResult {
   unsuppliedCount: number;
 }
 
-/**
- * Finalize an edited order and all of its line changes in one atomic commit.
- * Finance approval is a single event; GRN must use these persisted approved lines.
- * No stock, invoices, payments or dispatch records are written here.
- */
+type ApprovalWrite = {
+  lineId: string;
+  data: DocumentData;
+  before?: {
+    qty: number;
+    productId: string;
+    unitCost: number;
+    supplierId: string;
+  };
+  unsupplied?: DocumentData;
+};
+
+type PendingApproval = {
+  id: string;
+  next: number;
+  writes: ApprovalWrite[];
+  audit: DocumentData;
+  result: ConfirmProcurementApprovalResult;
+};
+
+const approvalChanged = 'This order changed during financial approval. Reopen it from Financial Approval.';
+
+function assertLiveOrder(data: DocumentData | undefined, order: StockOrder, tenantId: string) {
+  if (!data || data.tenantId !== tenantId || data.status !== 'awaiting_finance_approval'
+      || data.category !== order.category || data.requesting_branch_id !== order.requesting_branch_id) {
+    throw new Error(approvalChanged);
+  }
+  return data;
+}
+
+async function applyApproval(
+  order: StockOrder, tenantId: string, actorId: string, approvalId: string, connection: Firestore
+): Promise<ConfirmProcurementApprovalResult> {
+  const orderRef = doc(connection, 'stock_orders', order.id);
+  const auditRef = doc(connection, 'procurement_approval_audit', `approval_${order.id}`);
+  for (;;) {
+    const finished = await runTransaction(connection, async transaction => {
+      const orderSnapshot = await transaction.get(orderRef);
+      const current = orderSnapshot.data();
+      if (current?.tenantId === tenantId && current.approval_operation_id === approvalId
+          && current.approval_audit_id === auditRef.id) {
+        const audit = await transaction.get(auditRef);
+        if (audit.exists()) return audit.data().result as ConfirmProcurementApprovalResult;
+      }
+      const live = assertLiveOrder(current, order, tenantId);
+      const pending = live.approvalSave as PendingApproval | undefined;
+      if (pending?.id !== approvalId) throw new Error(approvalChanged);
+
+      if (pending.next === pending.writes.length) {
+        const now = new Date().toISOString();
+        transaction.update(orderRef, {
+          status: 'approved', total_order_value_ugx: pending.result.approvedTotalUGX,
+          approved_at: now, approved_by: actorId, approval_revision: 1, approval_audit_id: auditRef.id,
+          approval_operation_id: pending.id, updatedAt: now, approvalSave: deleteField()
+        });
+        transaction.set(auditRef, {
+          ...pending.audit, actorId, approvedAt: now, result: pending.result
+        });
+        return pending.result;
+      }
+
+      const write = pending.writes[pending.next];
+      // Keep the unsupplied write within its own rule budget. Its stable ID makes
+      // it safe to resume here, and the log is hidden until the audit is published.
+      if (write.unsupplied) {
+        const unsuppliedRef = doc(connection, 'unsupplied_lines', `${auditRef.id}_${write.lineId}`);
+        const unsupplied = await transaction.get(unsuppliedRef);
+        if (!unsupplied.exists()) {
+          transaction.set(unsuppliedRef, write.unsupplied);
+          return null;
+        }
+        if (unsupplied.data().approval_audit_id !== auditRef.id
+            || unsupplied.data().qty_unsupplied !== write.unsupplied.qty_unsupplied) throw new Error(approvalChanged);
+      }
+      const ref = doc(connection, 'stock_order_lines', write.lineId);
+      if (write.before) {
+        const source = (await transaction.get(ref)).data();
+        const expected = write.before;
+        if (!source || source.tenantId !== tenantId || source.order_id !== order.id
+            || source.line_status !== 'awaiting_finance_approval' || source.qty_ordered !== expected.qty
+            || source.product_id !== expected.productId || source.unit_cost_ugx !== expected.unitCost
+            || (source.supplier_id || '') !== expected.supplierId) throw new Error(approvalChanged);
+        transaction.update(ref, { ...write.data, approval_operation_id: pending.id });
+      } else {
+        transaction.set(ref, { ...write.data, approval_operation_id: pending.id });
+      }
+      transaction.update(orderRef, { 'approvalSave.next': pending.next + 1 });
+      return null;
+    });
+    if (finished) return finished;
+  }
+}
+
+export async function resumeProcurementApproval(
+  order: StockOrder, tenantId: string, actorId: string, connection: Firestore = db
+): Promise<ConfirmProcurementApprovalResult> {
+  if (!actorId || !tenantId || tenantId !== order.tenantId || !order.id) throw new Error('Invalid approval identity.');
+  const current = (await getDocFromServer(doc(connection, 'stock_orders', order.id))).data();
+  const live = assertLiveOrder(current, order, tenantId);
+  const pending = live.approvalSave as PendingApproval | undefined;
+  if (!pending) throw new Error(approvalChanged);
+  return applyApproval(order, tenantId, actorId, pending.id, connection);
+}
+
 export async function confirmProcurementApproval(
   input: ConfirmProcurementApprovalInput,
   connection: Firestore = db
@@ -38,53 +138,43 @@ export async function confirmProcurementApproval(
 
   const operational = isOperationalInventoryRecord(order);
   const inventoryClass = operational ? 'OPERATIONAL' : 'SELLABLE';
-  const candidateLines = await getDocs(query(
+  const candidateLines = await getDocsFromServer(query(
     collection(connection, 'stock_order_lines'),
     where('tenantId', '==', tenantId), where('order_id', '==', order.id)
   ));
-  const existingRefs = candidateLines.docs.map(snapshot => doc(connection, 'stock_order_lines', snapshot.id));
+  const existingRefs = candidateLines.docs.map(snapshot => snapshot.ref);
+  const candidatesById = new Map(candidateLines.docs.map(snapshot => [snapshot.id, snapshot.data()]));
   const addedRefs = additions.map(() => doc(collection(connection, 'stock_order_lines')));
   const productRefs = additions.map(a => doc(connection, operational ? 'operational_inventory' : 'products', a.productId));
   const supplierRefs = additions.map(a => doc(connection, 'supplier_registry', a.supplierId));
-  const masterRefs = operational ? additions.map(a => {
-    const product = a.productId;
-    const option = input.additions.find(candidate => candidate.productId === product);
-    // The master identity is established from the live Operational location row below.
-    return option;
-  }) : [];
-  void masterRefs;
   const orderRef = doc(connection, 'stock_orders', order.id);
   const auditRef = doc(connection, 'procurement_approval_audit', `approval_${order.id}`);
   const now = new Date().toISOString();
 
-  return runTransaction(connection, async transaction => {
-    const [orderSnap, auditSnap, lineSnapshots, productSnapshots, supplierSnapshots] = await Promise.all([
-      transaction.get(orderRef),
-      transaction.get(auditRef),
+  const approvalId = doc(collection(connection, 'stock_orders')).id;
+  await runTransaction(connection, async transaction => {
+    const [orderSnap, auditSnap] = await Promise.all([transaction.get(orderRef), transaction.get(auditRef)]);
+    const current = assertLiveOrder(orderSnap.data(), order, tenantId);
+    if (current.approvalSave) throw new Error('Approval is already in progress. Reopen it to resume the confirmed review.');
+    if (auditSnap.exists()) throw new Error('This order has an existing financial approval audit. Reconcile before retrying.');
+    const [lineSnapshots, productSnapshots, supplierSnapshots] = await Promise.all([
       Promise.all(existingRefs.map(ref => transaction.get(ref))),
       Promise.all(productRefs.map(ref => transaction.get(ref))),
       Promise.all(supplierRefs.map(ref => transaction.get(ref)))
     ]);
-    if (!orderSnap.exists() || orderSnap.data().tenantId !== tenantId ||
-        orderSnap.data().status !== 'awaiting_finance_approval' ||
-        orderSnap.data().category !== order.category ||
-        orderSnap.data().requesting_branch_id !== order.requesting_branch_id) {
-      throw new Error('The order changed while you were reviewing it. Reopen Financial Approval.');
-    }
-    if (auditSnap.exists()) throw new Error('This order has an existing financial approval audit. Reconcile before retrying.');
     if (lineSnapshots.some(snapshot => !snapshot.exists())) throw new Error('Order lines changed during review.');
-    const liveLines = lineSnapshots.map(snapshot => ({ id: snapshot.id, ...snapshot.data() } as StockOrderLine));
+    const liveLines = lineSnapshots.map(snapshot => ({ ...snapshot.data(), id: snapshot.id } as StockOrderLine));
     for (const line of liveLines) {
-      const candidate = candidateLines.docs.find(snapshot => snapshot.id === line.id)?.data();
+      const candidate = candidatesById.get(line.id);
       if (!candidate || candidate.qty_ordered !== line.qty_ordered ||
           candidate.line_status !== line.line_status || candidate.unit_cost_ugx !== line.unit_cost_ugx ||
-          candidate.product_id !== line.product_id) {
+          candidate.product_id !== line.product_id || candidate.supplier_id !== line.supplier_id) {
         throw new Error('Order lines were modified during review. Reopen the approval editor.');
       }
     }
     const liveOrder = { ...order, ...orderSnap.data(), id: order.id } as StockOrder;
     const plan = planProcurementApproval(liveOrder, liveLines, edits, additions);
-    const newLineData = [];
+    const addedLineData: DocumentData[] = [];
     for (let i = 0; i < additions.length; i++) {
       const addition = additions[i];
       const p = productSnapshots[i];
@@ -102,7 +192,7 @@ export async function confirmProcurementApproval(
         throw new Error('Operational products cannot be added to a Sellable requisition.');
       }
       const quotedValue = addition.quantity * addition.unitCostUGX;
-      newLineData.push({
+      addedLineData.push({
         tenantId, order_id: order.id, inventoryClass,
         product_id: p.id, product_name: item.name,
         ...(operational ? { masterItemId: item.masterItemId, isOperational: true } : {}),
@@ -120,32 +210,41 @@ export async function confirmProcurementApproval(
       });
     }
     const changeRows = [];
+    const writes: ApprovalWrite[] = [];
+    const linesById = new Map(liveLines.map(line => [line.id, line]));
     let unsuppliedCount = 0;
     for (const change of plan.changes) {
-      const index = liveLines.findIndex(line => line.id === change.lineId);
-      const line = liveLines[index];
+      const line = linesById.get(change.lineId)!;
       const originalRequested = line.original_qty ?? change.originalQty;
-      transaction.update(existingRefs[index], {
-        original_qty: originalRequested,
-        qty_ordered: change.approvedQty,
-        line_total_ugx: change.approvedQty * change.unitCostUGX,
-        line_status: change.approvedQty === 0 ? 'unsupplied' : 'approved',
-        updatedAt: now,
-        ...(change.replacement ? { substituted_by_product_id: change.replacement.productId } : {})
-      });
+      const write: ApprovalWrite = {
+        lineId: line.id,
+        before: {
+          qty: line.qty_ordered, productId: line.product_id,
+          unitCost: line.unit_cost_ugx, supplierId: line.supplier_id || ''
+        },
+        data: {
+          original_qty: originalRequested,
+          qty_ordered: change.approvedQty,
+          line_total_ugx: change.approvedQty * change.unitCostUGX,
+          line_status: change.approvedQty === 0 ? 'unsupplied' : 'approved',
+          updatedAt: now,
+          ...(change.replacement ? { substituted_by_product_id: change.replacement.productId } : {})
+        }
+      };
       if (change.removedQty > 0) {
         unsuppliedCount++;
         const replacement = change.replacement;
-        transaction.set(doc(connection, 'unsupplied_lines', `approval_${order.id}_${line.id}`), {
+        write.unsupplied = {
           tenantId, inventoryClass, order_id: order.id, original_line_id: line.id,
           product_id: line.product_id, product_name: line.product_name,
           qty_unsupplied: change.removedQty,
           reason: replacement ? 'Substituted during financial approval' : 'Reduced or removed during financial approval',
-          status: 'pending',
+          status: 'pending', approval_audit_id: auditRef.id,
           ...(replacement ? { replacement_product_id: replacement.productId, replacement_order_line_id: addedRefs[additions.indexOf(replacement)].id } : {}),
           createdAt: now
-        });
+        };
       }
+      writes.push(write);
       changeRows.push({
         lineId: line.id, productId: line.product_id,
         originallyRequested: originalRequested, beforeApproval: change.originalQty,
@@ -153,16 +252,10 @@ export async function confirmProcurementApproval(
         substitutionProductId: change.replacement?.productId || null
       });
     }
-    for (let i = 0; i < newLineData.length; i++) transaction.set(addedRefs[i], newLineData[i]);
-    transaction.update(orderRef, {
-      status: 'approved', total_order_value_ugx: plan.approvedTotalUGX,
-      approved_at: now, approved_by: actorId,
-      approval_revision: 1, approval_audit_id: auditRef.id, updatedAt: now
-    });
-    transaction.set(auditRef, {
-      tenantId, orderId: order.id, orderNumber: order.order_number,
-      actorId, approvedAt: now,
-      inventoryClass, initialTotalUGX: Number(orderSnap.data().total_order_value_ugx || 0),
+    for (const [index, data] of addedLineData.entries()) writes.push({ lineId: addedRefs[index].id, data });
+    const audit = {
+      tenantId, orderId: order.id, orderNumber: order.order_number, initiatedBy: actorId,
+      initiatedAt: now, inventoryClass, initialTotalUGX: Number(current.total_order_value_ugx || 0),
       approvedTotalUGX: plan.approvedTotalUGX, changes: changeRows,
       additions: additions.map((addition, index) => ({
         lineId: addedRefs[index].id, productId: addition.productId,
@@ -170,7 +263,13 @@ export async function confirmProcurementApproval(
         supplierId: addition.supplierId, reason: addition.reason,
         replacesLineId: addition.replacesLineId || null
       }))
-    });
-    return { approvedTotalUGX: plan.approvedTotalUGX, addedCount: additions.length, unsuppliedCount };
+    };
+    const result = { approvedTotalUGX: plan.approvedTotalUGX, addedCount: addedLineData.length, unsuppliedCount };
+    const save: PendingApproval = { id: approvalId, next: 0, writes, audit, result };
+    if (new TextEncoder().encode(JSON.stringify(save)).length > 600_000) {
+      throw new Error('This approval contains too much line data to save.');
+    }
+    transaction.update(orderRef, { approvalSave: save });
   });
+  return applyApproval(order, tenantId, actorId, approvalId, connection);
 }
