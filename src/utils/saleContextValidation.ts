@@ -1,6 +1,7 @@
 export interface SaleCheckoutContextValidationInput {
   context: string;
   paymentMethod: string;
+  secondaryPaymentMethod?: string;
   hasPatient: boolean;
   hasInstitution: boolean;
   hasEligibleInstitution?: boolean;
@@ -14,7 +15,6 @@ export type SaleCheckoutContextValidationResult =
         | 'telepharmacy_patient_required'
         | 'institution_required'
         | 'credit_identity_required'
-        | 'credit_institution_required'
         | 'credit_institution_ineligible';
       message: string;
     };
@@ -46,15 +46,16 @@ export function validateSaleCheckoutContext(
     };
   }
 
-  if ((paymentMethod === 'credit' || paymentMethod === 'institutional_credit') && !input.hasInstitution) {
+  const onCredit = [paymentMethod, input.secondaryPaymentMethod].some(method => method === 'credit' || method === 'institutional_credit');
+  if (onCredit && !input.hasInstitution && !input.hasPatient) {
     return {
       valid: false,
-      code: 'credit_institution_required',
-      message: 'Select an eligible institution before using Institutional Credit.'
+      code: 'credit_identity_required',
+      message: 'Select a registered customer or eligible billing institution for credit.'
     };
   }
 
-  if ((paymentMethod === 'credit' || paymentMethod === 'institutional_credit') && input.hasEligibleInstitution === false) {
+  if (onCredit && input.hasInstitution && input.hasEligibleInstitution === false) {
     return {
       valid: false,
       code: 'credit_institution_ineligible',

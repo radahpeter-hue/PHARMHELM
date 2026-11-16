@@ -255,8 +255,11 @@ service cloud.firestore {
         && correction.originalOutboxEventId == resource.data.transactionOutboxEventId
         && next.revisionId == correction.revisionId
         && next.revisionLifecycle == 'COMPLETED' && next.revisionLocked
-        && next.supersededBySaleId == correction.replacementSaleId
-        && next.supersededByReceiptNumber == correction.replacementReceiptNumber
+        && (correction.requestType == 'POS_CREDIT_VOID'
+          ? next.status == 'voided' && next.voidedBy == request.auth.uid && next.voidReason == correction.reason
+            && next.get('supersededBySaleId', '') == ''
+          : next.status == 'completed' && next.supersededBySaleId == correction.replacementSaleId
+            && next.supersededByReceiptNumber == correction.replacementReceiptNumber)
         && next.revisionRequestedBy == request.auth.uid
         && next.revisionReason == correction.reason
         && next.revisionCompletedAt == request.time
@@ -267,8 +270,10 @@ service cloud.firestore {
           'pendingReplacementSaleId', 'supersededBySaleId', 'supersededByReceiptNumber',
           'revisionReason', 'revisionRequestedBy', 'revisionRequestedByName',
           'revisionRequestedAt', 'revisionCompletedAt', 'updatedAt',
-          'quotationConversionStatus', 'quotationConversionReversalId', 'quotationConversionReversedAt'
-        ]);
+          'quotationConversionStatus', 'quotationConversionReversalId', 'quotationConversionReversedAt',
+          'status','voidReason','voidedBy','voidedAt'
+        ])
+        && (correction.requestType == 'POS_CREDIT_VOID' || !next.diff(resource.data).affectedKeys().hasAny(['voidReason','voidedBy','voidedAt']));
     }
 
     function hasAtomicCorrectionChain(requestId) {
@@ -301,6 +306,30 @@ service cloud.firestore {
         && correction.revisedTotal - correction.originalTotal == correction.monetaryDelta
         && reversal.originalSaleId == correction.originalSaleId && reversal.revisionId == correction.revisionId
         && reversal.status == 'COMPLETED' && reversal.amountDelta == -correction.originalTotal
+        && audit.userId == request.auth.uid && audit.objectId == correction.originalSaleId
+        && audit.revisionRequestId == requestId && audit.reason == correction.reason && audit.createdAt == request.time
+        && outbox.status == 'SUPERSEDED' && outbox.revisionRequestId == requestId;
+    }
+
+    function validAtomicCreditVoid(requestId, correction) {
+      let before = get(/databases/$(database)/documents/sales/$(correction.originalSaleId)).data;
+      let after = getAfter(/databases/$(database)/documents/sales/$(correction.originalSaleId)).data;
+      let reversal = getAfter(/databases/$(database)/documents/pos_payment_reversals/$(correction.paymentReversalId)).data;
+      let audit = getAfter(/databases/$(database)/documents/audit_logs/$(correction.auditId)).data;
+      let outbox = getAfter(/databases/$(database)/documents/pos_transaction_outbox/$(correction.originalOutboxEventId)).data;
+      return correction.requestType == 'POS_CREDIT_VOID' && requestId == 'credit_void_' + correction.originalSaleId
+        && correction.requestId == requestId && correction.revisionId == requestId && isFreshAtomicRevision(requestId)
+        && correction.engineVersion == 2 && correction.payloadVersion == 1 && correction.completedAt == request.time
+        && correction.reason is string && correction.reason.size() >= 8 && correction.reason.size() <= 500
+        && correction.originalCreditPosted && correction.originalWelfarePosted == false && correction.welfareAmount == 0
+        && correction.creditReversal.carriedCollectionsUGX == 0 && correction.replacementOutboxEventId == null
+        && correction.originalReceiptNumber == before.receiptNumber
+        && (isReceivableCreditMethod(before.paymentMethod) || isReceivableCreditMethod(before.get('secondaryPaymentMethod', '')))
+        && before.status == 'completed' && after.status == 'voided' && after.revisionRequestId == requestId
+        && before.tenantId == correction.tenantId && before.branchId == correction.branchId
+        && correction.originalTotal == before.totalAmount && correction.revisedTotal == 0 && correction.monetaryDelta == -before.totalAmount
+        && reversal.originalSaleId == correction.originalSaleId && reversal.revisionId == requestId
+        && reversal.status == 'COMPLETED' && reversal.amountDelta == -before.totalAmount
         && audit.userId == request.auth.uid && audit.objectId == correction.originalSaleId
         && audit.revisionRequestId == requestId && audit.reason == correction.reason && audit.createdAt == request.time
         && outbox.status == 'SUPERSEDED' && outbox.revisionRequestId == requestId;
@@ -345,32 +374,100 @@ service cloud.firestore {
         && isAssignedToBranch(sale.branchId);
     }
 
-    function atomicCreditCreate(receivableId) {
-      let row = request.resource.data;
-      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(row.atomicRevisionRequestId)).data;
-      let payment = getAfter(/databases/$(database)/documents/pos_payments/$(correction.replacementPaymentId)).data;
-      return isFreshAtomicRevision(row.atomicRevisionRequestId)
-        && receivableId == correction.replacementSaleId && row.receipt_id == receivableId
-        && row.tenantId == correction.tenantId && row.branch_id == correction.branchId
-        && row.paymentId == correction.replacementPaymentId && row.source == 'POS' && row.engineVersion == 2
-        && payment.paymentMethod == 'institutional_credit' && row.amount_ugx == payment.amount
-        && row.outstanding_ugx == row.amount_ugx && row.status == 'outstanding';
+    function isReceivableCreditMethod(method) {
+      return method in ['institutional_credit', 'credit'];
+    }
+    function creditComponent(row, method, amount) {
+      return row.method == method && row.amount == amount
+        && row.outstandingAmount == (isReceivableCreditMethod(method) ? amount : 0)
+        && row.settledAmount == (isReceivableCreditMethod(method) ? 0 : amount);
+    }
+    function validCreditPayment(p, sale) {
+      let primary = sale.paymentMethod;
+      let second = sale.get('secondaryPaymentMethod', '');
+      let split = second != '' && second != null;
+      let secondAmount = split ? sale.secondaryAmount : 0;
+      return p.paymentMethod == primary && p.outstandingAmount is number && p.outstandingAmount > 0
+        && p.outstandingAmount <= 9007199254740991
+        && ((isReceivableCreditMethod(primary) && (!split || second in ['cash','mtn_momo','airtel_money','card','momo','airtel']))
+          || (isReceivableCreditMethod(second) && primary in ['cash','mtn_momo','airtel_money','card','momo','airtel']))
+        && p.components.size() == (split ? 2 : 1)
+        && creditComponent(p.components[0], primary, p.amount - secondAmount)
+        && (!split || (secondAmount > 0 && secondAmount < p.amount && creditComponent(p.components[1], second, secondAmount)))
+        && p.outstandingAmount == (isReceivableCreditMethod(primary) ? p.amount - secondAmount : secondAmount);
+    }
+    function creditDebtorMatches(row, sale) {
+      let institution = sale.get('institutionId', null);
+      let client = sale.get('patientId', null) != null ? sale.patientId : sale.get('clientId', null);
+      let kind = institution != null ? 'institutions' : 'clients';
+      let debtor = get(/databases/$(database)/documents/$(kind)/$(row.debtorId)).data;
+      let linked = (institution != null && client != null) ? get(/databases/$(database)/documents/clients/$(client)).data : {};
+      return row.debtorId == (institution != null ? institution : client)
+        && row.debtorType == (institution != null ? 'institution' : 'client')
+        && row.institution_id == institution && row.client_id == client
+        && debtor.tenantId == row.tenantId && debtor.get('care_status', debtor.get('status', 'active')).lower() == 'active'
+        && debtor.get('active', true) && debtor.get('isActive', true)
+        && debtor.get('creditEligible', true) && debtor.get('credit_eligible', true)
+        && debtor.get('billingEligible', true) && debtor.get('billing_eligible', true)
+        && debtor.get('branch_id', row.branch_id) == row.branch_id && debtor.get('branchId', row.branch_id) == row.branch_id
+        && (institution != null ? debtor.get('role', 'billable').lower() in ['billable', 'both']
+            : debtor.get('billing_type', 'self-pay') != 'institutional-pay')
+        && (institution == null || client == null || (linked.tenantId == row.tenantId
+          && (linked.get('billing_type', 'self-pay') != 'institutional-pay' || linked.institution_to_bill_id == institution)))
+        && row.client_name != '' && row.client_name == (institution != null
+          ? debtor.get('supplier_name', debtor.get('institution_name', debtor.get('name', '')))
+          : debtor.get('full_name', debtor.get('fullName', debtor.get('name', ''))))
+        && row.credit_terms == debtor.get('payment_terms', null);
+    }
+    function validCreditRecognition(id, row) {
+      let salePath = /databases/$(database)/documents/sales/$(id);
+      let sale = getAfter(salePath).data;
+      let payment = getAfter(/databases/$(database)/documents/pos_payments/$(row.paymentId)).data;
+      return !exists(salePath) && row.recognizedBy == request.auth.uid && sale.operatorUid == request.auth.uid
+        && row.keys().hasOnly(['tenantId','branch_id','receipt_id','paymentId','invoice_number','debtorType',
+          'debtorId','client_id','institution_id','client_name','invoice_amount_ugx','amount_ugx','outstanding_ugx',
+          'status','credit_terms','due_date','created_at','originalSaleId','recognizedBy','source','engineVersion',
+          'controlVersion','currency','createdAt','updatedAt','atomicRevisionRequestId','carriedCollectionsUGX'])
+        && row.controlVersion == 2 && row.engineVersion == 2 && row.source == 'POS' && row.currency == 'UGX'
+        && row.receipt_id == id && row.due_date == null && row.createdAt == request.time && row.updatedAt == request.time
+        && sale.engineVersion == 2 && sale.status == 'completed' && sale.inventoryPosted == true
+        && row.tenantId == getUserData().tenantId && row.tenantId == sale.tenantId && row.branch_id == sale.branchId
+        && row.paymentId == sale.canonicalPaymentId && payment.saleId == id
+        && row.invoice_number == sale.receiptNumber && row.created_at == sale.timestamp
+        && row.originalSaleId == sale.get('revisionOfSaleId', id)
+        && (isReceivableCreditMethod(sale.paymentMethod) || isReceivableCreditMethod(sale.get('secondaryPaymentMethod', '')))
+        && row.invoice_amount_ugx == sale.totalAmount && row.amount_ugx == payment.outstandingAmount && row.amount_ugx > 0
+        && row.outstanding_ugx == row.amount_ugx - row.get('carriedCollectionsUGX', 0) && row.outstanding_ugx >= 0
+        && row.status == (row.outstanding_ugx == 0 ? 'paid' : row.outstanding_ugx == row.amount_ugx ? 'outstanding' : 'partial')
+        && (row.get('carriedCollectionsUGX', 0) == 0 || validCreditCarry(row, sale))
+        && creditDebtorMatches(row, sale);
+    }
+    function validCreditCarry(row, sale) {
+      let path = /databases/$(database)/documents/pos_sale_revision_requests/$(sale.revisionRequestId);
+      let correction = getAfter(path).data;
+      let original = get(/databases/$(database)/documents/credit_receivables/$(row.originalSaleId)).data;
+      return !exists(path) && correction.createdAt == request.time && correction.originalCreditPosted
+        && correction.originalSaleId == row.originalSaleId && correction.replacementSaleId == row.receipt_id
+        && row.carriedCollectionsUGX > 0 && row.carriedCollectionsUGX == correction.creditReversal.carriedCollectionsUGX
+        && row.debtorId == original.debtorId && row.debtorType == original.debtorType;
     }
 
     function atomicCreditUpdate(receivableId) {
       let row = request.resource.data;
-      let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(row.atomicRevisionRequestId)).data;
-      let payment = get(/databases/$(database)/documents/pos_payments/$(correction.originalPaymentId)).data;
-      return isFreshAtomicRevision(row.atomicRevisionRequestId)
-        && receivableId == correction.originalSaleId && resource.data.receipt_id == receivableId
-        && resource.data.tenantId == correction.tenantId && resource.data.branch_id == correction.branchId
-        && payment.paymentMethod == 'institutional_credit'
-        && resource.data.amount_ugx == payment.amount && resource.data.outstanding_ugx == payment.amount
+      let before = resource.data;
+      let path = /databases/$(database)/documents/pos_sale_revision_requests/$(row.atomicRevisionRequestId);
+      let correction = getAfter(path).data;
+      let reversalPath = /databases/$(database)/documents/pos_credit_reversals/$(row.reversalId);
+      let reversal = getAfter(reversalPath).data;
+      return !exists(path) && !exists(reversalPath) && correction.createdAt == request.time
+        && correction.originalCreditPosted && receivableId == correction.originalSaleId && before.receipt_id == receivableId
+        && before.tenantId == correction.tenantId && before.branch_id == correction.branchId
         && row.outstanding_ugx == 0 && row.status == 'reversed'
-        && row.revisionId == correction.revisionId
-        && row.reversalId == correction.creditReversal.reversalId
-        && getAfter(/databases/$(database)/documents/pos_credit_reversals/$(row.reversalId)).data.amountDelta == -payment.amount
-        && row.diff(resource.data).affectedKeys().hasOnly(['status', 'outstanding_ugx', 'reversalId', 'revisionId', 'reversedAmount', 'reversedAt', 'reversedBy', 'reversedByName', 'reversalReason', 'updatedAt', 'atomicRevisionRequestId']);
+        && row.revisionId == correction.revisionId && row.reversalId == correction.creditReversal.reversalId
+        && row.reversedAmount == before.outstanding_ugx && row.refundDueUGX == reversal.refundDueUGX
+        && row.reversedAt == request.time && row.reversedBy == request.auth.uid && row.reversalReason == correction.reason
+        && row.diff(before).affectedKeys().hasOnly(['status','outstanding_ugx','reversalId','revisionId','reversedAmount',
+          'reversedAt','reversedBy','reversedByName','reversalReason','updatedAt','atomicRevisionRequestId','refundDueUGX']);
     }
 
     function atomicWelfareRecord(recordId, collectionName) {
@@ -412,9 +509,6 @@ service cloud.firestore {
       let payment = request.resource.data;
       let correction = getAfter(/databases/$(database)/documents/pos_sale_revision_requests/$(payment.revisionRequestId)).data;
       return isFreshAtomicRevision(payment.revisionRequestId)
-        && (payment.paymentMethod != 'institutional_credit' ||
-          (getAfter(/databases/$(database)/documents/credit_receivables/$(payment.saleId)).data.amount_ugx == payment.amount
-          && getAfter(/databases/$(database)/documents/credit_receivables/$(payment.saleId)).data.outstanding_ugx == payment.amount))
         && (payment.paymentMethod != 'staff_welfare' ||
           (correction.welfareAmount == payment.components[0].amount
           && payment.components[0].method == 'staff_welfare'
@@ -435,19 +529,42 @@ service cloud.firestore {
         && row.requestedBy == request.auth.uid && row.reason == correction.reason
         && row.status == 'COMPLETED' && row.completedAt == request.time
         && (collectionName == 'pos_quotation_reversals' || row.originalSaleId == correction.originalSaleId)
-        && (collectionName != 'pos_credit_reversals' || row.amountDelta == -payment.amount)
+        && (collectionName != 'pos_credit_reversals' || validCreditRevisionAmounts(row, correction, payment))
         && (collectionName != 'pos_welfare_reversals' || row.amountDelta == -payment.components[0].amount);
     }
 
+    function verifiedCreditCollection(before, receivableId) {
+      let p = get(receivableSettlementPath(before.lastSettlementId)).data;
+      return p.tenantId == before.tenantId && p.receivableId == receivableId
+        && p.outstandingAfterUGX == before.outstanding_ugx;
+    }
+    function validCreditRevisionAmounts(reversal, correction, payment) {
+      let path = /databases/$(database)/documents/credit_receivables/$(correction.originalSaleId);
+      let before = get(path).data;
+      let after = getAfter(path).data;
+      let carry = reversal.carriedCollectionsUGX;
+      let collected = before.amount_ugx - before.outstanding_ugx;
+      let next = carry > 0 ? getAfter(/databases/$(database)/documents/credit_receivables/$(correction.replacementSaleId)).data : {};
+      return correction.originalCreditPosted && before.amount_ugx == payment.outstandingAmount
+        && before.outstanding_ugx >= 0 && collected >= 0 && (collected == 0 || verifiedCreditCollection(before, correction.originalSaleId))
+        && !('reversalId' in before) && after.reversalId == reversal.reversalId
+        && reversal.originalReceivableId == correction.originalSaleId && reversal.originalPaymentId == correction.originalPaymentId
+        && reversal.amount == before.amount_ugx && reversal.amountDelta == -before.outstanding_ugx
+        && reversal.outstandingDelta == reversal.amountDelta && reversal.collectedUGX == collected
+        && carry >= 0 && carry <= collected && carry == correction.creditReversal.carriedCollectionsUGX
+        && (carry == 0 || (next.originalSaleId == correction.originalSaleId && next.carriedCollectionsUGX == carry))
+        && reversal.refundDueUGX == collected - carry + (correction.get('requestType', '') == 'POS_CREDIT_VOID' ? payment.settledAmount : 0);
+    }
     function atomicCreditCommit(correction) {
-      let before = get(/databases/$(database)/documents/credit_receivables/$(correction.originalSaleId)).data;
-      let after = getAfter(/databases/$(database)/documents/credit_receivables/$(correction.originalSaleId)).data;
-      let reversal = getAfter(/databases/$(database)/documents/pos_credit_reversals/$(correction.creditReversal.reversalId)).data;
-      return before.tenantId == correction.tenantId && after.tenantId == correction.tenantId
-        && before.outstanding_ugx == before.amount_ugx
+      let path = /databases/$(database)/documents/credit_receivables/$(correction.originalSaleId);
+      let before = get(path).data;
+      let after = getAfter(path).data;
+      let reversalPath = /databases/$(database)/documents/pos_credit_reversals/$(correction.creditReversal.reversalId);
+      let reversal = getAfter(reversalPath).data;
+      return !exists(reversalPath) && before.tenantId == correction.tenantId && after.tenantId == correction.tenantId
         && after.outstanding_ugx == 0 && after.status == 'reversed'
-        && reversal.originalSaleId == correction.originalSaleId
-        && reversal.amountDelta == -before.amount_ugx;
+        && after.reversalId == correction.creditReversal.reversalId
+        && reversal.originalSaleId == correction.originalSaleId && reversal.amountDelta == -before.outstanding_ugx;
     }
 
     function atomicWelfareCommit(correction, original) {
@@ -695,6 +812,117 @@ service cloud.firestore {
         || data.keys().hasAny(['supplierPosting','supplierCharge','paymentId','creditLedgerId'])
         || data.get('source', '') in ['Procurement Cash GRN settlement', 'Supplier credit settlement', 'Supplier payment transaction charge'];
     }
+    function receivableSettlementPath(id) {
+      return /databases/$(database)/documents/finance_receivable_settlements_v1/$(id);
+    }
+    function receivableBranch(row) {
+      return row.get('branch_id', row.get('branchId', ''));
+    }
+    function canCollectReceivable(tenantId, branchId) {
+      let staff = get(/databases/$(database)/documents/staff/$(request.auth.uid)).data;
+      let branch = get(/databases/$(database)/documents/branches/$(branchId)).data;
+      return isFinance() && staff.tenantId == tenantId && hasActiveStaffProfile()
+        && !staff.get('is_duplicate', false) && staff.get('active', true)
+        && staff.get('status', 'active').lower() == 'active'
+        && branch.tenantId == tenantId && branch.get('status','active').lower() == 'active'
+        && (isAssignedToBranch(branchId) || hasAnyRole(['Finance Head', 'Accountant', 'admin', 'Admin'])
+          || (staff.get('assigned_branches', []).size() == 0 && staff.get('branch_id', '') == ''
+            && staff.get('default_branch_id', '') == ''));
+    }
+    function eligibleReceivableDestination(a, branchId) {
+      let key = a.accountId;
+      let scope = a.scope;
+      let kind = a.portfolioClassification;
+      let path = /databases/$(database)/documents/finance_portfolios_v1/$(a.tenantId + '__' + key);
+      let registered = key.matches('^(bank_[a-f0-9]{64}|custom_[A-Za-z0-9_-]+)$');
+      let p = registered ? getAfter(path).data : {};
+      return a.initialized == true && a.currency == 'UGX' && a.portfolioId == key
+        && a.get('status', 'active') == 'active' && a.get('active', true)
+        && (scope == {'kind': 'organisation'} || scope == {'kind': 'branch', 'branchId': branchId})
+        && a.kind == (kind in ['bank', 'mobile_money'] ? 'bank' : 'petty_cash')
+        && (registered
+          ? p.id == key && p.origin == 'custom' && p.tenantId == a.tenantId && p.status == 'active'
+            && p.currency == 'UGX' && p.scope == scope && p.classification == kind
+            && kind in ['bank', 'mobile_money', 'cash_equivalent', 'petty_cash']
+            && (p.get('bankParentId', '') == 'system_bank' || p.allowsTransfersIn)
+          : (key == 'system_branch_cash_sales_' + branchId && scope.kind == 'branch' && kind == 'cash_equivalent')
+            || (key in ['system_mtn_mobile_money','system_airtel_mobile_money'] && scope.kind == 'organisation' && kind == 'mobile_money'));
+    }
+    function isReceivableMovement(id, data) {
+      return id.matches('^(receivable_payment_|transfer_receivable_).*')
+        || data.keys().hasAny(['receivableSettlementId', 'receivableId'])
+        || data.get('source', '') == 'Credit receivable payment';
+    }
+    function validReceivableMovement(id, data, account) {
+      let path = receivableSettlementPath(data.receivableSettlementId);
+      let p = getAfter(path).data;
+      return !exists(path) && p.recordedAt == request.time && id == p.movementId
+        && data.keys().hasOnly(['tenantId','branchId','portfolioId','accountDocumentId','accountDeltaUGX',
+          'amount','type','source','reference_number','receivableSettlementId','receivableId','invoiceNumber',
+          'postedBy','date','createdAt','updatedAt'])
+        && data.type == 'incoming' && data.source == 'Credit receivable payment' && data.amount == p.amountUGX
+        && data.tenantId == p.tenantId && data.branchId == p.branchId && data.portfolioId == account.accountId
+        && data.accountDocumentId == p.accountDocumentId && data.postedBy == p.actorId && data.date == p.date
+        && data.receivableId == p.receivableId && data.invoiceNumber == p.invoiceNumber
+        && data.reference_number == p.reference && data.createdAt == request.time && data.updatedAt == request.time;
+    }
+    function validReceivableRowSettlement(id, before, after) {
+      let path = receivableSettlementPath(after.lastSettlementId);
+      let p = getAfter(path).data;
+      return !exists(path) && p.recordedAt == request.time && p.receivableId == id
+        && p.tenantId == before.tenantId && before.outstanding_ugx > 0 && before.outstanding_ugx <= before.amount_ugx
+        && !(before.get('status', 'outstanding').lower() in ['paid', 'reversed', 'voided'])
+        && p.outstandingBeforeUGX == before.outstanding_ugx
+        && after.outstanding_ugx == p.outstandingAfterUGX && after.outstanding_ugx >= 0
+        && after.outstanding_ugx == before.outstanding_ugx - p.amountUGX
+        && after.status == (after.outstanding_ugx == 0 ? 'paid' : 'partial')
+        && after.lastProcessedAt == request.time
+        && after.diff(before).affectedKeys().hasOnly(['outstanding_ugx','status','lastSettlementId','lastProcessedAt']);
+    }
+    match /finance_receivable_settlements_v1/{requestId} {
+      function validSettlement(p) {
+        let debtPath = /databases/$(database)/documents/credit_receivables/$(p.receivableId);
+        let debt = get(debtPath).data;
+        let next = getAfter(debtPath).data;
+        let accountPath = /databases/$(database)/documents/finance_payment_accounts/$(p.accountDocumentId);
+        let account = get(accountPath).data;
+        let accountAfter = getAfter(accountPath).data;
+        let move = managementMovementPath(p.destinationKind, p.movementId);
+        let movement = getAfter(move).data;
+        let day = p.date.split('-');
+        let start = timestamp.date(int(day[0]), int(day[1]), int(day[2])) - duration.value(3, 'h');
+        return requestId.matches('^[A-Za-z0-9_-]{20,100}$')
+          && p.keys().hasOnly(['tenantId','receivableId','destinationAccountId','amountUGX','reference','requestId',
+            'actorId','settlementId','branchId','sourceSaleId','originalSaleId','invoiceId','invoiceNumber','customerId','customerName',
+            'outstandingBeforeUGX','outstandingAfterUGX','destinationPortfolio','destinationKind','destinationName',
+            'accountDocumentId','movementId','date','recordedAt'])
+          && p.actorId == request.auth.uid && p.recordedAt == request.time
+          && p.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && request.time >= start && request.time < start + duration.value(1, 'd')
+          && p.settlementId == requestId && p.requestId == requestId && p.movementId == 'receivable_payment_' + requestId
+          && p.amountUGX is int && p.amountUGX > 0 && p.reference is string && p.reference.size() >= 3 && p.reference.size() <= 120
+          && canCollectReceivable(p.tenantId, p.branchId) && debt.tenantId == p.tenantId && receivableBranch(debt) == p.branchId
+          && (p.sourceSaleId != '' || p.invoiceId != '')
+          && p.sourceSaleId == debt.get('receipt_id', debt.get('saleId', ''))
+          && p.originalSaleId == debt.get('originalSaleId', p.sourceSaleId)
+          && p.invoiceId == debt.get('invoiceId', debt.get('invoice_id', ''))
+          && p.invoiceNumber == debt.get('invoice_number', debt.get('receiptNumber', ''))
+          && p.customerId == (debt.get('debtorId', null) != null ? debt.debtorId
+            : debt.get('institution_id', null) != null ? debt.institution_id
+            : debt.get('client_id', null) != null ? debt.client_id : '')
+          && p.customerName == debt.get('client_name', debt.get('institution_name', ''))
+          && next.lastSettlementId == requestId && debt.get('lastSettlementId', '') != requestId
+          && p.accountDocumentId == p.tenantId + '_' + p.destinationAccountId
+          && account.tenantId == p.tenantId && account.accountId == p.destinationAccountId
+          && account.name == p.destinationName && account.kind == p.destinationKind
+          && account.portfolioClassification == p.destinationPortfolio && eligibleReceivableDestination(account, p.branchId)
+          && accountAfter.lastPostingId == p.movementId && accountAfter.balanceUGX == account.balanceUGX + p.amountUGX
+          && !exists(move) && movement.receivableSettlementId == requestId;
+      }
+      allow get: if canViewFinance() && (resource == null || resource.data.tenantId == getUserData().tenantId);
+      allow list: if resource.data.tenantId == getUserData().tenantId && (canViewFinance() ||
+        ((canViewBranchFinance() || isPOSOperator() || hasCustomModuleView('clients')) && isAssignedToBranch(resource.data.branchId)));
+      allow create: if validSettlement(request.resource.data);
+    }
     function validManagementMovement(id, data, kind) {
       let accountPath = /databases/$(database)/documents/finance_payment_accounts/$(data.accountDocumentId);
       let before = get(accountPath).data;
@@ -705,7 +933,10 @@ service cloud.firestore {
         && data.accountDeltaUGX == (data.type in ['incoming','deposit','topup'] ? data.amount : -data.amount)
         && before.kind == kind
         && (!data.keys().hasAny(['externalExpenseCollection','externalExpenseId']) || linkedExternalExpense(id, data, before))
-        && (isSupplierMovement(id, data)
+        && (isReceivableMovement(id, data)
+          ? after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.amount
+            && validReceivableMovement(id, data, before)
+          : isSupplierMovement(id, data)
           ? !data.keys().hasAny(['portfolioTransferId','movementClass','transferId','externalExpenseCollection','externalExpenseId','eodChannel'])
             && supplierMovement(id, data, before, after)
           : (id.matches('^pt_.*') || data.keys().hasAny(['portfolioTransferId','movementClass'])
@@ -859,6 +1090,8 @@ service cloud.firestore {
       allow create, update: if canonicalNonCashWelfareTransfer(request.resource.data);
       allow create: if isFinance() && isTenantMember(request.resource.data.tenantId)
         && request.resource.data.amount is int && request.resource.data.amount > 0
+        && request.resource.data.fromPortfolio != 'receivables' && request.resource.data.toPortfolio != 'receivables'
+        && !request.resource.data.keys().hasAny(['receivableId','remainingReceivableUGX'])
         && (request.resource.data.fromPortfolio == 'banked' || request.resource.data.toPortfolio == 'banked')
         && request.resource.data.bankMovementId == 'transfer_' + transferId
         && getAfter(/databases/$(database)/documents/banking_records/$('transfer_' + transferId)).data.transferId == transferId
@@ -1628,14 +1861,13 @@ service cloud.firestore {
 
     match /credit_receivables/{receivableId} {
       allow get: if isAuthenticated() && ((resource == null && isPOSOperator()) || canReadPosFinancial());
-      allow create: if atomicCreditCreate(receivableId);
-      allow update: if atomicCreditUpdate(receivableId);
-      allow read: if isTenantMember(resource.data.tenantId) && canViewFinance();
-      allow create: if isFinance() && isTenantMember(request.resource.data.tenantId);
-      allow update: if isFinance() && isTenantMember(resource.data.tenantId)
-        && isTenantMember(request.resource.data.tenantId)
-        && request.resource.data.tenantId == resource.data.tenantId;
-      allow delete: if isFinance() && isTenantMember(resource.data.tenantId);
+      allow read: if resource.data.tenantId == getUserData().tenantId && (
+        canViewFinance() || ((canViewBranchFinance() || isPOSOperator() || hasCustomModuleView('clients'))
+          && isAssignedToBranch(resource.data.branch_id)));
+      allow create: if validCreditRecognition(receivableId, request.resource.data);
+      allow update: if (request.resource.data.get('lastSettlementId', '') != resource.data.get('lastSettlementId', '')
+        ? validReceivableRowSettlement(receivableId, resource.data, request.resource.data)
+        : atomicCreditUpdate(receivableId));
     }
 
     match /supplier_payables/{payableId} {
@@ -3135,8 +3367,10 @@ service cloud.firestore {
         && isAssignedToBranch(request.resource.data.branchId)
         && request.resource.data.status == 'completed'
         && (
-          isLegacySale(request.resource.data) ||
-          hasValidV2SaleLinks(saleId)
+          (isLegacySale(request.resource.data)
+            ? !isReceivableCreditMethod(request.resource.data.get('paymentMethod', ''))
+              && !isReceivableCreditMethod(request.resource.data.get('secondaryPaymentMethod', ''))
+            : hasValidV2SaleLinks(saleId))
         );
       allow update: if isPOSOperator()
         && isTenantMember(resource.data.tenantId)
@@ -3187,7 +3421,11 @@ service cloud.firestore {
           && sale.receiptNumber == payment.receiptNumber
           && sale.checkoutAttemptId == payment.checkoutAttemptId
           && sale.totalAmount == payment.amount
-          && sale.canonicalPaymentId == paymentId;
+          && sale.canonicalPaymentId == paymentId
+          && (isReceivableCreditMethod(sale.paymentMethod) || isReceivableCreditMethod(sale.get('secondaryPaymentMethod', ''))
+            ? validCreditPayment(payment, sale)
+              && getAfter(/databases/$(database)/documents/credit_receivables/$(payment.saleId)).data.paymentId == paymentId
+            : !isReceivableCreditMethod(payment.paymentMethod));
       }
 
       allow get: if isAuthenticated()
@@ -3393,7 +3631,7 @@ service cloud.firestore {
       allow create: if isPOSOperator()
         && isTenantMember(request.resource.data.tenantId)
         && isAssignedToBranch(request.resource.data.branchId)
-        && (hasValidRevisionRequestEnvelope() || hasAtomicCorrectionChain(requestId));
+        && (hasValidRevisionRequestEnvelope() || (request.resource.data.requestType == 'POS_CREDIT_VOID' ? validAtomicCreditVoid(requestId, request.resource.data) : hasAtomicCorrectionChain(requestId)));
       // Revision lifecycle transitions are owned exclusively by the Admin SDK workers.
       allow update, delete: if false;
     }

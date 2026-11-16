@@ -44,22 +44,19 @@ test('institutional sale with an institution passes', () => {
   assert.deepEqual(validate({ context: 'institutional', hasInstitution: true }), { valid: true });
 });
 
-test('institutional credit without an institution is rejected, including the legacy internal token', () => {
+test('credit without a registered customer or institution is rejected for both payment tokens', () => {
   const expected = {
     valid: false,
-    code: 'credit_institution_required',
-    message: 'Select an eligible institution before using Institutional Credit.'
+    code: 'credit_identity_required',
+    message: 'Select a registered customer or eligible billing institution for credit.'
   };
   assert.deepEqual(validate({ paymentMethod: 'credit' }), expected);
   assert.deepEqual(validate({ paymentMethod: 'institutional_credit' }), expected);
 });
 
-test('institutional credit requires an eligible institution and does not accept a patient alone', () => {
-  assert.deepEqual(validate({ paymentMethod: 'credit', hasPatient: true }), {
-    valid: false,
-    code: 'credit_institution_required',
-    message: 'Select an eligible institution before using Institutional Credit.'
-  });
+test('credit accepts an identified customer and rejects an ineligible institution', () => {
+  assert.deepEqual(validate({ paymentMethod: 'credit', hasPatient: true }), { valid: true });
+  assert.equal(validate({ paymentMethod: 'cash', secondaryPaymentMethod: 'credit' }).valid, false);
   assert.deepEqual(validate({ paymentMethod: 'credit', hasInstitution: true }), { valid: true });
   assert.deepEqual(validate({ paymentMethod: 'institutional_credit', hasInstitution: true }), { valid: true });
   assert.deepEqual(validate({ paymentMethod: 'institutional_credit', hasInstitution: true, hasEligibleInstitution: false }), {

@@ -26,7 +26,7 @@ test('replacement checkout validates canonical identity before entering the tran
 });
 
 test('replacement checkout revalidates the immutable original lifecycle inside the checkout transaction', () => {
-  const transactionStart = repository.indexOf('return runTransaction(db');
+  const transactionStart = repository.indexOf('runTransaction(db, transaction => writeCheckoutV2Transaction');
   const originalRead = repository.indexOf("doc(db, 'sales', replacement.originalSaleId)");
   const lifecycleGuard = repository.indexOf('validatePosCheckoutV2ReplacementOriginalLifecycle');
   const firstInventoryWrite = repository.indexOf("transaction.update(doc(db, 'product_batches'");

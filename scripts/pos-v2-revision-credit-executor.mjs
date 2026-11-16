@@ -12,7 +12,8 @@ export async function executeInstitutionalCreditReversal({
   requestedBy,
   requestedByName,
   reason,
-  FieldValue
+  FieldValue,
+  compensation
 }) {
   if (!db || typeof db.runTransaction !== 'function') {
     throw new Error('Institutional credit reversal requires a Firestore database.');
@@ -68,12 +69,24 @@ export async function executeInstitutionalCreditReversal({
       sale,
       payment,
       receivable,
-      expectedAmount: expected.amount
+      expectedAmount: expected.amount,
+      allowSettled: !!compensation
     });
 
+    const outstanding = Number(receivable.outstanding_ugx);
+    const collected = expected.amount - outstanding;
+    const carried = compensation?.carriedCollectionsUGX ?? 0;
+    const extraRefund = compensation?.refundInitialTenderUGX ?? 0;
+    if (!Number.isFinite(carried) || carried < 0 || carried > collected) throw new Error('Invalid collected credit allocation.');
+    const refundDueUGX = collected - carried + extraRefund;
+    const adjustment = compensation ? {
+      amountDelta: -outstanding, outstandingDelta: -outstanding, collectedUGX: collected,
+      carriedCollectionsUGX: carried, refundDueUGX
+    } : {};
     const timestamp = FieldValue.serverTimestamp();
     tx.create(reversalRef, {
       ...expected,
+      ...adjustment,
       priorStatus: receivable.status || 'outstanding',
       priorOutstandingAmount: Number(receivable.outstanding_ugx || 0),
       status: 'COMPLETED',
@@ -86,7 +99,8 @@ export async function executeInstitutionalCreditReversal({
       status: 'reversed',
       reversalId: expected.reversalId,
       revisionId: expected.revisionId,
-      reversedAmount: expected.amount,
+      reversedAmount: outstanding,
+      ...(compensation ? { refundDueUGX } : {}),
       reversedBy: expected.requestedBy,
       reversedByName: expected.requestedByName,
       reversalReason: expected.reason,
@@ -99,7 +113,8 @@ export async function executeInstitutionalCreditReversal({
       reversalId: expected.reversalId,
       receivableId: expected.originalReceivableId,
       amountDelta: expected.amountDelta,
-      outstandingDelta: expected.outstandingDelta
+      outstandingDelta: expected.outstandingDelta,
+      ...adjustment
     };
   });
 }

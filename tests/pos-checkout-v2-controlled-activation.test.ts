@@ -92,5 +92,5 @@ test('browser reconciliation excludes V2 sales because Batch 4 owns durable down
 test('legacy mutation paths cannot edit or void immutable V2 receipts', () => {
   assert.match(salesSource, /ledgerEditingSale\.engineVersion === 2/);
   assert.match(salesSource, /sale\.engineVersion === 2/);
-  assert.match(salesSource, /durable V2 reversal workflow/);
+  assert.match(salesSource, /await voidPosV2CreditReceipt\(sale/);
 });

@@ -15,7 +15,7 @@ function stablePart(value, max = 180) {
 
 export function institutionalCreditAmount(payment) {
   return (Array.isArray(payment?.components) ? payment.components : [])
-    .filter(row => clean(row?.method) === 'institutional_credit')
+    .filter(row => ['institutional_credit', 'credit'].includes(clean(row?.method)))
     .reduce((sum, row) => sum + Math.max(0, numberValue(row?.amount)), 0);
 }
 
@@ -26,7 +26,7 @@ export function institutionalCreditReversalId({ tenantId, saleId, revisionId }) 
   return `pos_credit_reversal_${stablePart(`${tenantId}_${saleId}_${revisionId}`, 200)}`.slice(0, 240);
 }
 
-export function validateInstitutionalCreditOriginal({ sale, payment, receivable, expectedAmount }) {
+export function validateInstitutionalCreditOriginal({ sale, payment, receivable, expectedAmount, allowSettled = false }) {
   if (!sale || Number(sale.engineVersion || 0) !== 2 || sale.status !== 'completed') {
     throw new Error('Institutional credit reversal requires a completed POS V2 sale.');
   }
@@ -49,7 +49,8 @@ export function validateInstitutionalCreditOriginal({ sale, payment, receivable,
   if (!Number.isFinite(original) || Math.abs(original - amount) > EPSILON) {
     throw new Error('Institutional credit receivable amount does not reconcile with canonical payment.');
   }
-  if (!Number.isFinite(outstanding) || Math.abs(outstanding - amount) > EPSILON) {
+  if (!Number.isFinite(outstanding) || outstanding < 0 || outstanding > amount ||
+    (Math.abs(outstanding - amount) > EPSILON && !(allowSettled && receivable.lastSettlementId))) {
     throw new Error('Institutional credit has already been partially or fully settled. Manual review is required before receipt revision.');
   }
   return true;

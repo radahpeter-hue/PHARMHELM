@@ -6,11 +6,15 @@ import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {initializeTestEnvironment,assertFails} from '@firebase/rules-unit-testing';
 import {doc,setDoc,getDoc,updateDoc,deleteDoc,serverTimestamp} from 'firebase/firestore';
+import {settleCreditReceivable} from '../src/services/receivableSettlement.ts';
+import {kampalaBusinessDate} from '../src/utils/eodBusinessDate.ts';
 import {submitEod} from '../src/services/eodSubmissionService.ts';
 const env=await initializeTestEnvironment({projectId:'pharmhelm-eod-auto-test',firestore:{rules:readFileSync('firestore.rules','utf8')}});
 const tenantId='tenant_a',branch_id='masaka',uid='branch_operator',bank='bank_'+ 'a'.repeat(64);
 const targets=[['system_branch_cash_sales_masaka','petty_cash',120],['system_mtn_mobile_money','bank',230],['system_airtel_mobile_money','bank',340],[bank,'bank',450]];
-const input={tenantId,branch_id,reconciliation_date:'2026-11-02',shift_id:'dayShift',shift_name:'Day',shift_start:'08:00',shift_end:'17:00',cash_actual:120,cash_expected:120,momo_actual:230,momo_expected:230,airtel_actual:340,airtel_expected:340,card_actual:450,card_expected:450};
+const recentDate = pastDays => kampalaBusinessDate(new Date(Date.now()-pastDays*86400000));
+const auditDay=recentDate(5), deniedDay=recentDate(4), foreignDay=recentDate(3), missingDay=recentDate(2), zeroDay=recentDate(1);
+const input={tenantId,branch_id,reconciliation_date:auditDay,shift_id:'dayShift',shift_name:'Day',shift_start:'08:00',shift_end:'17:00',cash_actual:120,cash_expected:120,momo_actual:230,momo_expected:230,airtel_actual:340,airtel_expected:340,card_actual:450,card_expected:450};
 for(const c of ['insurance','institutional_credit','staff_welfare']){input[c+'_actual']=0;input[c+'_expected']=0;}
 try{
  await env.clearFirestore();
@@ -37,18 +41,18 @@ try{
  assert.equal(results.filter(r=>!r.replayed).length,1);
  const retry=await submitEod(input,{uid,tenantId},db);assert.equal(retry.replayed,true);
  for(const [id,,amount] of targets)assert.equal((await getDoc(doc(db,'finance_payment_accounts',tenantId+'_'+id))).data().balanceUGX,amount);
- await assertFails(setDoc(doc(db,'eod_reconciliations','eod~tenant_a~masaka~2026-11-05~dayShift'),{...input,reconciliation_date:'2026-11-05',financial_posting:'portfolios_v1'}));
+ await assertFails(setDoc(doc(db,'eod_reconciliations',`eod~tenant_a~masaka~${deniedDay}~dayShift`),{...input,reconciliation_date:deniedDay,financial_posting:'portfolios_v1'}));
  await assertFails(updateDoc(doc(db,'finance_payment_accounts',tenantId+'_'+bank),{balanceUGX:999999}));
  const other=env.authenticatedContext('other',{tenantId}).firestore();
- await assert.rejects(submitEod({...input,reconciliation_date:'2026-11-03'},{uid:'other',tenantId},other));
- const zeroId='eod~tenant_a~masaka~2026-11-06~dayShift';
- const zero={...input,reconciliation_date:'2026-11-06',reconciliation_key:zeroId,financial_posting:'portfolios_v1',card_settlement_account_id:bank,cashier_id:'other'};
+ await assert.rejects(submitEod({...input,reconciliation_date:foreignDay},{uid:'other',tenantId},other));
+ const zeroId=`eod~tenant_a~masaka~${zeroDay}~dayShift`;
+ const zero={...input,reconciliation_date:zeroDay,reconciliation_key:zeroId,financial_posting:'portfolios_v1',card_settlement_account_id:bank,cashier_id:'other'};
  for(const c of ['cash','momo','airtel','card'])zero[c+'_actual']=0;
  await assertFails(setDoc(doc(other,'eod_reconciliations',zeroId),zero));
  await setDoc(doc(db,'eod_reconciliations',zeroId),{...zero,cashier_id:uid});
  await assertFails(setDoc(doc(db,'eod_reconciliations','legacy-bypass'),{...input,financial_posting:'none',audit_only:true}));
  const it=env.authenticatedContext('it_head',{tenantId}).firestore();
- const auditId='eod~tenant_a~masaka~2026-11-02~dayShift';
+ const auditId=`eod~tenant_a~masaka~${auditDay}~dayShift`;
  await assertFails(updateDoc(doc(it,'eod_reconciliations',auditId),{cash_actual:999,cash_variance:879,correction_reason:'unpaired',corrected_by:'it_head',corrected_at:serverTimestamp(),correction_posting_id:'unpaired'}));
  await correctEod(auditId,{uid:'it_head',tenantId,role:'IT Head'},{cash:100,momo:200,airtel:300,card:400,insurance:0,institutional_credit:0,staff_welfare:0},'Correct declared collections',it);
  for(const [index,[accountId]] of targets.entries())assert.equal((await getDoc(doc(db,'finance_payment_accounts',tenantId+'_'+accountId))).data().balanceUGX,[100,200,300,400][index]);
@@ -66,6 +70,26 @@ try{
   assert.equal(ledger.entries.length,3,'One original funding plus two linked correction movements');
   assert.ok(ledger.entries.every(e=>e.eodReconciliationId===auditId&&e.shiftId==='dayShift'));
  }
+ // A credit collection posts independently of an already reconciled POS shift.
+ await env.withSecurityRulesDisabled(async context=>{
+  const seed=context.firestore();
+  await setDoc(doc(seed,'staff','finance'),{tenantId,role:'Finance Head',status:'active',active:true});
+  await setDoc(doc(seed,'credit_receivables','prior_credit'),{tenantId,branch_id,receipt_id:'old_credit_sale',
+   invoice_number:'MSK-CREDIT',amount_ugx:60,outstanding_ugx:60,status:'outstanding'});
+ });
+ const finance=env.authenticatedContext('finance').firestore();
+ const destinationAccountId='system_branch_cash_sales_masaka';
+ const auditBefore=(await getDoc(doc(finance,'eod_reconciliations',auditId))).data();
+ await settleCreditReceivable({tenantId,receivableId:'prior_credit',amountUGX:25,destinationAccountId,reference:'Till collection',
+  actorId:'finance',requestId:'level10_eod_test_settlement'},finance);
+ const funded=await getDoc(doc(finance,'finance_payment_accounts',tenantId+'_'+destinationAccountId));
+ assert.equal(funded.data().balanceUGX,135);
+ const cashLedger=await loadAuthoritativePortfolioLedger({...funded.data(),id:funded.id},{from:'1900-01-01',to:'9999-12-31',direction:'all'},finance);
+ assert.equal(cashLedger.entries.filter(e=>e.eodReconciliationId===auditId).length,3);
+ assert.ok(cashLedger.entries.some(e=>e.reference==='Till collection' && e.amountUGX===25 && !e.eodReconciliationId));
+ assert.deepEqual((await getDoc(doc(finance,'eod_reconciliations',auditId))).data(),auditBefore);
+ assert.equal((await getDoc(doc(finance,'credit_receivables','prior_credit'))).data().outstanding_ugx,35);
+ console.log('PASS receivable collection posts once alongside locked EOD and leaves the original audit intact.');
  // A correction may not reverse funds already spent. No audit/channel changes may survive.
  await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),'finance_payment_accounts',tenantId+'_system_branch_cash_sales_masaka'),{balanceUGX:0}));
  await assert.rejects(correctEod(auditId,{uid:'it_head',tenantId,role:'IT Head'},correction(100),'Insufficient cash reversal',it));
@@ -74,10 +98,10 @@ try{
  await assert.rejects(correctEod(auditId,{uid,tenantId,role:'Branch Manager'},correction(120),'Unauthorized correction',db));
  await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),'branches',branch_id),{cardSettlement:{bankPortfolioId:bank}}));
  await env.withSecurityRulesDisabled(c=>deleteDoc(doc(c.firestore(),'finance_payment_accounts',tenantId+'_system_airtel_mobile_money')));
- await assert.rejects(submitEod({...input,reconciliation_date:'2026-11-04'},{uid,tenantId},db));
+ await assert.rejects(submitEod({...input,reconciliation_date:missingDay},{uid,tenantId},db));
  assert.equal((await getDoc(doc(db,'finance_payment_accounts',tenantId+'_'+bank))).data().balanceUGX,410);
  await env.withSecurityRulesDisabled(async c=>{
-  assert.equal((await getDoc(doc(c.firestore(),'eod_reconciliations','eod~tenant_a~masaka~2026-11-04~dayShift'))).exists(),false,'Atomic failure cannot leave an EOD record');
+  assert.equal((await getDoc(doc(c.firestore(),'eod_reconciliations',`eod~tenant_a~masaka~${missingDay}~dayShift`))).exists(),false,'Atomic failure cannot leave an EOD record');
   await setDoc(doc(c.firestore(),'staff','second_operator'),{tenantId,role:'Branch Manager',assigned_branches:['second_branch']});
   await setDoc(doc(c.firestore(),'staff','foreign_operator'),{tenantId:'foreign_tenant',role:'owner'});
   await setDoc(doc(c.firestore(),'branches','second_branch'),{tenantId,shifts:{dayShift:{enabled:true,startTime:'08:00',endTime:'17:00'},nightShift:{enabled:true,startTime:'17:00',endTime:'23:00'}}});
@@ -96,6 +120,6 @@ try{
  const secondLedger=await loadAuthoritativePortfolioLedger({...secondSnapshot.data(),id:secondSnapshot.id},{from:'1900-01-01',to:'9999-12-31',direction:'all'},owner);
  assert.equal(secondLedger.entries.length,2);assert.deepEqual(new Set(secondLedger.entries.map(e=>e.shiftId)),new Set(['dayShift','nightShift']));
  const foreign=env.authenticatedContext('foreign_operator',{tenantId:'foreign_tenant'}).firestore();
- await assert.rejects(submitEod({...secondInput,reconciliation_date:'2026-11-03'},{uid:'foreign_operator',tenantId},foreign));
+ await assert.rejects(submitEod({...secondInput,reconciliation_date:foreignDay},{uid:'foreign_operator',tenantId},foreign));
  console.log('Automatic branch EOD posting, exactly-once ledgers, independent branches/shifts, previous-day posting, corrections, tenant isolation and atomic failure PASSED');
 }finally{await env.cleanup();}

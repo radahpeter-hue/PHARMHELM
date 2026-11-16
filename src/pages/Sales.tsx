@@ -1,3 +1,5 @@
+import { voidPosV2CreditReceipt } from '../services/pos-v2/posSaleRevisionV2AtomicRepository';
+import { isCreditMethod } from '../domain/finance/creditRecognition';
 import { capturePosShift } from '../utils/posShiftAttribution';
 import { staffMatchesId } from '../utils/operationalStaff';
 import { getDisplayReference } from '../utils/salePresentation';
@@ -148,6 +150,7 @@ const Sales: React.FC = () => {
   }, [ledgerEditingSale]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodType>('cash');
   const [secondaryPaymentMethod, setSecondaryPaymentMethod] = useState<PaymentMethodType>('cash');
+  const [creditUpfrontAmount, setCreditUpfrontAmount] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const checkoutAttemptRef = React.useRef<(PosCheckoutAttemptSelection & {
     tenantId: string;
@@ -640,6 +643,8 @@ const Sales: React.FC = () => {
   const discountAmount = Math.round(subtotal * (discountPercentage / 100));
   const totalAmount = subtotal - discountAmount;
   const isWelfareSplit = paymentMethod === 'staff_welfare' && totalAmount > welfareBalance;
+  const isCreditSale = isCreditMethod(paymentMethod);
+  const isCreditSplit = isCreditSale && Number(creditUpfrontAmount) > 0;
 
   useEffect(() => {
     if (selectedInstitution) {
@@ -751,6 +756,13 @@ const Sales: React.FC = () => {
       return;
     }
 
+    if (isCreditSale && creditUpfrontAmount && (!Number.isFinite(Number(creditUpfrontAmount))
+      || Number(creditUpfrontAmount) < 0 || Number(creditUpfrontAmount) >= totalAmount)) {
+      receiptWindow?.close();
+      toast.error('The amount received now must be less than the sale total.');
+      return;
+    }
+
     // React state disables the button visually; this synchronous guard also
     // closes the same-tick double-click window before any engine can start.
     if (checkoutSubmissionRef.current) {
@@ -831,6 +843,9 @@ const Sales: React.FC = () => {
         };
       });
 
+      if (isCreditSale && (editingSaleId || checkoutEngine !== 'v2')) {
+        throw new Error('Credit sales require POS V2 at this branch. Existing unmatched receipts appear in Credit Receivables.');
+      }
       const finalTotal = totalAmount;
       let finalReceiptId = editingSaleId;
       let completedSale: Sale | null = null;
@@ -903,8 +918,8 @@ const Sales: React.FC = () => {
           items: itemsWithVat,
           discountPercentage,
           paymentMethod,
-          secondaryPaymentMethod: isWelfareSplit ? secondaryPaymentMethod : undefined,
-          secondaryAmount: isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
+          secondaryPaymentMethod: isWelfareSplit || isCreditSplit ? secondaryPaymentMethod : undefined,
+          secondaryAmount: isCreditSplit ? Number(creditUpfrontAmount) : isWelfareSplit ? (totalAmount - welfareBalance) : undefined,
           welfareAmount: paymentMethod === 'staff_welfare' ? (isWelfareSplit ? welfareBalance : totalAmount) : undefined,
           welfareBeneficiaryIsStaff: paymentMethod === 'staff_welfare' ? Boolean(selectedPatient?.isStaff) : undefined,
           context,
@@ -1183,6 +1198,7 @@ const Sales: React.FC = () => {
       setSelectedPrescriber(null);
       setContext('walk-in');
       setPaymentMethod('cash');
+      setCreditUpfrontAmount('');
       setIsCheckoutOpen(false);
       setEditingSaleId(null);
       checkoutAttemptRef.current = null;
@@ -2426,6 +2442,22 @@ const Sales: React.FC = () => {
                   ))}
                 </div>
 
+                {isCreditSale && !editingSaleId && <div className="grid gap-3 rounded-2xl border border-zinc-200 p-4 sm:grid-cols-2">
+                  <label className="text-sm font-semibold">Amount received now (UGX)
+                    <input className="mt-1 w-full rounded-xl border border-zinc-300 p-2" type="number" min="0"
+                      step="any" value={creditUpfrontAmount} onChange={event=>setCreditUpfrontAmount(event.target.value)}
+                      placeholder="0 for full credit"/>
+                  </label>
+                  {isCreditSplit && <label className="text-sm font-semibold">Payment method for amount received
+                    <select className="mt-1 w-full rounded-xl border border-zinc-300 p-2" value={secondaryPaymentMethod}
+                      onChange={event=>setSecondaryPaymentMethod(event.target.value as PaymentMethodType)}>
+                      {POS_CANONICAL_PAYMENT_METHODS.filter(option=>['cash','mtn_momo','airtel_money','card'].includes(option.id))
+                        .map(option=><option key={option.id} value={option.id}>{option.label}</option>)}
+                    </select>
+                  </label>}
+                  {isCreditSplit && <p className="text-sm font-medium">Credit balance UGX {Math.max(0,totalAmount-Number(creditUpfrontAmount)).toLocaleString()}</p>}
+                </div>}
+
                 {isWelfareSplit && (
                   <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 space-y-3">
                     <p className="text-[10px] text-amber-700 font-bold uppercase flex items-center gap-2">
@@ -2503,12 +2535,15 @@ const Sales: React.FC = () => {
           onVoid={async (saleId, reason) => {
             const sale = sales.find(s => s.id === saleId);
             if (!sale) return;
-            if (sale.engineVersion === 2) {
-              toast.error('POS V2 receipts require a durable V2 reversal workflow and cannot be voided through the legacy path.');
-              return;
-            }
-            
             try {
+              if (sale.engineVersion === 2) {
+                if (!profile?.uid) throw new Error('An authenticated POS operator is required.');
+                const result = await voidPosV2CreditReceipt(sale,{uid:profile.uid,name:profile.full_name || profile.uid,role:profile.role},reason);
+                toast.success(result.refundDueUGX>0
+                  ? `Credit receipt voided. Refund due UGX ${result.refundDueUGX.toLocaleString()}.`
+                  : 'Credit receipt voided.');
+                return;
+              }
               if (!profile?.tenantId) throw new Error('A tenant profile is required to void this sale.');
               const voidBranchId = sale.branchId || activeBranchId;
               if (!voidBranchId) throw new Error('This receipt has no branch assignment and cannot be voided safely.');
@@ -2538,7 +2573,7 @@ const Sales: React.FC = () => {
               toast.success(changed ? 'Sale voided successfully' : 'Sale was already voided');
             } catch (error) {
               console.error('Error voiding sale:', error);
-              toast.error('Failed to void sale');
+              toast.error(error instanceof Error ? error.message : 'Failed to void sale');
             }
           }}
           onEdit={(sale) => {
@@ -3336,7 +3371,8 @@ const ReceiptLedger = ({ sales, staff, onVoid, onEdit, onEditInPOS, onReviseV2, 
                           )}
                         </>
                       )}
-                      {sale.status !== 'voided' && (
+                      {canOperatePos && sale.status !== 'voided' && (sale.engineVersion !== 2 ||
+                        ([sale.paymentMethod,sale.secondaryPaymentMethod].some(isCreditMethod) && !sale.revisionLocked)) && (
                         <button 
                           onClick={() => {
                             setSelectedSale(sale);

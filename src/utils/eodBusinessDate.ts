@@ -7,9 +7,11 @@ export function isBusinessDate(value: string): boolean {
 
 export function kampalaBusinessDate(instant: Date = new Date()): string {
   if (!Number.isFinite(instant.getTime())) throw new Error('Invalid business-day timestamp.');
-  return new Intl.DateTimeFormat('en-CA', {
+  const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Africa/Kampala', year: 'numeric', month: '2-digit', day: '2-digit'
-  }).format(instant);
+  }).formatToParts(instant);
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value;
+  return `${value('year')}-${value('month')}-${value('day')}`;
 }
 
 /** Ambiguous timezone-free legacy timestamps cannot establish a business day. */

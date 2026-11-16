@@ -12,7 +12,7 @@ const {settleSupplierCreditDraft,requestSupplierCreditDraft,rejectSupplierCredit
 const {collectCashOutflows}=await import('../node_modules/.cache/finance-emulator/cashOutflows.js');
 const {createCustomFinancialPortfolio}=await import('../node_modules/.cache/finance-emulator/portfolioFirestore.js');
 const {registerPortfolioFunding}=await import('../node_modules/.cache/finance-emulator/portfolioFunding.js');
-const {postManagementCashEntry,createManagementFinanceWriteGroup,postManagementReceivablePayment}=await import('../node_modules/.cache/finance-emulator/managementCashPosting.js');
+const {postManagementCashEntry,createManagementFinanceWriteGroup}=await import('../node_modules/.cache/finance-emulator/managementCashPosting.js');
 const {registerManagementPaymentAccount}=await import('../node_modules/.cache/finance-emulator/managementPaymentAccountService.js');
 const tenantId='finance-test',financeUid='finance-secondary';
 const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-settlement-rules',firestore:{rules:readFileSync(process.env.PHARMHELM_SETTLEMENT_RULES || 'firestore.rules','utf8')}});
@@ -108,16 +108,6 @@ try {
  assert.equal(Boolean(await value('cashTransfers',transferRef.id)),didTransfer);
  assert.equal((await value('finance_payment_accounts',accountId('petty_cash'))).balanceUGX,didTransfer?20000:0);
  console.log('PASS bank transfer and supplier settlement share the same bank balance.');
- await seed('receivable-source','bank',0);
- await admin(db=>setDoc(doc(db,'credit_receivables','receivable'),{tenantId,outstanding_ugx:10000,amount_ugx:10000,status:'outstanding'}));
- const receivableInput={tenantId,receivableId:'receivable',amountUGX:10000,requestId:'receivable-request',actorId:financeUid};
- await Promise.all([postManagementReceivablePayment(receivableInput,finance),postManagementReceivablePayment(receivableInput,finance)]);
- assert.equal((await value('finance_payment_accounts',accountId('bank'))).balanceUGX,10000);
- assert.equal((await value('credit_receivables','receivable')).outstanding_ugx,0);
- console.log('PASS receivable-to-bank funding is atomic and duplicate-safe.');
-
- await assertFails(updateDoc(doc(actor('foreign-finance'),'credit_receivables','receivable'),{outstanding_ugx:999999}));
- await assertFails(updateDoc(doc(finance,'credit_receivables','receivable'),{tenantId:'other'}));
  await seed('denied');
  await assert.rejects(settleCashGrnDraft({...input('denied','wrong-role'),actor:{uid:'procurement-only',name:'Procurement'}},actor('procurement-only')), /HQ Finance/);
  await assert.rejects(settleCashGrnDraft({...input('denied','foreign'),actor:{uid:'foreign-finance',name:'Other Finance'}},actor('foreign-finance')), /HQ Finance/);

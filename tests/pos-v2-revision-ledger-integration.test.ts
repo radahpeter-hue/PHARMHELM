@@ -48,7 +48,7 @@ test('legacy mutation paths still fail closed for POS V2 receipts', () => {
   );
   assert.match(
     salesSource,
-    /if \(sale\.engineVersion === 2\)[\s\S]*?POS V2 receipts require a durable V2 reversal workflow and cannot be voided through the legacy path\./
+    /if \(sale\.engineVersion === 2\)[\s\S]*?await voidPosV2CreditReceipt\(sale,[\s\S]*?return;[\s\S]*?await voidSaleInventoryAtomically/
   );
 });
 

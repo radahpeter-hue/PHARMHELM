@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, increment, runTransaction, Timestamp, writeBatch, type Firestore, type Transaction, type WriteBatch, type DocumentReference, type DocumentData } from 'firebase/firestore';
+import { collection, doc, increment, runTransaction, Timestamp, writeBatch, type Firestore, type Transaction, type WriteBatch, type DocumentReference, type DocumentData } from 'firebase/firestore';
 import { ledgerCollectionForPortfolioKind } from '../domain/finance/portfolioFundingService';
 import { auth, db } from '../firebase';
 
@@ -131,35 +131,4 @@ export function createManagementFinanceWriteGroup(tenantId: string, actorId: str
       committed=true;await batch.commit();
     }
   };
-}
-
-/** Existing receivable-to-bank funding writer shares the controlled bank balance. */
-export async function postManagementReceivablePayment(input:{tenantId:string;receivableId:string;amountUGX:number;requestId:string;actorId:string},connection:Firestore=db) {
-  const transferId=`receivable_${input.tenantId}_${input.receivableId}_${input.requestId}`;
-  const transferRef=doc(connection,'cashTransfers',transferId);
-  const receivableRef=doc(connection,'credit_receivables',input.receivableId);
-  if(!Number.isSafeInteger(input.amountUGX)||input.amountUGX<=0)throw new Error('Enter a positive whole UGX amount.');
-  try { return await runTransaction(connection,async tx=>{
-    const [transfer,receivable]=await Promise.all([tx.get(transferRef),tx.get(receivableRef)]);
-    if(transfer.exists()) {
-      if(transfer.data().tenantId!==input.tenantId||transfer.data().amount!==input.amountUGX||transfer.data().processedBy!==input.actorId)throw new Error('Receivable payment reference conflict.');
-      return {remainingUGX:Number(transfer.data().remainingReceivableUGX)};
-    }
-    if(!receivable.exists()||receivable.data().tenantId!==input.tenantId)throw new Error('Post and verify the canonical receivable before banking its payment.');
-    const outstanding=Number(receivable.data().outstanding_ugx);
-    if(!Number.isSafeInteger(outstanding)||outstanding<input.amountUGX)throw new Error('Payment exceeds the current outstanding receivable.');
-    const remaining=outstanding-input.amountUGX,now=Timestamp.now();
-    const bankMovementId=`transfer_${transferId}`;
-    stageManagementCashEntry(tx,bankMovementId,{tenantId:input.tenantId,amount:input.amountUGX,type:'incoming',source:'Credit receivable payment',transferId,reference_number:transferId},connection,MANAGEMENT_BANK_ACCOUNT,input.actorId);
-    tx.set(transferRef,{tenantId:input.tenantId,fromPortfolio:'receivables',toPortfolio:'banked',amount:input.amountUGX,bankMovementId,receivableId:input.receivableId,remainingReceivableUGX:remaining,processedBy:input.actorId,processedAt:now});
-    tx.update(receivableRef,{outstanding_ugx:remaining,status:remaining===0?'paid':'outstanding',lastProcessedAt:now});
-    return {remainingUGX:remaining};
-  }); } catch(error) {
-    try {
-      const existing=await getDoc(transferRef);
-      if(existing.exists()&&existing.data().tenantId===input.tenantId&&existing.data().amount===input.amountUGX&&existing.data().processedBy===input.actorId)
-        return {remainingUGX:Number(existing.data().remainingReceivableUGX)};
-    } catch {}
-    throw error;
-  }
 }
