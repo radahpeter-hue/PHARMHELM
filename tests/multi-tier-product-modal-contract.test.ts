@@ -16,6 +16,11 @@ test('device products reuse the consumable packaging form that includes Units pe
   assert.ok(source.includes("{formData.category === 'device' && renderConsumableFields()}"));
 });
 
+test('product registration removes unset optional fields before the Firestore identity transaction', () => {
+  assert.match(source, /const productData = omitUndefinedDeep\(/);
+  assert.match(source, /await createScopedIdentity\('products', profile\.tenantId, productData\)/);
+});
+
 test('POS multi-tier activation is explicit, tenant scoped and limited to full Settings access', () => {
   assert.match(settings, /const canManageSettings = hasPermission\('settings', 'all'\)/);
   assert.match(settings, /multiTierSellingEnabled: settings\.features\?\.multiTierSellingEnabled !== true/);
