@@ -2845,7 +2845,39 @@ service cloud.firestore {
         && !('operational_delivery_route' in request.resource.data)
         && validOrderClass(request.resource.data)
         && (!isOperationalOrderData(request.resource.data) || isAssignedToBranch(request.resource.data.requesting_branch_id) || isProcurement());
-      allow update: if isAuthenticated()
+      function advancesApproval(save, next) {
+        let write = save.writes[save.next];
+        let line = getAfter(/databases/$(database)/documents/stock_order_lines/$(write.lineId)).data;
+        return next.diff(save).affectedKeys().hasOnly(['next']) && next.next == save.next + 1
+          && line.order_id == orderId && line.tenantId == resource.data.tenantId
+          && line.approval_operation_id == save.id && line.line_status == write.data.line_status
+          && line.qty_ordered == write.data.qty_ordered && line.line_total_ugx == write.data.line_total_ugx;
+      }
+      function validApprovalUpdate() {
+        let old = resource.data.get('approvalSave', null);
+        let data = request.resource.data;
+        let next = data.get('approvalSave', null);
+        let changed = data.diff(resource.data).affectedKeys();
+        return (old == null && next == null)
+          || (resource.data.status == 'awaiting_finance_approval' && isProcurement()
+            && (old == null
+              ? data.status == resource.data.status && changed.hasOnly(['approvalSave'])
+                && next.next == 0 && next.writes.size() > 0 && next.audit.initiatedBy == request.auth.uid
+              : (next != null
+                ? data.status == resource.data.status && changed.hasOnly(['approvalSave']) && advancesApproval(old, next)
+                : old.next == old.writes.size() && data.status == 'approved'
+                  && changed.hasOnly(['status', 'total_order_value_ugx', 'approved_at', 'approved_by',
+                    'approval_revision', 'approval_audit_id', 'approval_operation_id', 'updatedAt', 'approvalSave'])
+                  && data.approval_operation_id == old.id && data.approved_by == request.auth.uid
+                  && data.total_order_value_ugx == old.result.approvedTotalUGX
+                  && data.approval_audit_id == 'approval_' + orderId && validOrderClass(data)
+                  && existsAfter(/databases/$(database)/documents/procurement_approval_audit/$(data.approval_audit_id)))));
+      }
+      allow update: if ('approvalSave' in resource.data || 'approvalSave' in request.resource.data)
+        && isTenantMember(resource.data.tenantId)
+        && validApprovalUpdate();
+      allow update: if !('approvalSave' in resource.data || 'approvalSave' in request.resource.data)
+        && isAuthenticated()
         && (isBranchManager() || isProcurement())
         && isTenantMember(resource.data.tenantId)
         && isTenantMember(request.resource.data.tenantId)
@@ -2931,6 +2963,22 @@ service cloud.firestore {
             && request.resource.data.unit_cost_ugx is number && request.resource.data.unit_cost_ugx >= 0 && request.resource.data.unit_cost_ugx <= 9007199254740991
             && request.resource.data.line_total_ugx <= 9007199254740991
             && request.resource.data.line_total_ugx == request.resource.data.qty_ordered * request.resource.data.unit_cost_ugx));
+      function validApprovalLineUpdate() {
+        let orderPath = parentOrderPath();
+        let previous = get(orderPath).data.approvalSave;
+        let next = getAfter(orderPath).data.approvalSave;
+        let planned = previous.writes[previous.next];
+        let data = request.resource.data;
+        return next.id == previous.id && next.next == previous.next + 1
+          && data.approval_operation_id == previous.id && planned.lineId == lineId
+          && resource.data.line_status == 'awaiting_finance_approval'
+          && data.diff(resource.data).affectedKeys().hasOnly(['approval_operation_id', 'original_qty',
+            'qty_ordered', 'line_total_ugx', 'line_status', 'updatedAt', 'substituted_by_product_id'])
+          && hasValidLineClass(false);
+      }
+      // The order cursor must advance in the same commit. Its scoped rule authorizes the actor.
+      allow update: if request.resource.data.get('approval_operation_id', '') != resource.data.get('approval_operation_id', '')
+        && validApprovalLineUpdate();
       // Direct GRN source totals are authorized by fresh immutable line evidence.
       // This bounded path avoids re-evaluating generic order-edit permissions.
       function validDirectGrnSourceUpdate() {
@@ -2955,7 +3003,8 @@ service cloud.firestore {
       allow update: if request.resource.data.get('operational_delivery_route', '') == 'DIRECT_BRANCH'
         && request.resource.data.get('qty_received', 0) != resource.data.get('qty_received', 0)
         && validDirectGrnSourceUpdate();
-      allow update: if isAuthenticated()
+      allow update: if request.resource.data.get('approval_operation_id', '') == resource.data.get('approval_operation_id', '')
+        && isAuthenticated()
         && (request.resource.data.get('inventoryClass', '') != 'OPERATIONAL'
           || (request.resource.data.order_id == resource.data.order_id
             && request.resource.data.product_id == resource.data.product_id
@@ -3565,6 +3614,21 @@ service cloud.firestore {
     }
 
 
+
+    match /unsupplied_lines/{unsuppliedId} {
+      function validStagedApprovalShortfall(data) {
+        let order = get(/databases/$(database)/documents/stock_orders/$(data.order_id)).data;
+        let staged = order.approvalSave;
+        let write = staged.writes[staged.next];
+        return isProcurement() && isTenantMember(order.tenantId)
+          && data.tenantId == order.tenantId && order.status == 'awaiting_finance_approval'
+          && data.approval_audit_id == 'approval_' + data.order_id
+          && unsuppliedId == data.approval_audit_id + '_' + write.lineId
+          && data == write.unsupplied;
+      }
+      allow create: if 'approval_audit_id' in request.resource.data
+        && validStagedApprovalShortfall(request.resource.data);
+    }
 
     // Write-once financial approval history. Only an authenticated procurement
     // operator can create it alongside the order's atomic approved transition.

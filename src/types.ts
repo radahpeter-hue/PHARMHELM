@@ -1141,6 +1141,13 @@ export interface StockOrder {
   submitted_at?: string;
   approved_at?: string;
   approved_by?: string;
+  approval_audit_id?: string;
+  approvalSave?: {
+    next: number;
+    audit: { initiatedBy: string };
+    writes: unknown[];
+    result: { approvedTotalUGX: number; addedCount: number; unsuppliedCount: number };
+  };
   notes?: string;
 }
 
@@ -1224,6 +1231,7 @@ export interface GRNLine {
 }
 
 export interface UnsuppliedLine {
+  approval_audit_id?: string;
   id: string;
   tenantId: string;
   order_id: string;
