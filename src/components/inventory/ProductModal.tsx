@@ -472,21 +472,21 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/40 backdrop-blur-sm">
-      <div className="bg-white w-full max-w-4xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        <div className="px-8 py-6 border-b border-zinc-100 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-zinc-950/40 backdrop-blur-sm">
+      <div className="bg-white w-full min-w-0 max-w-4xl rounded-2xl sm:rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)]">
+        <div className="shrink-0 px-4 py-3 sm:px-8 sm:py-6 border-b border-zinc-100 flex items-center justify-between gap-2">
           <div>
             <h2 className="text-xl font-black text-zinc-900 uppercase tracking-tight">
               {product ? 'Edit Product' : 'Add New Product'}
             </h2>
             <p className="text-xs text-zinc-500 font-medium">Inventory Master Registry</p>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
-            <X size={24} className="text-zinc-400" />
+          <button type="button" aria-label="Close product form" onClick={onClose} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-zinc-700 hover:bg-zinc-100">
+            <X size={24} aria-hidden="true" />
           </button>
         </div>
 
-        <form id="product-form" onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-6 sm:space-y-8">
+        <form id="product-form" onSubmit={handleSubmit} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-8 space-y-6 sm:space-y-8">
           {/* Core Details */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="space-y-1">
@@ -620,11 +620,11 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
           {renderSellingTierConfiguration()}
         </form>
 
-        <div className="px-8 py-6 border-t border-zinc-100 flex justify-end gap-3">
+        <div className="shrink-0 px-4 py-3 sm:px-8 sm:py-6 border-t border-zinc-100 flex flex-wrap justify-end gap-2 sm:gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="px-6 py-2 border border-zinc-200 rounded-xl font-bold text-zinc-600 hover:bg-zinc-50 transition-colors uppercase text-xs tracking-widest"
+            className="min-h-11 px-4 sm:px-6 py-2 border border-zinc-200 rounded-xl font-bold text-zinc-600 hover:bg-zinc-50 transition-colors uppercase text-xs tracking-widest"
           >
             Cancel
           </button>
@@ -632,7 +632,7 @@ const ProductModal: React.FC<ProductModalProps> = ({ isOpen, onClose, product, s
             type="submit"
             form="product-form"
             disabled={isSaving}
-            className="px-8 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl font-bold transition-all shadow-lg shadow-zinc-900/20 uppercase text-xs tracking-widest disabled:opacity-60 disabled:cursor-wait"
+            className="min-h-11 px-4 sm:px-8 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl font-bold transition-all shadow-lg shadow-zinc-900/20 uppercase text-xs tracking-widest disabled:opacity-60 disabled:cursor-wait"
           >
             {isSaving ? 'Saving…' : product ? 'Update Product' : 'Register Product'}
           </button>

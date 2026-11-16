@@ -151,12 +151,12 @@ const OperationalInventoryTab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex gap-1 p-1 bg-zinc-100 rounded-2xl w-fit">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="grid w-full grid-cols-2 gap-1 rounded-xl bg-zinc-100 p-1 sm:flex sm:w-fit">
           <button
             onClick={() => setActiveSubTab('registry')}
             className={cn(
-              "px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+              "min-h-11 rounded-xl px-2 py-2 text-xs font-bold transition-colors sm:px-4",
               activeSubTab === 'registry' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
             )}
           >
@@ -165,7 +165,7 @@ const OperationalInventoryTab: React.FC = () => {
           <button
             onClick={() => setActiveSubTab('usage')}
             className={cn(
-              "px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+              "min-h-11 rounded-xl px-2 py-2 text-xs font-bold transition-colors sm:px-4",
               activeSubTab === 'usage' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
             )}
           >
