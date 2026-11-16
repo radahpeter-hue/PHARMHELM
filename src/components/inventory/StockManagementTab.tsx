@@ -53,12 +53,12 @@ const StockManagementTab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex gap-1 p-1 bg-zinc-100 rounded-2xl w-fit">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="grid w-full grid-cols-2 gap-1 rounded-xl bg-zinc-100 p-1 sm:flex sm:w-fit">
           <button
             onClick={() => setActiveSubTab('adjustments')}
             className={cn(
-              "px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+              "min-h-11 rounded-xl px-2 py-2 text-xs font-bold transition-colors sm:px-4",
               activeSubTab === 'adjustments' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
             )}
           >
@@ -67,7 +67,7 @@ const StockManagementTab: React.FC = () => {
           <button
             onClick={() => setActiveSubTab('transfers')}
             className={cn(
-              "px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+              "min-h-11 rounded-xl px-2 py-2 text-xs font-bold transition-colors sm:px-4",
               activeSubTab === 'transfers' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
             )}
           >
@@ -78,7 +78,7 @@ const StockManagementTab: React.FC = () => {
           {activeSubTab === 'adjustments' ? (
             <button 
               onClick={() => setIsAdjustmentModalOpen(true)}
-              className="px-4 py-2 bg-zinc-900 text-white rounded-xl font-bold text-xs uppercase tracking-widest flex items-center gap-2"
+              className="min-h-11 px-4 py-2 bg-zinc-900 text-white rounded-xl font-bold text-xs uppercase tracking-widest flex items-center gap-2"
             >
               <ClipboardList size={16} />
               New Adjustment
@@ -86,7 +86,7 @@ const StockManagementTab: React.FC = () => {
           ) : (
             <button 
               onClick={() => setIsTransferModalOpen(true)}
-              className="px-4 py-2 bg-zinc-900 text-white rounded-xl font-bold text-xs uppercase tracking-widest flex items-center gap-2"
+              className="min-h-11 px-4 py-2 bg-zinc-900 text-white rounded-xl font-bold text-xs uppercase tracking-widest flex items-center gap-2"
             >
               <ArrowLeftRight size={16} />
               New Transfer
@@ -231,11 +231,11 @@ const AdjustmentModal: React.FC<{ isOpen: boolean; onClose: () => void; products
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/40 backdrop-blur-sm">
-      <div className="bg-white w-full max-w-lg rounded-[32px] shadow-2xl overflow-hidden">
+      <div className="bg-white w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-2xl sm:rounded-[32px] shadow-2xl">
         <div className="px-8 py-6 border-b border-zinc-100">
           <h2 className="text-xl font-black text-zinc-900 uppercase tracking-tight">Stock Adjustment</h2>
         </div>
-        <form onSubmit={handleSubmit} className="p-8 space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-4 p-4 sm:space-y-6 sm:p-8">
           <div className="space-y-4">
             <div className="space-y-1">
               <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Select Product</label>
@@ -282,7 +282,7 @@ const TransferModal: React.FC<{ isOpen: boolean; onClose: () => void; products: 
   // Simplified transfer modal for now
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/40 backdrop-blur-sm">
-      <div className="bg-white w-full max-w-lg rounded-[32px] shadow-2xl overflow-hidden p-12 text-center">
+      <div className="bg-white w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-2xl sm:rounded-[32px] shadow-2xl p-12 text-center">
         <AlertCircle className="mx-auto text-zinc-400 mb-4" size={48} />
         <h2 className="text-xl font-black text-zinc-900 uppercase tracking-tight mb-2">Branch Transfers</h2>
         <p className="text-zinc-500 text-sm mb-6">Inter-branch transfers are managed via the Stock In/Out module. Please use the Stock In/Out module to initiate a transfer request.</p>
