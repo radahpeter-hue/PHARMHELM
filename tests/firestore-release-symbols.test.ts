@@ -49,6 +49,27 @@ test('a retained root helper keeps its dependency chain accessible at root',()=>
 }`;
  assert.equal(localizeCollectionHelpers(source),source);
 });
+test('bounded multi-collection helpers retain the same call chain in every owning match',()=>{
+ const source=`service cloud.firestore {
+  match /databases/{database}/documents {
+    function positive(value) { return value > 0; }
+    function validDebt() { return positive(request.resource.data.amount); }
+    match /debts/{id} {
+      allow create: if validDebt();
+    }
+    match /invoices/{id} {
+      allow create: if validDebt();
+    }
+  }
+}`;
+ const result=localizeCollectionHelpers(source,6);
+ assert.equal((result.match(/function positive/g)||[]).length,2);
+ assert.equal((result.match(/function validDebt/g)||[]).length,2);
+ assert.ok(result.indexOf('function positive')>result.indexOf('match /debts/'));
+ assert.ok(result.lastIndexOf('function positive')>result.indexOf('match /invoices/'));
+ assert.equal((result.match(/allow create: if validDebt\(\);/g)||[]).length,2);
+ assert.equal(localizeCollectionHelpers(result,6),result);
+});
 test('release compaction renames internal symbols while preserving paths, fields and role literals',()=>{
  const source=`rules_version = '2'; service cloud.firestore { match /databases/{database}/documents {
  // comment must not change quoted text

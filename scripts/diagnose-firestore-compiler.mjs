@@ -51,6 +51,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  await diagnoseCompiler({project:'gen-lang-client-0911422817',token,runId:process.env.GITHUB_RUN_ID||Date.now(),controls:[
   {label:'Minimal deny-all control',source:"rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read, write: if false; } } }"},
   {label:'Current PR base control',source:readFileSync(process.argv[2],'utf8')},
+  ...process.argv.slice(3).map(path=>({label:path,source:readFileSync(path,'utf8')})),
  ]});
  console.log('Diagnostic controls do not certify the candidate. The original candidate failure remains blocking.');
 }

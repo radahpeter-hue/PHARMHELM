@@ -43,5 +43,12 @@ jobs:
           git show "$BASE_SHA:firestore.rules" > /tmp/main-control.rules
           git show "$BASE_SHA:scripts/build-firestore-release-rules.mjs" > /tmp/main-control-build.mjs
           node /tmp/main-control-build.mjs /tmp/main-control.rules
+          git show HEAD:firestore.rules > /tmp/authored-candidate.rules
+          node --input-type=module <<'JS'
+          import {readFileSync,writeFileSync} from 'node:fs';
+          import {compactRuleSymbols} from './scripts/build-firestore-release-rules.mjs';
+          const source=readFileSync('/tmp/authored-candidate.rules','utf8');
+          for(const maxLocalOwners of [10,20]) writeFileSync(`/tmp/scope-${maxLocalOwners}.rules`,compactRuleSymbols(source,{maxLocalOwners})+'\n');
+          JS
           cp scripts/diagnose-firestore-compiler.mjs /tmp/rules-size/diagnose.mjs
-          node /tmp/rules-size/diagnose.mjs /tmp/main-control.rules
+          node /tmp/rules-size/diagnose.mjs /tmp/main-control.rules /tmp/scope-10.rules /tmp/scope-20.rules
