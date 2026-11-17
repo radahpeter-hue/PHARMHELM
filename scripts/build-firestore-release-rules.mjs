@@ -7,7 +7,7 @@ import {pathToFileURL} from 'node:url';
 
 /** A prefix trie encodes only the supplied literal names, with no wildcard. */
 export function exactCollectionPattern(names) {
- if(!names.length||names.some(name=>!(/^[a-z0-9_]+$/).test(name)))throw Error('Invalid collection name set.');
+ if(!names.length||names.some(name=>!(/^[A-Za-z0-9_]+$/).test(name)))throw Error('Invalid collection name set.');
  const root={end:false,children:new Map()};
  for(const name of names){let node=root;for(const char of name){if(!node.children.has(char))node.children.set(char,{end:false,children:new Map()});node=node.children.get(char);}node.end=true;}
  const encode=node=>{
@@ -282,6 +282,46 @@ export function memoizeRequiredExpressions(source) {
  return source;
 }
 
+/** Identical leaf policies can share one exact collection guard. Only blocks
+ * containing grants, without local helpers or wildcard references, qualify.
+ * Append grouped policies after existing grants to preserve fast paths.
+ */
+export function groupEquivalentCollections(source) {
+ const masked=maskRulesTrivia(source),groups=new Map();let serial=0;
+ for(const head of masked.matchAll(/^    match \/([A-Za-z_]\w*)\/\{(\w+)\}\s*\{/gm)){
+  const from=head.index+head[0].length;let end=from,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  if(depth)throw Error('Unbalanced collection policy.');
+  const bodyMask=masked.slice(from,end-1),body=source.slice(from,end-1);
+  if(!/^\s*(?:allow\s+[a-z, ]+:\s*if\s+[^;]+;\s*)+$/.test(bodyMask))continue;
+  if(new RegExp('(?<!\\.)\\b'+head[2]+'\\b').test(bodyMask))continue;
+  const key=(body.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_0-9]+|\S/g)||[]).filter(token=>!token.startsWith('//')&&!token.startsWith('/*')).join(' ');
+  if(!groups.has(key))groups.set(key,[]);
+  groups.get(key).push({from:head.index,to:end,body,bodyMask,collection:head[1]});
+ }
+ const removals=[],policies=[];
+ for(const members of groups.values()){
+  if(members.length<2)continue;
+  let guard,collection,document;
+  do{const suffix=serial++;guard='releaseGroupGuard'+suffix;collection='releaseGroupCollection'+suffix;document='releaseGroupDocument'+suffix;}while([guard,collection,document].some(name=>source.includes(name)));
+  const first=members[0];let body=first.body;
+  for(const grant of [...first.bodyMask.matchAll(/\ballow\s+[a-z, ]+:\s*if\s+/g)].reverse()){
+   const at=grant.index+grant[0].length;body=body.slice(0,at)+guard+'() && ('+body.slice(at);
+   // Match the original predicate terminator in the suffix, ignoring strings.
+   const end=maskRulesTrivia(body).indexOf(';',at);body=body.slice(0,end)+')'+body.slice(end);
+  }
+  const names=[...new Set(members.map(member=>member.collection))];
+  policies.push(`    match /{${collection}}/{${document}} {\n      function ${guard}() { return ${collection}.matches('${exactCollectionPattern(names)}'); }\n${body}\n    }`);
+  removals.push(...members);
+ }
+ if(!policies.length)return source;
+ for(const {from,to} of removals.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+source.slice(to);
+ const root=databaseScope.exec(maskRulesTrivia(source));if(!root)throw Error('Missing database scope.');
+ const start=root.index+root[0].length;let end=start,depth=1;const remaining=maskRulesTrivia(source);
+ for(;end<remaining.length&&depth;end++){if(remaining[end]==='{')depth++;if(remaining[end]==='}')depth--;}
+ return source.slice(0,end-1)+'\n'+policies.join('\n')+'\n'+source.slice(end-1);
+}
+
 /** Move identical direct grants into shared predicates. Keep every allow at its
  * original path and method. Expressions capturing a match variable or a local
  * function stay in place so the shared predicate has the same lexical scope.
@@ -343,10 +383,12 @@ export function shareRequestExpressions(source) {
  return insertDatabaseHelpers(source, [...helpers].map(([path, name]) => 'function ' + name + '() { return ' + path + '; }'));
 }
 
-export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true}={}){
+export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true}={}){
  if(sharePaths)source=shareDocumentPaths(source);
  source=localizeCollectionHelpers(source,maxLocalOwners);
- source=shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(shareRepeatedAllowConditions(source))));
+ source=shareRepeatedAllowConditions(source);
+ if(groupCollections)source=groupEquivalentCollections(source);
+ source=shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(source)));
  if(memoize)source=memoizeRequiredExpressions(source);
  if(balanceConditions)source=balanceBooleanChains(source);
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];

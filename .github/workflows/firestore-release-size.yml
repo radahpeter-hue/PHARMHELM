@@ -49,7 +49,7 @@ jobs:
           import {compactRuleSymbols,wrapReleaseColumns} from './scripts/build-firestore-release-rules.mjs';
           const source=readFileSync('/tmp/authored-candidate.rules','utf8');
           const variants={
-            baseline:{maxLocalOwners:0,sharePaths:false,memoize:false,balanceConditions:false},
+            baseline:{maxLocalOwners:0,sharePaths:false,memoize:false,balanceConditions:false,groupCollections:false},
             unbalanced:{balanceConditions:false},
             shared:{maxLocalOwners:0,balanceConditions:false},
           };

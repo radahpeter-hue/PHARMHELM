@@ -9,6 +9,7 @@ on:
       - 'src/components/finance/**'
       - 'scripts/management-cash-settlement-*.mjs'
       - 'scripts/receivable-settlement-rules-emulator.mjs'
+      - 'scripts/firestore-release-equivalence-emulator.mjs'
       - 'scripts/validate-inactive-finance-rules.mjs'
       - 'scripts/firestore-unbound-probe.mjs'
       - '.github/workflows/management-cash-settlement-checks.yml'
@@ -40,7 +41,7 @@ jobs:
       - name: Authenticated Cash/Bank settlement and competing writer tests
         run: npx firebase emulators:exec --only firestore --project pharmhelm-finance-settlement-rules "node scripts/management-cash-settlement-rules-emulator.mjs"
       - name: Authenticated receivable recognition and collection rules
-        run: npx firebase emulators:exec --only firestore --project demo-pharmhelm-level10 "node scripts/receivable-settlement-rules-emulator.mjs"
+        run: npx firebase emulators:exec --only firestore --project demo-pharmhelm-level10 "node scripts/receivable-settlement-rules-emulator.mjs && node scripts/firestore-release-equivalence-emulator.mjs"
       - name: Install isolated mobile verification browser
         if: always()
         run: |

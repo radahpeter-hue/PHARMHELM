@@ -1,6 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains,shareDocumentPaths,memoizeRequiredExpressions,wrapReleaseColumns} from '../scripts/build-firestore-release-rules.mjs';
+import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains,shareDocumentPaths,memoizeRequiredExpressions,wrapReleaseColumns,groupEquivalentCollections} from '../scripts/build-firestore-release-rules.mjs';
+test('identical collection policies share exact names while different policies and wildcard captures stay separate',()=>{
+ const source=`service cloud.firestore {
+  match /databases/{database}/documents {
+    match /first/{id} {
+      allow read: if resource.data.tenant == 'tenant';
+      allow create: if request.resource.data.tenant == 'tenant';
+    }
+    match /second/{otherId} {
+      allow read: if resource.data.tenant == 'tenant';
+      allow create: if request.resource.data.tenant == 'tenant';
+    }
+    match /third/{id} {
+      allow read: if id == 'only-this';
+    }
+    match /fourth/{id} {
+      allow read: if false;
+    }
+  }
+}`;
+ const result=groupEquivalentCollections(source);
+ assert.ok(!result.includes('match /first/'));assert.ok(!result.includes('match /second/'));
+ assert.ok(result.includes('match /third/'));assert.ok(result.includes('match /fourth/'));
+ const pattern=result.match(/\.matches\('([^']+)'\)/)[1],matcher=new RegExp(pattern);
+ for(const name of ['first','second'])assert.ok(matcher.test(name));
+ for(const name of ['first_extra','third','First','second/items'])assert.ok(!matcher.test(name));
+ assert.equal((result.match(/allow read:/g)||[]).length,3);
+ assert.equal(groupEquivalentCollections(result),result);
+});
 test('release columns preserve the complete token stream and quoted whitespace',()=>{
  const source="rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { function label() { return 'keep spaces and \\n escapes'; } match /{id} { allow get: if request.auth != null; } } }";
  const result=wrapReleaseColumns(source,40);
