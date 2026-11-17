@@ -205,7 +205,9 @@ export function shareDocumentPaths(source) {
  while(source.includes(name))name='releaseDocumentPath'+serial++;
  const replacements=[],methods=new Set();let coveredUntil=0;
  for(const head of masked.matchAll(/\/databases\/\$\((\w+)\)\/documents\/([A-Za-z_]\w*)\/\$\(/g)){
-  if(head[1]!==database||head.index<coveredUntil)continue;
+  // Authority checks are evaluated frequently on complex inventory writes.
+  // Keep their direct lookups to preserve the existing expression budget.
+  if(head[1]!==database||head.index<coveredUntil||['staff','system_settings','branches'].includes(head[2]))continue;
   const start=head.index+head[0].length;let end=start,depth=1;
   for(;end<masked.length&&depth;end++){if(masked[end]==='(')depth++;if(masked[end]===')')depth--;}
   if(depth)throw Error('Unbalanced document path.');
@@ -221,7 +223,7 @@ export function shareDocumentPaths(source) {
  if(replacements.length<2)return source;
  for(const {from,to,text} of replacements.reverse())source=source.slice(0,from)+text+source.slice(to);
  return insertDatabaseHelpers(source,[`function ${name}(collection, id) { return /databases/$(${database})/documents/$(collection)/$(id); }`,
-  ...[...methods].map(method=>`function ${name}${method==='get'?'Before':'After'}(collection,id) { return ${method}(${name}(collection,id)).data; }`)]);
+  ...[...methods].map(method=>`function ${name}${method==='get'?'Before':'After'}(collection,id) { return ${method}(/databases/$(${database})/documents/$(collection)/$(id)).data; }`)]);
 }
 
 /** Move identical direct grants into shared predicates. Keep every allow at its

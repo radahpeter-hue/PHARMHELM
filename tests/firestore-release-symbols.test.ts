@@ -11,8 +11,8 @@ test('document path sharing preserves collection, ID expressions, snapshot metho
  const result=shareDocumentPaths(source);
  assert.ok(result.includes("releaseDocumentPathAfter('accounts',id)"));
  assert.ok(result.includes("releaseDocumentPathBefore('sales',request.resource.data.get('saleId', id))"));
- assert.ok(result.includes('return getAfter(releaseDocumentPath(collection,id)).data;'));
- assert.ok(result.includes('return get(releaseDocumentPath(collection,id)).data;'));
+ assert.ok(result.includes('return getAfter(/databases/$(database)/documents/$(collection)/$(id)).data;'));
+ assert.ok(result.includes('return get(/databases/$(database)/documents/$(collection)/$(id)).data;'));
  assert.ok(result.includes('exists(/databases/$(database)/documents/sales/$(id)/items/$(id))'));
  assert.ok(result.includes('// get(/databases/$(database)/documents/ignored/$(id))'));
  assert.equal(shareDocumentPaths(result),result);
