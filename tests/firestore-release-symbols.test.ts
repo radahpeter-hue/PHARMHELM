@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains,shareDocumentPaths,memoizeRequiredExpressions} from '../scripts/build-firestore-release-rules.mjs';
+import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains,shareDocumentPaths,memoizeRequiredExpressions,wrapReleaseColumns} from '../scripts/build-firestore-release-rules.mjs';
+test('release columns preserve the complete token stream and quoted whitespace',()=>{
+ const source="rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { function label() { return 'keep spaces and \\n escapes'; } match /{id} { allow get: if request.auth != null; } } }";
+ const result=wrapReleaseColumns(source,40);
+ const tokens=(s:string)=>s.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|[^\s'"]+/g);
+ assert.deepEqual(tokens(result),tokens(source));
+ assert.ok(result.includes('\n'));
+ assert.equal(wrapReleaseColumns(result,40),result);
+});
 test('required expression reuse preserves accepted values and rejection of missing required fields',()=>{
  const source='function permitted(row) { return row.amount > 0 && row.amount < 10 && row.amount != 4 && row.amount != 5; }';
  const transformed=memoizeRequiredExpressions(source);

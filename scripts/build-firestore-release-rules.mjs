@@ -383,7 +383,21 @@ export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memo
  }
  return output.join('').trim();
 }
+
+/** Keep source positions compact as well as identifiers. Replace only existing
+ * whitespace in comment-free compiler output, preserving every literal/token.
+ */
+export function wrapReleaseColumns(source,width=80){
+ const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\s+|[^\s'"]+/g)||[];
+ let output='',column=0,pending=false;
+ for(const token of tokens){
+  if(/^\s+$/.test(token)){pending=true;continue;}
+  if(pending&&output){if(column+1+token.length>width){output+='\n';column=0;}else{output+=' ';column++;}}
+  output+=token;column+=token.length;pending=false;
+ }
+ return output;
+}
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
- const file=process.argv[2]||'firestore.rules',source=readFileSync(file,'utf8'),output=compactRuleSymbols(source);
+ const file=process.argv[2]||'firestore.rules',source=readFileSync(file,'utf8'),output=wrapReleaseColumns(compactRuleSymbols(source));
  writeFileSync(file,output+'\n');console.log(`Generated equivalent release rules: ${Buffer.byteLength(source)} → ${Buffer.byteLength(output)+1} source bytes.`);
 }
