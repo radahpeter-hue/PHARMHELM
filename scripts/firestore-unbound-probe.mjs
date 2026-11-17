@@ -1,3 +1,22 @@
+/** Locate exact persisted input after an ambiguous ruleset-create response.
+ * Persistence is never acceptance: the caller must still verify a release.
+ */
+export async function findExactInactiveRuleset({project,token,rules,fetchImpl=fetch}) {
+ if(!/^[a-z0-9-]+$/.test(project))throw Error('Unsafe ruleset project.');
+ const root=`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,headers={Authorization:`Bearer ${token}`};
+ const listed=await fetchImpl(root+'?pageSize=8',{headers,signal:AbortSignal.timeout(60000)});
+ if(!listed.ok)return null;
+ const {rulesets=[]}=await listed.json();
+ for(const row of rulesets.slice(0,8)){
+  if(!row.name?.startsWith(`projects/${project}/rulesets/`))continue;
+  const response=await fetchImpl('https://firebaserules.googleapis.com/v1/'+row.name,{headers,signal:AbortSignal.timeout(60000)});
+  if(!response.ok)continue;
+  const saved=await response.json(),files=saved.source?.files;
+  if(saved.name===row.name&&files?.length===1&&files[0].name==='firestore.rules'&&files[0].content===rules)return saved;
+ }
+ return null;
+}
+
 /** Verify the actual compiled limit without binding any production release.
  * Ambiguous errors count as success only after GET verifies this exact probe.
  */

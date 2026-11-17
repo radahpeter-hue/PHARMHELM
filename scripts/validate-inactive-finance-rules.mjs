@@ -3,7 +3,7 @@
  */
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-import {validateUnboundProbe} from './firestore-unbound-probe.mjs';
+import {validateUnboundProbe,findExactInactiveRuleset} from './firestore-unbound-probe.mjs';
 const {GoogleAuth}=await import('google-auth-library');
 const token=process.env.GOOGLE_OAUTH_ACCESS_TOKEN || await new GoogleAuth({scopes:['https://www.googleapis.com/auth/cloud-platform']}).getAccessToken();
 if(!token)throw new Error('Scoped CI authentication is required.');
@@ -16,6 +16,10 @@ for(let attempt=1;attempt<=4;attempt++) {
  const response=await fetch(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({source:{files:[{name:'firestore.rules',content:rules}]} ,attachment_point}),signal:AbortSignal.timeout(60000)});
  result=await response.json();
  if(response.ok)break;
+ if([500,502,503,504].includes(response.status)){
+  const persisted=await findExactInactiveRuleset({project,token,rules}).catch(()=>null);
+  if(persisted){result=persisted;console.log('Exact inactive source recovered after an ambiguous response. Release verification is still mandatory.');break;}
+ }
  if(![429,500,502,503,504].includes(response.status)||attempt===4)throw new Error(`Inactive ruleset validation failed (${response.status}): ${result.error?.message||'Unknown compiler error'}`);
  console.log(`Rules API transient HTTP ${response.status}; retry ${attempt}/4 without activating any release.`);
  await new Promise(resolve=>setTimeout(resolve,attempt*5000));

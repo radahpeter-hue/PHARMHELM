@@ -1,8 +1,9 @@
 // Diagnostic only. Never targets a backend-bound release or changes document data.
 import {readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
+import {findExactInactiveRuleset} from './firestore-unbound-probe.mjs';
 
-export async function diagnoseCompiler({project,token,controls,runId,attachmentPoint=undefined,fetchImpl=fetch,log=console.log}) {
+export async function diagnoseCompiler({project,token,controls,runId,attachmentPoint=undefined,recoverPersisted=false,fetchImpl=fetch,log=console.log}) {
  if(!/^[a-z0-9-]+$/.test(project)||!/^\d+$/.test(String(runId)))throw Error('Unsafe diagnostic identity.');
  const root=`https://firebaserules.googleapis.com/v1/projects/${project}`;
  const headers={Authorization:`Bearer ${token}`,'Content-Type':'application/json'};
@@ -14,8 +15,12 @@ export async function diagnoseCompiler({project,token,controls,runId,attachmentP
    const source={files:[{name:'firestore.rules',content:control.source}]};
    const compiled=await fetchImpl(root+'/rulesets',{method:'POST',headers,body:JSON.stringify({source,...(attachmentPoint?{attachment_point:attachmentPoint}:{})}),signal:AbortSignal.timeout(60000)});
    result.compilerStatus=compiled.status;
-   const body=await compiled.json();
-   if(!compiled.ok){result.error=body.error?.message;continue;}
+   let body=await compiled.json();
+   if(!compiled.ok&&recoverPersisted&&[500,502,503,504].includes(compiled.status)){
+    const recovered=await findExactInactiveRuleset({project,token,rules:control.source,fetchImpl}).catch(()=>null);
+    if(recovered){body=recovered;result.exactSourceRecovered=true;}
+   }
+   if(!compiled.ok&&!result.exactSourceRecovered){result.error=body.error?.message;continue;}
    if(!body.name?.startsWith(`projects/${project}/rulesets/`))throw Error('Unexpected diagnostic ruleset.');
    rulesetName=body.name;
    probeName=`projects/${project}/releases/pharmhelm_size_probe_${runId}_${index+100}`;
@@ -33,7 +38,7 @@ export async function diagnoseCompiler({project,token,controls,runId,attachmentP
   } catch(error){result.error=error.message;}
   finally {
    // DELETE is restricted to the unique diagnostic identities created above.
-   for(const name of [probeName,rulesetName].filter(Boolean)){
+   for(const name of [probeName,...(result.exactSourceRecovered?[]:[rulesetName])].filter(Boolean)){
     try {
      const cleaned=await fetchImpl('https://firebaserules.googleapis.com/v1/'+name,{method:'DELETE',headers,signal:AbortSignal.timeout(60000)});
      if(!cleaned.ok&&cleaned.status!==404)result.cleanupError=`${name}: HTTP ${cleaned.status}`;
@@ -63,7 +68,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
   if(!file)throw Error('Active Firestore source unavailable.');
   activeControls.push({label:'Exact currently deployed source control',source:file.content});
  }catch(error){console.log(JSON.stringify({label:'Active source control unavailable',error:error.message}));}
- await diagnoseCompiler({project:'gen-lang-client-0911422817',token,attachmentPoint:'firestore.googleapis.com/projects/161921807585/databases/ai-studio-f7d8654b-e089-425a-a506-38159afe1e75',runId:process.env.GITHUB_RUN_ID||Date.now(),controls:[
+ await diagnoseCompiler({project:'gen-lang-client-0911422817',token,recoverPersisted:true,attachmentPoint:'firestore.googleapis.com/projects/161921807585/databases/ai-studio-f7d8654b-e089-425a-a506-38159afe1e75',runId:process.env.GITHUB_RUN_ID||Date.now(),controls:[
   {label:'Minimal deny-all control',source:"rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read, write: if false; } } }"},
   {label:'Current PR base control',source:readFileSync(process.argv[2],'utf8')},
   ...activeControls,
