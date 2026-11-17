@@ -150,6 +150,51 @@ export function localizeCollectionHelpers(source, maxOwners = 1) {
  return source;
 }
 
+/** Reassociate long homogeneous boolean chains into shallow trees. Operand
+ * order and short-circuit behavior stay unchanged; ternary precedence and
+ * function argument boundaries are preserved.
+ */
+export function balanceBooleanChains(source) {
+ const positions = (value, operator) => {
+  const masked = maskRulesTrivia(value), found = [];let depth=0;
+  for(let i=0;i<masked.length;i++){
+   if('([{'.includes(masked[i]))depth++;
+   else if(')]}'.includes(masked[i]))depth--;
+   else if(!depth&&masked.startsWith(operator,i)){found.push(i);i+=operator.length-1;}
+  }
+  return found;
+ };
+ const divide=(value,at,width)=>{let start=0;const parts=[];for(const index of at){parts.push(value.slice(start,index));start=index+width;}parts.push(value.slice(start));return parts;};
+ const rewrite = value => {
+  const masked=maskRulesTrivia(value);let result='',start=0;
+  for(let i=0;i<masked.length;i++)if(masked[i]==='('){
+   let end=i+1,depth=1;
+   for(;end<masked.length&&depth;end++){if(masked[end]==='(')depth++;if(masked[end]===')')depth--;}
+   if(depth)throw Error('Unbalanced boolean expression.');
+   result+=value.slice(start,i+1)+rewrite(value.slice(i+1,end-1))+')';start=end;i=end-1;
+  }
+  value=result+value.slice(start);
+  const commas=positions(value,',');
+  if(commas.length)return divide(value,commas,1).map(rewrite).join(',');
+  if(positions(value,'?').length)return value;
+  for(const operator of ['||','&&']){
+   const at=positions(value,operator);if(!at.length)continue;
+   const parts=divide(value,at,2).map(rewrite);
+   if(parts.length<8)return parts.join(operator);
+   const tree=(from,to)=>to-from===1?parts[from]:'('+tree(from,Math.floor((from+to)/2))+operator+tree(Math.floor((from+to)/2),to)+')';
+   return tree(0,parts.length);
+  }
+  return value;
+ };
+ const masked=maskRulesTrivia(source);
+ const statements=[...masked.matchAll(/\breturn\b([^;]+);|\ballow\s+[a-z, ]+:\s*if\b([^;]+);/g)];
+ for(const statement of statements.reverse()){
+  const body=statement[1]??statement[2],from=statement.index+statement[0].indexOf(body);
+  source=source.slice(0,from)+rewrite(source.slice(from,from+body.length))+source.slice(from+body.length);
+ }
+ return source;
+}
+
 /** Move identical direct grants into shared predicates. Keep every allow at its
  * original path and method. Expressions capturing a match variable or a local
  * function stay in place so the shared predicate has the same lexical scope.
@@ -211,8 +256,8 @@ export function shareRequestExpressions(source) {
  return insertDatabaseHelpers(source, [...helpers].map(([path, name]) => 'function ' + name + '() { return ' + path + '; }'));
 }
 
-export function compactRuleSymbols(source,{maxLocalOwners=6}={}){
- source=shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(shareRepeatedAllowConditions(localizeCollectionHelpers(source,maxLocalOwners)))));
+export function compactRuleSymbols(source,{maxLocalOwners=1}={}){
+ source=balanceBooleanChains(shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(shareRepeatedAllowConditions(localizeCollectionHelpers(source,maxLocalOwners))))));
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(tokens.filter(token=>/^[A-Za-z_]\w*$/.test(token))),symbols=new Set(),aliases=new Map();

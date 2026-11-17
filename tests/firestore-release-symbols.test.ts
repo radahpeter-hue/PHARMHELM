@@ -1,6 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers} from '../scripts/build-firestore-release-rules.mjs';
+import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains} from '../scripts/build-firestore-release-rules.mjs';
+test('balanced boolean chains preserve results and exact short-circuit operand order',()=>{
+ for(const operator of ['&&','||']){
+  const expression=Array.from({length:16},(_,index)=>`check(${index})`).join(operator);
+  const transformed=balanceBooleanChains('return '+expression+';');
+  assert.notEqual(transformed,'return '+expression+';');
+  for(let stop=0;stop<=16;stop++){
+   const evaluate=(body:string)=>{const calls:number[]=[];const value=Function('check',body)((index:number)=>{calls.push(index);return operator==='&&'?index!==stop:index===stop;});return {value,calls};};
+   assert.deepEqual(evaluate(transformed),evaluate('return '+expression+';'));
+  }
+  assert.equal(balanceBooleanChains(transformed),transformed);
+ }
+});
+test('boolean balancing respects ternaries, argument boundaries, strings and mixed precedence',()=>{
+ const expression="choose(true, false) ? (a || b && c && d && e && f && g && h && i && j) : 'literal && || ;'";
+ const transformed=balanceBooleanChains('return '+expression+';');
+ for(let bits=0;bits<1024;bits++){
+  const values=Array.from({length:10},(_,i)=>Boolean(bits&(1<<i)));
+  const evaluate=(body:string)=>Function('choose','a','b','c','d','e','f','g','h','i','j',body)((a:boolean)=>a,...values);
+  assert.equal(evaluate(transformed),evaluate('return '+expression+';'));
+ }
+ assert.ok(transformed.includes('choose(true, false)'));
+ assert.ok(transformed.includes("'literal && || ;'"));
+});
 test('collection helpers and their dependency chain move together while shared helpers remain inherited',()=>{
  const source=`service cloud.firestore {
   match /databases/{database}/documents {
