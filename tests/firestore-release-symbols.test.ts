@@ -1,6 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains,shareDocumentPaths} from '../scripts/build-firestore-release-rules.mjs';
+import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains,shareDocumentPaths,memoizeRequiredExpressions} from '../scripts/build-firestore-release-rules.mjs';
+test('required expression reuse preserves accepted values and rejection of missing required fields',()=>{
+ const source='function permitted(row) { return row.amount > 0 && row.amount < 10 && row.amount != 4 && row.amount != 5; }';
+ const transformed=memoizeRequiredExpressions(source);
+ assert.ok(transformed.includes('let releaseMemo'));
+ const run=(text:string,row:any)=>{try{return Function(text+'; return permitted(arguments[0]);')(row)===true;}catch{return false;}};
+ for(const value of [null,{},...Array.from({length:14},(_,amount)=>({amount}))])assert.equal(run(transformed,value),run(source,value));
+ assert.equal(memoizeRequiredExpressions(transformed),transformed);
+});
+test('memoization leaves optional OR and ternary branches lazy and respects the ten-binding limit',()=>{
+ for(const source of [
+  'function permitted(row) { return row == null || row.amount > 0 || row.amount < 10 || row.amount == 3 || row.amount == 4; }',
+  'function permitted(row) { return row == null ? true : row.amount > 0 && row.amount < 10 && row.amount != 4 && row.amount != 5; }',
+  'function permitted(row) { '+Array.from({length:10},(_,i)=>`let value${i} = ${i};`).join(' ')+' return row.amount > 0 && row.amount < 10 && row.amount != 4 && row.amount != 5; }',
+ ])assert.equal(memoizeRequiredExpressions(source),source);
+});
 test('document path sharing preserves collection, ID expressions, snapshot method and deeper paths',()=>{
  const source=`service cloud.firestore { match /databases/{database}/documents {
  function evidence(id) { return getAfter(/databases/$(database)/documents/accounts/$(id)).data; }

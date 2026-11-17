@@ -226,6 +226,62 @@ export function shareDocumentPaths(source) {
   ...[...methods].map(method=>`function ${name}${method==='get'?'Before':'After'}(collection,id) { return ${method}(/databases/$(${database})/documents/$(collection)/$(id)).data; }`)]);
 }
 
+/** Reuse pure values required by an unconditional conjunct. A successful rule
+ * must evaluate that conjunct already. Never hoist out of an OR or ternary.
+ * Keep the language's ten-let limit and all validation predicates intact.
+ */
+export function memoizeRequiredExpressions(source) {
+ const masked=maskRulesTrivia(source),functions=[];let serial=0;
+ for(const head of masked.matchAll(/\bfunction\s+\w+\([^)]*\)\s*\{/g)){
+  const from=head.index+head[0].length;let end=from,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  if(depth)throw Error('Unbalanced memoization function.');
+  functions.push({from,to:end-1});
+ }
+ const topOperators = value => {
+  const text=maskRulesTrivia(value),and=[];let depth=0;
+  for(let i=0;i<text.length;i++){
+   if('([{'.includes(text[i]))depth++;
+   else if(')]}'.includes(text[i]))depth--;
+   else if(!depth){if(text.startsWith('||',i)||text[i]==='?')return null;if(text.startsWith('&&',i)){and.push(i);i++;}}
+  }
+  const parts=[];let start=0;for(const at of and){parts.push(value.slice(start,at));start=at+2;}parts.push(value.slice(start));return parts;
+ };
+ const candidates = value => {
+  const masked=maskRulesTrivia(value),items=[];
+  for(const head of masked.matchAll(/(?<![.\w])[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\(/g)){
+   let end=head.index+head[0].length,depth=1;
+   for(;end<masked.length&&depth;end++){if(masked[end]==='(')depth++;if(masked[end]===')')depth--;}
+   if(!depth)items.push({from:head.index,to:end,text:value.slice(head.index,end),call:true});
+  }
+  for(const match of masked.matchAll(/(?<![.\w])[A-Za-z_]\w*\.[A-Za-z_]\w*\b(?![.\w]|\s*\()/g))items.push({from:match.index,to:match.index+match[0].length,text:value.slice(match.index,match.index+match[0].length),call:false});
+  return items;
+ };
+ for(const fn of functions.reverse()){
+  let body=source.slice(fn.from,fn.to),mask=maskRulesTrivia(body);
+  const returned=/\breturn\b([^;]+);/.exec(mask);if(!returned)continue;
+  const offset=returned.index+returned[0].indexOf(returned[1]);
+  let expression=body.slice(offset,offset+returned[1].length),slots=10-[...mask.matchAll(/\blet\b/g)].length;
+  const bindings=[];
+  while(slots-->0){
+   const parts=topOperators(expression);if(!parts)break;
+   const required=new Set(parts.filter(part=>!/[?|]/.test(maskRulesTrivia(part))).flatMap(candidates).map(item=>item.text));
+   const all=candidates(expression),groups=new Map();
+   for(const item of all){if(!required.has(item.text))continue;if(!groups.has(item.text))groups.set(item.text,[]);groups.get(item.text).push(item);}
+   const ranked=[...groups.values()].filter(items=>items.length>=(items[0].call?(items[0].text.length>=24?2:3):(items[0].text.split('.')[1].length>=8?3:4))).sort((a,b)=>(b.length-1)*b[0].text.length-(a.length-1)*a[0].text.length);
+   if(!ranked.length)break;
+   const items=ranked[0];let name;
+   do{name='releaseMemo'+serial++;}while(source.includes(name));
+   bindings.push(`let ${name} = ${items[0].text};`);
+   for(const item of items.reverse())expression=expression.slice(0,item.from)+name+expression.slice(item.to);
+  }
+  if(!bindings.length)continue;
+  body=body.slice(0,returned.index)+bindings.join(' ')+' return'+expression+body.slice(offset+returned[1].length);
+  source=source.slice(0,fn.from)+body+source.slice(fn.to);
+ }
+ return source;
+}
+
 /** Move identical direct grants into shared predicates. Keep every allow at its
  * original path and method. Expressions capturing a match variable or a local
  * function stay in place so the shared predicate has the same lexical scope.
@@ -287,8 +343,12 @@ export function shareRequestExpressions(source) {
  return insertDatabaseHelpers(source, [...helpers].map(([path, name]) => 'function ' + name + '() { return ' + path + '; }'));
 }
 
-export function compactRuleSymbols(source,{maxLocalOwners=1}={}){
- source=balanceBooleanChains(shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(shareRepeatedAllowConditions(localizeCollectionHelpers(shareDocumentPaths(source),maxLocalOwners))))));
+export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true}={}){
+ if(sharePaths)source=shareDocumentPaths(source);
+ source=localizeCollectionHelpers(source,maxLocalOwners);
+ source=shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(shareRepeatedAllowConditions(source))));
+ if(memoize)source=memoizeRequiredExpressions(source);
+ if(balanceConditions)source=balanceBooleanChains(source);
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(tokens.filter(token=>/^[A-Za-z_]\w*$/.test(token))),symbols=new Set(),aliases=new Map();
