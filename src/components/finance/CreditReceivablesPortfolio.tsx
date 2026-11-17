@@ -158,13 +158,13 @@ export function CreditReceivablesLedger({data,branches,allowSettlement=false,bra
     {!validPeriod ? <p role="alert">Choose a valid collection period ending today or earlier.</p> : <>
       <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{[...buckets].map(([bucket,amount])=><div key={bucket} className="rounded-lg bg-zinc-50 p-2 text-sm"><dt>{bucket}</dt><dd className="font-semibold">{money(amount)}</dd></div>)}</dl>
       {rows.some(row=>row.balance===null) && <p role="status">Some historical balances could not be reconstructed from the available payment and correction history.</p>}
-      <div className="overflow-x-auto"><table className="w-full text-left text-sm">
-        <thead className="bg-zinc-50"><tr>{['Receipt or invoice','Customer or institution','Branch','Original UGX','Outstanding UGX','Due date','Ageing','Status'].map(title=><th key={title} className="p-3">{title}</th>)}</tr></thead>
-        <tbody>{rows.slice(page*50,page*50+50).map(item=><tr key={item.id} className="border-t border-zinc-100">
-          <td className="p-3"><button className="font-semibold text-emerald-800 underline" onClick={()=>setSelected(item.id)}>{item.reference}</button></td>
-          <td className="p-3">{item.client}</td><td className="p-3">{label(branches,item.branchId)}</td>
-          <td className="p-3">{item.originalUGX.toLocaleString()}</td><td className="p-3 font-semibold">{item.balance?.toLocaleString()??'Unverified'}</td>
-          <td className="p-3">{item.dueDate||'Terms missing'}</td><td className="p-3">{item.ageing}</td><td className="p-3 capitalize">{item.reportStatus}</td>
+      <div className="overflow-x-auto"><table className="w-full text-left text-sm text-zinc-900">
+        <thead className="bg-zinc-50 text-zinc-700"><tr>{['Receipt or invoice','Customer or institution','Branch','Original UGX','Outstanding UGX','Due date','Ageing','Status'].map(title=><th key={title} className="p-3 text-zinc-900">{title}</th>)}</tr></thead>
+        <tbody className="text-zinc-900">{rows.slice(page*50,page*50+50).map(item=><tr key={item.id} className="border-t border-zinc-100">
+          <td className="p-3 text-zinc-900"><button className="font-semibold text-emerald-800 underline" onClick={()=>setSelected(item.id)}>{item.reference}</button></td>
+          <td className="p-3 text-zinc-900">{item.client}</td><td className="p-3 text-zinc-900">{label(branches,item.branchId)}</td>
+          <td className="p-3 text-zinc-900">{item.originalUGX.toLocaleString()}</td><td className="p-3 font-semibold text-zinc-900">{item.balance?.toLocaleString()??'Unverified'}</td>
+          <td className="p-3 text-zinc-900">{item.dueDate||'Terms missing'}</td><td className="p-3 text-zinc-900">{item.ageing}</td><td className="p-3 capitalize">{item.reportStatus}</td>
         </tr>)}</tbody></table></div>
       {!rows.length && <p>No saved receivables match these filters.</p>}
       {rows.length>50&&<div className="flex items-center justify-between">
