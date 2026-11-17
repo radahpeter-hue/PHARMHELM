@@ -49,6 +49,13 @@ jobs:
           import {compactRuleSymbols} from './scripts/build-firestore-release-rules.mjs';
           const source=readFileSync('/tmp/authored-candidate.rules','utf8');
           for(const maxLocalOwners of [10,20]) writeFileSync(`/tmp/scope-${maxLocalOwners}.rules`,compactRuleSymbols(source,{maxLocalOwners})+'\n');
+          // Restrictive diagnostic subsets only, never deployment candidates.
+          const blocks=[...source.matchAll(/^    match [^\n]+ \{[\s\S]*?^    }/gm)];
+          for(const half of [0,1]){
+            let reduced=source;
+            for(let index=blocks.length-1;index>=0;index--)if(index%2!==half){const block=blocks[index];reduced=reduced.slice(0,block.index)+reduced.slice(block.index+block[0].length);}
+            writeFileSync(`/tmp/half-${half}.rules`,compactRuleSymbols(reduced)+'\n');
+          }
           JS
           cp scripts/diagnose-firestore-compiler.mjs /tmp/rules-size/diagnose.mjs
-          node /tmp/rules-size/diagnose.mjs /tmp/main-control.rules /tmp/scope-10.rules /tmp/scope-20.rules
+          node /tmp/rules-size/diagnose.mjs /tmp/main-control.rules /tmp/scope-10.rules /tmp/scope-20.rules /tmp/half-0.rules /tmp/half-1.rules

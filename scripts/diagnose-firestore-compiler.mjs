@@ -48,9 +48,24 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  const {GoogleAuth}=await import('google-auth-library');
  const token=await new GoogleAuth({scopes:['https://www.googleapis.com/auth/cloud-platform']}).getAccessToken();
  if(!token)throw Error('Scoped CI authentication is required.');
+ const activeControls=[];
+ try {
+  const root='https://firebaserules.googleapis.com/v1/';
+  const headers={Authorization:`Bearer ${token}`};
+  const release=await fetch(root+'projects/gen-lang-client-0911422817/releases/cloud.firestore/ai-studio-f7d8654b-e089-425a-a506-38159afe1e75',{headers,signal:AbortSignal.timeout(60000)});
+  if(!release.ok)throw Error(`Active release read: HTTP ${release.status}`);
+  const {rulesetName}=await release.json();
+  if(!rulesetName?.startsWith('projects/gen-lang-client-0911422817/rulesets/'))throw Error('Unexpected active ruleset identity.');
+  const saved=await fetch(root+rulesetName,{headers,signal:AbortSignal.timeout(60000)});
+  if(!saved.ok)throw Error(`Active source read: HTTP ${saved.status}`);
+  const data=await saved.json(),file=data.source?.files?.find(file=>file.name==='firestore.rules');
+  if(!file)throw Error('Active Firestore source unavailable.');
+  activeControls.push({label:'Exact currently deployed source control',source:file.content});
+ }catch(error){console.log(JSON.stringify({label:'Active source control unavailable',error:error.message}));}
  await diagnoseCompiler({project:'gen-lang-client-0911422817',token,attachmentPoint:'firestore.googleapis.com/projects/161921807585/databases/ai-studio-f7d8654b-e089-425a-a506-38159afe1e75',runId:process.env.GITHUB_RUN_ID||Date.now(),controls:[
   {label:'Minimal deny-all control',source:"rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read, write: if false; } } }"},
   {label:'Current PR base control',source:readFileSync(process.argv[2],'utf8')},
+  ...activeControls,
   ...process.argv.slice(3).map(path=>({label:path,source:readFileSync(path,'utf8')})),
  ]});
  console.log('Diagnostic controls do not certify the candidate. The original candidate failure remains blocking.');
