@@ -2,7 +2,7 @@
 import {readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
 
-export async function diagnoseCompiler({project,token,controls,runId,fetchImpl=fetch,log=console.log}) {
+export async function diagnoseCompiler({project,token,controls,runId,attachmentPoint,fetchImpl=fetch,log=console.log}) {
  if(!/^[a-z0-9-]+$/.test(project)||!/^\d+$/.test(String(runId)))throw Error('Unsafe diagnostic identity.');
  const root=`https://firebaserules.googleapis.com/v1/projects/${project}`;
  const headers={Authorization:`Bearer ${token}`,'Content-Type':'application/json'};
@@ -12,7 +12,7 @@ export async function diagnoseCompiler({project,token,controls,runId,fetchImpl=f
   let rulesetName,probeName;
   try {
    const source={files:[{name:'firestore.rules',content:control.source}]};
-   const compiled=await fetchImpl(root+'/rulesets',{method:'POST',headers,body:JSON.stringify({source}),signal:AbortSignal.timeout(60000)});
+   const compiled=await fetchImpl(root+'/rulesets',{method:'POST',headers,body:JSON.stringify({source,...(attachmentPoint?{attachment_point:attachmentPoint}:{})}),signal:AbortSignal.timeout(60000)});
    result.compilerStatus=compiled.status;
    const body=await compiled.json();
    if(!compiled.ok){result.error=body.error?.message;continue;}
@@ -48,7 +48,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  const {GoogleAuth}=await import('google-auth-library');
  const token=await new GoogleAuth({scopes:['https://www.googleapis.com/auth/cloud-platform']}).getAccessToken();
  if(!token)throw Error('Scoped CI authentication is required.');
- await diagnoseCompiler({project:'gen-lang-client-0911422817',token,runId:process.env.GITHUB_RUN_ID||Date.now(),controls:[
+ await diagnoseCompiler({project:'gen-lang-client-0911422817',token,attachmentPoint:'firestore.googleapis.com/projects/161921807585/databases/ai-studio-f7d8654b-e089-425a-a506-38159afe1e75',runId:process.env.GITHUB_RUN_ID||Date.now(),controls:[
   {label:'Minimal deny-all control',source:"rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read, write: if false; } } }"},
   {label:'Current PR base control',source:readFileSync(process.argv[2],'utf8')},
   ...process.argv.slice(3).map(path=>({label:path,source:readFileSync(path,'utf8')})),

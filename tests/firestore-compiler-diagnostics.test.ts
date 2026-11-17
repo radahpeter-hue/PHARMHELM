@@ -21,3 +21,9 @@ test('compiler diagnostics continue to the second control after a failure',async
  const result=await diagnoseCompiler({...input,controls:[...input.controls,...input.controls],fetchImpl:async()=>response(503)});
  assert.equal(result.length,2);assert.ok(result.every((r:any)=>r.compilerStatus===503));
 });
+test('named database compilation context is sent without changing release targets',async()=>{
+ const calls:any[]=[];
+ await diagnoseCompiler({...input,attachmentPoint:'firestore.googleapis.com/projects/123/databases/named-database',fetchImpl:async(url:any,options:any)=>{calls.push({url,options});return response(503);}});
+ assert.equal(JSON.parse(calls[0].options.body).attachment_point,'firestore.googleapis.com/projects/123/databases/named-database');
+ assert.ok(calls.every(c=>!c.url.includes('/releases/cloud.firestore')));
+});
