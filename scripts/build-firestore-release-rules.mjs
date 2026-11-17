@@ -76,6 +76,75 @@ function insertDatabaseHelpers(source, helpers) {
  return source.slice(0, offset) + '\n' + helpers.join('\n') + '\n' + source.slice(offset);
 }
 
+/** Collection-specific helpers need not be inherited by every sibling match.
+ * Follow the complete helper call graph to identify a single owning match.
+ * Only move declarations; do not change predicates, calls, paths or grants.
+ * Ambiguous names and unfamiliar source layouts are left untouched.
+ */
+export function localizeCollectionHelpers(source) {
+ const masked = maskRulesTrivia(source);
+ const blocks = pattern => [...masked.matchAll(pattern)].map(header => {
+  let end = header.index + header[0].length, depth = 1;
+  for (; end < masked.length && depth; end++) {
+   if (masked[end] === '{') depth++;
+   if (masked[end] === '}') depth--;
+  }
+  if (depth) throw Error('Unbalanced rules block.');
+  return Object.assign([masked.slice(header.index,end),header[1]],{index:header.index});
+ });
+ const functions = new Map(blocks(/^    function (\w+)\([^\n]*\) \{/gm).map(m => [m[1], m]));
+ const matches = blocks(/^    match [^\n]+ \{/gm);
+ if (!functions.size || !matches.length) return source;
+ const calls = (text, name) => new RegExp('(?<![.\\w])' + name + '\\s*\\(').test(text);
+ const owners = new Map([...functions.keys()].map(name => [name, new Set()]));
+ for (const [name] of functions) {
+  for (const [index, match] of matches.entries()) if (calls(match[0], name)) owners.get(name).add(index);
+ }
+ for (let pass = 0; pass < functions.size; pass++) {
+  for (const [parent, declaration] of functions) {
+   const body = declaration[0].slice(declaration[0].indexOf('{') + 1);
+   for (const [child] of functions) if (calls(body, child)) {
+    for (const owner of owners.get(parent)) owners.get(child).add(owner);
+   }
+  }
+ }
+ let remaining = masked;
+ for (const block of [...functions.values(), ...matches].sort((a, b) => b.index - a.index)) {
+  remaining = remaining.slice(0, block.index) + ' '.repeat(block[0].length) + remaining.slice(block.index + block[0].length);
+ }
+ const candidates = new Map();
+ for (const [name, declaration] of functions) {
+  const targets = owners.get(name);
+  if (targets.size !== 1) continue;
+  const index = [...targets][0], target = matches[index];
+  const localNames = [...target[0].matchAll(/\b(?:function|let)\s+(\w+)|\{(\w+)(?:=\*\*)?\}/g)].map(m => m[1] || m[2]);
+  const parameters = declaration[0].match(/^    function \w+\(([^)]*)\)/)[1].split(',').map(s=>s.trim());
+  const ownBindings = new Set([...parameters,...[...declaration[0].matchAll(/\blet\s+(\w+)/g)].map(m=>m[1])]);
+  // No newly visible binding may shadow a name referenced by the helper.
+  if (localNames.includes(name) || localNames.some(local => !ownBindings.has(local) && new RegExp('\\b' + local + '\\b').test(declaration[0]))) continue;
+  // Every reference must be accounted for by the parsed function/match graph.
+  if (calls(remaining, name)) continue;
+  candidates.set(name,{declaration,target});
+ }
+ // A helper retained at root must still be able to resolve all its callees.
+ for (let pass = 0; pass < functions.size; pass++) {
+  for (const [child] of candidates) {
+   if ([...functions].some(([parent, declaration]) => !candidates.has(parent) && calls(declaration[0].slice(declaration[0].indexOf('{')+1), child))) candidates.delete(child);
+  }
+ }
+ const replacements = [], insertions = new Map();
+ for (const {declaration,target} of candidates.values()) {
+  const text = source.slice(declaration.index, declaration.index + declaration[0].length);
+  replacements.push({from:declaration.index,to:declaration.index + declaration[0].length,text:''});
+  const offset = target.index + target[0].indexOf('{', target[0].indexOf(' {')) + 1;
+  if (!insertions.has(offset)) insertions.set(offset, []);
+  insertions.get(offset).push(text.replace(/^/gm, '  '));
+ }
+ for (const [from, declarations] of insertions) replacements.push({from,to:from,text:'\n' + declarations.join('\n') + '\n'});
+ for (const {from,to,text} of replacements.sort((a,b) => b.from - a.from)) source = source.slice(0,from) + text + source.slice(to);
+ return source;
+}
+
 /** Move identical direct grants into shared predicates. Keep every allow at its
  * original path and method. Expressions capturing a match variable or a local
  * function stay in place so the shared predicate has the same lexical scope.
@@ -138,7 +207,7 @@ export function shareRequestExpressions(source) {
 }
 
 export function compactRuleSymbols(source){
- source=shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(shareRepeatedAllowConditions(source))));
+ source=shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(shareRepeatedAllowConditions(localizeCollectionHelpers(source)))));
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(tokens.filter(token=>/^[A-Za-z_]\w*$/.test(token))),symbols=new Set(),aliases=new Map();

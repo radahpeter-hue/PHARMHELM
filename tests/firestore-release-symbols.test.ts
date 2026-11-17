@@ -1,6 +1,54 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions} from '../scripts/build-firestore-release-rules.mjs';
+import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers} from '../scripts/build-firestore-release-rules.mjs';
+test('collection helpers and their dependency chain move together while shared helpers remain inherited',()=>{
+ const source=`service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function positive(value) { return value > 0; }
+    function validDebt() { return signedIn() && positive(request.resource.data.amount); }
+    match /debts/{id} {
+      allow create: if validDebt();
+    }
+    match /users/{id} {
+      allow read: if signedIn();
+    }
+  }
+}`;
+ const result=localizeCollectionHelpers(source),debt=result.indexOf('match /debts/');
+ assert.ok(result.indexOf('function signedIn')<debt);
+ assert.ok(result.indexOf('function positive')>debt);
+ assert.ok(result.indexOf('function validDebt')>debt);
+ assert.ok(result.indexOf('function validDebt')<result.indexOf('allow create'));
+ assert.equal((result.match(/allow /g)||[]).length,2);
+ assert.equal(localizeCollectionHelpers(result),result);
+});
+test('localization preserves lexical binding when a destination declares a conflicting helper',()=>{
+ const source=`service cloud.firestore {
+  match /databases/{database}/documents {
+    function shared() { return true; }
+    function specific() { return shared(); }
+    match /debts/{id} {
+      function shared() { return false; }
+      allow create: if specific();
+    }
+  }
+}`;
+ assert.equal(localizeCollectionHelpers(source),source);
+});
+test('a retained root helper keeps its dependency chain accessible at root',()=>{
+ const source=`service cloud.firestore {
+  match /databases/{database}/documents {
+    function positive(value) { return value > 0; }
+    function validDebt() { return positive(request.resource.data.amount); }
+    match /debts/{id} {
+      function unrelated() { let amount = 1; return amount; }
+      allow create: if validDebt();
+    }
+  }
+}`;
+ assert.equal(localizeCollectionHelpers(source),source);
+});
 test('release compaction renames internal symbols while preserving paths, fields and role literals',()=>{
  const source=`rules_version = '2'; service cloud.firestore { match /databases/{database}/documents {
  // comment must not change quoted text
