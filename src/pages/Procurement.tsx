@@ -23,11 +23,11 @@ import {
 import { toast } from 'sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { processProcurementGrn } from '../services/procurementFinanceService';
+import { processProcurementGrn, resumeSellableCentralGrn } from '../services/procurementFinanceService';
 import { dispatchPreparedSellableGrn } from '../services/grnDispatchService';
 import { grnReceivedDateKey } from '../utils/grnDates';
 import { processOperationalGrn } from '../services/operationalGrnService';
-import { confirmProcurementApproval } from '../services/procurementApprovalService';
+import { confirmProcurementApproval, resumeProcurementApproval } from '../services/procurementApprovalService';
 import type { ApprovalAddition, ApprovalQuantityEdit } from '../services/procurementApprovalPolicy';
 import { dispatchOperationalOrderToBranch, dispatchPreparedOperationalHqTransfer, fulfillOperationalOrderFromHqStore } from '../services/operationalTransferService';
 import { AutoGenerateOrderModal } from '../components/inventory/AutoGenerateOrderModal';
@@ -1656,12 +1656,13 @@ const WholeOrderSourcingModal: React.FC<{
 };
 
 const FinancialApprovalTab: React.FC = () => {
-  const { profile } = useAuth();
+  const { profile, hasPermission } = useAuth();
   const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [orders, setOrders] = useState<StockOrder[]>([]);
   const [branchNames, setBranchNames] = useState<Record<string, string>>({});
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [resuming, setResuming] = useState<string | null>(null);
   const displayBranch = (order: StockOrder): string => procurementRequestingBranchLabel(order, branchNames);
 
   useEffect(() => {
@@ -1673,7 +1674,7 @@ const FinancialApprovalTab: React.FC = () => {
 
   useEffect(() => {
     if (profile?.tenantId) {
-      firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
+      return firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
         setOrders(data.filter(o => o.status === 'awaiting_finance_approval' && (operationalInventoryEnabled || !isOperationalInventoryRecord(o))));
       });
     }
@@ -1687,6 +1688,18 @@ const FinancialApprovalTab: React.FC = () => {
   }, [operationalInventoryEnabled, selectedOrder]);
 
   const handleApprove = () => setIsModalOpen(false);
+  const handleResume = async (order: StockOrder) => {
+    if (!profile?.tenantId || !profile.uid || !hasPermission('procurement', 'operate') || resuming) return;
+    setResuming(order.id);
+    try {
+      await resumeProcurementApproval(order, profile.tenantId, profile.uid);
+      toast.success('Financial approval completed. The order is available in Central GRN.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Approval is still pending. Try resuming again.');
+    } finally {
+      setResuming(null);
+    }
+  };
 
   return (
     <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
@@ -1706,7 +1719,18 @@ const FinancialApprovalTab: React.FC = () => {
               <td className="px-6 py-4 font-bold text-zinc-900">UGX {order.total_order_value_ugx.toLocaleString()}</td>
               <td className="px-6 py-4 text-sm text-zinc-600">{displayBranch(order)}</td>
               <td className="px-6 py-4 text-right">
-                <div className="flex justify-end gap-2">
+                {order.approvalSave ? (
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <span className="text-xs text-zinc-600" role={resuming === order.id ? 'status' : undefined}>
+                      {order.approvalSave.next} of {order.approvalSave.writes.length} lines saved · UGX {order.approvalSave.result.approvedTotalUGX.toLocaleString()}
+                    </span>
+                    <button type="button" disabled={Boolean(resuming) || !hasPermission('procurement', 'operate')}
+                      onClick={() => handleResume(order)}
+                      className="bg-zinc-900 text-white px-3 py-1 rounded-lg text-xs font-bold disabled:opacity-50">
+                      {resuming === order.id ? 'Approving…' : 'Resume approval'}
+                    </button>
+                  </div>
+                ) : <div className="flex justify-end gap-2">
                   <button 
                     onClick={async () => {
                       if (window.confirm(`Are you sure you want to revert order ${order.order_number || ''} back to the Sourcing tab?`)) {
@@ -1742,7 +1766,7 @@ const FinancialApprovalTab: React.FC = () => {
                   >
                     Review &amp; Approve
                   </button>
-                </div>
+                </div>}
               </td>
             </tr>
           ))}
@@ -1904,7 +1928,9 @@ const FinancialApprovalModal: React.FC<{
       toast.success(`Approved UGX ${result.approvedTotalUGX.toLocaleString()} with ${result.addedCount} added and ${result.unsuppliedCount} unsupplied line(s).`);
       onApprove(order.id);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not finalize financial approval.');
+      toast.error(error instanceof Error ? error.message : 'Could not finalize financial approval.', {
+        description: 'If the approval is in progress, close this review and choose Resume approval.'
+      });
     } finally {
       setSubmitting(false);
     }
@@ -2122,6 +2148,7 @@ const GRNTab: React.FC = () => {
   const { profile } = useAuth();
   const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [grns, setGrns] = useState<GRNRecord[]>([]);
+  const [resumingGrn, setResumingGrn] = useState(false);
   const [approvedOrders, setApprovedOrders] = useState<StockOrder[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<StockOrder | null>(null);
@@ -2135,7 +2162,7 @@ const GRNTab: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId) {
       const unsubscribeGrns = firestoreService.subscribeToCollection<GRNRecord>('grn_records', profile.tenantId, (data) => {
-        setGrns(data.filter(grn => operationalInventoryEnabled || !isOperationalInventoryRecord(grn))
+        setGrns(data.filter(grn => grn.status !== 'posting' && (operationalInventoryEnabled || !isOperationalInventoryRecord(grn)))
           .sort((a, b) => (grnReceivedDateKey(b.receivedAt) || '').localeCompare(grnReceivedDateKey(a.receivedAt) || '')));
       });
       const unsubscribeOrders = firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, (data) => {
@@ -2276,6 +2303,22 @@ const GRNTab: React.FC = () => {
 
     return matchesSearch && matchesStart && matchesEnd;
   });
+
+  const handleResumeGrn = async (order: StockOrder) => {
+    if (resumingGrn || !profile?.tenantId || !profile.uid) return;
+    setResumingGrn(true);
+    try {
+      await resumeSellableCentralGrn(order, profile.tenantId, {
+        uid: profile.uid, name: profile.fullName || profile.displayName || profile.email || 'Staff User'
+      });
+      toast.success('Central GRN completed and ready for dispatch.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'The receipt is still pending. Try resuming it again.');
+    } finally {
+      setResumingGrn(false);
+    }
+  };
+
   const displayedGRNItems = selectedGRN && isOperationalInventoryRecord(selectedGRN)
     ? (operationalGRNItems.length ? operationalGRNItems : (selectedGRN.items || []))
     : (selectedGRN?.items || []);
@@ -2296,7 +2339,7 @@ const GRNTab: React.FC = () => {
                 {isOperationalInventoryRecord(order) && <p className="mt-1 text-[10px] font-black uppercase tracking-wide text-emerald-700">Operational Inventory</p>}
               </div>
               <div className="flex gap-2">
-                {!isOperationalInventoryRecord(order) && <button
+                {!order.sellableGrnSave && !isOperationalInventoryRecord(order) && <button
                   onClick={async () => {
                     if (window.confirm(`Are you sure you want to revert order ${order.order_number || ''} back to the Financial Approval tab?`)) {
                       try {
@@ -2322,7 +2365,12 @@ const GRNTab: React.FC = () => {
                 >
                   Revert
                 </button>}
-                <button 
+                {order.sellableGrnSave ? (
+                  <button type="button" disabled={resumingGrn} onClick={() => handleResumeGrn(order)}
+                    className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50">
+                    {resumingGrn ? 'Posting…' : 'Resume GRN'}
+                  </button>
+                ) : <button
                   onClick={() => {
                     setSelectedOrder(order);
                     setIsProcessModalOpen(true);
@@ -2330,7 +2378,7 @@ const GRNTab: React.FC = () => {
                   className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors"
                 >
                   Process GRN
-                </button>
+                </button>}
               </div>
             </div>
           ))}
@@ -3741,6 +3789,8 @@ const UnsuppliedTab: React.FC = () => {
   const { profile } = useAuth();
   const [unsupplied, setUnsupplied] = useState<UnsuppliedLine[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [publishedGrns, setPublishedGrns] = useState<Set<string>>(new Set());
+  const [approvalAudits, setApprovalAudits] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (profile?.tenantId) {
@@ -3750,6 +3800,15 @@ const UnsuppliedTab: React.FC = () => {
         setUnsupplied(data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
       });
     }
+  }, [profile?.tenantId]);
+
+  useEffect(() => {
+    setApprovalAudits(new Set());
+    if (!profile?.tenantId) return;
+    return firestoreService.subscribeToCollection<StockOrder>('stock_orders', profile.tenantId, orders => {
+      setApprovalAudits(new Set(orders.flatMap(order => order.approval_audit_id ? [order.approval_audit_id] : [])));
+      setPublishedGrns(new Set(orders.flatMap(order => order.grn_id ? [order.grn_id] : [])));
+    });
   }, [profile?.tenantId]);
 
   const handleDefer = async (item: UnsuppliedLine) => {
@@ -3804,9 +3863,11 @@ const UnsuppliedTab: React.FC = () => {
     }
   };
 
-  const filtered = unsupplied.filter(u => 
-    u.product_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    u.reason.toLowerCase().includes(searchTerm.toLowerCase())
+  const search = searchTerm.toLowerCase();
+  const filtered = unsupplied.filter(item =>
+    (!item.approval_audit_id || approvalAudits.has(item.approval_audit_id))
+    && (!item.staged_central_grn || publishedGrns.has(item.grn_id || ''))
+    && (item.product_name.toLowerCase().includes(search) || item.reason.toLowerCase().includes(search))
   );
 
   return (

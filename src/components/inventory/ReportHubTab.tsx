@@ -184,7 +184,7 @@ const ReportHubTab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-4">
         <ReportCard 
           title="Stock Intelligence" 
           icon={<TrendingUp size={20} />} 
@@ -212,8 +212,8 @@ const ReportHubTab: React.FC = () => {
       </div>
 
       <div className="bg-white rounded-[32px] border border-zinc-200 shadow-sm overflow-hidden min-h-[500px]">
-        <div className="px-8 py-6 border-b border-zinc-100 flex items-center justify-between">
-          <h2 className="text-xl font-black text-zinc-900 uppercase tracking-tight">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 p-4 sm:px-8 sm:py-6">
+          <h2 className="text-base sm:text-xl font-black text-zinc-900 uppercase tracking-tight">
             {activeReport === 'intelligence' && 'Stock Intelligence & Capital Reports'}
             {activeReport === 'expiry' && 'Expiry & Short Expiry Reports'}
             {activeReport === 'adjustments' && 'Stock Adjustment Reports'}
@@ -221,17 +221,17 @@ const ReportHubTab: React.FC = () => {
           </h2>
           <button 
             onClick={handleExportCSV}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md shadow-emerald-100"
+            className="flex min-h-11 items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md shadow-emerald-100"
           >
             <Download size={14} />
             Export CSV
           </button>
         </div>
 
-        <div className="p-8">
+        <div className="min-w-0 p-3 sm:p-6">
           {activeReport === 'intelligence' && (
             <div className="space-y-8">
-              <div className="grid grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
                 <div className="p-6 bg-zinc-50 rounded-3xl border border-zinc-100">
                   <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Total Inventory Valuation</p>
                   <p className="text-2xl font-black text-zinc-900">{(totalValuation || 0).toLocaleString()} UGX</p>
@@ -289,175 +289,183 @@ const ReportHubTab: React.FC = () => {
                   <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                   Expired Batches (Audited Financial Loss)
                 </h3>
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-red-50/50 border-b border-red-100">
-                      <th className="px-6 py-4 text-[10px] font-black text-red-700 uppercase tracking-widest">Product</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-red-700 uppercase tracking-widest">Batch</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-red-700 uppercase tracking-widest">Expiry Date</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-red-700 uppercase tracking-widest text-right">Qty</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-red-700 uppercase tracking-widest text-right">Unit Price</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-red-700 uppercase tracking-widest text-right font-black">Perceived Loss</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-red-100 bg-red-50/10">
-                    {expiredBatches.map(batch => {
-                      const product = products.find(p => p.id === batch.productId);
-                      const unitCost = batch.purchasePrice || 0;
-                      const perceivedLoss = batch.quantity * unitCost;
-                      return (
-                        <tr key={batch.id} className="hover:bg-red-50/30 transition-colors">
-                          <td className="px-6 py-4 font-bold text-red-900">{product?.name || 'Unknown Product'}</td>
-                          <td className="px-6 py-4 text-xs text-red-800">{batch.batchNumber}</td>
-                          <td className="px-6 py-4 text-xs font-bold text-red-600">
-                            {format(new Date(batch.expiryDate), 'MMM dd, yyyy')}
-                          </td>
-                          <td className="px-6 py-4 text-xs font-black text-right text-red-900">{batch.quantity}</td>
-                          <td className="px-6 py-4 text-xs text-right text-red-800">{unitCost.toLocaleString()}</td>
-                          <td className="px-6 py-4 text-xs font-black text-right text-red-700">{perceivedLoss.toLocaleString()} UGX</td>
-                        </tr>
-                      );
-                    })}
-                    {expiredBatches.length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="px-6 py-8 text-center text-zinc-400 italic">
-                          No expired batches found. Excellent!
-                        </td>
+                <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Expired batches">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-red-50/50 border-b border-red-100">
+                        <th className="px-6 py-4 text-[10px] font-black text-red-700 uppercase tracking-widest">Product</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-red-700 uppercase tracking-widest">Batch</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-red-700 uppercase tracking-widest">Expiry Date</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-red-700 uppercase tracking-widest text-right">Qty</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-red-700 uppercase tracking-widest text-right">Unit Price</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-red-700 uppercase tracking-widest text-right font-black">Perceived Loss</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-red-100 bg-red-50/10">
+                      {expiredBatches.map(batch => {
+                        const product = products.find(p => p.id === batch.productId);
+                        const unitCost = batch.purchasePrice || 0;
+                        const perceivedLoss = batch.quantity * unitCost;
+                        return (
+                          <tr key={batch.id} className="hover:bg-red-50/30 transition-colors">
+                            <td className="px-6 py-4 font-bold text-red-900">{product?.name || 'Unknown Product'}</td>
+                            <td className="px-6 py-4 text-xs text-red-800">{batch.batchNumber}</td>
+                            <td className="px-6 py-4 text-xs font-bold text-red-600">
+                              {format(new Date(batch.expiryDate), 'MMM dd, yyyy')}
+                            </td>
+                            <td className="px-6 py-4 text-xs font-black text-right text-red-900">{batch.quantity}</td>
+                            <td className="px-6 py-4 text-xs text-right text-red-800">{unitCost.toLocaleString()}</td>
+                            <td className="px-6 py-4 text-xs font-black text-right text-red-700">{perceivedLoss.toLocaleString()} UGX</td>
+                          </tr>
+                        );
+                      })}
+                      {expiredBatches.length === 0 && (
+                        <tr>
+                          <td colSpan={6} className="px-6 py-8 text-center text-zinc-400 italic">
+                            No expired batches found. Excellent!
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
 
               {/* SECTION B: Short Expiry Batches */}
-              <div className="space-y-3 pt-4 border-t border-zinc-100">
+              <div className="min-w-0 space-y-3 pt-4 border-t border-zinc-100">
                 <h3 className="text-xs font-black text-amber-600 uppercase tracking-widest flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-amber-500" />
                   Short Expiry Batches (Expiring soon)
                 </h3>
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-amber-50/50 border-b border-amber-100">
-                      <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest">Product</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest">Batch</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest">Expiry Date</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest text-right">Days Left</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest text-right">Qty</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest text-right">Cost Value</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-amber-100 bg-amber-50/10">
-                    {shortExpiryBatches.map(batch => {
-                      const product = products.find(p => p.id === batch.productId);
-                      const daysToExpiry = differenceInDays(new Date(batch.expiryDate), new Date());
-                      const costValue = batch.quantity * (batch.purchasePrice || 0);
-                      return (
-                        <tr key={batch.id} className="hover:bg-amber-50/30 transition-colors">
-                          <td className="px-6 py-4 font-bold text-amber-900">{product?.name || 'Unknown Product'}</td>
-                          <td className="px-6 py-4 text-xs text-amber-800">{batch.batchNumber}</td>
-                          <td className="px-6 py-4 text-xs font-bold text-amber-600">
-                            {format(new Date(batch.expiryDate), 'MMM dd, yyyy')}
-                          </td>
-                          <td className="px-6 py-4 text-xs text-right text-amber-700 font-mono font-bold">{daysToExpiry} Days</td>
-                          <td className="px-6 py-4 text-xs font-black text-right text-amber-900">{batch.quantity}</td>
-                          <td className="px-6 py-4 text-xs font-bold text-right text-amber-800">{costValue.toLocaleString()} UGX</td>
-                        </tr>
-                      );
-                    })}
-                    {shortExpiryBatches.length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="px-6 py-8 text-center text-zinc-400 italic">
-                          No short-expiry batches found before {expiryLimitDate}.
-                        </td>
+                <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Batches nearing expiry">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-amber-50/50 border-b border-amber-100">
+                        <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest">Product</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest">Batch</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest">Expiry Date</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest text-right">Days Left</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest text-right">Qty</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest text-right">Cost Value</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-amber-100 bg-amber-50/10">
+                      {shortExpiryBatches.map(batch => {
+                        const product = products.find(p => p.id === batch.productId);
+                        const daysToExpiry = differenceInDays(new Date(batch.expiryDate), new Date());
+                        const costValue = batch.quantity * (batch.purchasePrice || 0);
+                        return (
+                          <tr key={batch.id} className="hover:bg-amber-50/30 transition-colors">
+                            <td className="px-6 py-4 font-bold text-amber-900">{product?.name || 'Unknown Product'}</td>
+                            <td className="px-6 py-4 text-xs text-amber-800">{batch.batchNumber}</td>
+                            <td className="px-6 py-4 text-xs font-bold text-amber-600">
+                              {format(new Date(batch.expiryDate), 'MMM dd, yyyy')}
+                            </td>
+                            <td className="px-6 py-4 text-xs text-right text-amber-700 font-mono font-bold">{daysToExpiry} Days</td>
+                            <td className="px-6 py-4 text-xs font-black text-right text-amber-900">{batch.quantity}</td>
+                            <td className="px-6 py-4 text-xs font-bold text-right text-amber-800">{costValue.toLocaleString()} UGX</td>
+                          </tr>
+                        );
+                      })}
+                      {shortExpiryBatches.length === 0 && (
+                        <tr>
+                          <td colSpan={6} className="px-6 py-8 text-center text-zinc-400 italic">
+                            No short-expiry batches found before {expiryLimitDate}.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
 
           {activeReport === 'adjustments' && (
             <div className="space-y-6">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-zinc-50/50 border-b border-zinc-100">
-                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Date</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Product</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Batch</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Adjustment Qty</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Unit Cost</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Value Variance</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Reason / Audit Log</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Initiator</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100">
-                  {adjustmentMovements.map(m => {
-                    const product = products.find(p => p.id === m.productId);
-                    const unitPrice = m.purchasePrice || product?.purchasePrice || 0;
-                    const valueShift = m.amount * unitPrice;
-                    const isPositive = m.type === 'in';
-                    return (
-                      <tr key={m.id} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="px-6 py-4 text-xs text-zinc-500">{format(new Date(m.timestamp), 'MMM dd, yyyy')}</td>
-                        <td className="px-6 py-4 font-bold text-zinc-900">{product?.name || 'Unknown Product'}</td>
-                        <td className="px-6 py-4 text-xs text-zinc-500">{m.batchNumber}</td>
-                        <td className={cn("px-6 py-4 text-xs text-right font-black", isPositive ? "text-emerald-600" : "text-red-600")}>
-                          {isPositive ? '+' : '-'}{m.amount}
-                        </td>
-                        <td className="px-6 py-4 text-xs text-right text-zinc-600">{unitPrice.toLocaleString()}</td>
-                        <td className={cn("px-6 py-4 text-xs text-right font-bold", isPositive ? "text-emerald-600" : "text-red-600")}>
-                          {isPositive ? '+' : '-'}{valueShift.toLocaleString()} UGX
-                        </td>
-                        <td className="px-6 py-4 text-xs text-zinc-500">{m.notes}</td>
-                        <td className="px-6 py-4 text-xs text-zinc-500">{m.initiator}</td>
-                      </tr>
-                    );
-                  })}
-                  {adjustmentMovements.length === 0 && (
-                    <tr>
-                      <td colSpan={8} className="px-6 py-12 text-center text-zinc-400 italic">
-                        No audited adjustment records found.
-                      </td>
+              <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Stock adjustment history">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-zinc-50/50 border-b border-zinc-100">
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Date</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Product</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Batch</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Adjustment Qty</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Unit Cost</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Value Variance</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Reason / Audit Log</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Initiator</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {adjustmentMovements.map(m => {
+                      const product = products.find(p => p.id === m.productId);
+                      const unitPrice = m.purchasePrice || product?.purchasePrice || 0;
+                      const valueShift = m.amount * unitPrice;
+                      const isPositive = m.type === 'in';
+                      return (
+                        <tr key={m.id} className="hover:bg-zinc-50/50 transition-colors">
+                          <td className="px-6 py-4 text-xs text-zinc-500">{format(new Date(m.timestamp), 'MMM dd, yyyy')}</td>
+                          <td className="px-6 py-4 font-bold text-zinc-900">{product?.name || 'Unknown Product'}</td>
+                          <td className="px-6 py-4 text-xs text-zinc-500">{m.batchNumber}</td>
+                          <td className={cn("px-6 py-4 text-xs text-right font-black", isPositive ? "text-emerald-600" : "text-red-600")}>
+                            {isPositive ? '+' : '-'}{m.amount}
+                          </td>
+                          <td className="px-6 py-4 text-xs text-right text-zinc-600">{unitPrice.toLocaleString()}</td>
+                          <td className={cn("px-6 py-4 text-xs text-right font-bold", isPositive ? "text-emerald-600" : "text-red-600")}>
+                            {isPositive ? '+' : '-'}{valueShift.toLocaleString()} UGX
+                          </td>
+                          <td className="px-6 py-4 text-xs text-zinc-500">{m.notes}</td>
+                          <td className="px-6 py-4 text-xs text-zinc-500">{m.initiator}</td>
+                        </tr>
+                      );
+                    })}
+                    {adjustmentMovements.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="px-6 py-12 text-center text-zinc-400 italic">
+                          No audited adjustment records found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
           {activeReport === 'onhand' && (
             <div className="space-y-6">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-zinc-50/50 border-b border-zinc-100">
-                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Product Name</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Category</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Stock Level</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Valuation (Cost)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100">
-                  {products.map(p => {
-                    const productBatches = batches.filter(b => b.productId === p.id);
-                    const totalQty = productBatches.reduce((acc, b) => acc + b.quantity, 0);
-                    const valuation = productBatches.reduce((acc, b) => acc + (b.quantity * (b.purchasePrice || 0)), 0);
+              <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Stock on hand">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-zinc-50/50 border-b border-zinc-100">
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Product Name</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Category</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Stock Level</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Valuation (Cost)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {products.map(p => {
+                      const productBatches = batches.filter(b => b.productId === p.id);
+                      const totalQty = productBatches.reduce((acc, b) => acc + b.quantity, 0);
+                      const valuation = productBatches.reduce((acc, b) => acc + (b.quantity * (b.purchasePrice || 0)), 0);
                     
-                    if (totalQty === 0) return null;
+                      if (totalQty === 0) return null;
 
-                    return (
-                      <tr key={p.id} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="px-6 py-4 font-bold text-slate-900">{p.name}</td>
-                        <td className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">{p.category}</td>
-                        {/* Solved visibility: explicitly set to text-slate-900 with strong font and high-contrast styling */}
-                        <td className="px-6 py-4 text-xs font-black text-slate-900 text-right bg-slate-50/40 rounded-lg pr-4">{totalQty.toLocaleString()} {p.unitOfSell}s</td>
-                        <td className="px-6 py-4 text-xs font-bold text-slate-900 text-right">{valuation.toLocaleString()} UGX</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                      return (
+                        <tr key={p.id} className="hover:bg-zinc-50/50 transition-colors">
+                          <td className="px-6 py-4 font-bold text-slate-900">{p.name}</td>
+                          <td className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">{p.category}</td>
+                          {/* Solved visibility: explicitly set to text-slate-900 with strong font and high-contrast styling */}
+                          <td className="px-6 py-4 text-xs font-black text-slate-900 text-right bg-slate-50/40 rounded-lg pr-4">{totalQty.toLocaleString()} {p.unitOfSell}s</td>
+                          <td className="px-6 py-4 text-xs font-bold text-slate-900 text-right">{valuation.toLocaleString()} UGX</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -470,7 +478,7 @@ const ReportCard: React.FC<{ title: string; icon: React.ReactNode; active: boole
   <button 
     onClick={onClick}
     className={cn(
-      "p-6 rounded-[32px] border transition-all flex flex-col items-center gap-3 text-center",
+      "min-w-0 rounded-2xl border p-3 transition-colors flex flex-col items-center gap-2 text-center sm:p-5",
       active 
         ? "bg-zinc-900 border-zinc-900 text-white shadow-xl shadow-zinc-900/20" 
         : "bg-white border-zinc-200 text-zinc-500 hover:border-zinc-300 hover:bg-zinc-50"

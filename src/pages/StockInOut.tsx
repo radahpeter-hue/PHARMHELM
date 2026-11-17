@@ -30,7 +30,7 @@ import { hasAnyRole } from '../utils/roles';
 import { firestoreService } from '../services/firestore';
 import { Product, StockOrder, StockOrderLine, TransferInvoice, Branch, ProductBatch, TransferInvoiceLine, Sale, OperationalInventory, OperationalTransfer, OperationalTransferLine } from '../types';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, runTransaction, writeBatch, increment } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, runTransaction, deleteField, increment } from 'firebase/firestore';
 import { logMovementAndAggregateInTx, getBranchProductBatchRefs } from '../services/consumptionService';
 import { replaySellableReceiptMovement, reconcilePendingSellableReceipts, sellableReceiptMovementId } from '../services/sellableReceiptRecoveryService';
 import { toast } from 'sonner';
@@ -46,7 +46,7 @@ import { createOperationalBranchReturn, receiveOperationalTransferLine } from '.
 import { OpeningStockTab } from '../components/inventory/OpeningStockTab';
 import { isScopeAllowedForOrderCategory, scopesForOrderCategory } from '../services/operationalOrderScopes';
 
-import { persistNewManualStockOrder, persistManualStockOrderDraft } from '../services/manualStockOrderService';
+import { persistNewManualStockOrder, persistManualStockOrderDraft, loadManualStockOrderDraft } from '../services/manualStockOrderService';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -390,6 +390,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   // New states for loading saved draft orders
   const [drafts, setDrafts] = useState<StockOrder[]>([]);
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
+  const selectedDraftRevision = useRef<string | null>(null);
   const [selectedDraftDate, setSelectedDraftDate] = useState<string>('');
 
   useEffect(() => {
@@ -425,38 +426,40 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
   }, [profile?.tenantId, activeBranchId]);
 
   const handleSelectDraft = async (draftId: string) => {
-    const draft = drafts.find(d => d.id === draftId);
-    if (!draft) return;
-    if (draft.category === 'non_sellable' && !operationalInventoryEnabled) {
+    const listedDraft = drafts.find(d => d.id === draftId);
+    if (!listedDraft || isSubmitting) return;
+    if (listedDraft.category === 'non_sellable' && !operationalInventoryEnabled) {
       toast.error('Operational Inventory is disabled in System Settings.');
       return;
     }
 
     setIsGenerating(true);
     try {
+      const { draft, lines, pending, revision } = await loadManualStockOrderDraft(draftId);
+      pendingNewOrder.current = null;
+      selectedDraftRevision.current = revision;
       setSelectedDraftId(draft.id);
       setOrderType(draft.order_type);
       setCategory(draft.category);
       setGenMethod(draft.generation_method);
 
-      // Fetch the draft lines
-      const lines = await firestoreService.getDocumentsByQuery<StockOrderLine>('stock_order_lines', [{ field: 'order_id', operator: '==', value: draft.id }, { field: 'tenantId', operator: '==', value: profile?.tenantId }]);
       setOrderLines(draft.category === 'non_sellable'
         ? lines.map(line => ({
             ...line,
             masterItemId: line.masterItemId || operationalInventory.find(item => item.id === line.product_id)?.masterItemId
           }))
         : lines);
-      toast.success(`Draft loaded: ${draft.order_number}`);
+      toast.success(pending ? 'Unfinished order loaded. Save or submit to finish it.' : `Draft loaded: ${draft.order_number}`);
     } catch (error) {
       console.error(error);
-      toast.error("Failed to load draft lines.");
+      toast.error(error instanceof Error ? error.message : 'Failed to load draft lines.');
     } finally {
       setIsGenerating(false);
     }
   };
 
   const handleClearDraft = () => {
+    pendingNewOrder.current = null;
     setSelectedDraftId(null);
     setOrderLines([]);
     setCategory('sellable_non_cosmetic');
@@ -696,7 +699,7 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       return;
     }
 
-    if (isSubmitting) return;
+    if (isSubmitting || isGenerating) return;
 
     const branchId = activeBranchId || profile?.branchId || branches[0]?.id;
     if (!branchId) {
@@ -731,39 +734,6 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         orderData.submitted_at = new Date().toISOString();
       }
 
-      if (expectedClass === 'OPERATIONAL') {
-        let orderId = selectedDraftId;
-        if (!orderId) {
-          pendingNewOrder.current ||= {
-            id: doc(collection(db, 'stock_orders')).id,
-            orderNumber: `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
-            createdAt: new Date().toISOString()
-          };
-          const pending = pendingNewOrder.current;
-          await persistNewManualStockOrder(pending.id, {
-            ...orderData,
-            order_number: pending.orderNumber,
-            requesting_branch_id: branchId,
-            requesting_branch_name: activeBranch?.name || branches.find(b => b.id === branchId)?.name || 'Unknown Branch',
-            createdAt: pending.createdAt,
-            updatedAt: new Date().toISOString()
-          }, orderLines.map(line => ({ ...line, tenantId: profile.tenantId, inventoryClass: expectedClass })));
-          pendingNewOrder.current = null;
-          toast.success(`Order ${status === 'submitted' ? 'submitted' : 'saved as draft'}.`);
-          setOrderLines([]);
-          setSelectedDraftId(null);
-          return;
-        }
-        const existingLines = await firestoreService.getDocumentsByQuery<any>('stock_order_lines', [{ field: 'order_id', operator: '==', value: orderId }, { field: 'tenantId', operator: '==', value: profile.tenantId }]);
-        await persistManualStockOrderDraft(orderId, orderData, existingLines,
-          orderLines.map(line => ({ ...line, tenantId: profile.tenantId, inventoryClass: expectedClass })));
-        toast.success(`Order ${status === 'submitted' ? 'submitted' : 'saved as draft'}.`);
-        setOrderLines([]);
-        setSelectedDraftId(null);
-        return;
-      }
-      // Sellable orders must use the same atomic draft lifecycle as Operational orders.
-      // In particular, do NOT update the header to submitted before replacing draft lines.
       const requestedLines = orderLines.map(line => ({
         ...line, tenantId: profile.tenantId, inventoryClass: expectedClass
       }));
@@ -773,15 +743,10 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
           || selected.requesting_branch_id !== branchId) {
           throw new Error('The selected draft is no longer available for this branch. Refresh before submitting.');
         }
-        const existingLines = await firestoreService.getDocumentsByQuery<StockOrderLine>(
-          'stock_order_lines', [
-            { field: 'order_id', operator: '==', value: selectedDraftId },
-            { field: 'tenantId', operator: '==', value: profile.tenantId }
-          ]);
-        await persistManualStockOrderDraft(selectedDraftId, orderData, existingLines, requestedLines);
+        await persistManualStockOrderDraft(selectedDraftId, orderData, requestedLines, selectedDraftRevision.current);
       } else {
         pendingNewOrder.current ||= {
-          id: doc(collection(db, 'stock_orders')).id,
+          id: `manual_${doc(collection(db, 'stock_orders')).id}`,
           orderNumber: `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
           createdAt: new Date().toISOString()
         };
@@ -1024,16 +989,19 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
               <button type="button" disabled={orderReviewPage >= orderReviewPageCount} onClick={() => setOrderReviewPage(p => Math.min(orderReviewPageCount, p + 1))} className="border rounded-lg px-3 py-1 disabled:opacity-40">Next</button>
             </div>
           </div>
-          <div className="p-6 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/30">
+          <div className="p-6 border-t border-zinc-100 flex flex-wrap items-center justify-end gap-3 bg-zinc-50/30">
+            {isSubmitting && <p role="status" className="w-full text-sm text-zinc-600">Saving order lines. Large orders may take a moment.</p>}
             <button 
               onClick={() => handleSubmit('draft')}
-              className="px-6 py-2 border border-zinc-200 rounded-xl font-medium text-zinc-600 hover:bg-zinc-50 transition-colors text-xs uppercase tracking-wider font-bold"
+              disabled={isSubmitting || isGenerating}
+              className="disabled:opacity-50 px-6 py-2 border border-zinc-200 rounded-xl font-medium text-zinc-600 hover:bg-zinc-50 transition-colors text-xs uppercase tracking-wider font-bold"
             >
               Save as Draft
             </button>
             <button 
               onClick={() => handleSubmit('submitted')}
-              className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-medium transition-colors shadow-lg shadow-emerald-500/20 text-xs uppercase tracking-wider font-bold animate-pulse-subtle"
+              disabled={isSubmitting || isGenerating}
+              className="disabled:opacity-50 px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-medium transition-colors shadow-lg shadow-emerald-500/20 text-xs uppercase tracking-wider font-bold animate-pulse-subtle"
             >
               Submit to Procurement
             </button>
@@ -1052,7 +1020,8 @@ const InitiateOrder: React.FC<{ branches: Branch[] }> = ({ branches }) => {
             {selectedDraftId && (
               <button 
                 onClick={handleClearDraft}
-                className="text-xs text-rose-500 hover:text-rose-700 font-bold uppercase tracking-wider"
+                disabled={isSubmitting || isGenerating}
+                className="disabled:opacity-50 text-xs text-rose-500 hover:text-rose-700 font-bold uppercase tracking-wider"
               >
                 Clear / New Order
               </button>
@@ -1677,7 +1646,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       toast.error('Operational stock must be received in Operational Stock In, not Sellable Stock In.');
       return;
     }
-    if (!['dispatched', 'fully_accepted', 'queried'].includes(invoice.status)) {
+    if (!(['dispatched', 'fully_accepted', 'queried'].includes(invoice.status) || (invoice.status === 'receiving' && invoice.receiptSelections))) {
       toast.error('Only physically dispatched Sellable transfers can be opened for reception.');
       return;
     }
@@ -1704,7 +1673,7 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       lines.forEach(l => {
         initialReceiving[l.id] = { accepted: l.qty_dispatched, queried: 0 };
       });
-      setReceivingData(initialReceiving);
+      setReceivingData(invoice.receiptSelections || initialReceiving);
     } catch (error) {
       console.error('Failed to load incoming invoice lines', error);
       setInvoiceLinesError('The invoice contents could not be loaded. Close this window and try again.');
@@ -1749,10 +1718,8 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
     receptionInFlightRef.current = true;
     setReceptionInFlight(true);
     const selectedInvoiceRef = doc(db, 'transfer_invoices', selectedInvoice.id);
-    let receptionClaimed = false;
-    let receptionCommitted = false;
     try {
-      await runTransaction(db, async transaction => {
+      const receiptSelections = await runTransaction(db, async transaction => {
         const current = await transaction.get(selectedInvoiceRef);
         if (!current.exists()) throw new Error('The dispatch no longer exists.');
         if (current.data().tenantId !== profile.tenantId ||
@@ -1764,15 +1731,24 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         if (status === 'fully_accepted' || status === 'queried' || status === 'received') {
           throw new Error('This dispatch has already been received. No stock was added again.');
         }
+        const saved = current.data().receiptSelections as TransferInvoice['receiptSelections'];
+        if (status === 'receiving' && saved) return saved;
         if (status === 'receiving') throw new Error('This dispatch is already being received by another session.');
         if (status !== 'dispatched') throw new Error('This transfer has not been physically dispatched. Reception cannot begin.');
+        const selections = Object.fromEntries(invoiceLines.map(line => {
+          const { accepted, queried, reason } = receivingData[line.id];
+          return [line.id, { accepted, queried, reason: reason || '' }];
+        }));
+        if (new TextEncoder().encode(JSON.stringify(selections)).length > 600_000) {
+          throw new Error('This delivery contains too much line data.');
+        }
         transaction.update(selectedInvoiceRef, {
-          status: 'receiving',
+          status: 'receiving', receiptSelections: selections,
           reception_claimed_by: profile.uid,
           reception_claimed_at: new Date().toISOString()
         });
+        return selections;
       });
-      receptionClaimed = true;
 
       const batchPromises = invoiceLines.map(line => 
         firestoreService.getDocumentsByQuery('product_batches', [
@@ -1803,134 +1779,169 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
         }
       });
 
-      const batch = writeBatch(db);
-
-      let hasQueries = false;
-      const successfulMovements: any[] = []; 
+      if (Object.keys(receiptSelections).length !== invoiceLines.length) {
+        throw new Error('The incoming shipment changed after reception began.');
+      }
+      const hasQueries = Object.values(receiptSelections).some(line => line.queried > 0);
+      const successfulMovements: string[] = [];
 
       for (const line of invoiceLines) {
-        const data = receivingData[line.id];
-        if (!data) continue;
-
+        const data = receiptSelections[line.id];
+        if (!data || data.accepted + data.queried !== line.qty_dispatched) {
+          throw new Error('The incoming shipment changed after reception began.');
+        }
         const lineRef = doc(db, 'transfer_invoice_lines', line.id);
-        
-        batch.update(lineRef, {
-          qty_received: data.accepted,
-          qty_accepted: data.accepted,
-          qty_queried: data.queried,
-          query_reason: data.reason || null,
-          line_status: data.queried > 0 ? 'queried' : 'received',
-          updatedAt: new Date().toISOString()
+        const movementId = sellableReceiptMovementId(selectedInvoice.id, line.id);
+        const acceptedUnits = await runTransaction(db, async batch => {
+          const [header, source] = await Promise.all([batch.get(selectedInvoiceRef), batch.get(lineRef)]);
+          const persisted = source.data();
+          if (header.data()?.status !== 'receiving' || !persisted
+              || persisted.tenantId !== profile.tenantId || persisted.transfer_id !== selectedInvoice.id
+              || persisted.product_id !== line.product_id || persisted.qty_dispatched !== line.qty_dispatched) {
+            throw new Error('The incoming shipment changed during reception.');
+          }
+          if (['received', 'queried'].includes(persisted.line_status)) {
+            if (persisted.qty_accepted !== data.accepted || persisted.qty_queried !== data.queried) {
+              throw new Error('A received line differs from the saved verification.');
+            }
+            return Number(persisted.qty_accepted_base_units);
+          }
+
+          const product = productMap[line.product_id];
+          const unitsPerPack = Number(product?.unitsPerPack || 1);
+          const totalUnitsAccepted = data.accepted * unitsPerPack;
+          if (!Number.isSafeInteger(totalUnitsAccepted) || totalUnitsAccepted < 0) {
+            throw new Error('Invalid units per pack on the received product.');
+          }
+          batch.update(lineRef, {
+            qty_accepted_base_units: totalUnitsAccepted,
+            qty_received: data.accepted,
+            qty_accepted: data.accepted,
+            qty_queried: data.queried,
+            query_reason: data.reason || null,
+            line_status: data.queried > 0 ? 'queried' : 'received',
+            updatedAt: new Date().toISOString()
+          });
+
+          if (data.accepted > 0) {
+            const existingBatch = batchMap[line.id as string];
+          
+            if (existingBatch) {
+              const batchRef = doc(db, 'product_batches', existingBatch.id);
+              batch.update(batchRef, {
+                quantity: increment(totalUnitsAccepted),
+                lastUpdated: new Date().toISOString()
+              });
+            } else {
+              // Stable identity: concurrent first receipts for one product batch
+              // must increment the same document rather than create duplicates.
+              const newBatchId = ['stockin', profile.tenantId, activeBranchId, line.product_id,
+                line.batch_number || 'N/A', line.expiry_date || '']
+                .map(value => encodeURIComponent(String(value))).join('_');
+              const newBatchRef = doc(db, 'product_batches', newBatchId);
+              const purchasePricePerUnit = (line.unit_cost_ugx || 0) / unitsPerPack;
+              const sellingPricePerUnit = product?.sellingPricePerUnit || (purchasePricePerUnit * 1.3);
+            
+              const newBatch = {
+                tenantId: profile.tenantId,
+                branchId: activeBranchId,
+                productId: line.product_id,
+                batchNumber: line.batch_number || 'N/A',
+                expiryDate: line.expiry_date || '',
+                quantity: totalUnitsAccepted,
+                purchasePrice: purchasePricePerUnit,
+                sellingPrice: sellingPricePerUnit,
+                batch_status: 'active',
+                lastUpdated: new Date().toISOString()
+              };
+              // merge + increment preserves simultaneous first receipts of the
+              // same canonical batch even when neither caller saw it in a query.
+              batch.set(newBatchRef, {
+                ...newBatch, quantity: increment(totalUnitsAccepted),
+                createdAt: new Date().toISOString()
+              }, { merge: true });
+            }
+
+            if (product) {
+              const productRef = doc(db, 'products', line.product_id);
+              batch.update(productRef, {
+                quantityInStock: increment(totalUnitsAccepted),
+                updatedAt: new Date().toISOString()
+              });
+            }
+
+          }
+          return totalUnitsAccepted;
         });
 
-        if (data.queried > 0) {
-          hasQueries = true;
-          const queryRef = doc(db, 'stock_queries', line.id);
-          const queryObj = {
-            id: line.id,
-            tenantId: profile.tenantId,
-            invoiceId: selectedInvoice.id,
-            invoiceNumber: selectedInvoice.transfer_number,
-            productId: line.product_id,
-            productName: line.product_name,
-            batchNumber: line.batch_number || 'N/A',
-            qtyQueried: data.queried,
-            unitCost: line.unit_cost_ugx || 0,
-            amountAccrued: data.queried * (line.unit_cost_ugx || 0),
-            reason: data.reason || 'Unspecified discrepancy',
-            sourceBranchId: selectedInvoice.source_branch_id,
-            sourceBranchName: selectedInvoice.source_branch_name,
-            destinationBranchId: selectedInvoice.destination_branch_id,
-            destinationBranchName: selectedInvoice.destination_branch_name,
-            loggedBy: profile.uid,
-            loggedByName: profile.fullName || profile.displayName || profile.email || 'Staff User',
-            status: 'pending_return',
-            timestamp: new Date().toISOString()
-          };
-          batch.set(queryRef, queryObj);
-        }
-
-        if (data.accepted > 0) {
-          const existingBatch = batchMap[line.id as string];
-          const product = productMap[line.product_id as string];
-          const unitsPerPack = product?.unitsPerPack || 1;
-          const totalUnitsAccepted = data.accepted * unitsPerPack;
-          
-          if (existingBatch) {
-            const batchRef = doc(db, 'product_batches', existingBatch.id);
-            batch.update(batchRef, {
-              quantity: increment(totalUnitsAccepted),
-              lastUpdated: new Date().toISOString()
-            });
-          } else {
-            // Stable identity: concurrent first receipts for one product batch
-            // must increment the same document rather than create duplicates.
-            const newBatchId = ['stockin', profile.tenantId, activeBranchId, line.product_id,
-              line.batch_number || 'N/A', line.expiry_date || '']
-              .map(value => encodeURIComponent(String(value))).join('_');
-            const newBatchRef = doc(db, 'product_batches', newBatchId);
-            const purchasePricePerUnit = (line.unit_cost_ugx || 0) / unitsPerPack;
-            const sellingPricePerUnit = product?.sellingPricePerUnit || (purchasePricePerUnit * 1.3);
-            
-            const newBatch = {
+          if (data.queried > 0) {
+            const queryRef = doc(db, 'stock_queries', line.id);
+            const queryObj = {
+              id: line.id,
               tenantId: profile.tenantId,
-              branchId: activeBranchId,
+              invoiceId: selectedInvoice.id,
+              invoiceNumber: selectedInvoice.transfer_number,
               productId: line.product_id,
+              productName: line.product_name,
               batchNumber: line.batch_number || 'N/A',
-              expiryDate: line.expiry_date || '',
-              quantity: totalUnitsAccepted,
-              purchasePrice: purchasePricePerUnit,
-              sellingPrice: sellingPricePerUnit,
-              batch_status: 'active',
-              lastUpdated: new Date().toISOString()
+              qtyQueried: data.queried,
+              unitCost: line.unit_cost_ugx || 0,
+              amountAccrued: data.queried * (line.unit_cost_ugx || 0),
+              reason: data.reason || 'Unspecified discrepancy',
+              sourceBranchId: selectedInvoice.source_branch_id,
+              sourceBranchName: selectedInvoice.source_branch_name,
+              destinationBranchId: selectedInvoice.destination_branch_id,
+              destinationBranchName: selectedInvoice.destination_branch_name,
+              loggedBy: profile.uid,
+              loggedByName: profile.fullName || profile.displayName || profile.email || 'Staff User',
+              status: 'pending_return',
+              timestamp: new Date().toISOString()
             };
-            // merge + increment preserves simultaneous first receipts of the
-            // same canonical batch even when neither caller saw it in a query.
-            batch.set(newBatchRef, {
-              ...newBatch, quantity: increment(totalUnitsAccepted),
-              createdAt: new Date().toISOString()
-            }, { merge: true });
-          }
-
-          if (product) {
-            const productRef = doc(db, 'products', line.product_id);
-            batch.update(productRef, {
-              quantityInStock: increment(totalUnitsAccepted),
-              updatedAt: new Date().toISOString()
+            await runTransaction(db, async transaction => {
+              if (!(await transaction.get(queryRef)).exists()) transaction.set(queryRef, queryObj);
             });
           }
 
-          const movementId = sellableReceiptMovementId(selectedInvoice.id, line.id);
-          batch.set(doc(db, 'sellable_receipt_movement_outbox', movementId), {
-            tenantId: profile.tenantId, branchId: activeBranchId,
-            productId: line.product_id, transferId: selectedInvoice.id,
-            lineId: line.id, quantityBaseUnits: totalUnitsAccepted,
-            actorId: profile.uid, effectiveAt: new Date().toISOString(),
-            status: 'pending', createdAt: new Date().toISOString()
+        if (acceptedUnits > 0) {
+          const movementRef = doc(db, 'sellable_receipt_movement_outbox', movementId);
+          await runTransaction(db, async transaction => {
+            if ((await transaction.get(movementRef)).exists()) return;
+            transaction.set(movementRef, {
+              tenantId: profile.tenantId, branchId: activeBranchId,
+              productId: line.product_id, transferId: selectedInvoice.id,
+              lineId: line.id, quantityBaseUnits: acceptedUnits,
+              actorId: profile.uid, effectiveAt: new Date().toISOString(),
+              status: 'pending', createdAt: new Date().toISOString()
+            });
           });
           successfulMovements.push(movementId);
         }
       }
 
       const finalStatus = hasQueries ? 'queried' : 'fully_accepted';
-      batch.update(selectedInvoiceRef, {
-        status: finalStatus,
-        received_at: new Date().toISOString(),
-        received_by: profile?.uid,
-        received_by_name: profile?.full_name || profile?.displayName || profile?.email || 'Unknown',
-        updatedAt: new Date().toISOString()
-      });
-
-      if (selectedInvoice.order_id) {
-        const orderRef = doc(db, 'stock_orders', selectedInvoice.order_id);
-        batch.update(orderRef, {
-          status: finalStatus === 'fully_accepted' ? 'closed' : 'queried',
-          received_at: new Date().toISOString()
+      await runTransaction(db, async batch => {
+        const header = (await batch.get(selectedInvoiceRef)).data();
+        if (header?.status === finalStatus && !header.receiptSelections) return;
+        if (header?.status !== 'receiving' || !header.receiptSelections) {
+          throw new Error('The incoming shipment changed during reception.');
+        }
+          batch.update(selectedInvoiceRef, {
+          status: finalStatus, receiptSelections: deleteField(),
+          received_at: new Date().toISOString(),
+          received_by: profile?.uid,
+          received_by_name: profile?.full_name || profile?.displayName || profile?.email || 'Unknown',
+          updatedAt: new Date().toISOString()
         });
-      }
 
-      await batch.commit();
-      receptionCommitted = true;
+        if (selectedInvoice.order_id) {
+          const orderRef = doc(db, 'stock_orders', selectedInvoice.order_id);
+          batch.update(orderRef, {
+            status: finalStatus === 'fully_accepted' ? 'closed' : 'queried',
+            received_at: new Date().toISOString()
+          });
+        }
+
+      });
 
       let analyticsOutstanding = false;
       for (const movementId of successfulMovements) {
@@ -1949,19 +1960,9 @@ const StockInTab: React.FC<{ branches: Branch[] }> = ({ branches }) => {
       setSelectedInvoice(null);
     } catch (error: any) {
       console.error(error);
-      // Never reopen an already committed receipt when a later analytics write fails.
-      if (receptionClaimed && !receptionCommitted) {
-        try {
-          await updateDoc(selectedInvoiceRef, {
-            status: 'dispatched',
-            reception_claimed_by: null,
-            reception_claimed_at: null
-          });
-        } catch (releaseError) {
-          console.error('Failed to release reception claim:', releaseError);
-        }
-      }
-      toast.error(error?.message || "Failed to process reception.");
+      toast.error(error?.message || 'Failed to process reception.', {
+        description: 'Reopen the delivery from Stock In to resume a partially saved receipt.'
+      });
     } finally {
       receptionInFlightRef.current = false;
       setReceptionInFlight(false);
@@ -2083,7 +2084,7 @@ return (
                         </td>
                         <td className="px-4 py-3 text-center font-bold text-zinc-900">{line.qty_dispatched}</td>
                         <td className="px-4 py-3 text-center">
-                          {showHistory || !canOperateReception ? (
+                          {showHistory || !canOperateReception || Boolean(selectedInvoice.receiptSelections) ? (
                             <span className="font-bold text-emerald-600">{line.qty_accepted ?? line.qty_received ?? line.qty_dispatched ?? 0}</span>
                           ) : (
                             <input 
@@ -2101,7 +2102,7 @@ return (
                           )}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          {showHistory || !canOperateReception ? (
+                          {showHistory || !canOperateReception || Boolean(selectedInvoice.receiptSelections) ? (
                             <span className="font-bold text-red-600">{line.qty_queried || 0}</span>
                           ) : (
                             <input 
@@ -2119,7 +2120,7 @@ return (
                           UGX {((line.qty_dispatched || 0) * (line.unit_cost_ugx || 0)).toLocaleString()}
                         </td>
                         <td className="px-4 py-3">
-                          {showHistory || !canOperateReception ? (
+                          {showHistory || !canOperateReception || Boolean(selectedInvoice.receiptSelections) ? (
                             <span className="text-[11px] text-red-500 italic">{line.query_reason || '--'}</span>
                           ) : (
                             receivingData[line.id]?.queried > 0 && (

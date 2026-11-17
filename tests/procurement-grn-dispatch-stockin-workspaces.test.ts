@@ -12,13 +12,13 @@ const ruleBlock = (collection: string, next: string) => {
   return rules.slice(start, end);
 };
 
-test('procurement GRN transfer authorization requires a posted matching GRN', () => {
+test('procurement GRN transfer authorization requires a matching GRN and keeps pending transfers unpublished', () => {
   const block = ruleBlock('transfer_invoices', 'transfer_invoice_lines');
   assert.match(block, /isStockOperator\(\) \|\| \(/);
   assert.match(block, /isProcurement\(\)/);
   assert.match(block, /request\.resource\.data\.get\('inventoryClass', ''\) == 'SELLABLE'/);
   assert.match(block, /getAfter\(\/databases\/\$\(database\)\/documents\/grn_records\/\$\(request\.resource\.data\.grn_id\)\)\.data\.transfer_id == invoiceId/);
-  assert.match(block, /financial_posting_status in \['posted', 'not_applicable'\]/);
+  assert.match(block, /financial_posting_status in \['posted', 'not_applicable', 'posting'\]/);
 });
 
 test('procurement GRN line authorization requires the same transfer ID and tenant', () => {

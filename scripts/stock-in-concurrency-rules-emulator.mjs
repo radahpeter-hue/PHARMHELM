@@ -13,7 +13,7 @@ const productId='test-product', batchNumber='TEST2026', expiry='2028-12-31';
 const batchId=['stockin',tenant,branch,productId,batchNumber,expiry].map(encodeURIComponent).join('_');
 const env=await initializeTestEnvironment({
   projectId:'pharmhelm-operational-inventory-v2-rules',
-  firestore:{rules:readFileSync('firestore.rules','utf8')}
+  firestore:{rules:readFileSync(process.env.OPERATIONAL_RULES_PATH || 'firestore.rules','utf8')}
 });
 const user=(uid)=>env.authenticatedContext(uid,{tenantId:tenant}).firestore();
 try {
@@ -99,6 +99,48 @@ try {
     'sellable_stockin_transfer-four_test-line-2'),{
     ...intent,transferId:'transfer-four',lineId:'test-line-2',actorId:'unauthorized'
   }));
+  const large='transfer-large';
+  const largeRows=Array.from({length:210},(_,i)=>'large-line-'+i);
+  await env.withSecurityRulesDisabled(async ctx=>{
+    const seed=ctx.firestore();
+    const batch=writeBatch(seed);
+    batch.set(doc(seed,'transfer_invoices',large),{tenantId:tenant,inventoryClass:'SELLABLE',
+      status:'receiving',destination_branch_id:branch,source_branch_id:'HQ',
+      receiptSelections:Object.fromEntries(largeRows.map(id=>[id,{accepted:2,queried:1,reason:'Short shipment'}]))});
+    for(const id of largeRows) batch.set(doc(seed,'transfer_invoice_lines',id),{
+      tenantId:tenant,inventoryClass:'SELLABLE',transfer_id:large,product_id:productId,qty_dispatched:3,line_status:'ready_for_dispatch'
+    });
+    await batch.commit();
+  });
+  const applyLine=async(db,uid,id)=>{
+    await runTransaction(db,async tx=>{
+    const transferRef=doc(db,'transfer_invoices',large);
+    const lineRef=doc(db,'transfer_invoice_lines',id);
+    const [header,line]=await Promise.all([tx.get(transferRef),tx.get(lineRef)]);
+    assert.equal(header.data().status,'receiving');
+    if(line.data().line_status==='queried')return;
+    tx.update(lineRef,{line_status:'queried',qty_received:2,qty_accepted:2,qty_queried:1,qty_accepted_base_units:2});
+    tx.update(doc(db,'product_batches',batchId),{quantity:increment(2),lastUpdated:'2026-11-17'});
+    tx.update(doc(db,'products',productId),{quantityInStock:increment(2),updatedAt:'2026-11-17'});
+    });
+    const queryRef=doc(db,'stock_queries',id);
+    await runTransaction(db,async tx=>{
+      if (!(await tx.get(queryRef)).exists()) tx.set(queryRef,{tenantId:tenant,qtyQueried:1,invoiceId:large});
+    });
+    const outboxRef=doc(db,'sellable_receipt_movement_outbox',`sellable_stockin_${large}_${id}`);
+    await runTransaction(db,async tx=>{
+      if (!(await tx.get(outboxRef)).exists()) tx.set(outboxRef,{
+        ...intent,transferId:large,lineId:id,quantityBaseUnits:2,actorId:uid
+      });
+    });
+  };
+  await Promise.all([applyLine(first,'receiver-one',largeRows[0]),applyLine(second,'receiver-two',largeRows[0])]);
+  for(const id of largeRows)await applyLine(second,'receiver-two',id);
+  assert.equal((await getDoc(doc(first,'products',productId))).data().quantityInStock,438);
+  assert.equal((await getDoc(doc(first,'product_batches',batchId))).data().quantity,428);
+  await updateDoc(doc(first,'transfer_invoices',large),{status:'queried'});
+  assert.equal((await getDoc(doc(first,'transfer_invoices',large))).data().status,'queried');
+  console.log('210-line stock receipt, including concurrent replay, applied accepted units exactly once.');
   console.log('PASS: distinct concurrent receipts add 3+5 exactly; canonical batch, duplicate claim blocked, movement intent guardrails.');
 } finally {
   await env.cleanup();

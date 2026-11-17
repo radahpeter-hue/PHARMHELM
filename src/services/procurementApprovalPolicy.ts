@@ -46,7 +46,7 @@ export function planProcurementApproval(
   additions: ApprovalAddition[]
 ): ApprovalPlan {
   if (order.status !== 'awaiting_finance_approval') throw new Error('Only orders awaiting financial approval may be edited.');
-  if (lines.length > 150 || additions.length > 40) throw new Error('This approval is too large to process safely in one transaction.');
+  if (lines.length + additions.length > 550 || additions.length > 40) throw new Error('An approval supports up to 550 lines, including up to 40 additions.');
   const editable = lines.filter(line => line.line_status === 'awaiting_finance_approval');
   if (editable.length === 0) throw new Error('No sourced order lines are awaiting financial approval.');
   if (editable.some(line => line.order_id !== order.id || line.tenantId !== order.tenantId)) {

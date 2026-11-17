@@ -8,7 +8,7 @@ const end=src.indexOf('\nreturn (',start);
 const handler=src.slice(start,end);
 
 test('Sellable reception increments existing batch and product stock atomically',()=>{
-  assert.match(src,/writeBatch, increment \} from 'firebase\/firestore'/);
+  assert.match(handler,/await runTransaction\(db, async batch =>/);
   assert.match(handler,/quantity: increment\(totalUnitsAccepted\)/);
   assert.match(handler,/quantityInStock: increment\(totalUnitsAccepted\)/);
   assert.doesNotMatch(handler,/quantity: \(existingBatch\.quantity \|\| 0\) \+ totalUnitsAccepted/);
@@ -23,10 +23,11 @@ test('simultaneous first receptions use one stable product batch document',()=>{
   assert.doesNotMatch(handler,/doc\(collection\(db, 'product_batches'\)\)/);
 });
 
-test('analytics errors after stock commit never release a receipt for duplicate posting',()=>{
-  assert.match(handler,/let receptionCommitted = false/);
-  assert.match(handler,/await batch\.commit\(\);\s*receptionCommitted = true;/);
-  assert.match(handler,/if \(receptionClaimed && !receptionCommitted\)/);
+test('partial receipts keep their selections and do not reapply finished lines',()=>{
+  assert.match(handler,/status: 'receiving', receiptSelections: selections/);
+  assert.match(handler,/persisted\.qty_accepted !== data\.accepted/);
+  assert.match(handler,/status: finalStatus, receiptSelections: deleteField\(\)/);
+  assert.doesNotMatch(handler,/status: 'dispatched'/);
 });
 
 test('each receipt is claimed under transaction before any stock write and remains class scoped',()=>{
@@ -37,7 +38,7 @@ test('each receipt is claimed under transaction before any stock write and remai
 });
 
 test('post-commit Sellable movement records flag stock as already applied',()=>{
-  assert.match(handler,/batch\.set\(doc\(db, 'sellable_receipt_movement_outbox'/);
+  assert.match(handler,/doc\(db, 'sellable_receipt_movement_outbox', movementId\)/);
   assert.match(handler,/await replaySellableReceiptMovement\(/);
   const recovery = readFileSync(new URL('../src/services/sellableReceiptRecoveryService.ts',import.meta.url),'utf8');
   assert.match(recovery,/eventType: 'TRANSFER_IN'/);

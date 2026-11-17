@@ -122,7 +122,7 @@ export function shareRepeatedAllowConditions(source) {
 export function shareRequestExpressions(source) {
  const masked = maskRulesTrivia(source);
  if (!databaseScope.test(masked)) return source;
- const paths = [...masked.matchAll(/(?<![.\w])(?:request\.resource\.data|resource\.data|request\.auth\.uid|request\.time)\b/g)];
+ const paths = [...masked.matchAll(/(?<![.\w])(?:isTenantMember\((?:request\.)?resource\.data\.tenantId\)|(?:(?:request\.)?resource\.data(?:\.(?:tenantId|branchId|status|inventoryClass))?|request\.auth\.uid|request\.time)\b)/g)];
  const helpers = new Map();
  let serial = 0;
  for (const match of paths.reverse()) {
@@ -146,7 +146,9 @@ export function compactRuleSymbols(source){
  for(const keyword of ['as','break','const','continue','do','else','for','function','if','in','is','let','match','return','service','true','false','null','rules_version','while'])names.add(keyword);
  const alphabet='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';let serial=0;
  const unique=()=>{for(;;){let index=serial++,name='';do{name=alphabet[index%52]+name;index=Math.floor(index/52)-1;}while(index>=0);if(!names.has(name)){names.add(name);return name;}}};
- const addBinding=name=>{if(name&&!reservedPaths.has(name))symbols.add(name);};
+ // Rule methods can also be local binding names. Keep the method token intact.
+ const ruleMethods=new Set(['read','write','get','list','create','update','delete']);
+ const addBinding=name=>{if(name&&!reservedPaths.has(name)&&!ruleMethods.has(name))symbols.add(name);};
  for(const m of stripped.matchAll(/\bfunction\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/g)){
   symbols.add(m[1]);
   for(const name of m[2].split(',').map(s=>s.trim()).filter(Boolean))addBinding(name);
