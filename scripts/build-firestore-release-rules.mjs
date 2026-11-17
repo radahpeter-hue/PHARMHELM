@@ -195,6 +195,35 @@ export function balanceBooleanChains(source) {
  return source;
 }
 
+/** Share the invariant database/documents path prefix. Each literal collection,
+ * document expression and get/getAfter call is retained at its original site.
+ */
+export function shareDocumentPaths(source) {
+ const masked=maskRulesTrivia(source),database=masked.match(/match\s+\/databases\/\{(\w+)\}\/documents\s*\{/)?.[1];
+ if(!database)return source;
+ let name='releaseDocumentPath',serial=0;
+ while(source.includes(name))name='releaseDocumentPath'+serial++;
+ const replacements=[],methods=new Set();let coveredUntil=0;
+ for(const head of masked.matchAll(/\/databases\/\$\((\w+)\)\/documents\/([A-Za-z_]\w*)\/\$\(/g)){
+  if(head[1]!==database||head.index<coveredUntil)continue;
+  const start=head.index+head[0].length;let end=start,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='(')depth++;if(masked[end]===')')depth--;}
+  if(depth)throw Error('Unbalanced document path.');
+  // Never rewrite a prefix of a deeper subcollection path.
+  if(masked[end]==='/')continue;
+  const prefix=masked.slice(0,head.index).match(/(?<![.\w])(get|getAfter)\(\s*$/),suffix=masked.slice(end).match(/^\s*\)\s*\.data\b/);
+  const method=prefix&&suffix?prefix[1]:null;
+  const from=method?head.index-prefix[0].length:head.index,to=method?end+suffix[0].length:end;
+  if(method)methods.add(method);
+  replacements.push({from,to,text:name+(method==='get'?'Before':method==='getAfter'?'After':'')+"('"+head[2]+"',"+source.slice(start,end-1)+')'});
+  coveredUntil=to;
+ }
+ if(replacements.length<2)return source;
+ for(const {from,to,text} of replacements.reverse())source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,[`function ${name}(collection, id) { return /databases/$(${database})/documents/$(collection)/$(id); }`,
+  ...[...methods].map(method=>`function ${name}${method==='get'?'Before':'After'}(collection,id) { return ${method}(${name}(collection,id)).data; }`)]);
+}
+
 /** Move identical direct grants into shared predicates. Keep every allow at its
  * original path and method. Expressions capturing a match variable or a local
  * function stay in place so the shared predicate has the same lexical scope.
@@ -257,7 +286,7 @@ export function shareRequestExpressions(source) {
 }
 
 export function compactRuleSymbols(source,{maxLocalOwners=1}={}){
- source=balanceBooleanChains(shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(shareRepeatedAllowConditions(localizeCollectionHelpers(source,maxLocalOwners))))));
+ source=balanceBooleanChains(shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(shareRepeatedAllowConditions(localizeCollectionHelpers(shareDocumentPaths(source),maxLocalOwners))))));
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(tokens.filter(token=>/^[A-Za-z_]\w*$/.test(token))),symbols=new Set(),aliases=new Map();

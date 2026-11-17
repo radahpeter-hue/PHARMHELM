@@ -2,7 +2,7 @@
 import {readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
 
-export async function diagnoseCompiler({project,token,controls,runId,attachmentPoint,fetchImpl=fetch,log=console.log}) {
+export async function diagnoseCompiler({project,token,controls,runId,attachmentPoint=undefined,fetchImpl=fetch,log=console.log}) {
  if(!/^[a-z0-9-]+$/.test(project)||!/^\d+$/.test(String(runId)))throw Error('Unsafe diagnostic identity.');
  const root=`https://firebaserules.googleapis.com/v1/projects/${project}`;
  const headers={Authorization:`Bearer ${token}`,'Content-Type':'application/json'};
@@ -21,6 +21,7 @@ export async function diagnoseCompiler({project,token,controls,runId,attachmentP
    probeName=`projects/${project}/releases/pharmhelm_size_probe_${runId}_${index+100}`;
    const activated=await fetchImpl(root+'/releases',{method:'POST',headers,body:JSON.stringify({name:probeName,rulesetName}),signal:AbortSignal.timeout(60000)});
    result.releaseStatus=activated.status;
+   if(!activated.ok)result.releaseError=(await activated.json()).error?.message;
    // Always inspect the exact release, including after an ambiguous POST failure.
    const verified=await fetchImpl('https://firebaserules.googleapis.com/v1/'+probeName,{headers,signal:AbortSignal.timeout(60000)});
    result.verificationStatus=verified.status;

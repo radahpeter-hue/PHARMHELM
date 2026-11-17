@@ -1,6 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains} from '../scripts/build-firestore-release-rules.mjs';
+import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains,shareDocumentPaths} from '../scripts/build-firestore-release-rules.mjs';
+test('document path sharing preserves collection, ID expressions, snapshot method and deeper paths',()=>{
+ const source=`service cloud.firestore { match /databases/{database}/documents {
+ function evidence(id) { return getAfter(/databases/$(database)/documents/accounts/$(id)).data; }
+ match /debts/{id} { allow update: if get(/databases/$(database)/documents/sales/$(request.resource.data.get('saleId', id))).data.amount > 0; }
+ match /nested/{id} { allow get: if exists(/databases/$(database)/documents/sales/$(id)/items/$(id)); }
+ // get(/databases/$(database)/documents/ignored/$(id))
+} }`;
+ const result=shareDocumentPaths(source);
+ assert.ok(result.includes("releaseDocumentPathAfter('accounts',id)"));
+ assert.ok(result.includes("releaseDocumentPathBefore('sales',request.resource.data.get('saleId', id))"));
+ assert.ok(result.includes('return getAfter(releaseDocumentPath(collection,id)).data;'));
+ assert.ok(result.includes('return get(releaseDocumentPath(collection,id)).data;'));
+ assert.ok(result.includes('exists(/databases/$(database)/documents/sales/$(id)/items/$(id))'));
+ assert.ok(result.includes('// get(/databases/$(database)/documents/ignored/$(id))'));
+ assert.equal(shareDocumentPaths(result),result);
+});
 test('balanced boolean chains preserve results and exact short-circuit operand order',()=>{
  for(const operator of ['&&','||']){
   const expression=Array.from({length:16},(_,index)=>`check(${index})`).join(operator);
