@@ -7,6 +7,7 @@ on:
       - 'scripts/build-firestore-release-rules.mjs'
       - 'scripts/validate-inactive-finance-rules.mjs'
       - 'scripts/firestore-unbound-probe.mjs'
+      - 'scripts/diagnose-firestore-compiler.mjs'
       - '.github/workflows/firestore-release-size.yml'
 permissions:
   contents: read
@@ -14,9 +15,11 @@ jobs:
   activation-size:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -27,7 +30,18 @@ jobs:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
       - run: npm install --prefix /tmp/rules-size --no-save --ignore-scripts google-auth-library
       - name: Require actual compiled executable to fit the activation limit
+        id: candidate
         run: |
           cp scripts/validate-inactive-finance-rules.mjs /tmp/rules-size/validate.mjs
           cp scripts/firestore-unbound-probe.mjs /tmp/rules-size/firestore-unbound-probe.mjs
           node /tmp/rules-size/validate.mjs
+      - name: Diagnose compiler failure against deny-all and exact PR base controls
+        if: failure() && steps.candidate.outcome == 'failure'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git show "$BASE_SHA:firestore.rules" > /tmp/main-control.rules
+          git show "$BASE_SHA:scripts/build-firestore-release-rules.mjs" > /tmp/main-control-build.mjs
+          node /tmp/main-control-build.mjs /tmp/main-control.rules
+          cp scripts/diagnose-firestore-compiler.mjs /tmp/rules-size/diagnose.mjs
+          node /tmp/rules-size/diagnose.mjs /tmp/main-control.rules
