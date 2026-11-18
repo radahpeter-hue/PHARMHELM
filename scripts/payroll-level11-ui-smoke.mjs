@@ -1,0 +1,66 @@
+// Executed by CI in an isolated browser against real components with synthetic data only.
+import {buildPayrollFixture} from './payroll-level11-ui-fixture.mjs';
+import {createRequire} from 'node:module';
+import {createServer} from 'node:http';
+import {readFile,mkdir} from 'node:fs/promises';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+const require=createRequire(import.meta.url),{chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const root=await buildPayrollFixture();
+await mkdir('/tmp/payroll-level11-mobile-proof',{recursive:true});
+const server=createServer(async(req,res)=>{try{const file=req.url==='/'?'index.html':path.basename(req.url);res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');res.end(await readFile(path.join(root,file)));}catch{res.statusCode=404;res.end();}});
+await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+const browser=await chromium.launch({headless:true}),errors=[];
+try{
+ for(const width of [360,390,768,1280]){
+  const page=await browser.newPage({viewport:{width,height:740}});page.on('pageerror',e=>errors.push(e.message));
+  await page.route('**/*',route=>route.request().url().startsWith('http://127.0.0.1:')?route.continue():route.abort());
+  await page.goto('http://127.0.0.1:'+server.address().port);
+  await page.locator('button:visible').filter({hasText:'Payroll approval & payments'}).first().click();
+  const dialog=page.getByRole('dialog',{name:'Payroll review'});
+  await dialog.getByText('Pending Finance Approval',{exact:true}).waitFor();
+  assert.equal(await dialog.getByRole('spinbutton').count(),0,'Finance must not edit salary calculations');
+  assert.equal(await dialog.getByRole('button',{name:'Return to HR',exact:true}).isDisabled(),true);
+  await dialog.getByLabel('Correction reason').fill('Please correct the allowance');
+  await dialog.getByRole('button',{name:'Return to HR',exact:true}).click();
+  await dialog.getByText('Returned for Correction',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Close payroll review'}).click();
+  await page.getByRole('button',{name:'HR payroll',exact:true}).click();
+  await page.getByText('Finance correction reason:',{exact:false}).count();
+  assert.match(await page.locator('body').innerText(),/Returned for Correction/);
+  await page.reload();
+  await page.locator('button:visible').filter({hasText:'Payroll approval & payments'}).first().click();
+  await dialog.getByRole('button',{name:'Approve Payroll',exact:true}).click();
+  await dialog.getByText('Approved, Awaiting Payment',{exact:true}).waitFor();
+  await dialog.getByLabel('Employee',{exact:true}).selectOption('employee1');
+  await dialog.getByLabel('Actual funding account',{exact:true}).selectOption('system_mtn_mobile_money');
+  await dialog.getByLabel('Amount (whole UGX)',{exact:true}).fill('200000');
+  await dialog.getByLabel('Actual payment reference',{exact:true}).fill('MM-FIXTURE-001');
+  await dialog.getByRole('button',{name:'Record salary payment',exact:true}).click();
+  await dialog.getByText('Partially Paid',{exact:true}).first().waitFor();
+  assert.equal(await page.evaluate(()=>window.__paid.amountUGX),200000);
+  assert.equal(await page.evaluate(()=>window.__paid.accountId),'system_mtn_mobile_money');
+  const rect=await dialog.boundingBox();assert.ok(rect.y>=0&&rect.height<=740,'Modal fits phone viewport');
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),'No document horizontal overflow');
+  await dialog.screenshot({path:'/tmp/payroll-level11-mobile-proof/finance-'+width+'.png'});
+  await page.getByRole('button',{name:'Close payroll review'}).click();
+  await page.getByRole('button',{name:'HR payroll',exact:true}).click();
+  await page.locator('input[type=date]').nth(0).fill('2026-11-01');await page.locator('input[type=date]').nth(1).fill('2026-11-30');
+  await page.getByRole('button',{name:'Prepare Payroll Draft',exact:true}).click();
+  await page.getByRole('button',{name:'Review & Adjust',exact:true}).click();
+  const hrDialog=page.getByRole('dialog',{name:'Employee payroll review'});
+  const hrRect=await hrDialog.boundingBox();assert.ok(hrRect.height<=740&&hrRect.y>=0,'HR review fits viewport');
+  await hrDialog.getByRole('spinbutton').nth(1).fill('10000');
+  await page.getByPlaceholder('e.g. Sales performance reward, shift incentives...').fill('Verified allowance');
+  await hrDialog.getByRole('button',{name:'Update Draft Invoice',exact:true}).scrollIntoViewIfNeeded();
+  await hrDialog.screenshot({path:'/tmp/payroll-level11-mobile-proof/hr-'+width+'.png'});
+  await page.getByRole('button',{name:'Update Draft Invoice',exact:true}).click();
+  await page.getByRole('button',{name:'Submit to Finance',exact:true}).click();
+  await page.waitForFunction(()=>!!window.__submitted);
+  const line=await page.evaluate(()=>window.__submitted.lines[0]);
+  assert.equal(line.loggedHours,120);assert.equal(line.baseSalary,360000);assert.equal(line.netSalary,340600);
+  await page.close();
+  console.log('PASS actual HR/Finance payroll controls and scrolling at width '+width);
+ }
+ assert.deepEqual(errors,[]);
+}finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

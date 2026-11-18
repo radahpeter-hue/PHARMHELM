@@ -10,6 +10,7 @@ const readSources: { source: Source; label: string; filters?: () => QueryConstra
   { source: 'branch_expenses', label: 'Branch expenses' },
   { source: 'management_expenses', label: 'Management expenses' },
   { source: 'payroll', label: 'Payroll' },
+  { source: 'finance_payroll_batches_v1', label: 'Payroll approvals' },
   ...LOGISTICS_EXPENSE_COLLECTIONS.map(source => ({ source, label: 'Logistics expenses' })),
   { source: 'marketing_expenses', label: 'Marketing expenses' },
   { source: 'operational_inventory_maintenance', label: 'Operational maintenance' },

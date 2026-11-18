@@ -1,7 +1,9 @@
+import {doc,serverTimestamp,updateDoc,where} from 'firebase/firestore';
+import {db} from '../../firebase';
 import { staffMatchesId } from '../../utils/operationalStaff';
 import React, { useState, useEffect } from 'react';
-import { 
-  Calendar, Clock, CheckCircle2, XCircle, Search, 
+import {
+  Calendar, Clock, CheckCircle2, XCircle, Search,
   Filter, UserCheck, UserX, AlertCircle, MapPin,
   ChevronLeft, ChevronRight, Download, Users, Plus, Save, Trash2, Edit2
 } from 'lucide-react';
@@ -12,12 +14,13 @@ import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
 
 export const AttendanceTracker: React.FC = () => {
-  const { profile } = useAuth();
+  const { profile, hasPermission } = useAuth();
+  const canVerify = hasPermission('hr','operate') || profile?.role==='Branch Manager';
   const [staff, setStaff] = useState<Staff[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [searchTerm, setSearchTerm] = useState('');
-  
+
   // Bulking states
   const [isBulkLogging, setIsBulkLogging] = useState(false);
   const [bulkData, setBulkData] = useState<{
@@ -40,11 +43,13 @@ export const AttendanceTracker: React.FC = () => {
   useEffect(() => {
     if (profile?.tenantId) {
       firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setStaff);
-      
+
       // Subscribe to all attendance records to filter client side by selected date
-      return firestoreService.subscribeToCollection<AttendanceRecord>(
+      const broad = ['HR Head','HR Manager','HR Support Personnel','owner','CEO','CEO / MD','admin','Admin','Finance Head'].some(role=>[profile.role,...(profile.secondaryRoles || [])].includes(role));
+      const branches=[...new Set([profile.branch_id,...(profile.assigned_branches || [])].filter(Boolean))];
+      return firestoreService.subscribeToCollectionByQuery<AttendanceRecord>(
         'attendance',
-        profile.tenantId,
+        profile.tenantId, broad ? [] : [where('branch_id','in',branches.length?branches.slice(0,30):['__none__'])],
         (data) => {
           setAttendance(data);
         }
@@ -57,7 +62,7 @@ export const AttendanceTracker: React.FC = () => {
     const initial: typeof bulkData = {};
     staff.forEach(s => {
       initial[s.id] = {
-        selected: s.status === 'active', // default is active staff selected
+        selected: false, // Explicitly select staff whose attendance was recorded.
         status: 'present',
         checkIn: '08:00',
         checkOut: '17:00'
@@ -120,7 +125,8 @@ export const AttendanceTracker: React.FC = () => {
           check_in_time: item.details.status === 'present' ? item.details.checkIn : null,
           check_out_time: item.details.status === 'present' ? item.details.checkOut : null,
           hours_worked: hours,
-          branch_id: staffMember.branch_id || ''
+          branch_id: staffMember.branch_id || 'HQ',
+          verificationStatus: 'unverified', verifiedBy:null, verifiedAt:null
         });
         count++;
       }
@@ -148,7 +154,7 @@ export const AttendanceTracker: React.FC = () => {
         status: editingFields.status,
         check_in_time: editingFields.status === 'present' ? editingFields.checkIn : null,
         check_out_time: editingFields.status === 'present' ? editingFields.checkOut : null,
-        hours_worked: hours
+        hours_worked: hours, verificationStatus:'unverified',verifiedBy:null,verifiedAt:null
       });
       toast.success('Attendance record updated');
       setEditingRowId(null);
@@ -156,6 +162,11 @@ export const AttendanceTracker: React.FC = () => {
     } catch (error) {
       toast.error('Failed to update attendance record');
     }
+  };
+
+  const handleVerify = async (record:AttendanceRecord) => {
+    try {await updateDoc(doc(db,'attendance',record.id),{verificationStatus:'approved',verifiedBy:profile!.uid,verifiedAt:serverTimestamp()});toast.success('Attendance verified for payroll.');}
+    catch {toast.error('Unable to verify attendance. HR or the assigned branch manager is required.');}
   };
 
   const handleDeleteRecord = async (recordId: string) => {
@@ -189,7 +200,7 @@ export const AttendanceTracker: React.FC = () => {
       ];
     });
 
-    const csvContent = "data:text/csv;charset=utf-8," 
+    const csvContent = "data:text/csv;charset=utf-8,"
       + [headers.join(','), ...rows.map(e => e.map(val => `"${val}"`).join(","))].join("\n");
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
@@ -210,7 +221,7 @@ export const AttendanceTracker: React.FC = () => {
         </div>
 
         <div className="bg-white p-2 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
-          <button 
+          <button
             onClick={() => {
               const d = new Date(selectedDate);
               d.setDate(d.getDate() - 1);
@@ -224,8 +235,8 @@ export const AttendanceTracker: React.FC = () => {
           </button>
           <div className="flex flex-col items-center px-1">
             <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Attendance Date</span>
-            <input 
-              type="date" 
+            <input
+              type="date"
               className="text-xs font-bold text-slate-900 bg-transparent border-none p-0 focus:ring-0 cursor-pointer outline-none"
               value={selectedDate}
               onChange={(e) => {
@@ -235,7 +246,7 @@ export const AttendanceTracker: React.FC = () => {
               }}
             />
           </div>
-          <button 
+          <button
             onClick={() => {
               const d = new Date(selectedDate);
               d.setDate(d.getDate() + 1);
@@ -263,9 +274,9 @@ export const AttendanceTracker: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-          <input 
-            type="text" 
-            placeholder="Search logs/staff..." 
+          <input
+            type="text"
+            placeholder="Search logs/staff..."
             className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/20 outline-none text-xs font-semibold"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -273,7 +284,7 @@ export const AttendanceTracker: React.FC = () => {
         </div>
         <div className="flex items-center gap-2">
           {filteredAttendance.length > 0 && (
-            <button 
+            <button
               onClick={handleExportCSV}
               className="flex items-center gap-2 px-4 py-2 border border-slate-200 bg-white rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 transition-all uppercase tracking-widest"
             >
@@ -283,7 +294,7 @@ export const AttendanceTracker: React.FC = () => {
           )}
 
           {!isBulkLogging && filteredAttendance.length === 0 && (
-            <button 
+            <button
               onClick={startBulkLogMode}
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-indigo-100"
             >
@@ -303,13 +314,13 @@ export const AttendanceTracker: React.FC = () => {
               <h3 className="text-base font-black text-slate-900 mt-1 uppercase tracking-tight">Record Attendance for {selectedDate}</h3>
             </div>
             <div className="flex gap-2">
-              <button 
+              <button
                 onClick={() => setIsBulkLogging(false)}
                 className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 transition-all uppercase tracking-widest"
               >
                 Cancel
               </button>
-              <button 
+              <button
                 onClick={handleSaveBulkAttendance}
                 className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all uppercase tracking-widest"
               >
@@ -323,8 +334,8 @@ export const AttendanceTracker: React.FC = () => {
               <thead>
                 <tr className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100 bg-slate-50/50">
                   <th className="px-6 py-4 w-12 text-center">
-                    <input 
-                      type="checkbox" 
+                    <input
+                      type="checkbox"
                       className="rounded text-indigo-600 focus:ring-indigo-500"
                       checked={Object.keys(bulkData).length > 0 && Object.keys(bulkData).every(k => bulkData[k].selected)}
                       onChange={(e) => {
@@ -354,8 +365,8 @@ export const AttendanceTracker: React.FC = () => {
                     return (
                       <tr key={member.id} className={cn("transition-colors", rowState.selected ? "bg-indigo-50/20" : "hover:bg-slate-50/50")}>
                         <td className="px-6 py-4 text-center">
-                          <input 
-                            type="checkbox" 
+                          <input
+                            type="checkbox"
                             className="rounded text-indigo-600 focus:ring-indigo-500"
                             checked={rowState.selected}
                             onChange={(e) => {
@@ -375,7 +386,7 @@ export const AttendanceTracker: React.FC = () => {
                           <p className="text-[10px] text-slate-400 mt-0.5">{member.branch_id}</p>
                         </td>
                         <td className="px-6 py-4">
-                          <select 
+                          <select
                             className="text-xs font-bold px-3 py-1.5 bg-white border border-slate-200 rounded-xl outline-none"
                             value={rowState.status}
                             disabled={!rowState.selected}
@@ -392,8 +403,8 @@ export const AttendanceTracker: React.FC = () => {
                           </select>
                         </td>
                         <td className="px-6 py-4">
-                          <input 
-                            type="time" 
+                          <input
+                            type="time"
                             className="text-xs font-bold px-3 py-1 bg-white border border-slate-200 rounded-lg outline-none"
                             value={rowState.checkIn}
                             disabled={!rowState.selected || rowState.status !== 'present'}
@@ -406,8 +417,8 @@ export const AttendanceTracker: React.FC = () => {
                           />
                         </td>
                         <td className="px-6 py-4">
-                          <input 
-                            type="time" 
+                          <input
+                            type="time"
                             className="text-xs font-bold px-3 py-1 bg-white border border-slate-200 rounded-lg outline-none"
                             value={rowState.checkOut}
                             disabled={!rowState.selected || rowState.status !== 'present'}
@@ -425,6 +436,7 @@ export const AttendanceTracker: React.FC = () => {
                             hours > 0 ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "text-slate-300"
                           )}>
                             {hours} hrs
+
                           </span>
                         </td>
                       </tr>
@@ -479,7 +491,7 @@ export const AttendanceTracker: React.FC = () => {
                         </td>
                         <td className="px-6 py-4 text-center">
                           {isEditing ? (
-                            <select 
+                            <select
                               className="text-xs font-bold px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl outline-none"
                               value={editingFields?.status}
                               onChange={(e) => setEditingFields({ ...editingFields!, status: e.target.value })}
@@ -501,8 +513,8 @@ export const AttendanceTracker: React.FC = () => {
                         </td>
                         <td className="px-6 py-4">
                           {isEditing ? (
-                            <input 
-                              type="time" 
+                            <input
+                              type="time"
                               className="text-xs font-bold px-2 py-0.5 bg-slate-50 border border-slate-200 rounded-lg outline-none"
                               value={editingFields?.checkIn}
                               disabled={editingFields?.status !== 'present'}
@@ -516,8 +528,8 @@ export const AttendanceTracker: React.FC = () => {
                         </td>
                         <td className="px-6 py-4">
                           {isEditing ? (
-                            <input 
-                              type="time" 
+                            <input
+                              type="time"
                               className="text-xs font-bold px-2 py-0.5 bg-slate-50 border border-slate-200 rounded-lg outline-none"
                               value={editingFields?.checkOut}
                               disabled={editingFields?.status !== 'present'}
@@ -535,12 +547,14 @@ export const AttendanceTracker: React.FC = () => {
                             hours > 0 ? "bg-indigo-50 text-indigo-700 border border-indigo-100" : "text-slate-300"
                           )}>
                             {hours} hrs
+                            <span className="block text-[10px]">{record.verificationStatus==='approved'?'Verified':'Unverified'}</span>
                           </span>
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
+                            {!isEditing && canVerify && record.verificationStatus!=='approved' && <button type="button" onClick={()=>handleVerify(record)} className="min-h-11 rounded-lg bg-emerald-50 px-3 text-xs font-bold text-emerald-800">Verify</button>}
                             {isEditing ? (
-                              <button 
+                              <button
                                 onClick={() => handleSaveRow(record.id)}
                                 className="p-1.5 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors"
                                 title="Save Record"
@@ -548,7 +562,7 @@ export const AttendanceTracker: React.FC = () => {
                                 <Save size={16} />
                               </button>
                             ) : (
-                              <button 
+                              <button
                                 onClick={() => handleStartEditRow(record)}
                                 className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
                                 title="Edit Record"
@@ -556,7 +570,7 @@ export const AttendanceTracker: React.FC = () => {
                                 <Edit2 size={16} />
                               </button>
                             )}
-                            <button 
+                            <button
                               onClick={() => handleDeleteRecord(record.id)}
                               className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
                               title="Delete Record"
@@ -575,7 +589,7 @@ export const AttendanceTracker: React.FC = () => {
                       <Calendar className="mx-auto text-slate-300 mb-2" size={36} />
                       <p className="font-bold text-sm uppercase tracking-wider text-slate-400">No attendance records found for {selectedDate}</p>
                       <p className="text-[10px] text-slate-400 font-semibold uppercase mt-0.5">Please click "Bulk Log Attendance" to setup logs for this shift.</p>
-                      <button 
+                      <button
                         onClick={startBulkLogMode}
                         className="mt-4 bg-indigo-600 text-white px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider shadow-lg shadow-indigo-100 inline-flex items-center gap-2"
                       >

@@ -1,3 +1,4 @@
+import {usePayrollBatches} from '../../../hooks/usePayrollBatches';
 import { operationalStaff } from '../../../utils/operationalStaff';
 import { staffMatchesId } from '../../../utils/operationalStaff';
 import { isActiveSale } from '../../../utils/activeSales';
@@ -37,6 +38,7 @@ export const TaxEngine: React.FC = () => {
   // RAW lists
   const [sales, setSales] = useState<any[]>([]);
   const [grns, setGrns] = useState<any[]>([]);
+  const payrollBatches=usePayrollBatches(profile?.tenantId);
   const [payrollList, setPayrollList] = useState<any[]>([]);
   const [staffList, setStaffList] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
@@ -114,11 +116,12 @@ export const TaxEngine: React.FC = () => {
 
   const filteredPayroll = useMemo(() => {
     return payrollList.filter(p => {
+      if(p.payrollVersion===11 && !payrollBatches.some(b=>b.id===p.batchId&&b.revision===p.revision&&['approved','partial','paid'].includes(b.status)))return false;
       if (!isDateFilterActive) return true;
-      const d = (p.paid_date || p.generated_at || '').split('T')[0];
+      const d = (p.payrollVersion===11 ? p.periodEnd : p.paid_date || p.generated_at || '').split('T')[0];
       return d && d >= dateRange.start && d <= dateRange.end;
     });
-  }, [payrollList, isDateFilterActive, dateRange]);
+  }, [payrollList, payrollBatches, isDateFilterActive, dateRange]);
 
   // Calculations
   const outputVat = useMemo(() => {

@@ -1,3 +1,8 @@
+import {payrollStatutory} from '../../domain/finance/payrollStatutory';
+import {payableAttendance} from '../../domain/finance/payrollAttendance';
+import {employeePayrollStatus,payrollStatusLabels,finalizePayrollLine,type PayrollLine} from '../../domain/finance/payroll';
+import {submitPayroll,getPayrollRevision,type PayrollBatch} from '../../services/payrollFinanceService';
+import {usePayrollBatches} from '../../hooks/usePayrollBatches';
 import { staffMatchesId } from '../../utils/operationalStaff';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -13,7 +18,7 @@ import { toast } from 'sonner';
 import { cn } from '../../utils/cn';
 import { operationalStaff } from '../../utils/operationalStaff';
 
-interface DraftPayrollRecord {
+interface DraftPayrollRecord extends PayrollLine {
   staffId: string;
   staffName: string;
   role: string;
@@ -46,6 +51,9 @@ interface DraftPayrollRecord {
 export const PayrollManager: React.FC = () => {
   const { profile } = useAuth();
   const { tenant } = useTenant();
+  const batches = usePayrollBatches(profile?.tenantId);
+  const [correctionBatchId,setCorrectionBatchId] = useState<string>();
+  const [restartIncomplete,setRestartIncomplete] = useState(false);
   // Payroll tax processing is controlled by tenant settings, not subscription tier.
   const [staff, setStaff] = useState<Staff[]>([]);
   const [payroll, setPayroll] = useState<any[]>([]);
@@ -156,6 +164,7 @@ export const PayrollManager: React.FC = () => {
       return;
     }
 
+    if (!fromDate || !toDate || fromDate > toDate || (Date.parse(toDate)-Date.parse(fromDate))/86400000 > 366) { toast.error('Select a valid payroll period of no more than 367 days.'); return; }
     const draftRecords: DraftPayrollRecord[] = [];
 
     canonicalStaff.forEach(member => {
@@ -170,26 +179,19 @@ export const PayrollManager: React.FC = () => {
       // Expected Remunerations Per Hour: Base Salary divided by expected work hours of the month
       const hourlyRate = expectedHoursInMonth > 0 ? (salaryBase / expectedHoursInMonth) : 0;
 
-      // 2. Fetch actually worked hours in the selected period from the attendance ledger
-      const matchingHoursList = attendance.filter(a => 
-        staffMatchesId(member, a.staffId) &&
-        a.date >= fromDate && 
-        a.date <= toDate && 
-        a.status === 'present'
-      );
-      const loggedHoursFromAttendance = matchingHoursList.reduce((sum, item) => sum + (item.hours_worked || 0), 0);
-
-      // Robust fallback: if they are salaried and did not log attendance, we default loggedHours to expectedHoursInMonth so they get standard salary
-      const loggedHours = loggedHoursFromAttendance > 0 ? loggedHoursFromAttendance : expectedHoursInMonth;
-
-      // 3. Gross Payments dynamically derived from multiplying hours worked and hourly rate (plus fallback/adjustments)
-      const basePay = loggedHours * hourlyRate;
+      const attendanceResult = payableAttendance(
+        attendance.filter(a => staffMatchesId(member,a.staffId)),
+        leaveRequests.filter(l => staffMatchesId(member,l.staffId || l.staff_id)),
+        fromDate,toDate,expectedHoursPerDay);
+      const loggedHours = attendanceResult.workedHours;
+      const paidLeaveHours = attendanceResult.paidLeaveHours;
+      const basePay = attendanceResult.payableHours * hourlyRate;
 
       // 4. Compute normal salary advance deductions in date range
       let advanceDeduction = 0;
       const activeAdvances = advances.filter(a => 
         staffMatchesId(member, a.staff_id) &&
-        (a.status === 'Approved' || a.status === 'Disbursed') &&
+        a.status === 'Disbursed' &&
         a.created_at && a.created_at.split('T')[0] >= fromDate && a.created_at.split('T')[0] <= toDate
       );
       activeAdvances.forEach(adv => {
@@ -203,7 +205,7 @@ export const PayrollManager: React.FC = () => {
       const periodLeaves = leaveRequests.filter(l => 
         (staffMatchesId(member, l.staffId) || staffMatchesId(member, l.staff_id)) &&
         (l.status === 'Approved' || l.status === 'Rejected') &&
-        l.created_at && l.created_at.split('T')[0] >= fromDate && l.created_at.split('T')[0] <= toDate
+        (l.start_date || l.startDate) <= toDate && (l.end_date || l.endDate) >= fromDate
       );
 
       const approvedPeriodLeaves = periodLeaves.filter(l => l.status === 'Approved');
@@ -212,13 +214,8 @@ export const PayrollManager: React.FC = () => {
       const approvedLeavesDesc = approvedPeriodLeaves.map(l => `${l.leave_type} (${l.total_days} Days)`).join(', ') || 'None';
       const rejectedLeavesDesc = rejectedPeriodLeaves.map(l => `${l.leave_type} (${l.total_days} Days)`).join(', ') || 'None';
 
-      // Unpaid leaves require salary deduction: (baseSalary / expectedDaysPerMonth) * total_days
-      let unpaidLeaveDeduction = 0;
-      const unpaidLeaves = approvedPeriodLeaves.filter(l => l.leave_type === 'Unpaid');
-      unpaidLeaves.forEach(l => {
-        const perDayRate = salaryBase / expectedDaysPerMonth;
-        unpaidLeaveDeduction += perDayRate * (l.total_days || 0);
-      });
+      // Unworked unpaid-leave hours already earn no attendance pay. Do not deduct them twice.
+      const unpaidLeaveDeduction = 0;
 
       // 5. Compute deductible Traffic Fine Logs in the selected range
       let fineDeduction = 0;
@@ -235,38 +232,7 @@ export const PayrollManager: React.FC = () => {
       // 6. Tax Engine: PAYE and NSSF (Conditional based on process_tax_deductibles toggle)
       const taxEnabled = systemSettings ? systemSettings.process_tax_deductibles !== false : true;
       const empType = (member as any).employmentType || 'Full-Time';
-      const isRegularStaff = empType === 'Full-Time' || empType === 'Part-Time';
-      
-      const hasNssf = taxEnabled && isRegularStaff && (member.nssfEligible !== false); // default true unless explicitly checked false
-      const nssfEmployee = hasNssf ? basePay * 0.05 : 0;
-      const nssfEmployer = hasNssf ? basePay * 0.10 : 0;
-
-      // Progressive PAYE Tax (Uganda) & Withholding Taxes
-      let paye = 0;
-      if (taxEnabled) {
-        if (isRegularStaff) {
-          const taxableIncome = basePay - nssfEmployee;
-          if (taxableIncome > 235000) {
-            if (taxableIncome <= 335000) {
-              paye = (taxableIncome - 235000) * 0.10;
-            } else if (taxableIncome <= 410000) {
-              paye = 10000 + (taxableIncome - 335000) * 0.20;
-            } else {
-              paye = 10000 + 15000 + (taxableIncome - 410000) * 0.30;
-              if (taxableIncome > 10000000) {
-                paye += (taxableIncome - 10000000) * 0.10;
-              }
-            }
-          }
-        } else if (empType === 'Resident Consultant') {
-          paye = basePay * 0.06;
-        } else if (empType === 'Non-Resident Consultant') {
-          paye = basePay * 0.15;
-        } else if (empType === 'Independent Contractor / Self-Employed') {
-          paye = basePay * 0.06;
-        }
-      }
-
+      const {nssfEmployee,nssfEmployer,paye}=payrollStatutory(basePay,empType,taxEnabled,member.nssfEligible!==false);
       const totalDeductions = advanceDeduction + fineDeduction + nssfEmployee + paye + unpaidLeaveDeduction;
 
       draftRecords.push({
@@ -276,6 +242,12 @@ export const PayrollManager: React.FC = () => {
         employeeId: member.staff_code || member.employee_id || member.id.slice(0, 8),
         remunerationType: member.remunerationType || 'Salary',
         loggedHours,
+        paidLeaveHours,
+        branchId: member.branch_id || 'HQ',
+        customDeduction: 0,
+        attendanceState: attendanceResult.attendanceState,
+        attendanceWarnings: attendanceResult.warnings,
+        unroundedBaseSalary:basePay,
         baseSalary: basePay, // Saved as computed gross pay so existing UI/downstream works
         expectedPay: basePay,
         bonuses: 0,
@@ -300,7 +272,10 @@ export const PayrollManager: React.FC = () => {
       });
     });
 
-    setDraftPayroll(draftRecords);
+    setDraftPayroll(draftRecords.map(line => {
+      try { return {...finalizePayrollLine({...line,reviewed:true}),reviewed:false}; }
+      catch { return line; }
+    }));
     setIsDraftMode(true);
     toast.success(`Generated payroll drafts for period ${fromDate} to ${toDate}`);
   };
@@ -323,6 +298,8 @@ export const PayrollManager: React.FC = () => {
     const customDeductionsSum = editAdvanceDeduction + editFineDeduction + editNSSFEmployee + editPAYE + editCustomDeduction;
     const computedNet = reviewingRecord.baseSalary + editBonus - customDeductionsSum;
 
+    if ([editBonus,editAdvanceDeduction,editFineDeduction,editNSSFEmployee,editPAYE,editCustomDeduction].some(x => !Number.isFinite(x) || x < 0) || computedNet < 0) { toast.error('Review deductions: salary cannot be negative.'); return; }
+    if (editBonus > 0 && !editBonusNotes.trim()) { toast.error('Enter a reason for the bonus or allowance.'); return; }
     const updatedDraft = draftPayroll.map(item => {
       if (item.staffId === reviewingRecord.staffId) {
         return {
@@ -333,6 +310,7 @@ export const PayrollManager: React.FC = () => {
           fineDeduction: editFineDeduction,
           paye: editPAYE,
           nssfEmployee: editNSSFEmployee,
+          customDeduction: editCustomDeduction,
           deductions: customDeductionsSum,
           netSalary: computedNet,
           reviewed: true
@@ -346,102 +324,28 @@ export const PayrollManager: React.FC = () => {
     toast.success(`Payslip evaluated for ${reviewingRecord.staffName}`);
   };
 
-  // Permanently save and finalize reviewed payrolls to Firebase
   const handleFinalizeAndCommit = async () => {
-    if (!profile?.tenantId) return;
-
+    if (!profile?.tenantId || isGenerating) return;
+    if (draftPayroll.some(line => !line.reviewed)) { toast.error('Review every employee, including attendance exceptions, before submission.'); return; }
     setIsGenerating(true);
     try {
-      const monthLabel = new Date(toDate).toLocaleString('default', { month: 'long', year: 'numeric' });
-      const yearInt = new Date(toDate).getFullYear();
-
-      for (const item of draftPayroll) {
-        // Find matching staff to copy properties (like branchId)
-        const staffMember = canonicalStaff.find(s => staffMatchesId(s, item.staffId));
-        
-        // 1. Add to main payroll ledger
-        const payrollData = {
-          tenantId: profile.tenantId,
-          staffId: item.staffId,
-          staff_name: item.staffName,
-          month: monthLabel,
-          year: yearInt,
-          periodStart: fromDate,
-          periodEnd: toDate,
-          unpaid_leave_deduction: item.unpaidLeaveDeduction || 0,
-          base_salary: item.baseSalary,
-          allowances: item.bonuses,
-          bonus_notes: item.bonusNotes,
-          deductions: item.deductions,
-          advance_deduction: item.advanceDeduction,
-          fine_deduction: item.fineDeduction,
-          nssf_employee: item.nssfEmployee,
-          nssf_employer: item.nssfEmployer,
-          paye: item.paye,
-          net_salary: item.netSalary,
-          status: 'paid', // marked finalized and paid
-          paid_date: new Date().toISOString().split('T')[0],
-          generated_at: new Date().toISOString(),
-          branch_id: staffMember?.branch_id || 'HQ'
-        };
-
-        await firestoreService.addDocument('payroll', payrollData);
-
-        // 2. Feed Welfare Payslips portal
-        const payslipRecord: any = {
-          tenantId: profile.tenantId,
-          staffId: item.staffId,
-          month: new Date(toDate).toISOString().slice(0, 7), // "YYYY-MM" format
-          year: yearInt,
-          netPayable: item.netSalary,
-          basePay: item.baseSalary,
-          allowances: item.bonuses,
-          allowancesNotes: item.bonusNotes,
-          deductions: item.deductions,
-          advanceDeduction: item.advanceDeduction,
-          fineDeduction: item.fineDeduction,
-          nssfEmployee: item.nssfEmployee,
-          paye: item.paye,
-          unpaidLeaveDeduction: item.unpaidLeaveDeduction || 0,
-          approvedLeavesDesc: item.approvedLeavesDesc || 'None',
-          rejectedLeavesDesc: item.rejectedLeavesDesc || 'None',
-          advancesDesc: item.advancesDesc || 'None',
-          generatedAt: new Date().toISOString()
-        };
-
-        await firestoreService.addDocument('payslips', payslipRecord);
-      }
-
-      // Calculate total net salary for the request to Finance
-      const totalNetPayable = draftPayroll.reduce((sum, item) => sum + (item.netSalary || 0), 0);
-      
-      // Log as management expense request representing HR Payroll
-      await firestoreService.addDocument('management_expenses', {
-        tenantId: profile.tenantId,
-        category: 'Salaries - Payroll Disbursal',
-        department: 'HR',
-        description: `HR Payroll Disbursal Request: Period ${monthLabel} (Total Net Payable for ${draftPayroll.length} staff members)`,
-        amount_ugx: totalNetPayable,
-        expense_date: new Date().toISOString().split('T')[0],
-        payment_method: 'Petty Cash',
-        status: 'Pending',
-        logged_by: 'HR System',
-        created_at: new Date().toISOString(),
-        source: 'hr_salary',
-        excludeFromOpexRollup: false
-      });
-
-      toast.success(`Successfully finalized payroll, published payslips, and transmitted disbursal request to Finance.`);
-      setDraftPayroll([]);
-      setIsDraftMode(false);
-    } catch (error) {
-      toast.error('Failed to commit payroll records.');
-    } finally {
-      setIsGenerating(false);
-    }
+      const result = await submitPayroll({tenantId:profile.tenantId,actorId:profile.uid,
+        actorName:profile.fullName || profile.email || profile.uid,periodStart:fromDate,periodEnd:toDate,
+        lines:draftPayroll,batchId:correctionBatchId,restartIncomplete});
+      toast.success(`Payroll revision ${result.revision} submitted to Finance. No salary has been paid.`);
+      setIsDraftMode(false);setDraftPayroll([]);setCorrectionBatchId(undefined);setRestartIncomplete(false);
+    } catch (error) { toast.error(error instanceof Error ? error.message : 'Payroll submission failed. Retry to resume.'); }
+    finally {setIsGenerating(false);}
   };
 
-  // Export payroll report to CSV
+  const openReturnedPayroll = async (batch:PayrollBatch) => {
+    try {
+      const rows = await getPayrollRevision(batch);
+      setFromDate(batch.periodStart);setToDate(batch.periodEnd);setCorrectionBatchId(batch.id);
+      setDraftPayroll(rows.map(row=>({...row.line,reviewed:false})) as DraftPayrollRecord[]);setIsDraftMode(true);
+    } catch {toast.error('Unable to open the returned payroll.');}
+  };
+
   const handleExportCSV = (recordsToExport: any[], isDraft: boolean) => {
     if (recordsToExport.length === 0) {
       toast.error('No payroll logs available.');
@@ -459,7 +363,7 @@ export const PayrollManager: React.FC = () => {
       'Advances Repayment', 
       'Fines Recoveries', 
       'Total Deductions', 
-      'Net Disbursed'
+      'Net Payable'
     ];
 
     const rows = recordsToExport.map(r => {
@@ -514,6 +418,7 @@ export const PayrollManager: React.FC = () => {
 
     // Filter payroll records in period
     const matchedRecords = payroll.filter(p => {
+      if (p.payrollVersion===11) return ['approved','partial','paid'].includes(batches.find(b=>b.id===p.batchId)?.status || '') && p.periodEnd>=reportStartDate && p.periodEnd<=reportEndDate;
       // Check date range
       if (p.paid_date && p.paid_date >= reportStartDate && p.paid_date <= reportEndDate) {
         return true;
@@ -605,7 +510,7 @@ export const PayrollManager: React.FC = () => {
       'NSSF Employee contribution (5%) (UGX)',
       'NSSF Employer contribution (10%) (UGX)',
       'Total NSSF statutory fund (15%) (UGX)',
-      'Net Disbursement Paid (UGX)',
+      'Net Remuneration Payable (UGX)',
       'Aggregated Payroll Runs'
     ];
 
@@ -791,6 +696,13 @@ export const PayrollManager: React.FC = () => {
         </div>
       </div>
 
+      {batches.length>0 && <div className="space-y-3">{batches.map(batch=><div key={batch.id} className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3"><p className="font-bold break-words">{batch.reference} · Revision {batch.revision} · {payrollStatusLabels[batch.status]}</p>
+        {batch.status==='returned' && <button type="button" onClick={()=>openReturnedPayroll(batch)} className="min-h-11 rounded-xl bg-indigo-600 px-4 text-white">Correct and resubmit</button>}</div>
+        <p>{batch.periodStart} to {batch.periodEnd} · {batch.employeeCount} employees · Net: UGX {batch.totals.net.toLocaleString()} · Paid: UGX {batch.paidUGX.toLocaleString()} · Outstanding: UGX {(batch.totals.net-batch.paidUGX).toLocaleString()}</p>
+        {batch.returnReason && <p className="mt-2 text-amber-800">Finance correction reason: {batch.returnReason}</p>}
+        {batch.status==='draft' && <p className="text-amber-800">Submission incomplete ({batch.nextIndex}/{batch.employeeCount}). Retry the same reviewed payroll to resume.</p>}
+      </div>)}</div>}
       {/* Main Draft Ledger Operations Area */}
       {isDraftMode ? (
         <div className="space-y-4">
@@ -811,11 +723,12 @@ export const PayrollManager: React.FC = () => {
                 disabled={isGenerating}
                 className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors flex items-center gap-1.5"
               >
-                <Save size={14} /> Commit & Disburse payslips
+                <Save size={14} /> Submit to Finance
               </button>
             </div>
           </div>
 
+          {batches.some(b=>b.periodStart===fromDate&&b.periodEnd===toDate&&b.status==='draft')&&<label className="flex items-center gap-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-950"><input type="checkbox" checked={restartIncomplete} onChange={e=>setRestartIncomplete(e.target.checked)}/>Replace incomplete staging with this reviewed draft. The payroll ID is retained and the restart is audited.</label>}
           <div className="bg-white rounded-[32px] border border-slate-200 shadow-sm overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
@@ -955,7 +868,7 @@ export const PayrollManager: React.FC = () => {
                     <th className="px-6 py-4">Period</th>
                     <th className="px-6 py-4 text-right">Gross Salary</th>
                     <th className="px-6 py-4 text-right">Total Deductions</th>
-                    <th className="px-6 py-4 text-right">Paid Disbursed</th>
+                    <th className="px-6 py-4 text-right">Net salary / actual paid</th>
                     <th className="px-6 py-4 text-center">Status</th>
                     <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
@@ -989,16 +902,16 @@ export const PayrollManager: React.FC = () => {
                             <span className="text-xs font-semibold text-rose-500">-UGX {(pay.deductions || 0).toLocaleString()}</span>
                           </td>
                           <td className="px-6 py-4 text-right">
-                            <span className="text-xs font-black text-slate-900">UGX {(pay.net_salary || 0).toLocaleString()}</span>
+                            <span className="text-xs font-black text-slate-900">UGX {(pay.net_salary || 0).toLocaleString()}</span>{pay.payrollVersion===11 && <p className="text-xs text-slate-600">Paid: UGX {(pay.paidUGX || 0).toLocaleString()} · Outstanding: UGX {Math.max(0,pay.net_salary-(pay.paidUGX || 0)).toLocaleString()}</p>}
                           </td>
                           <td className="px-6 py-4 text-center">
                             <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-600 border border-emerald-100">
-                              Paid
+                              {pay.payrollVersion===11 ? payrollStatusLabels[employeePayrollStatus(batches.find(b=>b.id===pay.batchId)?.status || 'draft',pay.paidUGX || 0,pay.net_salary)] : 'Legacy: ' + (pay.status || 'unreconciled')}
                             </span>
                           </td>
                           <td className="px-6 py-4 text-right">
                             <div className="flex gap-2 justify-end">
-                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest pl-2">Publish Ok</span>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest pl-2">{pay.payrollVersion===11 ? pay.payrollReference + ' · R' + pay.revision : 'Legacy: payment evidence unreconciled'}</span>
                             </div>
                           </td>
                         </tr>
@@ -1024,7 +937,7 @@ export const PayrollManager: React.FC = () => {
       {/* Detail reviewing individual receipt draft payslip modal */}
       {reviewingRecord && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/40 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-xl rounded-[32px] shadow-2xl overflow-hidden text-left animate-in zoom-in duration-200">
+          <div role="dialog" aria-modal="true" aria-label="Employee payroll review" className="bg-white w-full max-w-xl max-h-[calc(100dvh-2rem)] flex flex-col rounded-[32px] shadow-2xl overflow-hidden text-left animate-in zoom-in duration-200">
             <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
               <div>
                 <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Individual Invoice Verification</span>
@@ -1038,7 +951,7 @@ export const PayrollManager: React.FC = () => {
               </button>
             </div>
 
-            <div className="p-8 space-y-6 max-h-[70vh] overflow-y-auto no-scrollbar">
+            <div className="p-4 sm:p-8 space-y-6 min-h-0 flex-1 overflow-y-auto overscroll-contain">
               {/* Detailed Breakdown of Hourly Remuneration Mechanics */}
               <div className="space-y-3 bg-indigo-50/40 border border-indigo-150/75 p-5 rounded-2xl">
                 <div className="grid grid-cols-2 gap-4">
@@ -1085,6 +998,8 @@ export const PayrollManager: React.FC = () => {
                 </div>
               </div>
 
+              {Array.isArray(reviewingRecord.attendanceWarnings) && reviewingRecord.attendanceWarnings.length>0 && <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{reviewingRecord.attendanceWarnings.join(' ')} Review any exceptional remuneration before submission.</div>}
+              <p className="text-sm text-slate-700">Verified worked hours: {reviewingRecord.loggedHours.toFixed(2)} · Approved paid leave: {reviewingRecord.paidLeaveHours.toFixed(2)} hours.</p>
               {/* CME Performance Governance Hook */}
               {(() => {
                 const points = getStaffCmePoints(reviewingRecord.staffId);
@@ -1292,7 +1207,7 @@ export const PayrollManager: React.FC = () => {
               </div>
             </div>
 
-            <div className="px-8 py-5 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-3 rounded-b-[32px]">
+            <div className="px-4 sm:px-8 py-5 shrink-0 border-t border-slate-100 bg-slate-50/50 flex flex-wrap justify-end gap-3 rounded-b-[32px]">
               <button 
                 type="button"
                 onClick={() => setReviewingRecord(null)}

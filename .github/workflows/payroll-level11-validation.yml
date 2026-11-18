@@ -1,0 +1,64 @@
+name: Level 11 payroll validation
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/domain/finance/payroll*.ts'
+      - 'src/domain/finance/profitability.ts'
+      - 'src/services/payrollFinanceService.ts'
+      - 'src/hooks/usePayrollBatches.ts'
+      - 'src/modules/hr/PayrollManager.tsx'
+      - 'src/modules/hr/AttendanceTracker.tsx'
+      - 'src/components/finance/PayrollReviewPanel.tsx'
+      - 'src/components/welfare/PayslipTab.tsx'
+      - 'src/pages/finance/management/ManagementExpenseLedger.tsx'
+      - 'src/pages/finance/management/TaxEngine.tsx'
+      - 'tests/payroll-level11.test.ts'
+      - 'scripts/payroll-level11-*.mjs'
+      - 'scripts/run-payroll-level11-emulator.mjs'
+      - 'firestore.rules'
+      - '.github/workflows/payroll-level11-validation.yml'
+permissions:
+  contents: read
+jobs:
+  payroll:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
+      - name: Authored payroll rules, large-batch recovery and atomic security acceptance
+        run: npx firebase emulators:exec --only firestore --project demo-pharmhelm-payroll11 "node scripts/payroll-level11-rules-emulator.mjs"
+      - name: Generate equivalent release rules without replacing authored source
+        run: |
+          cp firestore.rules /tmp/payroll-release.rules
+          node scripts/build-firestore-release-rules.mjs /tmp/payroll-release.rules
+      - name: Repeat payroll acceptance against exact compact release rules
+        env:
+          PAYROLL_RULES: /tmp/payroll-release.rules
+        run: npx firebase emulators:exec --only firestore --project demo-pharmhelm-payroll11 "node scripts/payroll-level11-rules-emulator.mjs"
+      - name: Install isolated UI verification browser
+        run: |
+          npm install --prefix /tmp/payroll-browser --no-save playwright@1.51.1
+          /tmp/payroll-browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Real payroll components at phone, tablet and desktop widths
+        env:
+          PLAYWRIGHT_MODULE: /tmp/payroll-browser/node_modules/playwright
+        run: node scripts/payroll-level11-ui-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: level11-payroll-mobile-proof
+          path: /tmp/payroll-level11-mobile-proof/*.png

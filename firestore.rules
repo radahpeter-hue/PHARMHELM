@@ -933,7 +933,7 @@ service cloud.firestore {
         && data.accountDeltaUGX == (data.type in ['incoming','deposit','topup'] ? data.amount : -data.amount)
         && before.kind == kind
         && (!data.keys().hasAny(['externalExpenseCollection','externalExpenseId']) || linkedExternalExpense(id, data, before))
-        && (isReceivableMovement(id, data)
+        && (isPayrollMovement(id,data) ? validPayrollMovement(id,data,before,after) : isReceivableMovement(id, data)
           ? after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.amount
             && validReceivableMovement(id, data, before)
           : isSupplierMovement(id, data)
@@ -1437,22 +1437,331 @@ service cloud.firestore {
     }
 
     match /leave_requests/{requestId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.staffId) || isHR() || isTenantMember(resource.data.tenantId));
-      allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && (isHR() || (isOwner(resource.data.staffId) && resource.data.status == 'pending'));
-      allow delete: if isAdmin() || isHR();
+      allow read: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isHR() || isFinance());
+      allow create: if isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.status == 'Pending' && request.resource.data.get('hr_approval_status','Pending') == 'Pending'
+        && request.resource.data.get('ceo_approval_status','Pending') == 'Pending';
+      allow update: if isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
+        && request.resource.data.staffId == resource.data.staffId
+        && (isHR() || (isOwner(resource.data.staffId) && resource.data.status.lower() == 'pending'
+          && request.resource.data.status == resource.data.status
+          && request.resource.data.get('hr_approval_status','Pending') == resource.data.get('hr_approval_status','Pending')
+          && request.resource.data.get('ceo_approval_status','Pending') == resource.data.get('ceo_approval_status','Pending')));
+      allow delete: if isTenantMember(resource.data.tenantId) && (isAdmin() || isHR());
     }
 
     match /advance_requests/{requestId} {
       allow read: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isHR() || isFinance() || isAdmin());
-      allow create: if isAuthenticated() && isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId);
-      allow update: if isAuthenticated() && (isHR() || isFinance() || isAdmin());
-      allow delete: if isAdmin();
+      allow create: if isOwner(request.resource.data.staffId) && isTenantMember(request.resource.data.tenantId)
+        && request.resource.data.status == 'Pending';
+      allow update: if isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
+        && request.resource.data.staffId == resource.data.staffId && (isHR() || isFinance() || isAdmin());
+      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
+    function canVerifyAttendance(data) {
+      return isTenantMember(data.tenantId) && hasActiveStaffProfile()
+        && (isHR() || (isBranchManager() && isAssignedToBranch(data.branch_id)));
+    }
+    match /attendance/{attendanceId} {
+      function validAttendance(data) {
+        let employee = get(/databases/$(database)/documents/staff/$(data.staffId)).data;
+        return data.tenantId == employee.tenantId && data.branch_id == (employee.get('branch_id','') == '' ? 'HQ' : employee.branch_id)
+          && data.status in ['present','absent','on-leave'] && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && data.hours_worked is number && data.hours_worked >= 0 && data.hours_worked <= 24;
+      }
+      function canLog(data) {
+        return isTenantMember(data.tenantId) && hasActiveStaffProfile()
+          && (isHR() || ((isBranchManager() || hasRole('Cashier')) && isAssignedToBranch(data.branch_id)));
+      }
+      allow read: if isTenantMember(resource.data.tenantId)
+        && (isHR() || canViewFinance() || isAssignedToBranch(resource.data.branch_id));
+      allow create: if canLog(request.resource.data) && validAttendance(request.resource.data)
+        && request.resource.data.verificationStatus == 'unverified' && request.resource.data.verifiedBy == null;
+      allow update: if request.resource.data.tenantId == resource.data.tenantId && request.resource.data.staffId == resource.data.staffId
+        && validAttendance(request.resource.data)
+        && (request.resource.data.verificationStatus == 'approved' ? canVerifyAttendance(resource.data)
+          && request.resource.data.verifiedBy == request.auth.uid && request.resource.data.verifiedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['verificationStatus','verifiedBy','verifiedAt'])
+          : canLog(resource.data) && request.resource.data.verificationStatus == 'unverified'
+            && request.resource.data.verifiedBy == null && request.resource.data.verifiedAt == null);
+      allow delete: if canVerifyAttendance(resource.data);
+    }
+
+    // Level 11 payroll: staged employee accumulator, immutable revisions, approval and funded settlement.
+    function payrollBatchPath(id) {
+      return /databases/$(database)/documents/finance_payroll_batches_v1/$(id);
+    }
+    function payrollEventPath(id, revision, action) {
+      return /databases/$(database)/documents/finance_payroll_events_v1/$(id + '_r' + string(revision) + '_' + action);
+    }
+    function payrollSnapshotPath(data) {
+      return /databases/$(database)/documents/finance_payroll_lines_v1/$(data.batchId + '_r' + string(data.revision) + '__' + data.staffId);
+    }
+    function payrollActor(tenantId, hr) {
+      let staff = get(/databases/$(database)/documents/staff/$(request.auth.uid)).data;
+      let central = hr ? ['HR Head','HR Manager','HR Support Personnel','admin','Admin','owner','Owner','CEO','ceo','CEO / MD']
+        : ['Finance Head','Accountant','admin','Admin','owner','Owner','CEO','ceo','CEO / MD'];
+      return isAuthenticated() && staff.tenantId == tenantId && !staff.get('is_duplicate',false) && staff.get('active',true)
+        && staff.get('status','active').lower() == 'active'
+        && (staff.role in central || staff.get('secondaryRoles',[]).hasAny(central)
+          || ((hr ? isHR() : isFinance()) && staff.get('assigned_branches',[]).size() == 0
+            && staff.get('branch_id','') == '' && staff.get('default_branch_id','') == ''));
+    }
+    function viewPayroll(tenantId) {
+      return isTenantMember(tenantId) && (isHR() || canViewFinance());
+    }
+    function payrollInt(n) { return n is int && n >= 0 && n <= 9007199254740991; }
+    function validPayrollComponents(l) {
+      return l.reviewed == true && l.staffId is string && l.staffId.size() > 0 && l.staffName is string
+        && l.loggedHours is number && l.loggedHours >= 0 && l.paidLeaveHours is number && l.paidLeaveHours >= 0
+        && payrollInt(l.baseSalary) && payrollInt(l.bonuses) && payrollInt(l.advanceDeduction)
+        && payrollInt(l.fineDeduction) && payrollInt(l.nssfEmployee) && payrollInt(l.nssfEmployer)
+        && payrollInt(l.paye) && payrollInt(l.customDeduction) && payrollInt(l.netSalary)
+        && l.deductions == l.advanceDeduction + l.fineDeduction + l.nssfEmployee + l.paye + l.customDeduction
+        && l.netSalary == l.baseSalary + l.bonuses - l.deductions
+        && (l.bonuses == 0 || (l.bonusNotes is string && l.bonusNotes.size() > 0));
+    }
+    function payrollTotalsStep(before, after, line) {
+      return payrollInt(after.net) && payrollInt(after.gross) && payrollInt(after.employerNssf) && payrollInt(after.employeeNssf) && payrollInt(after.paye) && payrollInt(after.otherDeductions) && after.net == before.net + line.netSalary && after.gross == before.gross + line.baseSalary + line.bonuses
+        && after.employerNssf == before.employerNssf + line.nssfEmployer
+        && after.employeeNssf == before.employeeNssf + line.nssfEmployee && after.paye == before.paye + line.paye
+        && after.otherDeductions == before.otherDeductions + line.advanceDeduction + line.fineDeduction + line.customDeduction;
+    }
+    function validPayrollSnapshot(data) {
+      let before = get(payrollBatchPath(data.batchId)).data;
+      let after = getAfter(payrollBatchPath(data.batchId)).data;
+      let staff = get(/databases/$(database)/documents/staff/$(data.staffId)).data;
+      let allocation = staff.get('branch_id','') == '' ? 'HQ' : staff.branch_id;
+      return payrollActor(data.tenantId, true) && before.tenantId == data.tenantId && before.status == 'draft'
+        && after.status == 'draft' && before.revision == data.revision && after.revision == data.revision
+        && data.index == before.nextIndex && after.nextIndex == before.nextIndex + 1
+        && after.lastStaffId == data.staffId && data.staffId == data.line.staffId
+        && staff.tenantId == data.tenantId && !staff.get('is_duplicate', false)
+        && data.branch_id == allocation && data.line.branchId == data.branch_id
+        && data.periodStart == before.periodStart && data.periodEnd == before.periodEnd && data.month == before.month
+        && data.payrollVersion == 11 && data.payrollReference == before.reference
+        && validPayrollComponents(data.line) && payrollTotalsStep(before.totals,after.totals,data.line)
+        && data.base_salary == data.line.baseSalary && data.gross_salary == data.line.baseSalary + data.line.bonuses
+        && data.allowances == data.line.bonuses && data.net_salary == data.line.netSalary
+        && data.deductions == data.line.deductions && data.nssf_employer == data.line.nssfEmployer
+        && data.nssf_employee == data.line.nssfEmployee && data.paye == data.line.paye
+        && data.advance_deduction == data.line.advanceDeduction && data.fine_deduction == data.line.fineDeduction
+        && data.staff_name == data.line.staffName && data.employee_id == data.line.employeeId
+        && data.basePay == data.base_salary && data.netPayable == data.net_salary
+        && data.nssfEmployee == data.nssf_employee && data.nssfEmployer == data.nssf_employer
+        && data.advanceDeduction == data.advance_deduction && data.fineDeduction == data.fine_deduction
+        && data.bonus_notes == data.line.bonusNotes && data.allowancesNotes == data.line.bonusNotes && data.unpaidLeaveDeduction == 0
+        && data.paidUGX == 0 && data.status == 'pending_finance' && data.unpaid_leave_deduction == 0
+        && !data.keys().hasAny(['paid_date','lastPaymentId']);
+    }
+    function payrollMirrorStaging(id, data) {
+      let path = payrollSnapshotPath(data);
+      let snapshot = getAfter(path).data;
+      return id == data.batchId + '__' + data.staffId && !exists(path)
+        && data.diff(snapshot).affectedKeys().hasOnly(['stagedAt'])
+        && snapshot.stagedAt == request.time;
+    }
+    function payrollEvent(data, action) {
+      let path = payrollEventPath(data.id,data.revision,action);
+      let event = getAfter(path).data;
+      return !exists(path) && event.tenantId == data.tenantId && event.batchId == data.id && event.revision == data.revision
+        && event.actorId == request.auth.uid && event.action == action && event.recordedAt == request.time
+        && event.totals == data.totals;
+    }
+    function payrollDraftLink(data) {
+      let batch = getAfter(payrollBatchPath(data.batchId)).data;
+      return data.payrollVersion == 11 && data.batchId == batch.id && data.tenantId == batch.tenantId
+        && data.revision == batch.revision && data.amount == batch.totals.net && data.amount_ugx == data.amount
+        && data.source == 'hr_salary' && data.sourceType == 'hr' && data.department == 'HR'
+        && data.payrollReference == batch.reference && data.employeeCount == batch.employeeCount && data.excludeFromOpexRollup
+        && !data.keys().hasAny(['cashOutflowPostingId','paid_date','payment_method','lastPaymentId']);
+    }
+    function validPayrollDraft(id, data) {
+      let before = get(payrollBatchPath(id)).data;
+      let after = getAfter(payrollBatchPath(id)).data;
+      return id == data.batchId && payrollDraftLink(data)
+        && (before.status == 'draft' && after.status == 'pending_finance' && data.status == 'pending'
+
+          || before.status == 'pending_finance' && after.status in ['approved','returned']
+            && data.status == (after.status == 'approved' ? 'approved' : 'rejected')
+            && data.diff(resource.data).affectedKeys().hasOnly(['status']));
+    }
+    function payrollPaymentPath(id) {return /databases/$(database)/documents/finance_payroll_payments_v1/$(id);}
+    function payrollPaidUpdate(before, after) {
+      let path = payrollPaymentPath(after.lastPaymentId);
+      let payment = getAfter(path).data;
+      return !exists(path) && payment.recordedAt == request.time && payment.actorId == request.auth.uid
+        && payment.tenantId == before.tenantId && payment.batchId == before.batchId && payment.staffId == before.staffId
+        && payment.revision == before.revision && after.paidUGX == before.paidUGX + payment.amountUGX
+        && after.status == (after.paidUGX == before.net_salary ? 'paid' : 'partial')
+        && (after.status != 'paid' || after.paid_date == payment.date)
+        && after.diff(before).affectedKeys().hasOnly(['paidUGX','status','paid_date','lastPaymentId']);
+    }
+    function isPayrollMovement(id, data) {
+      return id.matches('^salary_payment_.*') || data.keys().hasAny(['payrollPaymentId'])
+        || data.get('source','') == 'Payroll salary settlement';
+    }
+    function validPayrollMovement(id, data, before, after) {
+      let path = payrollPaymentPath(data.payrollPaymentId);
+      let p = getAfter(path).data;
+      return !exists(path) && p.recordedAt == request.time && id == p.movementId && data.source == 'Payroll salary settlement'
+        && data.excludeFromOpexRollup && data.type == 'outgoing' && data.amount == p.amountUGX
+        && data.tenantId == p.tenantId && data.portfolioId == p.accountId && data.accountDocumentId == p.accountDocumentId
+        && data.postedBy == p.actorId && data.reference_number == p.reference && data.staffId == p.staffId
+        && data.batchId == p.batchId && data.branchId == p.branchId && data.createdAt == request.time && data.updatedAt == request.time
+        && before.tenantId == p.tenantId && after.lastPostingId == id && after.balanceUGX == before.balanceUGX - p.amountUGX;
+    }
+    function payrollStatusMirror(data) {
+      let status = getAfter(/databases/$(database)/documents/finance_payroll_status_v1/$(data.id)).data;
+      return status.tenantId == data.tenantId && status.batchId == data.id && status.revision == data.revision && status.status == data.status;
+    }
+    match /finance_payroll_status_v1/{batchId} {
+      allow get: if resource != null && isTenantMember(resource.data.tenantId)
+        && (viewPayroll(resource.data.tenantId) || exists(/databases/$(database)/documents/payslips/$(batchId + '__' + request.auth.uid)));
+      allow create, update: if request.resource.data.batchId == batchId
+        && request.resource.data.keys().hasOnly(['tenantId','batchId','revision','status'])
+        && getAfter(payrollBatchPath(batchId)).data.updatedAt == request.time
+        && payrollStatusMirror(getAfter(payrollBatchPath(batchId)).data);
+    }
+    match /finance_payroll_batches_v1/{batchId} {
+      function validStart(data) {
+        return payrollActor(data.tenantId,true) && payrollStatusMirror(data) && data.id == batchId
+          && batchId == data.tenantId + '_PAY_' + data.periodStart + '_' + data.periodEnd
+          && data.periodStart.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && data.periodEnd.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && data.periodStart <= data.periodEnd && data.periodEnd.matches('^' + data.month + '-[0-9]{2}$')
+          && data.status == 'draft' && data.revision == 1 && data.nextIndex == 0 && data.employeeCount is int && data.employeeCount > 0
+          && data.totals == {'net':0,'gross':0,'employerNssf':0,'employeeNssf':0,'paye':0,'otherDeductions':0}
+          && data.paidUGX == 0 && data.submittedBy == request.auth.uid && data.planHash is string && data.planHash.size() == 64
+          && data.createdAt == request.time && data.updatedAt == request.time
+          && data.keys().hasOnly(['id','tenantId','reference','periodStart','periodEnd','month','revision','status','employeeCount',
+            'nextIndex','totals','paidUGX','submittedBy','submittedByName','planHash','createdAt','updatedAt']);
+      }
+      function validTransition(before, after) {
+        let changed = after.diff(before).affectedKeys();
+        return after.tenantId == before.tenantId && after.id == before.id && after.updatedAt == request.time
+          && ((after.status == before.status && after.revision == before.revision) || payrollStatusMirror(after))
+          && (before.status in ['returned','draft'] && after.status == 'draft' && after.revision == before.revision + 1 && payrollActor(before.tenantId,true)
+            && (before.status == 'returned' || payrollEvent(after,'restart'))
+            && after.revision == before.revision + 1 && after.nextIndex == 0 && after.submittedBy == request.auth.uid
+            && after.employeeCount is int && after.employeeCount > 0 && after.paidUGX == 0
+            && (before.status == 'draft' || after.employeeCount == before.employeeCount)
+            && after.totals == {'net':0,'gross':0,'employerNssf':0,'employeeNssf':0,'paye':0,'otherDeductions':0}
+            && changed.hasOnly(['status','revision','nextIndex','totals','employeeCount','planHash','submittedBy','submittedByName','updatedAt'])
+          || before.status == 'draft' && after.status == 'draft'
+            && before.nextIndex < before.employeeCount && after.nextIndex == before.nextIndex + 1
+            && changed.hasOnly(['nextIndex','totals','lastStaffId','updatedAt'])
+            && getAfter(/databases/$(database)/documents/finance_payroll_lines_v1/$(batchId + '_r' + string(before.revision) + '__' + after.lastStaffId)).data.stagedAt == request.time
+            && !exists(/databases/$(database)/documents/finance_payroll_lines_v1/$(batchId + '_r' + string(before.revision) + '__' + after.lastStaffId))
+          || before.status == 'draft' && after.status == 'pending_finance' && payrollActor(before.tenantId,true)
+            && before.nextIndex == before.employeeCount && after.submittedAt == request.time && payrollEvent(after,'submitted')
+            && getAfter(/databases/$(database)/documents/management_expenses/$(batchId)).data.revision == after.revision
+            && changed.hasOnly(['status','submittedAt','updatedAt'])
+          || before.status == 'pending_finance' && after.status in ['approved','returned'] && payrollActor(before.tenantId,false)
+            && getAfter(/databases/$(database)/documents/management_expenses/$(batchId)).data.status == (after.status == 'approved' ? 'approved' : 'rejected')
+            && (after.status == 'approved' ? after.approvedAt == request.time && after.approvedBy == request.auth.uid
+              && payrollEvent(after,'approve') && changed.hasOnly(['status','approvedAt','approvedBy','updatedAt'])
+              : after.returnReason is string && after.returnReason.size() >= 5 && after.returnedAt == request.time
+                && after.returnedBy == request.auth.uid && payrollEvent(after,'return')
+                && changed.hasOnly(['status','returnReason','returnedAt','returnedBy','updatedAt']))
+          || before.status in ['approved','partial'] && payrollActor(before.tenantId,false)
+            && changed.hasOnly(['status','paidUGX','lastPaymentId','updatedAt'])
+            && freshPayrollBatchPayment(before,after));
+      }
+      allow get: if isAuthenticated() && (resource == null ? (isHR() || canViewFinance()) : viewPayroll(resource.data.tenantId));
+      allow list: if viewPayroll(resource.data.tenantId);
+      allow create: if validStart(request.resource.data);
+      allow update: if validTransition(resource.data,request.resource.data);
+    }
+    function freshPayrollBatchPayment(before,after) {
+      let path = payrollPaymentPath(after.lastPaymentId);
+      let payment = getAfter(path).data;
+      return !exists(path) && payment.recordedAt == request.time && payment.batchId == before.id && payment.tenantId == before.tenantId
+        && after.paidUGX == before.paidUGX + payment.amountUGX && after.paidUGX <= before.totals.net
+        && after.status == (after.paidUGX == before.totals.net ? 'paid' : 'partial');
+    }
+    match /finance_payroll_lines_v1/{lineId} {
+      allow read: if viewPayroll(resource.data.tenantId);
+      allow create: if lineId == request.resource.data.batchId + '_r' + string(request.resource.data.revision) + '__' + request.resource.data.staffId
+        && request.resource.data.stagedAt == request.time && validPayrollSnapshot(request.resource.data)
+        && getAfter(/databases/$(database)/documents/payroll/$(request.resource.data.batchId + '__' + request.resource.data.staffId)).data.line == request.resource.data.line
+        && getAfter(/databases/$(database)/documents/payslips/$(request.resource.data.batchId + '__' + request.resource.data.staffId)).data.line == request.resource.data.line;
+    }
+    match /payroll/{employeeId} {
+      allow read: if viewPayroll(resource.data.tenantId);
+      allow create: if payrollMirrorStaging(employeeId,request.resource.data);
+      allow update: if resource.data.get('payrollVersion',0) == 11
+        && (payrollMirrorStaging(employeeId,request.resource.data) || payrollPaidUpdate(resource.data,request.resource.data));
+    }
+    match /finance_payroll_events_v1/{eventId} {
+      allow read: if viewPayroll(resource.data.tenantId);
+      allow get: if (isHR() || canViewFinance()) && resource == null;
+      allow create: if eventId == request.resource.data.batchId + '_r' + string(request.resource.data.revision) + '_' + request.resource.data.action
+        && request.resource.data.actorId == request.auth.uid && request.resource.data.recordedAt == request.time
+        && validPayrollEvent(request.resource.data);
+    }
+    function validPayrollEvent(data) {
+      let before = get(payrollBatchPath(data.batchId)).data;
+      let after = getAfter(payrollBatchPath(data.batchId)).data;
+      return before.tenantId == data.tenantId && data.revision == after.revision && data.totals == after.totals
+        && (data.action == 'restart' ? before.status == 'draft' && after.status == 'draft' && after.revision == before.revision + 1
+          && data.previousPlanHash == before.planHash && data.previousStagedEmployees == before.nextIndex
+          : data.action == 'submitted' ? before.status == 'draft' && after.status == 'pending_finance'
+          : before.status == 'pending_finance'
+            && (data.action == 'approve' && after.status == 'approved'
+              || data.action == 'return' && after.status == 'returned' && data.reason == after.returnReason));
+    }
+    match /finance_payroll_payment_requests_v1/{requestId} {
+      allow get: if (isHR() || canViewFinance()) && (resource == null || isTenantMember(resource.data.tenantId));
+      allow create: if payrollActor(request.resource.data.tenantId,false)
+        && requestId == request.resource.data.requestId && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.recordedAt == request.time
+        && !exists(payrollPaymentPath(request.resource.data.paymentId))
+        && getAfter(payrollPaymentPath(request.resource.data.paymentId)).data.requestId == requestId;
+    }
+    match /finance_payroll_payments_v1/{paymentId} {
+      function validPayment(p) {
+        let batch = get(payrollBatchPath(p.batchId)).data;
+        let nextBatch = getAfter(payrollBatchPath(p.batchId)).data;
+        let rowPath = /databases/$(database)/documents/payroll/$(p.batchId + '__' + p.staffId);
+        let row = get(rowPath).data;
+        let accountPath = /databases/$(database)/documents/finance_payment_accounts/$(p.accountDocumentId);
+        let account = get(accountPath).data;
+        let move = managementMovementPath(p.accountKind,p.movementId);
+        let claim = /databases/$(database)/documents/finance_payroll_payment_requests_v1/$(p.requestId);
+        let day = p.date.split('-');
+        let start = timestamp.date(int(day[0]),int(day[1]),int(day[2])) - duration.value(3,'h');
+        return payrollActor(p.tenantId,false) && p.actorId == request.auth.uid && p.recordedAt == request.time
+          && request.time >= start && request.time < start + duration.value(1,'d')
+          && paymentId == 'salary_' + p.tenantId + '__' + p.accountId + '__' + p.reference.upper().replace('[^A-Z0-9_-]','_')
+          && !exists(claim) && getAfter(claim).data.paymentId == paymentId
+          && paymentId == p.paymentId && p.requestId.matches('^[A-Za-z0-9_-]{20,100}$')
+          && p.amountUGX is int && p.amountUGX > 0 && p.reference is string && p.reference.size() >= 3 && p.reference.size() <= 120
+          && batch.tenantId == p.tenantId && batch.revision == p.revision && batch.status in ['approved','partial']
+          && row.tenantId == p.tenantId && row.batchId == p.batchId && row.revision == p.revision && row.staffId == p.staffId
+          && row.branch_id == p.branchId && row.paidUGX == p.paidBeforeUGX && p.paidAfterUGX == row.paidUGX + p.amountUGX
+          && p.paidAfterUGX <= row.net_salary && p.outstandingUGX == row.net_salary - p.paidAfterUGX
+          && batch.paidUGX == p.batchPaidBeforeUGX && p.batchPaidAfterUGX == batch.paidUGX + p.amountUGX
+          && nextBatch.paidUGX == p.batchPaidAfterUGX && nextBatch.lastPaymentId == paymentId
+          && getAfter(rowPath).data.lastPaymentId == paymentId
+          && getAfter(/databases/$(database)/documents/payslips/$(p.batchId + '__' + p.staffId)).data.lastPaymentId == paymentId
+          && account.tenantId == p.tenantId && account.accountId == p.accountId && account.name == p.accountName && account.kind == p.accountKind
+          && p.accountDocumentId == p.tenantId + '_' + p.accountId && eligibleSupplierAccount(account,account.get('scope',{}).get('branchId',''))
+          && (account.get('scope',{}).get('kind','organisation') != 'branch' || account.scope.branchId == p.branchId)
+          && account.balanceUGX >= p.amountUGX && getAfter(accountPath).data.balanceUGX == account.balanceUGX - p.amountUGX
+          && getAfter(accountPath).data.lastPostingId == p.movementId && p.movementId == 'salary_payment_' + paymentId
+          && !exists(move) && getAfter(move).data.payrollPaymentId == paymentId;
+      }
+      allow get: if (isHR() || canViewFinance()) && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if viewPayroll(resource.data.tenantId);
+      allow create: if validPayment(request.resource.data);
     }
 
     match /payslips/{payslipId} {
-      allow read: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isFinance() || isAdmin());
-      allow write: if isFinance() || isAdmin();
+      allow read: if isTenantMember(resource.data.tenantId) && (isOwner(resource.data.staffId) || isHR() || canViewFinance());
+      allow create: if payrollMirrorStaging(payslipId,request.resource.data);
+      allow update: if resource.data.get('payrollVersion',0) == 11
+        && (payrollMirrorStaging(payslipId,request.resource.data) || payrollPaidUpdate(resource.data,request.resource.data));
     }
 
     match /cme_records/{recordId} {
@@ -2035,7 +2344,7 @@ service cloud.firestore {
           || data.get('sourceType', '') in ['credit', 'procurement'];
       }
       // A cash GRN creates a payment draft tied to the GRN and invoice in the same commit.
-      allow create: if isProcurement()
+      allow create: if request.resource.data.get('payrollVersion',0) != 11 && isProcurement()
         && isTenantMember(request.resource.data.tenantId)
         && expenseId == 'management_payment_draft_' + request.resource.data.grnId
         && request.resource.data.source == 'procurement_cash_grn'
@@ -2047,11 +2356,12 @@ service cloud.firestore {
         && request.resource.data.amount == request.resource.data.amount_ugx
         && request.resource.data.amount > 0
         && validGrnDraftSource(request.resource.data);
-      allow create: if validCreditDraft(request.resource.data);
-      allow create: if isTenantMember(request.resource.data.tenantId) && (isFinance() || isHR())
+      allow create: if request.resource.data.get('source','') == 'credit_payment' && validCreditDraft(request.resource.data);
+      allow create: if request.resource.data.get('payrollVersion',0) != 11 && isTenantMember(request.resource.data.tenantId) && (isFinance() || isHR())
         && !supplierDraft(request.resource.data)
         && (!('cashOutflowPostingId' in request.resource.data) || freshManagementExpensePayment(request.resource.data));
-      allow update: if isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
+      allow update: if resource.data.get('payrollVersion',0) != 11 && request.resource.data.get('payrollVersion',0) != 11
+        && isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
         && !('cashOutflowPostingId' in resource.data)
         && (resource.data.get('source','') == 'procurement_cash_grn' ? validGrnDraftSettlement(request.resource.data)
           : resource.data.get('source','') == 'credit_payment'
@@ -2059,7 +2369,8 @@ service cloud.firestore {
             : isFinance() && !supplierDraft(resource.data) && !supplierDraft(request.resource.data)
               && (!('cashOutflowPostingId' in request.resource.data) || freshManagementExpensePayment(request.resource.data)));
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId) && !('cashOutflowPostingId' in resource.data)
-        && !supplierDraft(resource.data);
+        && !supplierDraft(resource.data) && resource.data.get('payrollVersion',0) != 11;
+      allow create, update: if validPayrollDraft(expenseId,request.resource.data);
     }
 
     match /campaigns/{campaignId} {
@@ -4033,7 +4344,7 @@ service cloud.firestore {
     // Share exclusions and dispatch by method instead of compiling five copies.
     match /{collectionName}/{docId} {
       function dedicatedCollection() {
-        return collectionName in ['staff_identity_claims', 'identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox'];
+        return collectionName in ['payroll','payslips','attendance','leave_requests','advance_requests','staff_identity_claims', 'identity_sequence_counters','branches','supplier_registry','opening_stock_sessions','transfer_invoices','transfer_invoice_lines','stock_orders','stock_order_lines','hiring_applications','practical_assessments','disciplinary_incidents','appraisals','pos_checkout_attempts','pos_payments','pos_transaction_outbox','pos_quotations','pos_quotation_counters','operational_inventory','operational_inventory_masters','operational_inventory_identity_claims','operational_inventory_identity_state','operational_inventory_usage','operational_inventory_maintenance','operational_inventory_movements','operational_transfers','operational_transfer_lines','grn_records','operational_grn_lines','operational_finance_events','operational_inventory_migration_audit','operational_inventory_identity_events','procurement_approval_audit','sellable_receipt_movement_outbox'];
       }
       function dedicatedWriteCollection() {
         return dedicatedCollection() || collectionName in ['staff', 'hr_roles', 'product_batches', 'products', 'role_realms_of_operation', 'sales'];
