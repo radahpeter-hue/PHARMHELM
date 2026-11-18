@@ -18,12 +18,12 @@ try{
   await page.goto('http://127.0.0.1:'+server.address().port);
   await page.locator('button:visible').filter({hasText:'Payroll approval & payments'}).first().click();
   const dialog=page.getByRole('dialog',{name:'Payroll review'});
-  await dialog.getByText('Pending Finance Approval',{exact:true}).waitFor();
+  await dialog.getByText('Pending Finance Approval',{exact:true}).first().waitFor();
   assert.equal(await dialog.getByRole('spinbutton').count(),0,'Finance must not edit salary calculations');
   assert.equal(await dialog.getByRole('button',{name:'Return to HR',exact:true}).isDisabled(),true);
   await dialog.getByLabel('Correction reason').fill('Please correct the allowance');
   await dialog.getByRole('button',{name:'Return to HR',exact:true}).click();
-  await dialog.getByText('Returned for Correction',{exact:true}).waitFor();
+  await dialog.getByText('Returned for Correction',{exact:true}).first().waitFor();
   await page.getByRole('button',{name:'Close payroll review'}).click();
   await page.getByRole('button',{name:'HR payroll',exact:true}).click();
   await page.getByText('Finance correction reason:',{exact:false}).count();
@@ -31,7 +31,7 @@ try{
   await page.reload();
   await page.locator('button:visible').filter({hasText:'Payroll approval & payments'}).first().click();
   await dialog.getByRole('button',{name:'Approve Payroll',exact:true}).click();
-  await dialog.getByText('Approved, Awaiting Payment',{exact:true}).waitFor();
+  await dialog.getByText('Approved, Awaiting Payment',{exact:true}).first().waitFor();
   await dialog.getByLabel('Employee',{exact:true}).selectOption('employee1');
   await dialog.getByLabel('Actual funding account',{exact:true}).selectOption('system_mtn_mobile_money');
   await dialog.getByLabel('Amount (whole UGX)',{exact:true}).fill('200000');
