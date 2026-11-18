@@ -1536,7 +1536,7 @@ service cloud.firestore {
       let after = getAfter(payrollBatchPath(data.batchId)).data;
       let staff = get(/databases/$(database)/documents/staff/$(data.staffId)).data;
       let allocation = staff.get('branch_id','') == '' ? 'HQ' : staff.branch_id;
-      return payrollActor(data.tenantId, true) && before.tenantId == data.tenantId && before.status == 'draft'
+      return before.tenantId == data.tenantId && before.status == 'draft'
         && after.status == 'draft' && before.revision == data.revision && after.revision == data.revision
         && data.index == before.nextIndex && after.nextIndex == before.nextIndex + 1
         && after.lastStaffId == data.staffId && data.staffId == data.line.staffId
@@ -1642,9 +1642,9 @@ service cloud.firestore {
       }
       function validTransition(before, after) {
         let changed = after.diff(before).affectedKeys();
-        return after.tenantId == before.tenantId && after.id == before.id && after.updatedAt == request.time
+        return payrollActor(before.tenantId,before.status in ['draft','returned']) && after.tenantId == before.tenantId && after.id == before.id && after.updatedAt == request.time
           && ((after.status == before.status && after.revision == before.revision) || payrollStatusMirror(after))
-          && (before.status in ['returned','draft'] && after.status == 'draft' && after.revision == before.revision + 1 && payrollActor(before.tenantId,true)
+          && (before.status in ['returned','draft'] && after.status == 'draft' && after.revision == before.revision + 1 
             && (before.status == 'returned' || payrollEvent(after,'restart'))
             && after.revision == before.revision + 1 && after.nextIndex == 0 && after.submittedBy == request.auth.uid
             && after.employeeCount is int && after.employeeCount > 0 && after.paidUGX == 0
@@ -1656,18 +1656,18 @@ service cloud.firestore {
             && changed.hasOnly(['nextIndex','totals','lastStaffId','updatedAt'])
             && getAfter(/databases/$(database)/documents/finance_payroll_lines_v1/$(batchId + '_r' + string(before.revision) + '__' + after.lastStaffId)).data.stagedAt == request.time
             && !exists(/databases/$(database)/documents/finance_payroll_lines_v1/$(batchId + '_r' + string(before.revision) + '__' + after.lastStaffId))
-          || before.status == 'draft' && after.status == 'pending_finance' && payrollActor(before.tenantId,true)
+          || before.status == 'draft' && after.status == 'pending_finance' 
             && before.nextIndex == before.employeeCount && after.submittedAt == request.time && payrollEvent(after,'submitted')
             && getAfter(/databases/$(database)/documents/management_expenses/$(batchId)).data.revision == after.revision
             && changed.hasOnly(['status','submittedAt','updatedAt'])
-          || before.status == 'pending_finance' && after.status in ['approved','returned'] && payrollActor(before.tenantId,false)
+          || before.status == 'pending_finance' && after.status in ['approved','returned'] 
             && getAfter(/databases/$(database)/documents/management_expenses/$(batchId)).data.status == (after.status == 'approved' ? 'approved' : 'rejected')
             && (after.status == 'approved' ? after.approvedAt == request.time && after.approvedBy == request.auth.uid
               && payrollEvent(after,'approve') && changed.hasOnly(['status','approvedAt','approvedBy','updatedAt'])
               : after.returnReason is string && after.returnReason.size() >= 5 && after.returnedAt == request.time
                 && after.returnedBy == request.auth.uid && payrollEvent(after,'return')
                 && changed.hasOnly(['status','returnReason','returnedAt','returnedBy','updatedAt']))
-          || before.status in ['approved','partial'] && payrollActor(before.tenantId,false)
+          || before.status in ['approved','partial'] 
             && changed.hasOnly(['status','paidUGX','lastPaymentId','updatedAt'])
             && freshPayrollBatchPayment(before,after));
       }
@@ -1716,7 +1716,8 @@ service cloud.firestore {
     }
     match /finance_payroll_payment_requests_v1/{requestId} {
       allow get: if (isHR() || canViewFinance()) && (resource == null || isTenantMember(resource.data.tenantId));
-      allow create: if payrollActor(request.resource.data.tenantId,false)
+      allow create: if isAuthenticated()
+        && getAfter(payrollPaymentPath(request.resource.data.paymentId)).data.tenantId == request.resource.data.tenantId
         && requestId == request.resource.data.requestId && request.resource.data.actorId == request.auth.uid
         && request.resource.data.recordedAt == request.time
         && !exists(payrollPaymentPath(request.resource.data.paymentId))
