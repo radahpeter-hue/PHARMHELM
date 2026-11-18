@@ -383,13 +383,25 @@ export function shareRequestExpressions(source) {
  return insertDatabaseHelpers(source, [...helpers].map(([path, name]) => 'function ' + name + '() { return ' + path + '; }'));
 }
 
-export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true}={}){
+/** Reconstruct static lists exactly while reducing literal AST nodes. */
+export function packStringArrays(source){
+ return source.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|\[(\s*'[^'\\\r\n]*'(?:\s*,\s*'[^'\\\r\n]*')+\s*,?\s*)\]/g,(literal,list)=>{
+  if(list===undefined)return literal;
+  const values=[...list.matchAll(/'([^'\\\r\n]*)'/g)].map(match=>match[1]);
+  if(values.length<4||values.some(value=>value===''))return literal;
+  const separator=['~','#',';','%','!','@',',',':','=','_','-'].find(char=>values.every(value=>!value.includes(char)));
+  return separator?"'"+values.join(separator)+"'.split('"+separator+"')":literal;
+ });
+}
+
+export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true}={}){
  if(sharePaths)source=shareDocumentPaths(source);
  source=localizeCollectionHelpers(source,maxLocalOwners);
  source=shareRepeatedAllowConditions(source);
  if(groupCollections)source=groupEquivalentCollections(source);
  source=shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(source)));
  if(memoize)source=memoizeRequiredExpressions(source);
+ if(packArrays)source=packStringArrays(source);
  if(balanceConditions)source=balanceBooleanChains(source);
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');

@@ -7,16 +7,17 @@ if(!process.env.FIRESTORE_EMULATOR_HOST)throw Error('Firestore emulator is requi
 const source=`rules_version = '2'; service cloud.firestore {
   match /databases/{database}/documents {
     function tenant(id) { return request.auth != null && request.auth.token.tenantId == id; }
-    function editor() { return request.auth != null && request.auth.token.role == 'editor'; }
+    function editor() { return request.auth != null && request.auth.token.role in ['editor','manager','owner','admin']; }
+    function validKeys(data) { return data.keys().hasOnly(['tenantId','value','note','reference']); }
     match /alpha/{id} {
       allow read: if tenant(resource.data.tenantId);
-      allow create: if editor() && tenant(request.resource.data.tenantId);
+      allow create: if editor() && tenant(request.resource.data.tenantId) && validKeys(request.resource.data);
       allow update: if editor() && tenant(resource.data.tenantId) && tenant(request.resource.data.tenantId);
       allow delete: if editor() && tenant(resource.data.tenantId);
     }
     match /beta/{other} {
       allow read: if tenant(resource.data.tenantId);
-      allow create: if editor() && tenant(request.resource.data.tenantId);
+      allow create: if editor() && tenant(request.resource.data.tenantId) && validKeys(request.resource.data);
       allow update: if editor() && tenant(resource.data.tenantId) && tenant(request.resource.data.tenantId);
       allow delete: if editor() && tenant(resource.data.tenantId);
     }
@@ -25,7 +26,7 @@ const source=`rules_version = '2'; service cloud.firestore {
     }
   }
 }`;
-const actors=[null,{role:'viewer',tenantId:'a'},{role:'editor',tenantId:'a'},{role:'editor',tenantId:'b'}];
+const actors=[null,{role:'viewer',tenantId:'a'},{role:'editor',tenantId:'a'},{role:'editor',tenantId:'b'},{role:'manager',tenantId:'a'},{role:'editor~manager',tenantId:'a'}];
 async function evaluate(rules,label){
  const env=await initializeTestEnvironment({projectId:'demo-release-equivalence-'+label,firestore:{rules}});
  const decisions=[];
@@ -34,12 +35,12 @@ async function evaluate(rules,label){
   await env.clearFirestore();
   for(const [index,actor] of actors.entries()){
    const db=(actor?env.authenticatedContext('actor_'+index,actor):env.unauthenticatedContext()).firestore();
-   for(const name of ['alpha','beta'])for(const action of ['get','list','create','update','move','delete']){
+   for(const name of ['alpha','beta'])for(const action of ['get','list','create','extra','update','move','delete']){
     const id='case_'+index+'_'+action,ref=doc(db,name,id);
-    if(action!=='create')await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),name,id),{tenantId:'a',value:1}));
-    const operation=action==='get'?getDoc(ref):action==='list'?getDocs(query(collection(db,name),where('tenantId','==','a'))):action==='create'?setDoc(ref,{tenantId:'a',value:1}):action==='delete'?deleteDoc(ref):updateDoc(ref,action==='move'?{tenantId:'b'}:{value:2});
+    if(!['create','extra'].includes(action))await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),name,id),{tenantId:'a',value:1}));
+    const operation=action==='get'?getDoc(ref):action==='list'?getDocs(query(collection(db,name),where('tenantId','==','a'))):action==='create'?setDoc(ref,{tenantId:'a',value:1}):action==='extra'?setDoc(ref,{tenantId:'a',value:1,'tenantId~value':2}):action==='delete'?deleteDoc(ref):updateDoc(ref,action==='move'?{tenantId:'b'}:{value:2});
     const result=await allowed(operation);
-    const expected=Boolean(actor?.tenantId==='a'&&(action==='get'||action==='list'||(actor.role==='editor'&&action!=='move')));
+    const expected=Boolean(actor?.tenantId==='a'&&(action==='get'||action==='list'||(['editor','manager','owner','admin'].includes(actor.role)&&!['move','extra'].includes(action))));
     assert.equal(result,expected,`${label}: ${index}/${name}/${action}`);decisions.push(result);
    }
    for(const name of ['alpha_extra','Beta','unrelated']){

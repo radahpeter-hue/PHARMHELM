@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains,shareDocumentPaths,memoizeRequiredExpressions,wrapReleaseColumns,groupEquivalentCollections} from '../scripts/build-firestore-release-rules.mjs';
+import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains,shareDocumentPaths,memoizeRequiredExpressions,wrapReleaseColumns,groupEquivalentCollections,packStringArrays} from '../scripts/build-firestore-release-rules.mjs';
 test('identical collection policies share exact names while different policies and wildcard captures stay separate',()=>{
  const source=`service cloud.firestore {
   match /databases/{database}/documents {
@@ -266,4 +266,18 @@ test('frequent snapshot fields share their full lazy paths', () => {
   assert.ok(output.includes('return ' + path + ';'));
  }
  assert.match(output, /resource == null \|\| releaseRequestPath\d+\(\) == 't'/);
+});
+
+test('packed literal lists preserve values, whitespace, duplicates and separator collisions',function roundTrip(){
+ for(const values of [['tenantId','branch_id',' outstanding ','status','status'],['a~b','a#b','a;b','four'],['Finance Head','admin','Admin','CEO']]){
+  const source='['+values.map(value=>"'"+value+"'").join(',')+']';
+  const packed=packStringArrays(source);
+  assert.notEqual(packed,source);assert.deepEqual(Function('return '+packed)(),values);
+  assert.equal(packStringArrays(packed),packed);
+ }
+});
+test('list packing leaves unsupported literals and quoted source untouched',function unsupportedLists(){
+ for(const source of ["['a','b']","['','b','c','d']",String.raw`['a\\b','b','c','d']`,"['a',value,'b','c']","['a' 'b' 'c' 'd']",'"[\'a\',\'b\',\'c\',\'d\']"',"// ['a','b','c','d']\ntrue"]){
+  assert.equal(packStringArrays(source),source);
+ }
 });
