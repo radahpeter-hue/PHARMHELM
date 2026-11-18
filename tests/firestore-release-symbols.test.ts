@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains,shareDocumentPaths,memoizeRequiredExpressions,wrapReleaseColumns,groupEquivalentCollections,packStringArrays,shareSnapshotReaders,shareSchemaChecks,shareRepeatedStringValues} from '../scripts/build-firestore-release-rules.mjs';
+import {omitNeverAllow,bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains,shareDocumentPaths,memoizeRequiredExpressions,wrapReleaseColumns,groupEquivalentCollections,packStringArrays,shareSnapshotReaders,shareSchemaChecks,shareRepeatedStringValues} from '../scripts/build-firestore-release-rules.mjs';
 test('identical collection policies share exact names while different policies and wildcard captures stay separate',()=>{
  const source=`service cloud.firestore {
   match /databases/{database}/documents {
@@ -269,7 +269,7 @@ test('frequent snapshot fields share their full lazy paths', () => {
 });
 
 test('packed literal lists preserve values, whitespace, duplicates and separator collisions',function roundTrip(){
- for(const values of [['a','b'],['cash','bank','credit'],['tenantId','branch_id',' outstanding ','status','status'],['a~b','a#b','a;b','four'],['Finance Head','admin','Admin','CEO']]){
+ for(const values of [['tenantId','branch_id',' outstanding ','status','status'],['a~b','a#b','a;b','four'],['Finance Head','admin','Admin','CEO']]){
   const source='['+values.map(value=>"'"+value+"'").join(',')+']';
   const packed=packStringArrays(source);
   assert.notEqual(packed,source);assert.deepEqual(Function('return '+packed)(),values);
@@ -277,7 +277,7 @@ test('packed literal lists preserve values, whitespace, duplicates and separator
  }
 });
 test('list packing leaves unsupported literals and quoted source untouched',function unsupportedLists(){
- for(const source of ["['','b','c','d']",String.raw`['a\\b','b','c','d']`,"['a',value,'b','c']","['a' 'b' 'c' 'd']",'"[\'a\',\'b\',\'c\',\'d\']"',"// ['a','b','c','d']\ntrue"]){
+ for(const source of ["['a','b']","['','b','c','d']",String.raw`['a\\b','b','c','d']`,"['a',value,'b','c']","['a' 'b' 'c' 'd']",'"[\'a\',\'b\',\'c\',\'d\']"',"// ['a','b','c','d']\ntrue"]){
   assert.equal(packStringArrays(source),source);
  }
 });
@@ -314,12 +314,14 @@ test('shared immutable string values preserve literals, map keys and byte values
  assert.equal(shareRepeatedStringValues(result),result);
 });
 
-
-test('hot inventory paths use one specialized helper call and preserve snapshot timing',()=>{
- const source="service cloud.firestore { match /databases/{database}/documents { function item(id){return get(/databases/$(database)/documents/operational_inventory/$(id)).data;} function order(id){return getAfter(/databases/$(database)/documents/stock_orders/$(id)).data;} } }";
- const result=shareDocumentPaths(source);
- assert.match(result,/releaseDocumentPathFixed0\(id\)/);
- assert.ok(result.includes('return get(/databases/$(database)/documents/operational_inventory/$(id)).data;'));
- assert.ok(result.includes('return getAfter(/databases/$(database)/documents/stock_orders/$(id)).data;'));
- assert.equal(shareDocumentPaths(result),result);
+test('implicit deny removes only constant-false grants and preserves all positive conditions',()=>{
+ const source="service cloud.firestore { match /databases/{database}/documents { match /items/{id} { allow update, delete: if false; allow list: if false; allow get: if true; allow create: if false && approved(); function label(){return 'allow write: if false;';} // allow write: if false;\n } } }";
+ const result=omitNeverAllow(source);
+ assert.ok(!result.includes('allow update, delete: if false;'));
+ assert.ok(!result.includes('allow list: if false;'));
+ assert.ok(result.includes('allow get: if true;'));
+ assert.ok(result.includes('allow create: if false && approved();'));
+ assert.ok(result.includes("'allow write: if false;'"));
+ assert.ok(result.includes('// allow write: if false;'));
+ assert.equal(omitNeverAllow(result),result);
 });

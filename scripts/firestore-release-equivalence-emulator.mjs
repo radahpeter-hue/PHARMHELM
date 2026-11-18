@@ -23,6 +23,7 @@ const source=`rules_version = '2'; service cloud.firestore {
       allow update: if editor() && tenant(resource.data.tenantId) && tenant(request.resource.data.tenantId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['value','note','reference','tenantId']);
       allow delete: if editor() && tenant(resource.data.tenantId);
     }
+    match /deny_only/{id} { allow read, write: if false; }
     match /special/{id} {
       allow get: if id == 'public';
     }
@@ -46,7 +47,7 @@ async function evaluate(rules,label){
     const expected=Boolean(actor?.tenantId==='a'&&(action==='get'||action==='list'||(['editor','manager','owner','admin'].includes(actor.role)&&!['move','extra','extraUpdate'].includes(action))));
     assert.equal(result,expected,`${label}: ${index}/${name}/${action}`);decisions.push(result);
    }
-   for(const name of ['alpha_extra','Beta','unrelated']){
+   for(const name of ['alpha_extra','Beta','unrelated','deny_only']){
     const result=await allowed(setDoc(doc(db,name,'new'),{tenantId:'a'}));
     assert.equal(result,false,`${label}: collection isolation ${name}`);decisions.push(result);
    }

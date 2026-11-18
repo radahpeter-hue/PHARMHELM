@@ -203,16 +203,11 @@ export function shareDocumentPaths(source) {
  if(!database)return source;
  let name='releaseDocumentPath',serial=0;
  while(source.includes(name))name='releaseDocumentPath'+serial++;
- const generated=[];
- for(const header of masked.matchAll(/\bfunction\s+releaseDocumentPath\w*\([^)]*\)\s*\{/g)){
-  let end=header.index+header[0].length,depth=1;for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
-  generated.push({from:header.index,to:end});
- }
- const replacements=[],methods=new Set(),fixed=new Map();let coveredUntil=0;
+ const replacements=[],methods=new Set();let coveredUntil=0;
  for(const head of masked.matchAll(/\/databases\/\$\((\w+)\)\/documents\/([A-Za-z_]\w*)\/\$\(/g)){
   // Authority checks are evaluated frequently on complex inventory writes.
   // Keep their direct lookups to preserve the existing expression budget.
-  if(head[1]!==database||head.index<coveredUntil||generated.some(range=>head.index>=range.from&&head.index<range.to)||['staff','system_settings','branches'].includes(head[2]))continue;
+  if(head[1]!==database||head.index<coveredUntil||['staff','system_settings','branches'].includes(head[2]))continue;
   const start=head.index+head[0].length;let end=start,depth=1;
   for(;end<masked.length&&depth;end++){if(masked[end]==='(')depth++;if(masked[end]===')')depth--;}
   if(depth)throw Error('Unbalanced document path.');
@@ -221,22 +216,14 @@ export function shareDocumentPaths(source) {
   const prefix=masked.slice(0,head.index).match(/(?<![.\w])(get|getAfter)\(\s*$/),suffix=masked.slice(end).match(/^\s*\)\s*\.data\b/);
   const method=prefix&&suffix?prefix[1]:null;
   const from=method?head.index-prefix[0].length:head.index,to=method?end+suffix[0].length:end;
-  const argument=source.slice(start,end-1);
-  if(/^(?:operational_|stock_orders$|opening_stock_sessions$)/.test(head[2])){
-   const key=head[2]+'/'+(method||'path');
-   if(!fixed.has(key))fixed.set(key,{name:name+'Fixed'+fixed.size,collection:head[2],method});
-   replacements.push({from,to,text:fixed.get(key).name+'('+argument+')'});
-  }else{
-   if(method)methods.add(method);
-   replacements.push({from,to,text:name+(method==='get'?'Before':method==='getAfter'?'After':'')+"('"+head[2]+"',"+argument+')'});
-  }
+  if(method)methods.add(method);
+  replacements.push({from,to,text:name+(method==='get'?'Before':method==='getAfter'?'After':'')+"('"+head[2]+"',"+source.slice(start,end-1)+')'});
   coveredUntil=to;
  }
  if(replacements.length<2)return source;
  for(const {from,to,text} of replacements.reverse())source=source.slice(0,from)+text+source.slice(to);
  return insertDatabaseHelpers(source,[`function ${name}(collection, id) { return /databases/$(${database})/documents/$(collection)/$(id); }`,
-  ...[...methods].map(method=>`function ${name}${method==='get'?'Before':'After'}(collection,id) { return ${method}(/databases/$(${database})/documents/$(collection)/$(id)).data; }`),
-  ...[...fixed.values()].map(value=>{const path='/databases/$('+database+')/documents/'+value.collection+'/$(id)';return 'function '+value.name+'(id) { return '+(value.method?value.method+'('+path+').data':path)+'; }';})]);
+  ...[...methods].map(method=>`function ${name}${method==='get'?'Before':'After'}(collection,id) { return ${method}(/databases/$(${database})/documents/$(collection)/$(id)).data; }`)]);
 }
 
 /** Reuse pure values required by an unconditional conjunct. A successful rule
@@ -401,7 +388,7 @@ export function packStringArrays(source){
  return source.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|\[(\s*'[^'\\\r\n]*'(?:\s*,\s*'[^'\\\r\n]*')+\s*,?\s*)\]/g,(literal,list)=>{
   if(list===undefined)return literal;
   const values=[...list.matchAll(/'([^'\\\r\n]*)'/g)].map(match=>match[1]);
-  if(values.length<2||values.some(value=>value===''))return literal;
+  if(values.length<4||values.some(value=>value===''))return literal;
   const separator=['~','#',';','%','!','@',',',':','=','_','-'].find(char=>values.every(value=>!value.includes(char)));
   return separator?"'"+values.join(separator)+"'.split('"+separator+"')":literal;
  });
@@ -451,13 +438,12 @@ export function shareSchemaChecks(source){
 }
 
 export function shareRepeatedStringValues(source){
- // Keep hot authority, inventory fields and inventory paths inline: nested transfer checks approach the evaluation limit.
- const masked=maskRulesTrivia(source),groups=new Map(),excluded=new Set(['assigned_branches','secondaryRoles','default_branch_id','branch_id','tenantId','active','status','is_duplicate']);
+ const masked=maskRulesTrivia(source),groups=new Map(),excluded=new Set(['assigned_branches','secondaryRoles','default_branch_id','branch_id','tenantId','active','status','is_duplicate','transferType','masterItemId','deliveryRoute','BRANCH_RETURN']);
  if(!databaseScope.test(masked))return source;
  for(const match of source.matchAll(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\//g)){
   const literal=match[0];if(!["'",'"'].includes(literal[0])||literal.length<14)continue;
   if(/[A-Za-z0-9_]/.test(source[match.index-1]||'')||masked.slice(match.index+literal.length).match(/\S/)?.[0]===':')continue;
-  if(excluded.has(literal.slice(1,-1)))continue;
+  if(excluded.has(literal.slice(1,-1))||/^(?:operational_|stock_orders$|opening_stock_sessions$)/.test(literal.slice(1,-1)))continue;
   if(!groups.has(literal))groups.set(literal,[]);groups.get(literal).push(match.index);
  }
  const changes=[],helpers=[];let serial=0;
@@ -471,7 +457,15 @@ export function shareRepeatedStringValues(source){
  return insertDatabaseHelpers(source,helpers);
 }
 
+export function omitNeverAllow(source){
+ const masked=maskRulesTrivia(source),pattern=/\ballow\s+(?:read|write|get|list|create|update|delete)(?:\s*,\s*(?:read|write|get|list|create|update|delete))*\s*:\s*if\s+false\s*;/g;
+ const matches=[...masked.matchAll(pattern)];
+ for(const match of matches.reverse())source=source.slice(0,match.index)+source.slice(match.index+match[0].length);
+ return source;
+}
+
 export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+ source=omitNeverAllow(source);
  if(shareReaders)source=shareSnapshotReaders(source);
  if(shareSchemas)source=shareSchemaChecks(source);
  if(sharePaths)source=shareDocumentPaths(source);
