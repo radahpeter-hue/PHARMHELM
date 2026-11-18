@@ -313,3 +313,8 @@ test('shared immutable string values preserve literals, map keys and byte values
  assert.ok(shareRepeatedStringValues(withBytes).includes('b'+literal));
  assert.equal(shareRepeatedStringValues(result),result);
 });
+
+test('hot authority and inventory field names stay inline to preserve evaluation budget',()=>{
+ const source="service cloud.firestore { match /databases/{database}/documents { function one(data){return data.get('inventoryClass','') == 'OPERATIONAL' && data.get('assigned_branches',[]) == [] && data.get('inventoryClass','') == data.get('inventoryClass','') && data.get('operational_inventory','') == data.get('operational_inventory','') && data.get('operational_inventory','') != '';} } }";
+ assert.equal(shareRepeatedStringValues(source),source);
+});

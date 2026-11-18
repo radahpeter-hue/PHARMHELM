@@ -438,12 +438,13 @@ export function shareSchemaChecks(source){
 }
 
 export function shareRepeatedStringValues(source){
- const masked=maskRulesTrivia(source),groups=new Map(),excluded=new Set(['assigned_branches','secondaryRoles','default_branch_id','branch_id','tenantId','active','status','is_duplicate']);
+ // Keep hot authority, inventory fields and inventory paths inline: nested transfer checks approach the evaluation limit.
+ const masked=maskRulesTrivia(source),groups=new Map(),excluded=new Set(['assigned_branches','secondaryRoles','default_branch_id','branch_id','tenantId','active','status','is_duplicate','inventoryClass','transferType','masterItemId','deliveryRoute','BRANCH_RETURN','Finance Head','Branch Manager','branch manager','Procurement Head','Procurement Officer','Procurement Manager']);
  if(!databaseScope.test(masked))return source;
  for(const match of source.matchAll(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\//g)){
   const literal=match[0];if(!["'",'"'].includes(literal[0])||literal.length<14)continue;
   if(/[A-Za-z0-9_]/.test(source[match.index-1]||'')||masked.slice(match.index+literal.length).match(/\S/)?.[0]===':')continue;
-  if(excluded.has(literal.slice(1,-1)))continue;
+  if(excluded.has(literal.slice(1,-1))||/^(?:operational_|stock_orders$|opening_stock_sessions$)/.test(literal.slice(1,-1)))continue;
   if(!groups.has(literal))groups.set(literal,[]);groups.get(literal).push(match.index);
  }
  const changes=[],helpers=[];let serial=0;

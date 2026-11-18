@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {initializeTestEnvironment} from '@firebase/rules-unit-testing';
-import {doc,setDoc,updateDoc,deleteDoc,getDoc,getDocs,collection,query,where} from 'firebase/firestore';
+import {FieldPath,doc,setDoc,updateDoc,deleteDoc,getDoc,getDocs,collection,query,where} from 'firebase/firestore';
 import {compactRuleSymbols,wrapReleaseColumns} from './build-firestore-release-rules.mjs';
 
 if(!process.env.FIRESTORE_EMULATOR_HOST)throw Error('Firestore emulator is required.');
@@ -41,7 +41,7 @@ async function evaluate(rules,label){
    for(const name of ['alpha','beta'])for(const action of ['get','list','create','extra','update','extraUpdate','move','delete']){
     const id='case_'+index+'_'+action,ref=doc(db,name,id);
     if(!['create','extra'].includes(action))await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),name,id),{tenantId:'a',value:1}));
-    const operation=action==='get'?getDoc(ref):action==='list'?getDocs(query(collection(db,name),where('tenantId','==','a'))):action==='create'?setDoc(ref,{tenantId:'a',value:1}):action==='extra'?setDoc(ref,{tenantId:'a',value:1,'tenantId~value':2}):action==='delete'?deleteDoc(ref):updateDoc(ref,action==='extraUpdate'?{'tenantId~value':2}:action==='move'?{tenantId:'b'}:{value:2});
+    const operation=action==='get'?getDoc(ref):action==='list'?getDocs(query(collection(db,name),where('tenantId','==','a'))):action==='create'?setDoc(ref,{tenantId:'a',value:1}):action==='extra'?setDoc(ref,{tenantId:'a',value:1,'tenantId~value':2}):action==='delete'?deleteDoc(ref):action==='extraUpdate'?updateDoc(ref,new FieldPath('tenantId~value'),2):updateDoc(ref,action==='move'?{tenantId:'b'}:{value:2});
     const result=await allowed(operation);
     const expected=Boolean(actor?.tenantId==='a'&&(action==='get'||action==='list'||(['editor','manager','owner','admin'].includes(actor.role)&&!['move','extra','extraUpdate'].includes(action))));
     assert.equal(result,expected,`${label}: ${index}/${name}/${action}`);decisions.push(result);
