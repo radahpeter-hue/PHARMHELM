@@ -1505,7 +1505,10 @@ service cloud.firestore {
       return isAuthenticated() && staff.tenantId == tenantId && !staff.get('is_duplicate',false) && staff.get('active',true)
         && staff.get('status','active').lower() == 'active'
         && (staff.role in central || staff.get('secondaryRoles',[]).hasAny(central)
-          || ((hr ? isHR() : isFinance()) && staff.get('assigned_branches',[]).size() == 0
+          || (((!hr && (staff.role == 'Finance Officer' || 'Finance Officer' in staff.get('secondaryRoles',[])))
+            || staff.role == 'ceo / md' || 'ceo / md' in staff.get('secondaryRoles',[])
+            || request.auth.token.get('email','') in ['peterssentongo61@gmail.com','peter.sentongo@pharmhelm','peter.sentongo@pharmhelm.com']
+            || hasCustomModuleFunctional(hr ? 'hr' : 'finance')) && staff.get('assigned_branches',[]).size() == 0
             && staff.get('branch_id','') == '' && staff.get('default_branch_id','') == ''));
     }
     function viewPayroll(tenantId) {
