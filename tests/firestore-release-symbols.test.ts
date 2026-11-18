@@ -314,7 +314,12 @@ test('shared immutable string values preserve literals, map keys and byte values
  assert.equal(shareRepeatedStringValues(result),result);
 });
 
-test('hot authority and inventory field names stay inline to preserve evaluation budget',()=>{
- const source="service cloud.firestore { match /databases/{database}/documents { function one(data){return data.get('inventoryClass','') == 'OPERATIONAL' && data.get('assigned_branches',[]) == [] && data.get('inventoryClass','') == data.get('inventoryClass','') && data.get('operational_inventory','') == data.get('operational_inventory','') && data.get('operational_inventory','') != '';} } }";
- assert.equal(shareRepeatedStringValues(source),source);
+
+test('hot inventory paths use one specialized helper call and preserve snapshot timing',()=>{
+ const source="service cloud.firestore { match /databases/{database}/documents { function item(id){return get(/databases/$(database)/documents/operational_inventory/$(id)).data;} function order(id){return getAfter(/databases/$(database)/documents/stock_orders/$(id)).data;} } }";
+ const result=shareDocumentPaths(source);
+ assert.match(result,/releaseDocumentPathFixed0\(id\)/);
+ assert.ok(result.includes('return get(/databases/$(database)/documents/operational_inventory/$(id)).data;'));
+ assert.ok(result.includes('return getAfter(/databases/$(database)/documents/stock_orders/$(id)).data;'));
+ assert.equal(shareDocumentPaths(result),result);
 });
