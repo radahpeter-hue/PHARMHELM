@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains,shareDocumentPaths,memoizeRequiredExpressions,wrapReleaseColumns,groupEquivalentCollections,packStringArrays} from '../scripts/build-firestore-release-rules.mjs';
+import {bindWriteSnapshots,compactRuleSymbols,shareRepeatedAllowConditions,shareRequestExpressions,localizeCollectionHelpers,balanceBooleanChains,shareDocumentPaths,memoizeRequiredExpressions,wrapReleaseColumns,groupEquivalentCollections,packStringArrays,shareSnapshotReaders,shareSchemaChecks,shareRepeatedStringValues} from '../scripts/build-firestore-release-rules.mjs';
 test('identical collection policies share exact names while different policies and wildcard captures stay separate',()=>{
  const source=`service cloud.firestore {
   match /databases/{database}/documents {
@@ -280,4 +280,36 @@ test('list packing leaves unsupported literals and quoted source untouched',func
  for(const source of ["['a','b']","['','b','c','d']",String.raw`['a\\b','b','c','d']`,"['a',value,'b','c']","['a' 'b' 'c' 'd']",'"[\'a\',\'b\',\'c\',\'d\']"',"// ['a','b','c','d']\ntrue"]){
   assert.equal(packStringArrays(source),source);
  }
+});
+
+test('snapshot readers retain before/after evidence and direct authority lookups',function snapshotReaderTest(){
+ const source="service cloud.firestore { match /databases/{database}/documents { function row(path) { return get(path).data.value == getAfter(path).data.value && get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.active; } } }";
+ const result=shareSnapshotReaders(source);
+ assert.ok(result.includes('releaseSnapshotDataBefore(path).value'));
+ assert.ok(result.includes('releaseSnapshotDataAfter(path).value'));
+ assert.ok(result.includes('get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.active'));
+ assert.ok(result.includes('return (get(path)).data;'));
+ assert.ok(result.includes('return (getAfter(path)).data;'));
+ assert.equal(shareSnapshotReaders(result),result);
+ assert.equal(shareSnapshotReaders('function plain(path) { return get(path).data; }'),'function plain(path) { return get(path).data; }');
+});
+test('schema readers retain exact key and change-set checks',function schemaReaderTest(){
+ const source="service cloud.firestore { match /databases/{database}/documents { function valid(after,before) { return after.keys().hasOnly(['a','b']) && after.diff(before).affectedKeys().hasOnly(['a']); } } }";
+ const result=shareSchemaChecks(source);
+ assert.ok(result.includes("releaseSchemaCheckKeys(after,['a','b'])"));
+ assert.ok(result.includes("releaseSchemaCheckChanges(after,before,['a'])"));
+ assert.ok(result.includes('return (data.keys()).hasOnly(fields);'));
+ assert.ok(result.includes('return (after.diff(before).affectedKeys()).hasOnly(fields);'));
+ assert.equal(shareSchemaChecks(result),result);
+});
+test('shared immutable string values preserve literals, map keys and byte values',function constantReaderTest(){
+ const literal="'A long immutable financial reference value'";
+ const source="service cloud.firestore { match /databases/{database}/documents { function one(){return "+literal+";} function two(){return "+literal+";} function three(){return "+literal+";} function four(){return "+literal+";} function labels(){return {"+literal+":true};} } }";
+ const result=shareRepeatedStringValues(source);
+ assert.ok(result.includes(literal+':true'));
+ const body=result.replace(/^service cloud\.firestore \{\s*match \/databases\/\{database\}\/documents \{/,'').replace(/}\s*}$/,'');
+ assert.deepEqual(Function(body+'return [one(),two(),three(),four()];')(),Array(4).fill(literal.slice(1,-1)));
+ const withBytes=source.replace('function one(){return '+literal+';}','function one(){return b'+literal+';}');
+ assert.ok(shareRepeatedStringValues(withBytes).includes('b'+literal));
+ assert.equal(shareRepeatedStringValues(result),result);
 });

@@ -394,7 +394,72 @@ export function packStringArrays(source){
  });
 }
 
-export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true}={}){
+export function shareSnapshotReaders(source){
+ const masked=maskRulesTrivia(source),changes=[],used=new Set();let covered=0,prefix='releaseSnapshotData';
+ if(!databaseScope.test(masked))return source;
+ while(source.includes(prefix))prefix+='X';
+ for(const head of masked.matchAll(/(?<![.\w])(get|getAfter)\s*\(/g)){
+  if(head.index<covered)continue;
+  const from=head.index+head[0].length;let end=from,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='(')depth++;if(masked[end]===')')depth--;}
+  if(depth)throw Error('Unbalanced snapshot read.');
+  if(masked.slice(from,end-1).trim().startsWith('/'))continue;
+  const suffix=masked.slice(end).match(/^\s*\.data\b/);if(!suffix)continue;
+  const name=prefix+(head[1]==='get'?'Before':'After');
+  changes.push({from:head.index,to:end+suffix[0].length,text:name+'('+source.slice(from,end-1)+')'});
+  used.add(head[1]);covered=end+suffix[0].length;
+ }
+ if(!changes.length)return source;
+ for(const {from,to,text} of changes.reverse())source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,[...used].map(method=>'function '+prefix+(method==='get'?'Before':'After')+'(path) { return ('+method+'(path)).data; }'));
+}
+
+export function shareSchemaChecks(source){
+ const masked=maskRulesTrivia(source),changes=[],used=new Set();let covered=0,prefix='releaseSchemaCheck';
+ if(!databaseScope.test(masked))return source;
+ while(source.includes(prefix))prefix+='X';
+ const argumentEnd=start=>{let end=start,depth=1;for(;end<masked.length&&depth;end++){if(masked[end]==='(')depth++;if(masked[end]===')')depth--;}if(depth)throw Error('Unbalanced schema check.');return end;};
+ for(const head of masked.matchAll(/(?<![.\w])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(keys\s*\(\s*\)\s*\.hasOnly|diff)\s*\(/g)){
+  if(head.index<covered)continue;
+  const from=head.index+head[0].length,firstEnd=argumentEnd(from),diff=head[2]==='diff';
+  let fieldsFrom=from,fieldsEnd=firstEnd,before='';
+  if(diff){
+   const suffix=masked.slice(firstEnd).match(/^\s*\.affectedKeys\s*\(\s*\)\s*\.hasOnly\s*\(/);if(!suffix)continue;
+   before=source.slice(from,firstEnd-1);
+   fieldsFrom=firstEnd+suffix[0].length;fieldsEnd=argumentEnd(fieldsFrom);
+  }
+  const name=prefix+(diff?'Changes':'Keys'),fields=source.slice(fieldsFrom,fieldsEnd-1);
+  changes.push({from:head.index,to:fieldsEnd,text:name+'('+head[1]+','+(diff?before+',':'')+fields+')'});
+  used.add(diff?'Changes':'Keys');covered=fieldsEnd;
+ }
+ if(!changes.length)return source;
+ for(const {from,to,text} of changes.reverse())source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,[...used].map(kind=>kind==='Keys'?'function '+prefix+'Keys(data, fields) { return (data.keys()).hasOnly(fields); }':'function '+prefix+'Changes(after, before, fields) { return (after.diff(before).affectedKeys()).hasOnly(fields); }'));
+}
+
+export function shareRepeatedStringValues(source){
+ const masked=maskRulesTrivia(source),groups=new Map(),excluded=new Set(['assigned_branches','secondaryRoles','default_branch_id','branch_id','tenantId','active','status','is_duplicate']);
+ if(!databaseScope.test(masked))return source;
+ for(const match of source.matchAll(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\//g)){
+  const literal=match[0];if(!["'",'"'].includes(literal[0])||literal.length<14)continue;
+  if(/[A-Za-z0-9_]/.test(source[match.index-1]||'')||masked.slice(match.index+literal.length).match(/\S/)?.[0]===':')continue;
+  if(excluded.has(literal.slice(1,-1)))continue;
+  if(!groups.has(literal))groups.set(literal,[]);groups.get(literal).push(match.index);
+ }
+ const changes=[],helpers=[];let serial=0;
+ for(const [literal,positions] of groups){
+  if(positions.length<3||(literal.length-4)*(positions.length-1)-28<40)continue;
+  let name;do{name='releaseStringValue'+serial++;}while(source.includes(name));
+  helpers.push('function '+name+'() { return '+literal+'; }');
+  for(const from of positions)changes.push({from,to:from+literal.length,text:name+'()'});
+ }
+ for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
+export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+ if(shareReaders)source=shareSnapshotReaders(source);
+ if(shareSchemas)source=shareSchemaChecks(source);
  if(sharePaths)source=shareDocumentPaths(source);
  source=localizeCollectionHelpers(source,maxLocalOwners);
  source=shareRepeatedAllowConditions(source);
@@ -402,6 +467,7 @@ export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memo
  source=shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(source)));
  if(memoize)source=memoizeRequiredExpressions(source);
  if(packArrays)source=packStringArrays(source);
+ if(shareConstants){source=shareRepeatedStringValues(source);if(memoize)source=memoizeRequiredExpressions(source);}
  if(balanceConditions)source=balanceBooleanChains(source);
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
