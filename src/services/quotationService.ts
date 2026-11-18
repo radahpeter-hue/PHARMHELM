@@ -24,7 +24,7 @@ export async function getNextQuotationId(tenantId: string, branchId: string, bra
   const counterId = [tenantId, branchId, year].map(value => encodeURIComponent(value)).join('__');
   const counterRef = doc(db, 'pos_quotation_counters', counterId);
 
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
     try {
       return await runTransaction(db, async transaction => {
         const counterSnap = await transaction.get(counterRef);
@@ -53,8 +53,8 @@ export async function getNextQuotationId(tenantId: string, branchId: string, bra
       // the same tenant and monotonic-increment rules are checked on every retry.
       const code = String((error as { code?: unknown })?.code || '');
       const retryableContention = ['permission-denied', 'already-exists', '6', '7'].includes(code);
-      if (!retryableContention || attempt === 4) throw error;
-      await new Promise(resolve => setTimeout(resolve, 25 * (attempt + 1)));
+      if (!retryableContention || attempt === 9) throw error;
+      await new Promise(resolve => setTimeout(resolve, Math.min(1000, 25 * 2 ** attempt) + Math.floor(Math.random() * 100)));
     }
   }
   throw new Error('Could not reserve a unique quotation number. Please retry.');
