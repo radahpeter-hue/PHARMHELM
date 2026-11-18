@@ -13,6 +13,9 @@ permissions:
   contents: read
 jobs:
   activation-size:
+    concurrency:
+      group: firestore-certification-${{ github.repository }}
+      cancel-in-progress: false
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 12

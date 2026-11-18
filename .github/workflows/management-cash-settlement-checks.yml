@@ -19,6 +19,9 @@ permissions:
   contents: read
 jobs:
   authenticated-settlement:
+    concurrency:
+      group: firestore-certification-${{ github.repository }}
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

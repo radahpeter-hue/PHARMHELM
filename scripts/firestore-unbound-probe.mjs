@@ -32,7 +32,17 @@ export async function validateUnboundProbe({project,token,rulesetName,probeName,
   const recovery=await fetchImpl(base+probeName,{headers,signal:AbortSignal.timeout(60000)});
   if(recovery.ok)return exact(await recovery.json());
   if(![404,429,500,502,503,504].includes(recovery.status))throw Error(`Unbound probe verification failed (${recovery.status}).`);
-  if(attempt===4)throw Error(`Compiled executable activation-size validation unavailable (${response.status}); exact probe not verified.`);
+  if(attempt===4){
+   // A timed-out create can become visible after the last immediate GET.
+   // Poll only this exact unbound identity; never substitute a control release.
+   for(const delay of [5000,10000,20000,30000]){
+    await pause(delay);
+    const late=await fetchImpl(base+probeName,{headers,signal:AbortSignal.timeout(60000)});
+    if(late.ok)return exact(await late.json());
+    if(![404,429,500,502,503,504].includes(late.status))throw Error(`Unbound probe verification failed (${late.status}).`);
+   }
+   throw Error(`Compiled executable activation-size validation unavailable (${response.status}); exact probe not verified.`);
+  }
   console.log(`Unbound probe HTTP ${response.status}; retry ${attempt}/4. No production release modified.`);
   await pause(attempt*5000);
  }

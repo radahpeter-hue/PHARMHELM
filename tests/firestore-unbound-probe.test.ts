@@ -24,7 +24,7 @@ test('unbound probe retries unavailable creation but still requires actual exact
  let n=0;await validateUnboundProbe({...input,fetchImpl:async()=>[response(503,{}),response(404,{}),response(200,{name:probeName,rulesetName})][n++]});assert.equal(n,3);
 });
 test('unbound probe fails closed for persistent 503 with no verified release',async()=>{
- let n=0;await assert.rejects(validateUnboundProbe({...input,fetchImpl:async()=>response(n++%2?404:503,{})}),/not verified/);assert.equal(n,8);
+ let n=0;await assert.rejects(validateUnboundProbe({...input,fetchImpl:async()=>response(n++%2?404:503,{})}),/not verified/);assert.equal(n,12);
 });
 test('unbound probe rejects compiled size errors without retrying or using another release',async()=>{
  let n=0;await assert.rejects(validateUnboundProbe({...input,fetchImpl:async()=>{n++;return response(400,{error:{message:'256300 bytes exceeds 256000'}});}}),/256300/);assert.equal(n,1);
@@ -34,4 +34,14 @@ test('unbound probe rejects conflicting candidate in successful response and rec
 });
 test('unbound probe refuses production release names before network access',async()=>{
  await assert.rejects(validateUnboundProbe({...input,probeName:'projects/test-project/releases/cloud.firestore',fetchImpl:async()=>{throw Error('Network must not be called');}}),/Unsafe/);
+});
+
+test('delayed acknowledgement verifies only the exact candidate after the final POST retry',async()=>{
+ let calls=0;const methods:any[]=[];
+ const result=await validateUnboundProbe({...input,fetchImpl:async(_url:any,options:any)=>{
+  methods.push(options.method || 'GET');calls++;
+  return calls>9?response(200,{name:probeName,rulesetName}):response(options.method==='POST'?503:404,{});
+ }});
+ assert.equal(result.rulesetName,rulesetName);assert.equal(methods.filter(x=>x==='POST').length,4);
+ assert.ok(methods.slice(8).every(x=>x==='GET'));
 });
