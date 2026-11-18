@@ -325,3 +325,10 @@ test('implicit deny removes only constant-false grants and preserves all positiv
  assert.ok(result.includes('// allow write: if false;'));
  assert.equal(omitNeverAllow(result),result);
 });
+
+test('deny-only match scopes retain a valid default denial declaration',()=>{
+ const source='service cloud.firestore { match /databases/{database}/documents { match /deny_only/{id} { allow delete: if false; } } }';
+ const result=omitNeverAllow(source);
+ assert.ok(result.includes('allow read, write: if false;'));
+ assert.equal(omitNeverAllow(result),result);
+});

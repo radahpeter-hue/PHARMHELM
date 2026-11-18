@@ -458,9 +458,17 @@ export function shareRepeatedStringValues(source){
 }
 
 export function omitNeverAllow(source){
- const masked=maskRulesTrivia(source),pattern=/\ballow\s+(?:read|write|get|list|create|update|delete)(?:\s*,\s*(?:read|write|get|list|create|update|delete))*\s*:\s*if\s+false\s*;/g;
+ let masked=maskRulesTrivia(source);const pattern=/\ballow\s+(?:read|write|get|list|create|update|delete)(?:\s*,\s*(?:read|write|get|list|create|update|delete))*\s*:\s*if\s+false\s*;/g;
  const matches=[...masked.matchAll(pattern)];
  for(const match of matches.reverse())source=source.slice(0,match.index)+source.slice(match.index+match[0].length);
+ // Firestore requires a declaration in every match, including deny-only scopes.
+ masked=maskRulesTrivia(source);const empty=[];
+ for(const header of masked.matchAll(/\bmatch\s+[^\n]*? \{/g)){
+  const start=header.index+header[0].length;let end=start,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  if(!depth&&!masked.slice(start,end-1).trim())empty.push({from:start,to:end-1});
+ }
+ for(const range of empty.reverse())source=source.slice(0,range.from)+' allow read, write: if false; '+source.slice(range.to);
  return source;
 }
 
