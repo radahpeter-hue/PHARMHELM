@@ -269,7 +269,7 @@ test('frequent snapshot fields share their full lazy paths', () => {
 });
 
 test('packed literal lists preserve values, whitespace, duplicates and separator collisions',function roundTrip(){
- for(const values of [['tenantId','branch_id',' outstanding ','status','status'],['a~b','a#b','a;b','four'],['Finance Head','admin','Admin','CEO']]){
+ for(const values of [['a','b'],['cash','bank','credit'],['tenantId','branch_id',' outstanding ','status','status'],['a~b','a#b','a;b','four'],['Finance Head','admin','Admin','CEO']]){
   const source='['+values.map(value=>"'"+value+"'").join(',')+']';
   const packed=packStringArrays(source);
   assert.notEqual(packed,source);assert.deepEqual(Function('return '+packed)(),values);
@@ -277,7 +277,7 @@ test('packed literal lists preserve values, whitespace, duplicates and separator
  }
 });
 test('list packing leaves unsupported literals and quoted source untouched',function unsupportedLists(){
- for(const source of ["['a','b']","['','b','c','d']",String.raw`['a\\b','b','c','d']`,"['a',value,'b','c']","['a' 'b' 'c' 'd']",'"[\'a\',\'b\',\'c\',\'d\']"',"// ['a','b','c','d']\ntrue"]){
+ for(const source of ["['','b','c','d']",String.raw`['a\\b','b','c','d']`,"['a',value,'b','c']","['a' 'b' 'c' 'd']",'"[\'a\',\'b\',\'c\',\'d\']"',"// ['a','b','c','d']\ntrue"]){
   assert.equal(packStringArrays(source),source);
  }
 });

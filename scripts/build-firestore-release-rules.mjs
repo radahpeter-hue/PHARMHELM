@@ -388,7 +388,7 @@ export function packStringArrays(source){
  return source.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|\[(\s*'[^'\\\r\n]*'(?:\s*,\s*'[^'\\\r\n]*')+\s*,?\s*)\]/g,(literal,list)=>{
   if(list===undefined)return literal;
   const values=[...list.matchAll(/'([^'\\\r\n]*)'/g)].map(match=>match[1]);
-  if(values.length<4||values.some(value=>value===''))return literal;
+  if(values.length<2||values.some(value=>value===''))return literal;
   const separator=['~','#',';','%','!','@',',',':','=','_','-'].find(char=>values.every(value=>!value.includes(char)));
   return separator?"'"+values.join(separator)+"'.split('"+separator+"')":literal;
  });
