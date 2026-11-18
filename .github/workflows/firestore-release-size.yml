@@ -15,7 +15,7 @@ jobs:
   activation-size:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,6 +49,9 @@ jobs:
           import {compactRuleSymbols,wrapReleaseColumns} from './scripts/build-firestore-release-rules.mjs';
           const source=readFileSync('/tmp/authored-candidate.rules','utf8');
           const variants={
+            symbolsOnly:{minimal:true},
+            noPaths:{maxLocalOwners:0,shareConstants:false,sharePaths:false},
+            noArrays:{maxLocalOwners:0,shareConstants:false,packArrays:false},
             baseline:{maxLocalOwners:0,sharePaths:false,memoize:false,balanceConditions:false,groupCollections:false,packArrays:false,shareReaders:false,shareSchemas:false,shareConstants:false},
             unbalanced:{balanceConditions:false},
             shared:{maxLocalOwners:0,balanceConditions:false},
@@ -63,4 +66,4 @@ jobs:
           }
           JS
           cp scripts/diagnose-firestore-compiler.mjs /tmp/rules-size/diagnose.mjs
-          node /tmp/rules-size/diagnose.mjs /tmp/main-control.rules /tmp/baseline.rules /tmp/unbalanced.rules /tmp/shared.rules /tmp/half-0.rules /tmp/half-1.rules
+          node /tmp/rules-size/diagnose.mjs /tmp/main-control.rules /tmp/symbolsOnly.rules /tmp/noPaths.rules /tmp/noArrays.rules /tmp/baseline.rules /tmp/unbalanced.rules /tmp/shared.rules
