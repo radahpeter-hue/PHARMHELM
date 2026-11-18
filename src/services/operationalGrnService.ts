@@ -85,7 +85,11 @@ export async function processOperationalGrn(input: ProcessOperationalGrnInput, c
     if (!Number.isFinite(quantity) || quantity < 0 || quantity > outstanding) {
       throw new Error(`Received quantity exceeds the outstanding quantity for ${line.product_name || line.product_id}.`);
     }
-    if (!Number.isFinite(cost) || cost < 0) throw new Error(`Unit cost is invalid for ${line.product_name || line.product_id}.`);
+    if (!Number.isSafeInteger(quantity) || !Number.isSafeInteger(cost) || cost < 0) {
+      throw new Error(`Received quantity and unit cost must be whole values for ${line.product_name || line.product_id}.`);
+    }
+    if (quantity > 0 && cost === 0) throw new Error(`Positive receipts require a unit cost for ${line.product_name || line.product_id}.`);
+    if (!Number.isSafeInteger(quantity * cost)) throw new Error(`GRN line value exceeds the safe UGX range for ${line.product_name || line.product_id}.`);
     if (quantity > 0 && !line.masterItemId) throw new Error(`Link ${line.product_name || line.product_id} to a tenant Operational identity before receiving it.`);
     return { line, edit, quantity, cost, outstanding };
   });
