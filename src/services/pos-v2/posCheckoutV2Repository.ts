@@ -1,8 +1,10 @@
+import { assertCreditDebtor, buildCreditRecognition, creditDebtorReference, isCreditMethod } from '../../domain/finance/creditRecognition';
 import { capturePosShift } from '../../utils/posShiftAttribution';
 import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   query,
   runTransaction,
@@ -384,7 +386,24 @@ function assertReplacementReplayLinkage(sale: Sale, replacement: ReturnType<type
 }
 
 export async function commitCheckoutV2(request: CheckoutV2Request, prepared: PosCheckoutV2RepositoryPreparation): Promise<PosCheckoutV2CompletedResult> {
-  return runTransaction(db, transaction => writeCheckoutV2Transaction(request, prepared, transaction));
+  try {
+    return await runTransaction(db, transaction => writeCheckoutV2Transaction(request, prepared, transaction));
+  } catch (error) {
+    // A simultaneous successful commit can turn the losing create into a
+    // rules rejection. Recover only the same persisted checkout intent.
+    const code = String((error as { code?: string }).code || '');
+    if (!['permission-denied','aborted','deadline-exceeded','unavailable'].includes(code)) throw error;
+    const attempt = await getDocFromServer(prepared.attemptRef).catch(() => null);
+    if (!attempt?.exists()) throw error;
+    if (attempt.data().tenantId !== prepared.authority.tenantId || attempt.data().fingerprint !== prepared.fingerprint) {
+      throw new PosCheckoutV2Error('IDEMPOTENCY_CONFLICT', 'This checkout attempt ID has already been used for different commercial intent.');
+    }
+    const prior = await recoverCompletedCheckoutV2({ uid:prepared.authority.uid, tenantId:prepared.authority.tenantId,
+      branchId:prepared.authority.branch.id, attemptId:request.attemptId });
+    if (!prior || prior.saleId !== prepared.saleId || prior.paymentId !== prepared.paymentId) throw error;
+    assertReplacementReplayLinkage(prior.sale, request.revisionReplacement ?? null);
+    return prior;
+  }
 }
 
 /** Shared canonical checkout operation. The caller must commit every staged write atomically. */
@@ -542,6 +561,23 @@ export async function writeCheckoutV2Transaction(request: CheckoutV2Request, pre
     });
     const quotationConvertedAt = request.sourceQuotationId ? new Date().toISOString() : undefined;
 
+    let creditMaster: Record<string, any> | undefined;
+    if (payment.components.some(row => isCreditMethod(row.method))) {
+      const reference = creditDebtorReference(request);
+      const debtor = await transaction.get(doc(db, reference.collection, reference.id));
+      if (!debtor.exists()) throw new Error('The registered credit debtor no longer exists.');
+      creditMaster = debtor.data();
+      assertCreditDebtor(reference, creditMaster, prepared.authority.tenantId, prepared.authority.branch.id);
+      const clientId = request.patientId || request.customerId;
+      if (clientId && request.institutionId) {
+        const client = await transaction.get(doc(db, 'clients', clientId));
+        if (!client.exists() || client.data().tenantId !== prepared.authority.tenantId
+          || (client.data().billing_type === 'institutional-pay' && client.data().institution_to_bill_id !== request.institutionId)) {
+          throw new Error('The client and billing institution do not match.');
+        }
+      }
+    }
+
     for (const [productId, deductions] of calculation.batchDeductions.entries()) {
       const rows = rawBatchesByProduct.get(productId) || [];
       for (const [batchId, deduction] of deductions.entries()) {
@@ -644,6 +680,13 @@ export async function writeCheckoutV2Transaction(request: CheckoutV2Request, pre
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     }));
+
+    if (creditMaster) {
+      transaction.set(doc(db, 'credit_receivables', prepared.saleId), {
+        ...buildCreditRecognition({ ...sale, ...revisionLinkage, canonicalPaymentId: prepared.paymentId }, payment, creditMaster),
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp()
+      });
+    }
 
     transaction.set(prepared.outboxRef, omitUndefinedDeep({
       ...outboxEvent,

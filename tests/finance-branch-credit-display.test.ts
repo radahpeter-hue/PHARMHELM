@@ -19,15 +19,8 @@ test('Branch Credit View shows institution or patient identity instead of walk-i
   assert.doesNotMatch(source, /const cName = credit\.patientName \|\| credit\.clientName \|\| 'Walk-in Client'/);
 });
 
-test('Branch Credit View recognizes current and legacy credit tokens', () => {
-  assert.match(source, /primaryMethod === 'institutional_credit'/);
-  assert.match(source, /primaryMethod === 'credit'/);
-  assert.match(source, /secondaryMethod === 'institutional_credit'/);
-  assert.match(source, /secondaryMethod === 'credit'/);
-});
-
-test('Credit Raised summary counts POS V2 credit values', () => {
-  assert.match(source, /s\.paymentMethod === 'institutional_credit' \|\| s\.paymentMethod === 'credit'/);
-  assert.match(source, /s\.secondaryPaymentMethod === 'institutional_credit' \|\| s\.secondaryPaymentMethod === 'credit'/);
-  assert.match(source, /creditRaisedToday = creditSalesToday\.reduce\(\(sum, s\) => sum \+ creditAmountForSale\(s\), 0\)/);
+test('Branch Finance and CRM use the shared scoped register', () => {
+  const crm = fs.readFileSync('src/pages/Clients.tsx', 'utf8');
+  assert.match(source, /<CreditReceivablesRegister branchId=\{activeBranchId\}/);
+  assert.match(crm, /<CreditReceivablesRegister branchId=\{activeBranchId\}/);
 });

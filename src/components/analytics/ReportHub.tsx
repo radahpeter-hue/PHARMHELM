@@ -1,3 +1,4 @@
+import { inspectReceivables } from '../../domain/finance/creditReceivablesPortfolio';
 import { eodReportRecord } from '../../utils/eodReport';
 import { analyticsDateText } from './analyticsDateText';
 import { isActiveSale } from '../../utils/activeSales';
@@ -109,10 +110,8 @@ export const ReportHub: React.FC = () => {
     return d >= startDate && d <= endDate;
   });
 
-  const filteredCreditReceivables = creditReceivables.filter(r => {
-    const d = analyticsDateText(r.created_at || r.due_date).split('T')[0];
-    return d && d >= startDate && d <= endDate;
-  });
+  const filteredCreditReceivables = inspectReceivables(profile?.tenantId || '', creditReceivables, [], []).rows
+    .filter(row => row.businessDate && row.businessDate >= startDate && row.businessDate <= endDate);
 
   const filteredSupplierPayables = supplierPayables.filter(p => {
     const d = analyticsDateText(p.created_at || p.due_date).split('T')[0];
@@ -183,14 +182,8 @@ export const ReportHub: React.FC = () => {
       rows = [...bRows, ...mRows];
     } else if (reportName.includes('Receivables') || reportName.includes('Owed Us')) {
       headers = ["Created Date", "Debtor/Client Name", "Invoice No", "Original Amount (UGX)", "Outstanding Owed", "Due Date", "Status"];
-      rows = filteredCreditReceivables.map(r => [
-        analyticsDateText(r.created_at).split('T')[0],
-        r.client_name || 'Walk-in Client',
-        r.invoice_number || r.receipt_id || 'N/A',
-        r.amount_ugx.toString(),
-        r.outstanding_ugx.toString(),
-        analyticsDateText(r.due_date),
-        r.status
+      rows = filteredCreditReceivables.map(row => [
+        row.businessDate,row.client,row.reference,String(row.originalUGX),String(row.outstandingUGX),row.dueDate,row.status
       ]);
     } else if (reportName.includes('Payables') || reportName.includes('We Owe')) {
       headers = ["Created Date", "Supplier/Creditor Name", "Total Invoice UGX", "Outstanding Payable", "Due Date", "Status"];

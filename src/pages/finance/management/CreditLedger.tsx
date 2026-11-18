@@ -1,13 +1,11 @@
 import { requestSupplierCreditDraft } from '../../../services/creditGrnSettlementService';
 import { canSettleSupplierInvoices } from '../../../domain/finance/supplierPaymentPolicy';
-import { postManagementReceivablePayment } from '../../../services/managementCashPosting';
-import { isActiveSale } from '../../../utils/activeSales';
+import { CreditReceivablesRegister } from '../../../components/finance/CreditReceivablesPortfolio';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
-import { firestoreService } from '../../../services/firestore';
 import { Search, Filter, Download, CreditCard, ChevronLeft, ChevronRight, X, ArrowRight, Check, Ban } from 'lucide-react';
 import { exportRecordsToExcel } from '../../../utils/excelExport';
-import { collection, query, where, getDocs, addDoc, doc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { toast } from 'sonner';
 import { dateInRange, financialDate, normalizeCreditRecord } from '../../../services/financeRecordNormalization';
@@ -36,7 +34,6 @@ export const CreditLedger: React.FC = () => {
   const canPaySuppliers = canSettleSupplierInvoices(profile, profile?.tenantId || '');
   const [activeTab, setActiveTab] = useState<'payables' | 'receivables'>('payables');
   const [credits, setCredits] = useState<CreditRecord[]>([]);
-  const [receivables, setReceivables] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]); // for payment history
   const [loading, setLoading] = useState(true);
 
@@ -94,102 +91,6 @@ export const CreditLedger: React.FC = () => {
 
       setCredits(data);
 
-      // 2. Fetch Credits Owed to Company (Receivables)
-      const recCol = collection(db, 'credit_receivables');
-      const recQ = query(
-        recCol,
-        where('tenantId', '==', profile.tenantId)
-      );
-      const recSnapshot = await getDocs(recQ);
-
-      // Resolve branch document IDs to human-readable tenant branch names.
-      const branchCol = collection(db, 'branches');
-      const branchQ = query(branchCol, where('tenantId', '==', profile.tenantId));
-      const branchSnapshot = await getDocs(branchQ);
-      const branchNameById = new Map<string, string>();
-      branchSnapshot.docs.forEach(branchDoc => {
-        const branch = branchDoc.data() as any;
-        branchNameById.set(
-          branchDoc.id,
-          branch.name || branch.branch_name || branch.branchName || branchDoc.id
-        );
-      });
-
-      const recData = recSnapshot.docs.map(doc => {
-        const rec = doc.data() as any;
-        const branchId = rec.branch_id || rec.branchId || 'HQ';
-        return {
-          ...rec,
-          id: doc.id,
-          branch_name: rec.branch_name || rec.branchName || branchNameById.get(branchId) || branchId
-        };
-      });
-
-      // 2b. Fetch POS sales labeled as institutional_credit
-      const salesCol = collection(db, 'sales');
-      const salesQ1 = query(
-        salesCol,
-        where('tenantId', '==', profile.tenantId),
-        where('paymentMethod', '==', 'institutional_credit')
-      );
-      const salesSnapshot1 = await getDocs(salesQ1);
-      
-      const salesQ2 = query(
-        salesCol,
-        where('tenantId', '==', profile.tenantId),
-        where('secondaryPaymentMethod', '==', 'institutional_credit')
-      );
-      const salesSnapshot2 = await getDocs(salesQ2);
-
-      const salesMap = new Map<string, any>();
-      salesSnapshot1.docs.forEach(doc => {
-        const d = doc.data();
-        if (!isActiveSale(d)) return;
-        salesMap.set(doc.id, {
-          id: doc.id,
-          ...d,
-          creditAmount: d.totalAmount !== undefined ? d.totalAmount : (d.total || 0)
-        });
-      });
-      salesSnapshot2.docs.forEach(doc => {
-        const d = doc.data();
-        if (!isActiveSale(d)) return;
-        salesMap.set(doc.id, {
-          id: doc.id,
-          ...d,
-          creditAmount: d.secondaryAmount !== undefined ? d.secondaryAmount : (d.totalAmount !== undefined ? d.totalAmount : (d.total || 0))
-        });
-      });
-
-      const allSalesAsReceivables = Array.from(salesMap.values());
-
-      // Merge: For each POS sale, if it doesn't exist in recData, add it dynamically!
-      // If it exists in recData, we use the recData entry as it tracks payment history.
-      const mergedReceivables = [...recData];
-      
-      allSalesAsReceivables.forEach(sale => {
-        const exists = recData.some(r => r.id === sale.id || r.receipt_id === sale.id);
-        if (!exists) {
-          mergedReceivables.push({
-            id: sale.id,
-            tenantId: sale.tenantId,
-            receipt_id: sale.id,
-            client_id: sale.patientId || sale.institutionId || '',
-            client_name: sale.institutionName || sale.patientName || 'Individual client',
-            amount_ugx: sale.creditAmount,
-            outstanding_ugx: sale.creditAmount,
-            status: 'outstanding',
-            branch_id: sale.branchId || 'HQ',
-            branch_name: branchNameById.get(sale.branchId || '') || sale.branchName || sale.branchId || 'HQ',
-            due_date: sale.timestamp || new Date().toISOString(),
-            invoice_number: sale.receiptNumber || 'N/A',
-            created_at: sale.timestamp || new Date().toISOString()
-          });
-        }
-      });
-
-      setReceivables(mergedReceivables);
-
       // 3. Fetch management_expenses as well for history
       const expCol = collection(db, 'management_expenses');
       const expQ = query(expCol, where('tenantId', '==', profile.tenantId));
@@ -245,45 +146,17 @@ export const CreditLedger: React.FC = () => {
     });
   }, [credits, selectedBranch, selectedStatus, debouncedSearchText]);
 
-  // Filter Receivables (Owing credits to company)
-  const filteredReceivables = useMemo(() => {
-    return receivables.filter(rec => {
-      // Date Filter
-      const recDate = rec.created_at ? rec.created_at.split('T')[0] : (rec.due_date ? rec.due_date.split('T')[0] : '');
-      if (dateRange.start && recDate < dateRange.start) return false;
-      if (dateRange.end && recDate > dateRange.end) return false;
-
-      // Status Filter
-      if (selectedStatus !== 'All') {
-        const statusLower = rec.status?.toLowerCase();
-        if (selectedStatus === 'Outstanding' && statusLower !== 'outstanding' && statusLower !== 'unpaid' && statusLower !== 'overdue') return false;
-        if (selectedStatus === 'Paid' && statusLower !== 'paid') return false;
-        if (selectedStatus === 'Defaulted' && statusLower !== 'defaulted') return false;
-      }
-
-      // Search Box (Invoice Ref / Receipt ID, Client Name)
-      if (debouncedSearchText.trim()) {
-        const queryStr = debouncedSearchText.toLowerCase().trim();
-        const refMatch = (rec.invoice_number || '').toLowerCase().includes(queryStr);
-        const receiptMatch = (rec.receipt_id || '').toLowerCase().includes(queryStr);
-        const clientMatch = (rec.client_name || '').toLowerCase().includes(queryStr);
-        if (!refMatch && !receiptMatch && !clientMatch) return false;
-      }
-      return true;
-    });
-  }, [receivables, selectedStatus, debouncedSearchText, dateRange]);
-
   // Paginated and Unified Results
   const paginatedItems = useMemo(() => {
     const startIdx = (currentPage - 1) * rowsPerPage;
-    const items = activeTab === 'payables' ? filteredCredits : filteredReceivables;
+    const items = filteredCredits;
     return items.slice(startIdx, startIdx + rowsPerPage);
-  }, [activeTab, filteredCredits, filteredReceivables, currentPage, rowsPerPage]);
+  }, [filteredCredits, currentPage, rowsPerPage]);
 
   const totalPages = useMemo(() => {
-    const totalCount = activeTab === 'payables' ? filteredCredits.length : filteredReceivables.length;
+    const totalCount = filteredCredits.length;
     return Math.ceil(totalCount / rowsPerPage) || 1;
-  }, [activeTab, filteredCredits.length, filteredReceivables.length]);
+  }, [filteredCredits.length]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -319,39 +192,9 @@ export const CreditLedger: React.FC = () => {
     }
   };
 
-  // Receivable payment confirmation and bank transfer
-  const handleConfirmReceivablePayment = async (rec: any) => {
-    if (amountToProcess <= 0) {
-      toast.error("Amount must be greater than zero");
-      return;
-    }
-    if (amountToProcess > rec.outstanding_ugx) {
-      toast.error(`Cannot process more than the outstanding balance of UGX ${rec.outstanding_ugx.toLocaleString()}`);
-      return;
-    }
-
-    setIsSubmittingPayment(true);
-    try {
-      const intentKey=`pharmhelm_receivable_${profile?.tenantId}_${rec.id}_${rec.outstanding_ugx}_${amountToProcess}`;
-      let requestId=sessionStorage.getItem(intentKey);
-      if(!requestId){requestId=crypto.randomUUID();sessionStorage.setItem(intentKey,requestId);}
-      const result=await postManagementReceivablePayment({tenantId:profile?.tenantId||'',receivableId:rec.id,amountUGX:amountToProcess,requestId,actorId:profile?.uid||''});
-
-      toast.success(`Payment of UGX ${amountToProcess.toLocaleString()} processed. Remaining: UGX ${result.remainingUGX.toLocaleString()}. Amount banked successfully!`);
-      setProcessingId(null);
-      fetchCredits(); // Refresh list
-    } catch (e: any) {
-      console.error("Error submitting receivable payment:", e);
-      toast.error(e instanceof Error ? e.message : "Failed to prepare the payment draft.");
-    } finally {
-      setIsSubmittingPayment(false);
-    }
-  };
-
   // Excel report generation
   const handleExport = async () => {
-    const isPayables = activeTab === 'payables';
-    const itemsToExport = isPayables ? filteredCredits : filteredReceivables;
+    const itemsToExport = filteredCredits;
 
     if (itemsToExport.length === 0) {
       toast.error(`No ${activeTab} data to export`);
@@ -359,7 +202,6 @@ export const CreditLedger: React.FC = () => {
     }
 
     const exportData = itemsToExport.map(c => {
-      if (isPayables) {
         let dateStr = '';
         if (c.creditAccruedAt) {
           dateStr = financialDate(c.creditAccruedAt)?.toLocaleDateString('en-GB') || '';
@@ -374,27 +216,14 @@ export const CreditLedger: React.FC = () => {
           'Remaining Balance (UGX)': c.remainingCreditBalance || 0,
           'Status': (c.status || '').toUpperCase()
         };
-      } else {
-        const dateStr = c.created_at ? new Date(c.created_at).toLocaleDateString('en-GB') : (c.due_date ? new Date(c.due_date).toLocaleDateString('en-GB') : 'N/A');
-        return {
-          'Type': 'RECEIVABLE (Owed to Company)',
-          'Date Accrued': dateStr,
-          'Invoice/Receipt Ref': c.invoice_number || c.receipt_id || '',
-          'Supplier/Client': c.client_name || 'Client',
-          'Branch': c.branch_name || c.branch_id || 'HQ',
-          'Original Credit Amount (UGX)': c.amount_ugx || 0,
-          'Remaining Balance (UGX)': c.outstanding_ugx || 0,
-          'Status': (c.status || '').toUpperCase()
-        };
-      }
     });
 
     const formattedFrom = dateRange.start.split('-').reverse().join('-');
     const formattedTo = dateRange.end.split('-').reverse().join('-');
     await exportRecordsToExcel(
       exportData,
-      isPayables ? 'Payables' : 'Receivables',
-      `CreditReport_${isPayables ? "Payables" : "Receivables"}_${formattedFrom}_${formattedTo}.xlsx`
+      'Payables',
+      `CreditReport_Payables_${formattedFrom}_${formattedTo}.xlsx`
     );
     toast.success("Excel report exported successfully");
   };
@@ -428,13 +257,13 @@ export const CreditLedger: React.FC = () => {
           <h2 className="text-2xl font-black text-zinc-900 tracking-tight">Credit Ledger</h2>
           <p className="text-sm text-zinc-500">Owed credits (payables) and owing credits (receivables) ledger.</p>
         </div>
-        <button
+        {activeTab === 'payables' && <button
           onClick={handleExport}
           className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-[#1A5E38] hover:bg-[#154b2d] text-white rounded-xl shadow-sm transition-all self-start md:self-auto"
         >
           <Download size={16} />
           Download Report
-        </button>
+        </button>}
       </div>
 
       {/* Dual Tabs for Payables vs Receivables */}
@@ -461,6 +290,7 @@ export const CreditLedger: React.FC = () => {
         </button>
       </div>
 
+      {activeTab === 'receivables' ? <CreditReceivablesRegister allowSettlement /> : <>
       {/* Filter Box */}
       <div className="bg-white p-5 rounded-2xl border border-zinc-200 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center gap-4">
@@ -490,7 +320,7 @@ export const CreditLedger: React.FC = () => {
             <Search size={16} className="text-zinc-400" />
             <input
               type="text"
-              placeholder={activeTab === 'payables' ? "Search ref, supplier, branch..." : "Search client, receipt, invoice..."}
+              placeholder="Search ref, supplier, branch..."
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
               className="bg-transparent border-none text-sm outline-none w-full text-zinc-800 placeholder-zinc-400"
@@ -504,7 +334,6 @@ export const CreditLedger: React.FC = () => {
               value={selectedBranch}
               onChange={(e) => setSelectedBranch(e.target.value)}
               className="bg-transparent border-none text-sm outline-none w-full text-zinc-800"
-              disabled={activeTab === 'receivables'}
             >
               <option value="All">All Branches</option>
               {branchOptions.filter(b => b !== 'All').map(b => (
@@ -523,9 +352,8 @@ export const CreditLedger: React.FC = () => {
             >
               <option value="All">All Statuses</option>
               <option value="Outstanding">Outstanding</option>
-              {activeTab === 'payables' && <option value="Partial">Partial</option>}
+              <option value="Partial">Partial</option>
               <option value="Paid">Paid</option>
-              {activeTab === 'receivables' && <option value="Defaulted">Defaulted</option>}
             </select>
           </div>
         </div>
@@ -548,9 +376,9 @@ export const CreditLedger: React.FC = () => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-zinc-50 border-b border-zinc-200 text-xs font-bold text-zinc-500 uppercase tracking-wider">
-                  <th className="px-6 py-4">Date {activeTab === 'payables' ? 'Accrued' : 'Due'}</th>
-                  <th className="px-6 py-4">{activeTab === 'payables' ? 'Invoice Ref' : 'Invoice/Receipt'}</th>
-                  <th className="px-6 py-4">{activeTab === 'payables' ? 'Supplier' : 'Client / Debtor'}</th>
+                  <th className="px-6 py-4">Date Accrued</th>
+                  <th className="px-6 py-4">Invoice Ref</th>
+                  <th className="px-6 py-4">Supplier</th>
                   <th className="px-6 py-4">Branch</th>
                   <th className="px-6 py-4 text-right">Original (UGX)</th>
                   <th className="px-6 py-4 text-right">Remaining (UGX)</th>
@@ -559,8 +387,7 @@ export const CreditLedger: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 text-sm font-medium text-zinc-700">
-                {activeTab === 'payables' ? (
-                  (paginatedItems as CreditRecord[]).map((credit) => {
+                {paginatedItems.map((credit) => {
                     const dateStr = financialDate(credit.creditAccruedAt)?.toLocaleDateString('en-GB') || 'N/A';
                     const isProcessing = processingId === credit.id;
 
@@ -662,109 +489,7 @@ export const CreditLedger: React.FC = () => {
                       </React.Fragment>
                     );
                   })
-                ) : (
-                  (paginatedItems as any[]).map((rec) => {
-                    const dateStr = rec.due_date ? new Date(rec.due_date).toLocaleDateString('en-GB') : 'N/A';
-                    const isProcessing = processingId === rec.id;
-                    return (
-                      <React.Fragment key={rec.id}>
-                        <tr className="hover:bg-zinc-50/30 transition-all">
-                          <td className="px-6 py-4 text-zinc-500">{dateStr}</td>
-                          <td className="px-6 py-4 font-mono font-bold text-zinc-800">
-                            {rec.invoice_number || rec.receipt_id || 'N/A'}
-                          </td>
-                          <td className="px-6 py-4 text-zinc-900 font-bold">{rec.client_name || 'Individual client'}</td>
-                          <td className="px-6 py-4 text-zinc-600">{rec.branch_name || rec.branch_id || 'HQ'}</td>
-                          <td className="px-6 py-4 text-right font-mono font-bold text-zinc-400">
-                            {(rec.amount_ugx || 0).toLocaleString()}
-                          </td>
-                          <td className="px-6 py-4 text-right font-mono font-bold">
-                            <span className={rec.outstanding_ugx > 0 ? "text-amber-600" : "text-zinc-400"}>
-                              {(rec.outstanding_ugx || 0).toLocaleString()}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-center">
-                            {rec.status === 'Paid' || rec.status === 'paid' ? (
-                              <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Paid</span>
-                            ) : rec.status === 'Overdue' || rec.status === 'defaulted' ? (
-                              <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-red-50 text-red-700 border border-red-200">Overdue</span>
-                            ) : (
-                              <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-50 text-amber-700 border border-amber-200">Outstanding</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 text-center">
-                            {(rec.status !== 'Paid' && rec.status !== 'paid' && rec.outstanding_ugx > 0) ? (
-                              <button
-                                onClick={() => {
-                                  setProcessingId(rec.id);
-                                  setAmountToProcess(rec.outstanding_ugx);
-                                }}
-                                className="px-3 py-1.5 text-xs font-bold border border-emerald-500 text-emerald-600 rounded-lg hover:bg-emerald-50 transition-all"
-                              >
-                                Process Payment
-                              </button>
-                            ) : (
-                              <span className="text-xs text-zinc-400">-</span>
-                            )}
-                          </td>
-                        </tr>
-
-                        {/* Inline Processing Panel for Receivable */}
-                        {isProcessing && (
-                          <tr>
-                            <td colSpan={8} className="px-6 py-4 bg-emerald-50/30 border-y border-emerald-100">
-                              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                <div className="space-y-1">
-                                  <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest block">Receivable Payment Processing</span>
-                                  <p className="text-xs text-zinc-600 font-medium">
-                                    Processing payment for receivable <strong className="text-zinc-900">{rec.invoice_number || rec.receipt_id}</strong> from client <strong className="text-zinc-900">{rec.client_name}</strong>.
-                                    Outstanding Balance: <strong className="text-zinc-950">UGX {rec.outstanding_ugx?.toLocaleString()}</strong>
-                                  </p>
-                                </div>
-
-                                <div className="flex items-center gap-3">
-                                  <div className="flex items-center gap-2">
-                                    <label className="text-xs font-bold text-zinc-500">Amount Paid (UGX):</label>
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      max={rec.outstanding_ugx}
-                                      value={amountToProcess || ''}
-                                      onChange={(e) => {
-                                        const val = parseInt(e.target.value) || 0;
-                                        if (val > rec.outstanding_ugx) {
-                                          setAmountToProcess(rec.outstanding_ugx);
-                                        } else {
-                                          setAmountToProcess(val);
-                                        }
-                                      }}
-                                      className="border border-zinc-200 bg-white px-3 py-1.5 rounded-xl font-mono text-sm font-bold w-40 outline-none text-zinc-800 focus:border-emerald-500"
-                                    />
-                                  </div>
-                                  <button
-                                    onClick={() => handleConfirmReceivablePayment(rec)}
-                                    disabled={isSubmittingPayment}
-                                    className="flex items-center gap-1 px-4 py-1.5 text-xs font-bold bg-[#1A5E38] text-white hover:bg-[#154b2d] disabled:opacity-50 rounded-xl transition-all shadow-sm"
-                                  >
-                                    <Check size={14} />
-                                    Confirm Payment & Bank
-                                  </button>
-                                  <button
-                                    onClick={() => setProcessingId(null)}
-                                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-600 rounded-xl transition-all shadow-sm"
-                                  >
-                                    <Ban size={14} />
-                                    Cancel
-                                  </button>
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })
-                )}
+                }
               </tbody>
             </table>
 
@@ -796,6 +521,7 @@ export const CreditLedger: React.FC = () => {
         )}
       </div>
 
+      </>}
       {/* Credit Details Modal & History Summary */}
       {selectedCredit && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">

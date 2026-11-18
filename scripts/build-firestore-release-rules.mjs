@@ -7,7 +7,7 @@ import {pathToFileURL} from 'node:url';
 
 /** A prefix trie encodes only the supplied literal names, with no wildcard. */
 export function exactCollectionPattern(names) {
- if(!names.length||names.some(name=>!(/^[a-z0-9_]+$/).test(name)))throw Error('Invalid collection name set.');
+ if(!names.length||names.some(name=>!(/^[A-Za-z0-9_]+$/).test(name)))throw Error('Invalid collection name set.');
  const root={end:false,children:new Map()};
  for(const name of names){let node=root;for(const char of name){if(!node.children.has(char))node.children.set(char,{end:false,children:new Map()});node=node.children.get(char);}node.end=true;}
  const encode=node=>{
@@ -76,6 +76,252 @@ function insertDatabaseHelpers(source, helpers) {
  return source.slice(0, offset) + '\n' + helpers.join('\n') + '\n' + source.slice(offset);
 }
 
+/** Collection-specific helpers need not be inherited by every sibling match.
+ * Follow the complete helper call graph to identify owning matches. A small
+ * number of owners may each receive the identical helper declaration.
+ * Only move declarations; do not change predicates, calls, paths or grants.
+ * Ambiguous names and unfamiliar source layouts are left untouched.
+ */
+export function localizeCollectionHelpers(source, maxOwners = 1) {
+ const masked = maskRulesTrivia(source);
+ const blocks = pattern => [...masked.matchAll(pattern)].map(header => {
+  let end = header.index + header[0].length, depth = 1;
+  for (; end < masked.length && depth; end++) {
+   if (masked[end] === '{') depth++;
+   if (masked[end] === '}') depth--;
+  }
+  if (depth) throw Error('Unbalanced rules block.');
+  return Object.assign([masked.slice(header.index,end),header[1]],{index:header.index});
+ });
+ const functions = new Map(blocks(/^    function (\w+)\([^\n]*\) \{/gm).map(m => [m[1], m]));
+ const matches = blocks(/^    match [^\n]+ \{/gm);
+ if (!functions.size || !matches.length) return source;
+ const calls = (text, name) => new RegExp('(?<![.\\w])' + name + '\\s*\\(').test(text);
+ const owners = new Map([...functions.keys()].map(name => [name, new Set()]));
+ for (const [name] of functions) {
+  for (const [index, match] of matches.entries()) if (calls(match[0], name)) owners.get(name).add(index);
+ }
+ for (let pass = 0; pass < functions.size; pass++) {
+  for (const [parent, declaration] of functions) {
+   const body = declaration[0].slice(declaration[0].indexOf('{') + 1);
+   for (const [child] of functions) if (calls(body, child)) {
+    for (const owner of owners.get(parent)) owners.get(child).add(owner);
+   }
+  }
+ }
+ let remaining = masked;
+ for (const block of [...functions.values(), ...matches].sort((a, b) => b.index - a.index)) {
+  remaining = remaining.slice(0, block.index) + ' '.repeat(block[0].length) + remaining.slice(block.index + block[0].length);
+ }
+ const candidates = new Map();
+ for (const [name, declaration] of functions) {
+  const targets = owners.get(name);
+  if (!targets.size || targets.size > maxOwners) continue;
+  const parameters = declaration[0].match(/^    function \w+\(([^)]*)\)/)[1].split(',').map(s=>s.trim());
+  const ownBindings = new Set([...parameters,...[...declaration[0].matchAll(/\blet\s+(\w+)/g)].map(m=>m[1])]);
+  // No newly visible binding may shadow a name referenced by the helper.
+  const targetMatches = [...targets].map(index=>matches[index]);
+  if (targetMatches.some(target=>{
+   const localNames = [...target[0].matchAll(/\b(?:function|let)\s+(\w+)|\{(\w+)(?:=\*\*)?\}/g)].map(m => m[1] || m[2]);
+   return localNames.includes(name) || localNames.some(local => !ownBindings.has(local) && new RegExp('\\b' + local + '\\b').test(declaration[0]));
+  })) continue;
+  // Every reference must be accounted for by the parsed function/match graph.
+  if (calls(remaining, name)) continue;
+  candidates.set(name,{declaration,targets:targetMatches});
+ }
+ // A helper retained at root must still be able to resolve all its callees.
+ for (let pass = 0; pass < functions.size; pass++) {
+  for (const [child] of candidates) {
+   if ([...functions].some(([parent, declaration]) => !candidates.has(parent) && calls(declaration[0].slice(declaration[0].indexOf('{')+1), child))) candidates.delete(child);
+  }
+ }
+ const replacements = [], insertions = new Map();
+ for (const {declaration,targets} of candidates.values()) {
+  const text = source.slice(declaration.index, declaration.index + declaration[0].length);
+  replacements.push({from:declaration.index,to:declaration.index + declaration[0].length,text:''});
+  for(const target of targets){
+   const offset = target.index + target[0].indexOf('{', target[0].indexOf(' {')) + 1;
+   if (!insertions.has(offset)) insertions.set(offset, []);
+   insertions.get(offset).push(text.replace(/^/gm, '  '));
+  }
+ }
+ for (const [from, declarations] of insertions) replacements.push({from,to:from,text:'\n' + declarations.join('\n') + '\n'});
+ for (const {from,to,text} of replacements.sort((a,b) => b.from - a.from)) source = source.slice(0,from) + text + source.slice(to);
+ return source;
+}
+
+/** Reassociate long homogeneous boolean chains into shallow trees. Operand
+ * order and short-circuit behavior stay unchanged; ternary precedence and
+ * function argument boundaries are preserved.
+ */
+export function balanceBooleanChains(source) {
+ const positions = (value, operator) => {
+  const masked = maskRulesTrivia(value), found = [];let depth=0;
+  for(let i=0;i<masked.length;i++){
+   if('([{'.includes(masked[i]))depth++;
+   else if(')]}'.includes(masked[i]))depth--;
+   else if(!depth&&masked.startsWith(operator,i)){found.push(i);i+=operator.length-1;}
+  }
+  return found;
+ };
+ const divide=(value,at,width)=>{let start=0;const parts=[];for(const index of at){parts.push(value.slice(start,index));start=index+width;}parts.push(value.slice(start));return parts;};
+ const rewrite = value => {
+  const masked=maskRulesTrivia(value);let result='',start=0;
+  for(let i=0;i<masked.length;i++)if(masked[i]==='('){
+   let end=i+1,depth=1;
+   for(;end<masked.length&&depth;end++){if(masked[end]==='(')depth++;if(masked[end]===')')depth--;}
+   if(depth)throw Error('Unbalanced boolean expression.');
+   result+=value.slice(start,i+1)+rewrite(value.slice(i+1,end-1))+')';start=end;i=end-1;
+  }
+  value=result+value.slice(start);
+  const commas=positions(value,',');
+  if(commas.length)return divide(value,commas,1).map(rewrite).join(',');
+  if(positions(value,'?').length)return value;
+  for(const operator of ['||','&&']){
+   const at=positions(value,operator);if(!at.length)continue;
+   const parts=divide(value,at,2).map(rewrite);
+   if(parts.length<8)return parts.join(operator);
+   const tree=(from,to)=>to-from===1?parts[from]:'('+tree(from,Math.floor((from+to)/2))+operator+tree(Math.floor((from+to)/2),to)+')';
+   return tree(0,parts.length);
+  }
+  return value;
+ };
+ const masked=maskRulesTrivia(source);
+ const statements=[...masked.matchAll(/\breturn\b([^;]+);|\ballow\s+[a-z, ]+:\s*if\b([^;]+);/g)];
+ for(const statement of statements.reverse()){
+  const body=statement[1]??statement[2],from=statement.index+statement[0].indexOf(body);
+  source=source.slice(0,from)+rewrite(source.slice(from,from+body.length))+source.slice(from+body.length);
+ }
+ return source;
+}
+
+/** Share the invariant database/documents path prefix. Each literal collection,
+ * document expression and get/getAfter call is retained at its original site.
+ */
+export function shareDocumentPaths(source) {
+ const masked=maskRulesTrivia(source),database=masked.match(/match\s+\/databases\/\{(\w+)\}\/documents\s*\{/)?.[1];
+ if(!database)return source;
+ let name='releaseDocumentPath',serial=0;
+ while(source.includes(name))name='releaseDocumentPath'+serial++;
+ const replacements=[],methods=new Set();let coveredUntil=0;
+ for(const head of masked.matchAll(/\/databases\/\$\((\w+)\)\/documents\/([A-Za-z_]\w*)\/\$\(/g)){
+  // Authority checks are evaluated frequently on complex inventory writes.
+  // Keep their direct lookups to preserve the existing expression budget.
+  if(head[1]!==database||head.index<coveredUntil||['staff','system_settings','branches'].includes(head[2]))continue;
+  const start=head.index+head[0].length;let end=start,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='(')depth++;if(masked[end]===')')depth--;}
+  if(depth)throw Error('Unbalanced document path.');
+  // Never rewrite a prefix of a deeper subcollection path.
+  if(masked[end]==='/')continue;
+  const prefix=masked.slice(0,head.index).match(/(?<![.\w])(get|getAfter)\(\s*$/),suffix=masked.slice(end).match(/^\s*\)\s*\.data\b/);
+  const method=prefix&&suffix?prefix[1]:null;
+  const from=method?head.index-prefix[0].length:head.index,to=method?end+suffix[0].length:end;
+  if(method)methods.add(method);
+  replacements.push({from,to,text:name+(method==='get'?'Before':method==='getAfter'?'After':'')+"('"+head[2]+"',"+source.slice(start,end-1)+')'});
+  coveredUntil=to;
+ }
+ if(replacements.length<2)return source;
+ for(const {from,to,text} of replacements.reverse())source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,[`function ${name}(collection, id) { return /databases/$(${database})/documents/$(collection)/$(id); }`,
+  ...[...methods].map(method=>`function ${name}${method==='get'?'Before':'After'}(collection,id) { return ${method}(/databases/$(${database})/documents/$(collection)/$(id)).data; }`)]);
+}
+
+/** Reuse pure values required by an unconditional conjunct. A successful rule
+ * must evaluate that conjunct already. Never hoist out of an OR or ternary.
+ * Keep the language's ten-let limit and all validation predicates intact.
+ */
+export function memoizeRequiredExpressions(source) {
+ const masked=maskRulesTrivia(source),functions=[];let serial=0;
+ for(const head of masked.matchAll(/\bfunction\s+\w+\([^)]*\)\s*\{/g)){
+  const from=head.index+head[0].length;let end=from,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  if(depth)throw Error('Unbalanced memoization function.');
+  functions.push({from,to:end-1});
+ }
+ const topOperators = value => {
+  const text=maskRulesTrivia(value),and=[];let depth=0;
+  for(let i=0;i<text.length;i++){
+   if('([{'.includes(text[i]))depth++;
+   else if(')]}'.includes(text[i]))depth--;
+   else if(!depth){if(text.startsWith('||',i)||text[i]==='?')return null;if(text.startsWith('&&',i)){and.push(i);i++;}}
+  }
+  const parts=[];let start=0;for(const at of and){parts.push(value.slice(start,at));start=at+2;}parts.push(value.slice(start));return parts;
+ };
+ const candidates = value => {
+  const masked=maskRulesTrivia(value),items=[];
+  for(const head of masked.matchAll(/(?<![.\w])[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\(/g)){
+   let end=head.index+head[0].length,depth=1;
+   for(;end<masked.length&&depth;end++){if(masked[end]==='(')depth++;if(masked[end]===')')depth--;}
+   if(!depth)items.push({from:head.index,to:end,text:value.slice(head.index,end),call:true});
+  }
+  for(const match of masked.matchAll(/(?<![.\w])[A-Za-z_]\w*\.[A-Za-z_]\w*\b(?![.\w]|\s*\()/g))items.push({from:match.index,to:match.index+match[0].length,text:value.slice(match.index,match.index+match[0].length),call:false});
+  return items;
+ };
+ for(const fn of functions.reverse()){
+  let body=source.slice(fn.from,fn.to),mask=maskRulesTrivia(body);
+  const returned=/\breturn\b([^;]+);/.exec(mask);if(!returned)continue;
+  const offset=returned.index+returned[0].indexOf(returned[1]);
+  let expression=body.slice(offset,offset+returned[1].length),slots=10-[...mask.matchAll(/\blet\b/g)].length;
+  const bindings=[];
+  while(slots-->0){
+   const parts=topOperators(expression);if(!parts)break;
+   const required=new Set(parts.filter(part=>!/[?|]/.test(maskRulesTrivia(part))).flatMap(candidates).map(item=>item.text));
+   const all=candidates(expression),groups=new Map();
+   for(const item of all){if(!required.has(item.text))continue;if(!groups.has(item.text))groups.set(item.text,[]);groups.get(item.text).push(item);}
+   const ranked=[...groups.values()].filter(items=>items.length>=(items[0].call?(items[0].text.length>=24?2:3):(items[0].text.split('.')[1].length>=8?3:4))).sort((a,b)=>(b.length-1)*b[0].text.length-(a.length-1)*a[0].text.length);
+   if(!ranked.length)break;
+   const items=ranked[0];let name;
+   do{name='releaseMemo'+serial++;}while(source.includes(name));
+   bindings.push(`let ${name} = ${items[0].text};`);
+   for(const item of items.reverse())expression=expression.slice(0,item.from)+name+expression.slice(item.to);
+  }
+  if(!bindings.length)continue;
+  body=body.slice(0,returned.index)+bindings.join(' ')+' return'+expression+body.slice(offset+returned[1].length);
+  source=source.slice(0,fn.from)+body+source.slice(fn.to);
+ }
+ return source;
+}
+
+/** Identical leaf policies can share one exact collection guard. Only blocks
+ * containing grants, without local helpers or wildcard references, qualify.
+ * Append grouped policies after existing grants to preserve fast paths.
+ */
+export function groupEquivalentCollections(source) {
+ const masked=maskRulesTrivia(source),groups=new Map();let serial=0;
+ for(const head of masked.matchAll(/^    match \/([A-Za-z_]\w*)\/\{(\w+)\}\s*\{/gm)){
+  const from=head.index+head[0].length;let end=from,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  if(depth)throw Error('Unbalanced collection policy.');
+  const bodyMask=masked.slice(from,end-1),body=source.slice(from,end-1);
+  if(!/^\s*(?:allow\s+[a-z, ]+:\s*if\s+[^;]+;\s*)+$/.test(bodyMask))continue;
+  if(new RegExp('(?<!\\.)\\b'+head[2]+'\\b').test(bodyMask))continue;
+  const key=(body.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_0-9]+|\S/g)||[]).filter(token=>!token.startsWith('//')&&!token.startsWith('/*')).join(' ');
+  if(!groups.has(key))groups.set(key,[]);
+  groups.get(key).push({from:head.index,to:end,body,bodyMask,collection:head[1]});
+ }
+ const removals=[],policies=[];
+ for(const members of groups.values()){
+  if(members.length<2)continue;
+  let guard,collection,document;
+  do{const suffix=serial++;guard='releaseGroupGuard'+suffix;collection='releaseGroupCollection'+suffix;document='releaseGroupDocument'+suffix;}while([guard,collection,document].some(name=>source.includes(name)));
+  const first=members[0];let body=first.body;
+  for(const grant of [...first.bodyMask.matchAll(/\ballow\s+[a-z, ]+:\s*if\s+/g)].reverse()){
+   const at=grant.index+grant[0].length;body=body.slice(0,at)+guard+'() && ('+body.slice(at);
+   // Match the original predicate terminator in the suffix, ignoring strings.
+   const end=maskRulesTrivia(body).indexOf(';',at);body=body.slice(0,end)+')'+body.slice(end);
+  }
+  const names=[...new Set(members.map(member=>member.collection))];
+  policies.push(`    match /{${collection}}/{${document}} {\n      function ${guard}() { return ${collection}.matches('${exactCollectionPattern(names)}'); }\n${body}\n    }`);
+  removals.push(...members);
+ }
+ if(!policies.length)return source;
+ for(const {from,to} of removals.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+source.slice(to);
+ const root=databaseScope.exec(maskRulesTrivia(source));if(!root)throw Error('Missing database scope.');
+ const start=root.index+root[0].length;let end=start,depth=1;const remaining=maskRulesTrivia(source);
+ for(;end<remaining.length&&depth;end++){if(remaining[end]==='{')depth++;if(remaining[end]==='}')depth--;}
+ return source.slice(0,end-1)+'\n'+policies.join('\n')+'\n'+source.slice(end-1);
+}
+
 /** Move identical direct grants into shared predicates. Keep every allow at its
  * original path and method. Expressions capturing a match variable or a local
  * function stay in place so the shared predicate has the same lexical scope.
@@ -137,8 +383,108 @@ export function shareRequestExpressions(source) {
  return insertDatabaseHelpers(source, [...helpers].map(([path, name]) => 'function ' + name + '() { return ' + path + '; }'));
 }
 
-export function compactRuleSymbols(source){
- source=shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(shareRepeatedAllowConditions(source))));
+/** Reconstruct static lists exactly while reducing literal AST nodes. */
+export function packStringArrays(source){
+ return source.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|\[(\s*'[^'\\\r\n]*'(?:\s*,\s*'[^'\\\r\n]*')+\s*,?\s*)\]/g,(literal,list)=>{
+  if(list===undefined)return literal;
+  const values=[...list.matchAll(/'([^'\\\r\n]*)'/g)].map(match=>match[1]);
+  if(values.length<4||values.some(value=>value===''))return literal;
+  const separator=['~','#',';','%','!','@',',',':','=','_','-'].find(char=>values.every(value=>!value.includes(char)));
+  return separator?"'"+values.join(separator)+"'.split('"+separator+"')":literal;
+ });
+}
+
+export function shareSnapshotReaders(source){
+ const masked=maskRulesTrivia(source),changes=[],used=new Set();let covered=0,prefix='releaseSnapshotData';
+ if(!databaseScope.test(masked))return source;
+ while(source.includes(prefix))prefix+='X';
+ for(const head of masked.matchAll(/(?<![.\w])(get|getAfter)\s*\(/g)){
+  if(head.index<covered)continue;
+  const from=head.index+head[0].length;let end=from,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='(')depth++;if(masked[end]===')')depth--;}
+  if(depth)throw Error('Unbalanced snapshot read.');
+  if(masked.slice(from,end-1).trim().startsWith('/'))continue;
+  const suffix=masked.slice(end).match(/^\s*\.data\b/);if(!suffix)continue;
+  const name=prefix+(head[1]==='get'?'Before':'After');
+  changes.push({from:head.index,to:end+suffix[0].length,text:name+'('+source.slice(from,end-1)+')'});
+  used.add(head[1]);covered=end+suffix[0].length;
+ }
+ if(!changes.length)return source;
+ for(const {from,to,text} of changes.reverse())source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,[...used].map(method=>'function '+prefix+(method==='get'?'Before':'After')+'(path) { return ('+method+'(path)).data; }'));
+}
+
+export function shareSchemaChecks(source){
+ const masked=maskRulesTrivia(source),changes=[],used=new Set();let covered=0,prefix='releaseSchemaCheck';
+ if(!databaseScope.test(masked))return source;
+ while(source.includes(prefix))prefix+='X';
+ const argumentEnd=start=>{let end=start,depth=1;for(;end<masked.length&&depth;end++){if(masked[end]==='(')depth++;if(masked[end]===')')depth--;}if(depth)throw Error('Unbalanced schema check.');return end;};
+ for(const head of masked.matchAll(/(?<![.\w])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(keys\s*\(\s*\)\s*\.hasOnly|diff)\s*\(/g)){
+  if(head.index<covered)continue;
+  const from=head.index+head[0].length,firstEnd=argumentEnd(from),diff=head[2]==='diff';
+  let fieldsFrom=from,fieldsEnd=firstEnd,before='';
+  if(diff){
+   const suffix=masked.slice(firstEnd).match(/^\s*\.affectedKeys\s*\(\s*\)\s*\.hasOnly\s*\(/);if(!suffix)continue;
+   before=source.slice(from,firstEnd-1);
+   fieldsFrom=firstEnd+suffix[0].length;fieldsEnd=argumentEnd(fieldsFrom);
+  }
+  const name=prefix+(diff?'Changes':'Keys'),fields=source.slice(fieldsFrom,fieldsEnd-1);
+  changes.push({from:head.index,to:fieldsEnd,text:name+'('+head[1]+','+(diff?before+',':'')+fields+')'});
+  used.add(diff?'Changes':'Keys');covered=fieldsEnd;
+ }
+ if(!changes.length)return source;
+ for(const {from,to,text} of changes.reverse())source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,[...used].map(kind=>kind==='Keys'?'function '+prefix+'Keys(data, fields) { return (data.keys()).hasOnly(fields); }':'function '+prefix+'Changes(after, before, fields) { return (after.diff(before).affectedKeys()).hasOnly(fields); }'));
+}
+
+export function shareRepeatedStringValues(source){
+ const masked=maskRulesTrivia(source),groups=new Map(),excluded=new Set(['assigned_branches','secondaryRoles','default_branch_id','branch_id','tenantId','active','status','is_duplicate','transferType','masterItemId','deliveryRoute','BRANCH_RETURN']);
+ if(!databaseScope.test(masked))return source;
+ for(const match of source.matchAll(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\//g)){
+  const literal=match[0];if(!["'",'"'].includes(literal[0])||literal.length<14)continue;
+  if(/[A-Za-z0-9_]/.test(source[match.index-1]||'')||masked.slice(match.index+literal.length).match(/\S/)?.[0]===':')continue;
+  if(excluded.has(literal.slice(1,-1))||/^(?:operational_|stock_orders$|opening_stock_sessions$)/.test(literal.slice(1,-1)))continue;
+  if(!groups.has(literal))groups.set(literal,[]);groups.get(literal).push(match.index);
+ }
+ const changes=[],helpers=[];let serial=0;
+ for(const [literal,positions] of groups){
+  if(positions.length<3||(literal.length-4)*(positions.length-1)-28<40)continue;
+  let name;do{name='releaseStringValue'+serial++;}while(source.includes(name));
+  helpers.push('function '+name+'() { return '+literal+'; }');
+  for(const from of positions)changes.push({from,to:from+literal.length,text:name+'()'});
+ }
+ for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
+export function omitNeverAllow(source){
+ let masked=maskRulesTrivia(source);const pattern=/\ballow\s+(?:read|write|get|list|create|update|delete)(?:\s*,\s*(?:read|write|get|list|create|update|delete))*\s*:\s*if\s+false\s*;/g;
+ const matches=[...masked.matchAll(pattern)];
+ for(const match of matches.reverse())source=source.slice(0,match.index)+source.slice(match.index+match[0].length);
+ // Firestore requires a declaration in every match, including deny-only scopes.
+ masked=maskRulesTrivia(source);const empty=[];
+ for(const header of masked.matchAll(/\bmatch\s+[^\n]*? \{/g)){
+  const start=header.index+header[0].length;let end=start,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  if(!depth&&!masked.slice(start,end-1).trim())empty.push({from:start,to:end-1});
+ }
+ for(const range of empty.reverse())source=source.slice(0,range.from)+' allow read, write: if false; '+source.slice(range.to);
+ return source;
+}
+
+export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+ source=omitNeverAllow(source);
+ if(shareReaders)source=shareSnapshotReaders(source);
+ if(shareSchemas)source=shareSchemaChecks(source);
+ if(sharePaths)source=shareDocumentPaths(source);
+ source=localizeCollectionHelpers(source,maxLocalOwners);
+ source=shareRepeatedAllowConditions(source);
+ if(groupCollections)source=groupEquivalentCollections(source);
+ source=shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(source)));
+ if(memoize)source=memoizeRequiredExpressions(source);
+ if(packArrays)source=packStringArrays(source);
+ if(shareConstants){source=shareRepeatedStringValues(source);if(memoize)source=memoizeRequiredExpressions(source);}
+ if(balanceConditions)source=balanceBooleanChains(source);
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(tokens.filter(token=>/^[A-Za-z_]\w*$/.test(token))),symbols=new Set(),aliases=new Map();
@@ -173,7 +519,21 @@ export function compactRuleSymbols(source){
  }
  return output.join('').trim();
 }
+
+/** Keep source positions compact as well as identifiers. Replace only existing
+ * whitespace in comment-free compiler output, preserving every literal/token.
+ */
+export function wrapReleaseColumns(source,width=80){
+ const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\s+|[^\s'"]+/g)||[];
+ let output='',column=0,pending=false;
+ for(const token of tokens){
+  if(/^\s+$/.test(token)){pending=true;continue;}
+  if(pending&&output){if(column+1+token.length>width){output+='\n';column=0;}else{output+=' ';column++;}}
+  output+=token;column+=token.length;pending=false;
+ }
+ return output;
+}
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
- const file=process.argv[2]||'firestore.rules',source=readFileSync(file,'utf8'),output=compactRuleSymbols(source);
+ const file=process.argv[2]||'firestore.rules',source=readFileSync(file,'utf8'),output=wrapReleaseColumns(compactRuleSymbols(source));
  writeFileSync(file,output+'\n');console.log(`Generated equivalent release rules: ${Buffer.byteLength(source)} → ${Buffer.byteLength(output)+1} source bytes.`);
 }

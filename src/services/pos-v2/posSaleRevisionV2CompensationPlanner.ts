@@ -170,7 +170,7 @@ export function buildPosV2CompensationPlan(params: {
   }
 
   const welfareAmount = paymentComponentAmount(payment, 'staff_welfare');
-  const institutionalCreditAmount = paymentComponentAmount(payment, 'institutional_credit');
+  const institutionalCreditAmount = paymentComponentAmount(payment, 'institutional_credit') + paymentComponentAmount(payment, 'credit');
   const consumerStatus = (name: string) => clean(outbox.consumers?.[name]?.status);
 
   return {

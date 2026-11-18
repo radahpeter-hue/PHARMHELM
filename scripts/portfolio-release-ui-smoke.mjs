@@ -97,7 +97,7 @@ try{browser=await chromium.launch({headless:true});
   await postingId.waitFor();
   await page.getByLabel('Ledger from').fill('2099-01-01');await page.getByText('No posted movements match these filters.').waitFor();await page.getByLabel('Ledger from').fill('');
   await fit(page,width);await page.screenshot({path:path.join(output,`cash-ledger-${width}.png`),fullPage:true});await back(page);
-  await open(page,'Credit Receivables');await page.getByRole('heading',{name:'Credit Receivables ledger'}).waitFor();await page.getByLabel('Receivables customer or reference').fill('Fixture');
+  await open(page,'Credit Receivables');await page.getByRole('heading',{name:'Credit Receivables',level:4}).waitFor();await page.getByLabel('Customer or invoice').fill('Fixture');
   await fit(page,width);await page.screenshot({path:path.join(output,`credit-ledger-${width}.png`),fullPage:true});await back(page);
   for(const name of ['Airtel Money','MTN Money','Petty Cash']){await open(page,name);await page.getByRole('heading',{name:name,exact:true}).waitFor();await page.getByRole('heading',{name:'Authoritative account ledger'}).waitFor();await fit(page,width);await back(page);}
   await open(page,'Staff Welfare Fund');await page.getByRole('heading',{name:'Staff Welfare Fund records'}).waitFor();await page.getByRole('cell',{name:/Fixture welfare allocation/}).waitFor();assert.equal(await page.getByRole('button',{name:'Initiate Transfer',exact:true}).count(),1);await fit(page,width);await back(page);

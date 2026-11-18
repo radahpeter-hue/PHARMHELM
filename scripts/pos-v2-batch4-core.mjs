@@ -94,7 +94,7 @@ export function snapshotBaseQuantityForItem(item) {
 export function consumerApplicability({ sale, payment }) {
   const productGroups = groupedSaleProducts(sale);
   const welfareAmount = paymentComponentAmount(payment, 'staff_welfare');
-  const institutionalCreditAmount = paymentComponentAmount(payment, 'institutional_credit');
+  const institutionalCreditAmount = paymentComponentAmount(payment, 'institutional_credit') + paymentComponentAmount(payment, 'credit');
   const sourceQuotationId = String(sale?.sourceQuotationId || '').trim();
 
   return {

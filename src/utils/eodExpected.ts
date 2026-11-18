@@ -1,3 +1,4 @@
+import { isCreditMethod } from '../domain/finance/creditRecognition';
 import type { Sale } from '../types';
 import { isActiveSale } from './activeSales';
 import { eodAmountNumber, sumEodAmounts } from './eodMoney';
@@ -16,6 +17,10 @@ export function expectedEodSales(sales: Sale[], tenantId: string, branchId: stri
       const welfare = eodAmountNumber(sale.welfareAmount ?? 0);
       add('staff_welfare', welfare);
       add(sale.secondaryPaymentMethod, sale.secondaryAmount ?? total - welfare);
+    } else if (sale.secondaryPaymentMethod && (isCreditMethod(sale.paymentMethod) || isCreditMethod(sale.secondaryPaymentMethod))) {
+      const secondary = eodAmountNumber(sale.secondaryAmount ?? 0);
+      add(sale.paymentMethod, total - secondary);
+      add(sale.secondaryPaymentMethod, secondary);
     } else add(sale.paymentMethod, total);
   }
   const totals = Object.fromEntries(EOD_PAYMENT_CHANNELS.map(c => [c, sumEodAmounts(values[c])])) as Record<typeof EOD_PAYMENT_CHANNELS[number], number>;

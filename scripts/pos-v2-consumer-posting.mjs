@@ -249,7 +249,7 @@ async function postWelfare(sale, payment) {
 }
 
 async function postInstitutionalCredit(sale, payment) {
-  const amount = paymentComponentAmount(payment, 'institutional_credit');
+  const amount = paymentComponentAmount(payment, 'institutional_credit') + paymentComponentAmount(payment, 'credit');
   if (amount <= 0) return;
   const ref = db.collection('credit_receivables').doc(sale.id);
   await db.runTransaction(async tx => {
@@ -263,6 +263,12 @@ async function postInstitutionalCredit(sale, payment) {
       const original = numberValue(existing.amount_ugx);
       if (original > 0 && Math.abs(original - amount) > 0.0001) {
         throw new Error('Existing institutional credit amount conflicts with canonical POS payment. Manual review required.');
+      }
+      if (existing.controlVersion === 2) {
+        if (existing.paymentId !== payment.paymentId || original !== amount) {
+          throw new Error('Atomic receivable does not match its immutable POS payment.');
+        }
+        return;
       }
       tx.set(ref, {
         paymentId: payment.paymentId,
@@ -282,7 +288,7 @@ async function postInstitutionalCredit(sale, payment) {
       outstanding_ugx: amount,
       status: 'outstanding',
       branch_id: sale.branchId || 'HQ',
-      due_date: created,
+      due_date: null,
       invoice_number: sale.receiptNumber || 'N/A',
       created_at: created,
       paymentId: payment.paymentId,

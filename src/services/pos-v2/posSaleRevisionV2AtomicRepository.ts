@@ -1,3 +1,4 @@
+import { creditDebtorReference, isCreditMethod } from '../../domain/finance/creditRecognition';
 import { auth, db } from '../../firebase';
 import { doc, getDoc, runTransaction, serverTimestamp, type Transaction } from 'firebase/firestore';
 import type { Sale } from '../../types';
@@ -5,10 +6,11 @@ import { prepareCheckoutV2Repository, writeCheckoutV2Transaction } from './posCh
 import { buildPosV2RevisionSubmissionRequest } from './posSaleRevisionV2Submission';
 import { buildPosV2ReplacementCheckoutRequest } from './posSaleRevisionV2ReplacementOrchestrator';
 import { buildPosV2ReplacementSnapshots } from './posSaleRevisionV2ReplacementExecution';
-import { evaluatePosV2RevisionEligibility } from './posSaleRevisionV2Policy';
+import { assertRevisionReason, evaluatePosV2RevisionEligibility } from './posSaleRevisionV2Policy';
 import { PosRevisionStagedTransaction } from './posRevisionStagedTransaction';
 import type { SubmitPosV2RevisionInput, PosV2RevisionRequestProgress } from './posSaleRevisionV2SubmissionRepository';
 import type { PosCheckoutV2CompletedResult } from './posCheckoutV2Types';
+import { institutionalCreditAmount } from '../../../scripts/pos-v2-revision-credit-core.mjs';
 import { buildRevisionInventoryRestores, assertLiveBatchMatchesRestore, reverseConsumptionSummary } from '../../../scripts/pos-v2-revision-inventory-core.mjs';
 import { buildInventoryReversalEvent } from '../../../scripts/pos-v2-revision-inventory-executor.mjs';
 import { executePaymentReversal } from '../../../scripts/pos-v2-revision-payment-executor.mjs';
@@ -108,7 +110,7 @@ export async function commitPosV2ReceiptCorrection(input: SubmitPosV2RevisionInp
         const snapshot = await stage.get(doc(db, collection, id));
         if (!snapshot.exists() || snapshot.data().tenantId !== original.tenantId) throw new Error(`The selected ${collection} record is unavailable.`);
         const option = project({ ...snapshot.data(), id });
-        if (!option.selectable || (collection === 'institutions' && replacement.paymentMethod === 'institutional_credit' && !option.billingEligible)) throw new Error('The selected account is no longer eligible. Reload the editor.');
+        if (!option.selectable || (collection === 'institutions' && [replacement.paymentMethod,replacement.secondaryPaymentMethod].some(isCreditMethod) && !option.billingEligible)) throw new Error('The selected account is no longer eligible. Reload the editor.');
       }
       if (replacement.patientId) {
         let snapshot = await stage.get(doc(db, 'clients', replacement.patientId));
@@ -117,37 +119,7 @@ export async function commitPosV2ReceiptCorrection(input: SubmitPosV2RevisionInp
       }
       const common = { db: executorDb, sale: original, payment, revisionId: submission.revisionId,
         requestedBy: uid, requestedByName: input.actor.name, reason: submission.reason, FieldValue: { serverTimestamp } };
-      const plan = buildRevisionInventoryRestores({ sale: original, revisionId: submission.revisionId });
-      for (const restore of plan.batches) {
-        const ref = doc(db, 'product_batches', restore.batchId);
-        const snapshot = await stage.get(ref);
-        const batch = snapshot.exists() ? snapshot.data() : null;
-        assertLiveBatchMatchesRestore({ batch, restore, tenantId: original.tenantId, branchId: original.branchId });
-        stage.update(ref, { quantity: Number(batch.quantity) + restore.baseQuantity, lastUpdated: new Date().toISOString() });
-      }
-      for (const restore of plan.products) {
-        const ref = doc(db, 'products', restore.productId);
-        const product = await stage.get(ref);
-        if (!product.exists() || product.data().tenantId !== original.tenantId) throw new Error('Historical product authority mismatch.');
-        let aggregate = 0;
-        for (const row of prepared.batchRefsByProduct.get(restore.productId) || []) {
-          const batch = await stage.get(row.ref);
-          if (batch.exists()) aggregate += Number(batch.data().quantity || 0);
-        }
-        stage.update(ref, { stock: aggregate, quantityInStock: aggregate, stockAggregateSource: 'product_batches', updatedAt: serverTimestamp() });
-        const eventRef = doc(db, 'inventoryMovementEvents', movementEventId({ saleId: original.id, productId: restore.productId }));
-        const eventSnap = await stage.get(eventRef);
-        if (!eventSnap.exists()) continue; // An unposted original has no consumption to compensate.
-        const event = eventSnap.data();
-        if (event.tenantId !== original.tenantId || event.branchId !== original.branchId || event.eventType !== 'SALE' || event.sourceDocumentId !== original.id || Number(event.consumptionDeltaBaseUnits) !== restore.baseQuantity) throw new Error('Original consumption history does not reconcile.');
-        const summaryRef = doc(db, 'branchConsumptionDaily', consumptionSummaryId(original.tenantId, original.branchId, restore.productId, event.dateKey));
-        const summary = await stage.get(summaryRef);
-        if (!summary.exists()) throw new Error('Original consumption summary is missing.');
-        stage.set(summaryRef, { ...reverseConsumptionSummary({ summary: summary.data(), baseQuantity: restore.baseQuantity, exceptional: Boolean(event.isExceptional), productId: restore.productId }), updatedAt: serverTimestamp() });
-        const reversalRef = doc(db, 'inventoryMovementEvents', restore.eventId);
-        if ((await stage.get(reversalRef)).exists()) throw new Error('Original inventory was already reversed.');
-        stage.set(reversalRef, buildInventoryReversalEvent({ sale: original, restore, originalEvent: { ...event, eventId: eventSnap.id }, revisionId: submission.revisionId, workerId: uid, serverTimestamp: serverTimestamp() }));
-      }
+      const plan = await restoreRevisionInventory(stage, original, submission.revisionId, uid, prepared.batchRefsByProduct);
       const paymentReversal = await executePaymentReversal(common);
       const oldWelfareIds = welfarePostingIds(original.tenantId, original.id);
       let welfareReversal: any = null;
@@ -164,12 +136,9 @@ export async function commitPosV2ReceiptCorrection(input: SubmitPosV2RevisionInp
           welfareReversal = await executeWelfareReversal(common);
         }
       }
-      let originalCreditPosted = false;
-      if (paymentComponentAmount(payment, 'institutional_credit') > 0) {
-        const originalCredit = await stage.get(doc(db, 'credit_receivables', original.id));
-        originalCreditPosted = originalCredit.exists();
-        if (originalCreditPosted) creditReversal = await executeInstitutionalCreditReversal(common);
-      }
+      const originalCreditRef = doc(db, 'credit_receivables', original.id);
+      const originalCredit = institutionalCreditAmount(payment) > 0 ? (await stage.get(originalCreditRef)).data() : undefined;
+      const originalCreditPosted = !!originalCredit;
       if (original.sourceQuotationId) {
         const quotation = await stage.get(doc(db, 'pos_quotations', original.sourceQuotationId));
         if (!quotation.exists()) throw new Error('The source quotation is missing.');
@@ -202,24 +171,26 @@ export async function commitPosV2ReceiptCorrection(input: SubmitPosV2RevisionInp
         if (Number(beneficiary.data().welfare_spent || 0) + welfareAmount > allowance) throw new Error('The corrected receipt exceeds the remaining welfare allocation.');
       }
       await posters.postWelfare(corrected, checkout.payment);
-      await posters.postInstitutionalCredit(corrected, checkout.payment);
-      await posters.postQuotation(corrected);
-      // Refresh closing usable stock even for a product removed completely, or
-      // restored into an expired/quarantined historical batch.
-      for (const restore of plan.products) {
-        const event = await stage.get(doc(db, 'inventoryMovementEvents', movementEventId({ saleId: original.id, productId: restore.productId })));
-        if (!event.exists()) continue;
-        let closingUsableStock = 0;
-        for (const row of prepared.batchRefsByProduct.get(restore.productId) || []) {
-          const snapshot = await stage.get(row.ref);
-          if (!snapshot.exists()) continue;
-          const batch = snapshot.data();
-          const candidate = { ...batch, id: row.id, expiryDate: normalizeDateValue(batch.expiryDate)?.toISOString(), batchStatus: batch.batch_status, costPerBaseUnit: Number(batch.purchasePrice) };
-          if (isV2SellableBatch({ batch: candidate as any, tenantId: original.tenantId, branchId: original.branchId, productId: restore.productId, now: new Date() })) closingUsableStock += Number(batch.quantity);
+      const replacementCreditAmount = institutionalCreditAmount(checkout.payment);
+      const replacementCreditRef = doc(db, 'credit_receivables', corrected.id);
+      let carriedCollectionsUGX = 0;
+      if (originalCredit) {
+        const nextDebtor = replacementCreditAmount > 0 ? creditDebtorReference(corrected) : null;
+        if (nextDebtor && originalCredit.debtorId === nextDebtor.id && originalCredit.debtorType === nextDebtor.type) {
+          const collected = Number(originalCredit.amount_ugx) - Number(originalCredit.outstanding_ugx);
+          carriedCollectionsUGX = Math.min(collected,replacementCreditAmount);
         }
-        const summaryRef = doc(db, 'branchConsumptionDaily', consumptionSummaryId(original.tenantId, original.branchId, restore.productId, event.data().dateKey));
-        stage.update(summaryRef, { closingUsableStock, updatedAt: serverTimestamp() });
+        creditReversal = await executeInstitutionalCreditReversal({ ...common, compensation:{carriedCollectionsUGX} });
       }
+      if (replacementCreditAmount > 0) {
+        const outstanding = replacementCreditAmount - carriedCollectionsUGX;
+        stage.update(replacementCreditRef, {
+          created_at: original.timestamp, carriedCollectionsUGX, outstanding_ugx: outstanding,
+          status: outstanding === 0 ? 'paid' : carriedCollectionsUGX > 0 ? 'partial' : 'outstanding'
+        });
+      }
+      await posters.postQuotation(corrected);
+      await refreshRestoredConsumption(stage, original, plan, prepared.batchRefsByProduct);
       const consumers = initializeConsumers({ sale: corrected, payment: checkout.payment, existingConsumers: {}, nowIso: new Date().toISOString() });
       for (const state of Object.values(consumers) as any[]) if (state.status !== 'NOT_APPLICABLE') state.status = 'COMPLETED';
       stage.update(prepared.outboxRef, { status: 'PROCESSED', consumers, processedAt: serverTimestamp(), postingMode: 'SPARK_ATOMIC' });
@@ -255,4 +226,129 @@ export async function commitPosV2ReceiptCorrection(input: SubmitPosV2RevisionInp
     if (committed) return committed;
     throw error;
   }
+}
+
+async function restoreRevisionInventory(stage: PosRevisionStagedTransaction, original: Sale, revisionId: string, uid: string,
+  batchRefsByProduct: Awaited<ReturnType<typeof prepareCheckoutV2Repository>>['batchRefsByProduct']) {
+  const plan = buildRevisionInventoryRestores({ sale: original, revisionId: revisionId });
+  for (const restore of plan.batches) {
+    const ref = doc(db, 'product_batches', restore.batchId);
+    const snapshot = await stage.get(ref);
+    const batch = snapshot.exists() ? snapshot.data() : null;
+    assertLiveBatchMatchesRestore({ batch, restore, tenantId: original.tenantId, branchId: original.branchId });
+    stage.update(ref, { quantity: Number(batch.quantity) + restore.baseQuantity, lastUpdated: new Date().toISOString() });
+  }
+  for (const restore of plan.products) {
+    const ref = doc(db, 'products', restore.productId);
+    const product = await stage.get(ref);
+    if (!product.exists() || product.data().tenantId !== original.tenantId) throw new Error('Historical product authority mismatch.');
+    let aggregate = 0;
+    for (const row of batchRefsByProduct.get(restore.productId) || []) {
+      const batch = await stage.get(row.ref);
+      if (batch.exists()) aggregate += Number(batch.data().quantity || 0);
+    }
+    stage.update(ref, { stock: aggregate, quantityInStock: aggregate, stockAggregateSource: 'product_batches', updatedAt: serverTimestamp() });
+    const eventRef = doc(db, 'inventoryMovementEvents', movementEventId({ saleId: original.id, productId: restore.productId }));
+    const eventSnap = await stage.get(eventRef);
+    if (!eventSnap.exists()) continue; // An unposted original has no consumption to compensate.
+    const event = eventSnap.data();
+    if (event.tenantId !== original.tenantId || event.branchId !== original.branchId || event.eventType !== 'SALE' || event.sourceDocumentId !== original.id || Number(event.consumptionDeltaBaseUnits) !== restore.baseQuantity) throw new Error('Original consumption history does not reconcile.');
+    const summaryRef = doc(db, 'branchConsumptionDaily', consumptionSummaryId(original.tenantId, original.branchId, restore.productId, event.dateKey));
+    const summary = await stage.get(summaryRef);
+    if (!summary.exists()) throw new Error('Original consumption summary is missing.');
+    stage.set(summaryRef, { ...reverseConsumptionSummary({ summary: summary.data(), baseQuantity: restore.baseQuantity, exceptional: Boolean(event.isExceptional), productId: restore.productId }), updatedAt: serverTimestamp() });
+    const reversalRef = doc(db, 'inventoryMovementEvents', restore.eventId);
+    if ((await stage.get(reversalRef)).exists()) throw new Error('Original inventory was already reversed.');
+    stage.set(reversalRef, buildInventoryReversalEvent({ sale: original, restore, originalEvent: { ...event, eventId: eventSnap.id }, revisionId: revisionId, workerId: uid, serverTimestamp: serverTimestamp() }));
+  }
+  return plan;
+}
+
+async function refreshRestoredConsumption(stage: PosRevisionStagedTransaction, original: Sale,
+  plan: ReturnType<typeof buildRevisionInventoryRestores>,
+  batchRefsByProduct: Awaited<ReturnType<typeof prepareCheckoutV2Repository>>['batchRefsByProduct']) {
+  // Refresh closing usable stock even for a product removed completely, or
+  // restored into an expired/quarantined historical batch.
+  for (const restore of plan.products) {
+    const event = await stage.get(doc(db, 'inventoryMovementEvents', movementEventId({ saleId: original.id, productId: restore.productId })));
+    if (!event.exists()) continue;
+    let closingUsableStock = 0;
+    for (const row of batchRefsByProduct.get(restore.productId) || []) {
+      const snapshot = await stage.get(row.ref);
+      if (!snapshot.exists()) continue;
+      const batch = snapshot.data();
+      const candidate = { ...batch, id: row.id, expiryDate: normalizeDateValue(batch.expiryDate)?.toISOString(), batchStatus: batch.batch_status, costPerBaseUnit: Number(batch.purchasePrice) };
+      if (isV2SellableBatch({ batch: candidate as any, tenantId: original.tenantId, branchId: original.branchId, productId: restore.productId, now: new Date() })) closingUsableStock += Number(batch.quantity);
+    }
+    const summaryRef = doc(db, 'branchConsumptionDaily', consumptionSummaryId(original.tenantId, original.branchId, restore.productId, event.data().dateKey));
+    stage.update(summaryRef, { closingUsableStock, updatedAt: serverTimestamp() });
+  }
+}
+
+/** Void a credit receipt through the existing atomic correction and immutable reversal chain. */
+export async function voidPosV2CreditReceipt(sale: Sale, actor: {uid:string;name:string;role:string}, rawReason:string) {
+  const uid = auth.currentUser?.uid;
+  const reason = assertRevisionReason(rawReason);
+  if (!uid || uid !== actor.uid || !sale.branchId || !sale.canonicalPaymentId || !sale.transactionOutboxEventId
+    || ![sale.paymentMethod,sale.secondaryPaymentMethod].some(isCreditMethod)) {
+    throw new Error('An authorized operator and a canonical POS V2 credit receipt are required.');
+  }
+  const requestId = 'credit_void_' + sale.id;
+  const auditId = 'credit_void_audit_' + sale.id;
+  const requestRef = doc(db,'pos_sale_revision_requests',requestId);
+  const prepared = await prepareCheckoutV2Repository(uid,{attemptId:requestId,branchId:sale.branchId,items:sale.items});
+  if (prepared.authority.tenantId !== sale.tenantId) throw new Error('Receipt tenant authority mismatch.');
+  return runTransaction(db, async transaction => {
+    const stage = new PosRevisionStagedTransaction(db,transaction);
+    const prior = (await stage.get(requestRef)).data();
+    if (prior) {
+      if (prior.requestType !== 'POS_CREDIT_VOID' || prior.reason !== reason || prior.requestedBy !== uid
+        || prior.tenantId !== sale.tenantId || prior.status !== 'COMPLETED') throw new Error('A different void request already exists.');
+      return {replayed:true,refundDueUGX:prior.creditReversal.refundDueUGX as number};
+    }
+    const originalRef = doc(db,'sales',sale.id);
+    const original = { ...(await stage.get(originalRef)).data(), id:sale.id } as Sale;
+    if (!evaluatePosV2RevisionEligibility(original).allowed || original.revisionLocked
+      || original.tenantId !== sale.tenantId || original.branchId !== sale.branchId
+      || original.canonicalPaymentId !== sale.canonicalPaymentId || original.transactionOutboxEventId !== sale.transactionOutboxEventId
+      || !receiptItemsMatch(original.items,sale.items)) throw new Error('This receipt changed or is outside the correction window.');
+    const payment = (await stage.get(doc(db,'pos_payments',sale.canonicalPaymentId!))).data();
+    const outboxRef = doc(db,'pos_transaction_outbox',sale.transactionOutboxEventId!);
+    const outbox = (await stage.get(outboxRef)).data();
+    if (!payment || institutionalCreditAmount(payment)<=0 || payment.saleId!==original.id ||
+      !outbox || outbox.saleId!==original.id || outbox.paymentId!==payment.paymentId || outbox.status==='SUPERSEDED') {
+      throw new Error('The original credit payment and outbox must reconcile before voiding.');
+    }
+    const common = {db:stage.asExecutorDatabase(),sale:original,payment,revisionId:requestId,
+      requestedBy:uid,requestedByName:actor.name,reason,FieldValue:{serverTimestamp}};
+    const plan = await restoreRevisionInventory(stage,original,requestId,uid,prepared.batchRefsByProduct);
+    await refreshRestoredConsumption(stage,original,plan,prepared.batchRefsByProduct);
+    const paymentReversal = await executePaymentReversal(common);
+    const creditReversal = await executeInstitutionalCreditReversal({...common,
+      compensation:{carriedCollectionsUGX:0,refundInitialTenderUGX:payment.settledAmount}});
+    let quotationReversal = null;
+    if(original.sourceQuotationId) {
+      const quotation = (await stage.get(doc(db,'pos_quotations',original.sourceQuotationId))).data();
+      if(quotation?.status === 'Converted') quotationReversal = await executeQuotationReversal(common);
+      else if (quotation?.status !== 'Draft') throw new Error('The source quotation cannot be released.');
+    }
+    const now = serverTimestamp();
+    const revisionFields = {revisionId:requestId,revisionRequestId:requestId,revisionLocked:true,revisionLifecycle:'COMPLETED',
+      revisionRequestedBy:uid,revisionRequestedByName:actor.name,revisionReason:reason,revisionRequestedAt:now,revisionCompletedAt:now,updatedAt:now};
+    stage.update(originalRef,{...revisionFields,status:'voided',voidReason:reason,voidedBy:uid,voidedAt:new Date().toISOString()});
+    stage.update(outboxRef,{status:'SUPERSEDED',supersededByEventId:null,revisionRequestId:requestId,leaseOwner:null,leaseExpiresAt:null,updatedAt:now});
+    stage.set(requestRef,{requestType:'POS_CREDIT_VOID',requestId,revisionId:requestId,executionMode:'SPARK_ATOMIC',status:'COMPLETED',
+      tenantId:original.tenantId,branchId:original.branchId,originalSaleId:original.id,originalReceiptNumber:original.receiptNumber,
+      originalTotal:payment.amount,revisedTotal:0,monetaryDelta:-payment.amount,originalPaymentId:payment.paymentId,
+      originalOutboxEventId:outboxRef.id,replacementOutboxEventId:null,paymentReversalId:paymentReversal.reversalId,
+      originalCreditPosted:true,originalWelfarePosted:false,welfareAmount:0,creditReversal,quotationReversal,
+      requestedBy:uid,requestedByName:actor.name,reason,auditId,engineVersion:2,payloadVersion:1,createdAt:now,completedAt:now});
+    stage.set(doc(db,'sale_revisions',requestId),{tenantId:original.tenantId,branchId:original.branchId,originalSaleId:original.id,
+      status:'COMPLETED',revisionId:requestId,revisionRequestId:requestId,action:'void',reason,completedAt:now});
+    stage.set(doc(db,'audit_logs',auditId),{tenantId:original.tenantId,action:'VOID_SALE',objectId:original.id,reason,
+      userId:uid,revisionRequestId:requestId,timestamp:new Date().toISOString(),createdAt:now});
+    stage.annotateFinancialWrites(requestId,original.timestamp);
+    stage.flush();
+    return {replayed:false,refundDueUGX:creditReversal.refundDueUGX || 0};
+  });
 }

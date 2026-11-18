@@ -17,10 +17,10 @@ test('institutional credit compensation preserves original amount and expresses 
   assert.match(core, /amountDelta: -amount/);
   assert.match(core, /outstandingDelta: -amount/);
   assert.match(executor, /priorOutstandingAmount/);
-  assert.match(executor, /reversedAmount: expected\.amount/);
+  assert.match(executor, /reversedAmount: outstanding/);
 });
 
-test('institutional credit reversal fails closed if any receivable settlement already occurred', () => {
+test('historical credit reversal fails closed when collection evidence is unavailable', () => {
   assert.match(core, /outstanding - amount/);
   assert.match(core, /partially or fully settled\. Manual review is required/);
   assert.match(core, /receivable amount does not reconcile with canonical payment/);

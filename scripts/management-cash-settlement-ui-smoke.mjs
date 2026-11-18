@@ -12,7 +12,7 @@ const stubs={
  auth:`export const useAuth=()=>({profile:{tenantId:'test',uid:'finance',fullName:'Finance Tester',role:location.search==='?branch-role'?'Branch Manager':'Finance Officer',status:'active'},hasPermission:()=>true});`,
  firebase:'export const db={},auth={},storage={},googleProvider={};export const registerAuthUser=()=>{};',
  firestoreService:'export const firestoreService={};',
- sdk:`const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Kampala',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const expense={tenantId:'test',source:'procurement_cash_grn',sourceType:'procurement',invoiceId:'invoice',grnId:'grn_test',invoiceRef:'AVN161026001234',amount:38000,originalAmount:38000,paidAmountUGX:0,status:'draft',category:'Procurement & Inventory',department:'Masaka',expense_date:day,date:day,description:'Supplier invoice payment draft',created_at:day};const invoice={tenantId:'test',grnId:'grn_test',invoiceValue:38000,paidAmountUGX:0,invoiceRef:'AVN161026001234',grnRef:'GRN-TEST',supplierName:'Aiveen Pharmacy'};const creditMode=()=>location.search==='?credit';
+ sdk:`const day=new Date(Date.now()+10800000).toISOString().slice(0,10);const expense={tenantId:'test',source:'procurement_cash_grn',sourceType:'procurement',invoiceId:'invoice',grnId:'grn_test',invoiceRef:'AVN161026001234',amount:38000,originalAmount:38000,paidAmountUGX:0,status:'draft',category:'Procurement & Inventory',department:'Masaka',expense_date:day,date:day,description:'Supplier invoice payment draft',created_at:day};const invoice={tenantId:'test',grnId:'grn_test',invoiceValue:38000,paidAmountUGX:0,invoiceRef:'AVN161026001234',grnRef:'GRN-TEST',supplierName:'Aiveen Pharmacy'};const creditMode=()=>location.search==='?credit';
 const creditDraft={...expense,source:'credit_payment',sourceType:'credit',sourceRefId:'liability',amount:28000,originalAmount:28000};
 const creditInvoice={...invoice,paidAmountUGX:10000,creditBalance:28000};
 const history={status:'posted',amount:10000,chargeUGX:500,totalDebitUGX:10500,balanceAfter:28000,externalReference:'BANK-TEST-1',
@@ -23,16 +23,25 @@ const payment={tenantId:'test',type:'outgoing',amount:10000,accountDeltaUGX:-100
  scope:{kind:'branch',branchId:'masaka'},kind:'petty_cash',currency:'UGX',initialized:true,balanceUGX:20000
 }]:[])];const snapshot=(id,data)=>({id,exists:()=>true,data:()=>data});export const collection=(db,path)=>({path});export const doc=(db,path,id)=>({path,id});export const where=(...args)=>args;export const query=(ref,...args)=>ref;export const orderBy=(...args)=>args;export const getDocs=async ref=>({docs:ref.path==='management_expenses'?[snapshot('draft',creditMode()?creditDraft:expense)]:ref.path==='petty_cash_ledger'?[snapshot('expense_payment_fixture',payment),snapshot('legacy',{...payment,accountDocumentId:'',externalExpenseId:'',source:'Unresolved historical cash'})]:ref.path==='finance_payment_accounts'?accounts().map(a=>snapshot(a.id,a)):
 ref.path==='branches'?[snapshot('masaka',{name:'Masaka',status:'Active'})]:
-ref.path==='creditPayments'&&creditMode()?[snapshot('history',history)]:[],size:0});export const getDoc=async ref=>snapshot(ref.id,ref.path==='system_settings'?{tenantId:'test',managementCashSettlementV1:location.search!=='?unreleased'}:ref.path==='invoices'?(creditMode()?creditInvoice:invoice):(creditMode()?creditDraft:expense));export const onSnapshot=(ref,cb)=>{cb({docs:accounts().map(a=>snapshot(a.id,a))});return()=>{};};export const Timestamp={now:()=>({toDate:()=>new Date()})};export const writeBatch=()=>{throw new Error('Unexpected live batch');};export const addDoc=()=>{throw new Error('Unexpected live add');};export const updateDoc=()=>{throw new Error('Unexpected live update');};export const runTransaction=()=>{throw new Error('Unexpected live transaction');};`,
+ref.path==='creditPayments'&&creditMode()?[snapshot('history',history)]:[],size:0});export const getDoc=async ref=>snapshot(ref.id,ref.path==='system_settings'?{tenantId:'test',managementCashSettlementV1:location.search!=='?unreleased'}:ref.path==='invoices'?(creditMode()?creditInvoice:invoice):(creditMode()?creditDraft:expense));export const onSnapshot=(ref,cb)=>{
+ const dto=ref.path==='finance_payment_accounts'?(location.search==='?receivable'?[{
+ id:'test_system_mtn_mobile_money',tenantId:'test',accountId:'system_mtn_mobile_money',portfolioId:'system_mtn_mobile_money',name:'MTN Mobile Money',
+ scope:{kind:'organisation'},kind:'bank',portfolioClassification:'mobile_money',currency:'UGX',initialized:true,balanceUGX:12000
+ }]:accounts()).map(a=>snapshot(a.id,a)):ref.path==='credit_receivables'?[snapshot('sale',{tenantId:'test',branch_id:'masaka',receipt_id:'sale',
+ invoice_number:'MSK-001',client_name:'Credit Customer',amount_ugx:500000,outstanding_ugx:500000,status:'outstanding',created_at:day})]:
+ ref.path==='branches'?[snapshot('masaka',{name:'Masaka'})]:[];
+ cb({docs:dto});return()=>{};};export const Timestamp={now:()=>({toDate:()=>new Date()})};export const writeBatch=()=>{throw new Error('Unexpected live batch');};export const addDoc=()=>{throw new Error('Unexpected live add');};export const setDoc=()=>{throw new Error('Unexpected live set');};export const deleteField=()=>{throw new Error('Unexpected field deletion');};export const updateDoc=()=>{throw new Error('Unexpected live update');};export const runTransaction=()=>{throw new Error('Unexpected live transaction');};`,
  settlement:`export async function settleCashGrnDraft(input){window.paymentCalls=window.paymentCalls||[];window.paymentCalls.push(input);await new Promise(r=>setTimeout(r,100));if(location.search==='?retry'&&window.paymentCalls.length===1)throw new Error('Network response lost. Retry uses the same reference.');return {remainingUGX:38000-input.amountUGX};}`,
  creditSettlement:`export async function settleSupplierCreditDraft(input){window.creditPayment=input;return {remainingUGX:28000-input.amountUGX};}export async function rejectSupplierCreditDraft(){throw new Error('Unexpected rejection');}`,
+ receivableSettlement:`export async function settleCreditReceivable(input){window.receivableCalls=(window.receivableCalls||[]).concat(input);
+ await new Promise(r=>setTimeout(r,100));return {remainingUGX:500000-input.amountUGX};}`,
  registration:`export async function registerManagementPaymentAccount(input){window.registeredAccount=input;return {openingBalanceUGX:60000,openingEntryCount:22};}`,
  export:'export const exportRecordsToExcel=()=>{};'
 };
-await build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';import {ManagementExpenseLedger} from './src/pages/finance/management/ManagementExpenseLedger';createRoot(document.getElementById('root')).render(<main className="p-3 text-white"><ManagementExpenseLedger/></main>);`,loader:'tsx',resolveDir:process.cwd()},bundle:true,format:'iife',outfile:path.join(output,'app.js'),plugins:[{name:'isolated-payment',setup(b){
+await build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';import {ManagementExpenseLedger} from './src/pages/finance/management/ManagementExpenseLedger';import {CreditReceivablesRegister} from './src/components/finance/CreditReceivablesPortfolio';createRoot(document.getElementById('root')).render(<main className="p-3 text-white">{location.search==='?receivable'?<CreditReceivablesRegister allowSettlement/>:<ManagementExpenseLedger/>}</main>);`,loader:'tsx',resolveDir:process.cwd()},bundle:true,format:'iife',outfile:path.join(output,'app.js'),plugins:[{name:'isolated-payment',setup(b){
  b.onResolve({filter:/AuthContext$/},()=>({path:'auth',namespace:'stub'}));b.onResolve({filter:/\/firebase$/},()=>({path:'firebase',namespace:'stub'}));b.onResolve({filter:/services\/firestore$/},()=>({path:'firestoreService',namespace:'stub'}));
- b.onResolve({filter:/^firebase\/firestore$/},args=>args.importer.includes('/components/finance/')||(args.importer.endsWith('/ManagementExpenseLedger.tsx')||args.importer.endsWith('/cashOutflowReportService.ts'))?{path:'sdk',namespace:'stub'}:undefined);
- b.onResolve({filter:/cashGrnSettlementService$/},()=>({path:'settlement',namespace:'stub'}));b.onResolve({filter:/creditGrnSettlementService$/},()=>({path:'creditSettlement',namespace:'stub'}));b.onResolve({filter:/managementPaymentAccountService$/},()=>({path:'registration',namespace:'stub'}));b.onResolve({filter:/utils\/excelExport$/},()=>({path:'export',namespace:'stub'}));
+ b.onResolve({filter:/^firebase\/firestore$/},args=>args.importer.includes('/components/finance/')||(args.importer.endsWith('/ManagementExpenseLedger.tsx')||args.importer.endsWith('/cashOutflowReportService.ts')||args.importer.endsWith('/portfolioFirestore.ts'))?{path:'sdk',namespace:'stub'}:undefined);
+ b.onResolve({filter:/services\/receivableSettlement$/},()=>({path:'receivableSettlement',namespace:'stub'}));b.onResolve({filter:/cashGrnSettlementService$/},()=>({path:'settlement',namespace:'stub'}));b.onResolve({filter:/creditGrnSettlementService$/},()=>({path:'creditSettlement',namespace:'stub'}));b.onResolve({filter:/managementPaymentAccountService$/},()=>({path:'registration',namespace:'stub'}));b.onResolve({filter:/utils\/excelExport$/},()=>({path:'export',namespace:'stub'}));
  b.onLoad({filter:/.*/,namespace:'stub'},args=>({contents:stubs[args.path],loader:'js'}));
 }}]});
 const css=(await readdir('dist/assets')).find(n=>n.endsWith('.css'));assert.ok(css);await copyFile(path.join('dist/assets',css),path.join(output,'style.css'));
@@ -42,6 +51,37 @@ let browser;
 const open=async(page,scenario='')=>{await page.goto(`http://127.0.0.1:${server.address().port}/${scenario}`);await page.getByRole('button',{name:/^(Supplier invoice & payments|Review Draft)$/i}).click();await page.getByLabel('Supplier payment amount',{exact:true}).waitFor();await page.getByLabel('Supplier payment reference',{exact:true}).fill('VOUCHER-TEST-001');};
 try{
  browser=await chromium.launch({headless:true});
+ for (const viewport of [{width:320,height:480},{width:844,height:320},{width:1280,height:800}]) {
+  const page=await browser.newPage({viewport});
+  page.on('pageerror',error=>console.error('Receivable test page:',error.message));
+  await page.goto(`http://127.0.0.1:${server.address().port}/?receivable`);
+  try { await page.getByRole('button',{name:'MSK-001'}).click({timeout:10000}); }
+  catch (error) { console.error((await page.locator('body').innerText()).slice(0,2500)); throw error; }
+  const dialog=page.getByRole('dialog',{name:'MSK-001'});
+  await dialog.getByRole('button',{name:'Record collection'}).click();
+  const accounts=dialog.getByLabel('Receiving account');
+  assert.equal(await accounts.inputValue(),'');
+  assert.equal(await dialog.getByRole('button',{name:'Confirm collection'}).isDisabled(),true);
+  await accounts.selectOption('system_mtn_mobile_money');
+  await dialog.getByLabel('Payment amount (UGX)').fill('150000');
+  await dialog.getByLabel('Payment reference').fill('MTN-TEST-01');
+  await dialog.getByText('UGX 150,000 will be posted to MTN Mobile Money · Organisation.').waitFor();
+  const confirm=dialog.getByRole('button',{name:'Confirm collection'});
+  await confirm.scrollIntoViewIfNeeded();
+  const rect=await dialog.boundingBox();
+  const control=await confirm.boundingBox();
+  assert.ok(rect.x>=0 && rect.y>=0 && rect.x+rect.width<=viewport.width && rect.y+rect.height<=viewport.height);
+  assert.ok(control.y>=0 && control.y+control.height<=viewport.height);
+  if (viewport.height<500) assert.ok(await dialog.evaluate(el=>el.scrollHeight>el.clientHeight && el.scrollTop>0));
+  await page.screenshot({path:path.join(output,`receivable-${viewport.width}.png`)});
+  await confirm.click();
+  await dialog.getByText('Collection recorded. Remaining balance UGX 350,000.').waitFor();
+  const calls=await page.evaluate(()=>window.receivableCalls);
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].destinationAccountId,'system_mtn_mobile_money');
+  await page.close();
+  console.log(`Receivable settlement fits ${viewport.width}×${viewport.height}`);
+ }
  const report=await browser.newPage({viewport:{width:390,height:844}});
  await report.goto(`http://127.0.0.1:${server.address().port}/`);
  await report.getByText('Verified total · UGX 10,000',{exact:true}).waitFor();

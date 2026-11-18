@@ -1,9 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validateUnboundProbe} from '../scripts/firestore-unbound-probe.mjs';
+import {validateUnboundProbe,findExactInactiveRuleset} from '../scripts/firestore-unbound-probe.mjs';
 const project='test-project',probeName='projects/test-project/releases/pharmhelm_size_probe_123_1',rulesetName='projects/test-project/rulesets/exact';
 const input={project,token:'test-token',probeName,rulesetName,pause:async()=>{}};
 const response=(status:number,data:any)=>new Response(JSON.stringify(data),{status});
+test('ambiguous compilation recovery requires exact source and does not create or activate releases',async()=>{
+ const calls:any[]=[];const saved={name:rulesetName,source:{files:[{name:'firestore.rules',content:'exact input'}]}};
+ const replies=[response(200,{rulesets:[{name:rulesetName}]}),response(200,saved)];
+ assert.deepEqual(await findExactInactiveRuleset({project,token:'test',rules:'exact input',fetchImpl:async(url:any,options:any)=>{calls.push({url,options});return replies.shift();}}),saved);
+ assert.ok(calls.every(call=>!call.options.method&&!call.url.includes('/releases/')));
+});
+test('ruleset recovery rejects similar input, unexpected file envelopes and cross-project identities',async()=>{
+ const calls:any[]=[];
+ const result=await findExactInactiveRuleset({project,token:'test',rules:'exact',fetchImpl:async(url:any)=>{calls.push(url);return calls.length===1?response(200,{rulesets:[{name:'projects/foreign/rulesets/x'},{name:rulesetName}]}):response(200,{name:rulesetName,source:{files:[{name:'firestore.rules',content:'different'}]}});}});
+ assert.equal(result,null);assert.equal(calls.length,2);assert.ok(calls.every(url=>!url.includes('foreign')));
+});
 test('unbound probe verifies exact candidate after ambiguous 503 acknowledgement',async()=>{
  const calls:any[]=[];let n=0;
  const result=await validateUnboundProbe({...input,fetchImpl:async(url:any,options:any)=>{calls.push({url,method:options.method});return n++===0?response(503,{}):response(200,{name:probeName,rulesetName});}});

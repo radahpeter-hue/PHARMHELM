@@ -43,14 +43,15 @@ export function mapAuthoritativeMovement(id:string,raw:Record<string,unknown>,ac
   ?stamp.toDate().toISOString():businessDate+'T00:00:00.000Z';
  const supplierPayment=typeof raw.paymentId==='string'&&raw.paymentId
   && (raw.supplierPosting==='cash'||raw.supplierPosting==='credit'||raw.source==='Procurement Cash GRN settlement');
+ const receiptCollection=typeof raw.receivableSettlementId==='string' && raw.receivableSettlementId;
  const supplierReference=supplierPayment&&typeof raw.externalReference==='string'?raw.externalReference.trim():'';
  return {id,tenantId:account.tenantId,portfolioId:account.accountId,accountId:account.accountId,
   businessDate,occurredAt,reference:supplierReference||String(raw.reference_number||raw.transferId||id),
-  description:String(raw.source||raw.type||'Posted management transaction'),
+  description:receiptCollection && raw.invoiceNumber ? 'Credit collection · '+String(raw.invoiceNumber) : String(raw.source||raw.type||'Posted management transaction'),
   source:managementLedgerCollection(account),direction:delta>0?'inflow':'outflow',
   amountUGX:Math.abs(delta),actorId:String(raw.postedBy||''),status:'posted',
    ...(transferClass?{transferClass}:{}),
-  ...(supplierPayment?{linkedRecordId:String(raw.paymentId)}:
+  ...(supplierPayment?{linkedRecordId:String(raw.paymentId)}:receiptCollection?{linkedRecordId:String(raw.receivableSettlementId)}:
    typeof raw.transferId==='string'&&raw.transferId?{linkedRecordId:raw.transferId}:{}),
   ...(typeof raw.branchId==='string'&&raw.branchId?{branchId:raw.branchId}:account.scope?.kind==='branch'?{branchId:account.scope.branchId}:{}),
   ...(typeof raw.eodReconciliationId==='string'&&raw.eodReconciliationId?{eodReconciliationId:raw.eodReconciliationId,shiftId:raw.eodReconciliationId.split('~')[4]}:{}),

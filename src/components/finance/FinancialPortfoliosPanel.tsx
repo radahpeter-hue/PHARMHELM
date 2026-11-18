@@ -37,12 +37,12 @@ function TreasuryWorkspace(){
  const treasury=useManagementPaymentAccounts(true);
  const [branches,setBranches]=useState<Array<{id:string;name:string;active:boolean}>>([]),[items,setItems]=useState<FinancialPortfolio[]>([]);
  const [registryError,setRegistryError]=useState(''),[registryLoading,setRegistryLoading]=useState(true),[refresh,setRefresh]=useState(0);
- const credit=useCreditReceivablesPortfolio(refresh);
  const welfareEvidence=useTreasuryWelfareEvidence(tenantId,refresh);
  const [bankTab,setBankTab]=useState('Unified Ledger');
  const [activityDate,setActivityDate]=useState('');
  const [entryId,setEntryId]=useState('');
  const [workspace,setWorkspace]=useState(''),[accountId,setAccountId]=useState(''),[createOpen,setCreateOpen]=useState(false);
+ const credit=useCreditReceivablesPortfolio(refresh,undefined,workspace==='credit');
  const [ledgers,setLedgers]=useState<AuthoritativePortfolioLedger[]>([]),[ledgerError,setLedgerError]=useState(''),[ledgerLoading,setLedgerLoading]=useState(true);
  const [ledgerRevision,setLedgerRevision]=useState<unknown>(null);
  const changed=()=>setRefresh(n=>n+1);
@@ -172,13 +172,8 @@ function TreasuryWorkspace(){
     </section>
    </div>
   </>:<>
-   {workspace==='credit'?<>{credit.error?<p role="alert">{credit.error}</p>:credit.data?<CreditReceivablesLedger data={credit.data} branches={branches}/>:<p>Loading receivables…</p>}{credit.unlinkedReceipts===null?<p className="text-xs text-zinc-600">POS credit linkage check unavailable or loading.</p>:
-    credit.unlinkedReceipts.length?<details className={surface}><summary className="cursor-pointer font-semibold">{credit.unlinkedReceipts.length} POS credit receipts need matching</summary>
-     <p className="mt-2 text-sm text-zinc-600">Match these receipts against the Credit Ledger before changing a receivable.</p>
-     <ul className="mt-2 space-y-1 text-sm">{credit.unlinkedReceipts.map(receipt=><li key={receipt.id} className="break-words">
-      {receipt.reference} · {branches.find(branch=>branch.id===receipt.branchId)?.name||receipt.branchId||'Branch unavailable'} · {receipt.date||'Date unavailable'}
-     </li>)}</ul>
-    </details>:<p className="text-xs text-zinc-600">No unmatched POS credit receipts found.</p>}</>:workspace==='welfare'?<div key={'welfare-'+refresh}><TreasuryWelfareRecords evidence={welfareEvidence}/></div>:<>
+   {workspace==='credit'?<>{credit.error?<p role="alert">{credit.error}</p>:credit.data?<CreditReceivablesLedger data={credit.data} branches={branches}
+    historyReady={!!credit.historyReady} evidenceIncomplete={!!credit.evidencePending||!!credit.evidenceError?.length}/>:<p>Loading receivables…</p>}</>:workspace==='welfare'?<div key={'welfare-'+refresh}><TreasuryWelfareRecords evidence={welfareEvidence}/></div>:<>
     {bankRoot&&<nav aria-label="Bank portfolio views" className="flex flex-wrap gap-2 border-b border-zinc-200">
      {['Unified Ledger','Bank Accounts',...(canRegister?['Account Management']:[]),'Reconciliations','Audit Trail'].map(tab=><button key={tab} aria-pressed={bankTab===tab} onClick={()=>setBankTab(tab)} className={`min-h-11 border-b-2 px-3 text-sm font-semibold ${bankTab===tab?'border-emerald-700 text-emerald-800':'border-transparent text-zinc-600'}`}>{tab}</button>)}
     </nav>}

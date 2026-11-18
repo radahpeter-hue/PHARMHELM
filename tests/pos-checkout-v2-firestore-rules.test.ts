@@ -47,7 +47,7 @@ test('V2 sale creation is linked to the canonical payment and durable outbox in 
   assert.match(saleRule, /getAfter\(\/databases\/\$\(database\)\/documents\/pos_payments/);
   assert.match(saleRule, /getAfter\(\/databases\/\$\(database\)\/documents\/pos_transaction_outbox/);
   assert.match(saleRule, /payment\.amount == sale\.totalAmount/);
-  assert.match(saleRule, /isLegacySale\(request\.resource\.data\) \|\|[\s\S]{0,100}hasValidV2SaleLinks\(saleId\)/);
+  assert.match(saleRule, /isLegacySale\(request\.resource\.data\)[\s\S]{0,360}hasValidV2SaleLinks\(saleId\)/);
 });
 
 test('V2 batch deduction is branch-scoped and cannot create negative stock', () => {

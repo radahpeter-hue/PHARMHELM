@@ -1,3 +1,4 @@
+import { CREDIT_SPLIT_TENDER, isCreditMethod } from '../../domain/finance/creditRecognition';
 import { PosCheckoutV2Error } from './posCheckoutV2Errors';
 import { POS_CANONICAL_PAYMENT_METHODS } from '../../utils/posPaymentMethods';
 import type {
@@ -79,8 +80,18 @@ export function buildPosCheckoutV2Payment(params: {
 
   const components: PosCheckoutV2PaymentComponent[] = [];
 
-  if (method === 'staff_welfare' && request.secondaryPaymentMethod) {
-    const secondaryMethod = String(request.secondaryPaymentMethod).trim();
+  const secondaryMethod = String(request.secondaryPaymentMethod || '').trim();
+  if (secondaryMethod && (isCreditMethod(method) || isCreditMethod(secondaryMethod))) {
+    if (!(isCreditMethod(method) && CREDIT_SPLIT_TENDER.includes(secondaryMethod) ||
+      isCreditMethod(secondaryMethod) && CREDIT_SPLIT_TENDER.includes(method))) {
+      throw new PosCheckoutV2Error('PAYMENT_MISMATCH', 'Credit splits require one credit balance and one cash, mobile money or card payment.');
+    }
+    const secondaryAmount = normalizeAmount(request.secondaryAmount, 'Secondary payment amount');
+    if (secondaryAmount <= 0 || secondaryAmount >= total) {
+      throw new PosCheckoutV2Error('PAYMENT_MISMATCH', 'The split amount must be greater than zero and less than the sale total.');
+    }
+    components.push(component(method, total - secondaryAmount), component(secondaryMethod, secondaryAmount));
+  } else if (method === 'staff_welfare' && request.secondaryPaymentMethod) {
     if (!WELFARE_SECONDARY_METHODS.has(secondaryMethod)) {
       throw new PosCheckoutV2Error('PAYMENT_MISMATCH', 'The welfare split contains a secondary payment method that is not offered by the current POS workflow.');
     }
@@ -90,7 +101,7 @@ export function buildPosCheckoutV2Payment(params: {
     components.push(component('staff_welfare', welfareAmount), component(secondaryMethod, secondaryAmount));
   } else {
     if (request.secondaryPaymentMethod != null || request.secondaryAmount != null) {
-      throw new PosCheckoutV2Error('PAYMENT_MISMATCH', 'Secondary payment fields are only valid for the existing staff-welfare split workflow.');
+      throw new PosCheckoutV2Error('PAYMENT_MISMATCH', 'Secondary payment fields are only valid for welfare or credit split payments.');
     }
     if (method === 'staff_welfare' && request.welfareAmount != null) {
       assertMoneyEqual(normalizeAmount(request.welfareAmount, 'Staff welfare amount'), total, 'Staff welfare amount must equal the authoritative sale total when no split applies.');

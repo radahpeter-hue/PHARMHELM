@@ -17,7 +17,9 @@ const stub = join(scratch, 'firebase-runtime.ts');
 writeFileSync(stub, 'export const db = globalThis.__sparkRuntime.db; export const auth = globalThis.__sparkRuntime.auth;');
 const bundle = join(scratch, 'atomic.mjs');
 const entry = join(scratch, 'entry.ts');
-writeFileSync(entry, `export { commitPosV2ReceiptCorrection } from ${JSON.stringify(resolve('src/services/pos-v2/posSaleRevisionV2AtomicRepository.ts'))};\nexport { PosRevisionStagedTransaction } from ${JSON.stringify(resolve('src/services/pos-v2/posRevisionStagedTransaction.ts'))};`);
+writeFileSync(entry, `export { commitPosV2ReceiptCorrection, voidPosV2CreditReceipt } from ${JSON.stringify(resolve('src/services/pos-v2/posSaleRevisionV2AtomicRepository.ts'))};\nexport { PosRevisionStagedTransaction } from ${JSON.stringify(resolve('src/services/pos-v2/posRevisionStagedTransaction.ts'))};
+export { prepareCheckoutV2Repository, commitCheckoutV2 } from ${JSON.stringify(resolve('src/services/pos-v2/posCheckoutV2Repository.ts'))};
+export { settleCreditReceivable } from ${JSON.stringify(resolve('src/services/receivableSettlement.ts'))};`);
 await build({ entryPoints: [entry],
   bundle: true, platform: 'node', format: 'esm', packages: 'external', outfile: bundle,
   plugins: [{ name: 'emulator-connection', setup(builder) {
@@ -28,7 +30,7 @@ await build({ entryPoints: [resolve('src/services/pos-v2/posSaleRevisionV2Planne
   platform: 'node', format: 'esm', packages: 'external', outfile: plannerBundle });
 const { buildPosV2RevisionPlan } = await import(pathToFileURL(plannerBundle));
 const env = await initializeTestEnvironment({ projectId: 'demo-pharmhelm-spark-production',
-  firestore: { rules: readFileSync('firestore.rules', 'utf8') } });
+  firestore: { rules: readFileSync(process.env.PHARMHELM_SETTLEMENT_RULES || 'firestore.rules', 'utf8') } });
 let checks = 0;
 
 async function seed({ method = 'cash', posted = false, role = 'Dispenser', quantity = 90, settledCredit = false, multipleBatches = false, productCount = 1, originalQuantity = 10, unitPrice = 500 } = {}) {
@@ -99,13 +101,15 @@ async function seed({ method = 'cash', posted = false, role = 'Dispenser', quant
   });
   const db = env.authenticatedContext('operator', { tenantId: 'tenant-a', email: 'operator@example.test' }).firestore();
   globalThis.__sparkRuntime = { db, auth: { currentUser: { uid: 'operator' } } };
-  const { commitPosV2ReceiptCorrection, PosRevisionStagedTransaction } = await import(pathToFileURL(bundle).href + `?case=${checks++}`);
-  return { db, sale: clean(sale), commit: commitPosV2ReceiptCorrection, Stage: PosRevisionStagedTransaction };
+  const { commitPosV2ReceiptCorrection, voidPosV2CreditReceipt, PosRevisionStagedTransaction,
+    prepareCheckoutV2Repository,commitCheckoutV2,settleCreditReceivable } = await import(pathToFileURL(bundle).href + `?case=${checks++}`);
+  return { db, sale: clean(sale), commit: commitPosV2ReceiptCorrection, Stage: PosRevisionStagedTransaction,
+    voidPosV2CreditReceipt,prepareCheckoutV2Repository,commitCheckoutV2,settleCreditReceivable };
 }
 
 function input(sale, quantity = 30, addService = false, paymentMethod = sale.paymentMethod) {
   const unitPrice = sale.items[0].actualUnitPrice;
-  const revisedItems = [{ ...sale.items[0], quantity, commercialQuantity: quantity, subtotal: quantity * unitPrice, total: quantity * unitPrice }, ...sale.items.slice(1)];
+  const revisedItems = [{ ...sale.items[0], quantity, commercialQuantity: quantity, subtotal: quantity * unitPrice, total: quantity * unitPrice, lineTotal: quantity * unitPrice }, ...sale.items.slice(1)];
   if (addService) revisedItems.push({ productId: 'consultation', name: 'Consultation', productName: 'Consultation', batchId: 'N/A', quantity: 1, unitPrice: 2000, subtotal: 2000, total: 2000, costPrice: 0, isService: true });
   const plan = buildPosV2RevisionPlan({ originalSale: sale, revisedItems, revisedTotal: quantity * unitPrice + (sale.items.length - 1) * sale.items[0].total + (addService ? 2000 : 0),
     reason: 'Correct the receipt quantity', paymentMethod, now: new Date() });
@@ -113,6 +117,62 @@ function input(sale, quantity = 30, addService = false, paymentMethod = sale.pay
 }
 
 try {
+  for (const scenario of ['edit','void','credit-secondary']) {
+    const { db,sale,commit,voidPosV2CreditReceipt,prepareCheckoutV2Repository,commitCheckoutV2,settleCreditReceivable } = await seed();
+    const actor = {uid:'operator',name:'POS Operator',role:'Dispenser'};
+    const dest = 'system_mtn_mobile_money';
+    await env.withSecurityRulesDisabled(async context=>{
+      const admin=context.firestore();
+      await setDoc(doc(admin,'staff','finance'),{tenantId:sale.tenantId,role:'Finance Head',status:'active',active:true});
+      await setDoc(doc(admin,'clients','credit-client'),{tenantId:sale.tenantId,full_name:'Credit Customer',status:'active',payment_terms:'Net 30'});
+      await setDoc(doc(admin,'finance_payment_accounts',sale.tenantId+'_'+dest),{tenantId:sale.tenantId,accountId:dest,portfolioId:dest,
+        currency:'UGX',name:'MTN Mobile Money',kind:'bank',portfolioClassification:'mobile_money',scope:{kind:'organisation'},
+        initialized:true,balanceUGX:0,openingBalanceUGX:0,lastPostingId:null});
+    });
+    const finance=env.authenticatedContext('finance').firestore();
+    const split = scenario!=='edit';
+    const checkout = {attemptId:'level10-checkout-'+scenario,branchId:sale.branchId,items:sale.items,
+      paymentMethod:scenario==='credit-secondary'?'cash':'institutional_credit',
+      secondaryPaymentMethod:split?(scenario==='credit-secondary'?'credit':'cash'):undefined,
+      secondaryAmount:split?(scenario==='credit-secondary'?3000:2000):undefined,patientId:'credit-client',patientName:'Credit Customer'};
+    console.log(`Testing credit ${scenario} checkout`);
+    const prepared = await prepareCheckoutV2Repository('operator',checkout);
+    const [first,retry] = await Promise.all([commitCheckoutV2(checkout,prepared),commitCheckoutV2(checkout,prepared)]);
+    assert.equal(first.saleId,retry.saleId);
+    const debtRef=doc(finance,'credit_receivables',first.saleId);
+    const debt=(await getDoc(debtRef)).data();
+    assert.equal(debt.amount_ugx,split?3000:5000);
+    assert.equal(debt.invoice_number,first.receiptNumber);
+    assert.equal(first.payment.settledAmount,split?2000:0);
+    assert.equal(debt.debtorId,'credit-client');
+    assert.equal((await getDoc(doc(finance,'finance_payment_accounts',sale.tenantId+'_'+dest))).data().balanceUGX,0);
+    if (scenario==='credit-secondary') {console.log('PASS exactly-once credit recognition with credit as the secondary POS tender.'); continue;}
+    console.log(`Testing credit ${scenario} collection`);
+    const collection=await settleCreditReceivable({tenantId:sale.tenantId,receivableId:first.saleId,amountUGX:2000,destinationAccountId:dest,
+      reference:'MTN collection test',requestId:'level10_spark_collection_'+scenario,actorId:'finance'},finance);
+    const savedSale={...(await getDoc(doc(db,'sales',first.saleId))).data(),id:first.saleId};
+    console.log(`Testing credit ${scenario} correction`);
+    if (scenario==='edit') {
+      const reviewed=input(savedSale,6);
+      const corrected=await commit(reviewed);
+      const revisedDebt=(await getDoc(doc(finance,'credit_receivables',corrected.checkout.saleId))).data();
+      assert.equal(revisedDebt.amount_ugx,3000);
+      assert.equal(revisedDebt.outstanding_ugx,1000);
+      assert.equal(revisedDebt.carriedCollectionsUGX,2000);
+      assert.equal(revisedDebt.originalSaleId,first.saleId);
+    } else {
+      const reason='Void duplicate credit receipt';
+      const result=await voidPosV2CreditReceipt(savedSale,actor,reason);
+      assert.equal(result.refundDueUGX,4000);
+      assert.equal((await voidPosV2CreditReceipt(savedSale,actor,reason)).replayed,true);
+      assert.equal((await getDoc(doc(db,'sales',first.saleId))).data().status,'voided');
+      assert.equal((await getDoc(doc(db,'product_batches','batch-a'))).data().quantity,90);
+    }
+    assert.equal((await getDoc(debtRef)).data().outstanding_ugx,0);
+    assert.equal((await getDoc(doc(finance,'finance_payment_accounts',sale.tenantId+'_'+dest))).data().balanceUGX,2000);
+    assert.equal((await getDoc(doc(finance,'finance_receivable_settlements_v1',collection.settlementId))).data().amountUGX,2000);
+    console.log(`PASS exactly-once POS recognition, settled credit ${scenario}, retained collections and no fabricated account movement.`);
+  }
   for (const scenario of [
     { label: 'cash 10 to 30', method: 'cash' },
     { label: 'cash quantity decrease', method: 'cash', revisedQuantity: 5 },

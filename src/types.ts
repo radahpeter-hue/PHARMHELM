@@ -964,10 +964,12 @@ export interface CreditReceivable {
   institution_id?: string;
   amount_ugx: number;
   outstanding_ugx: number;
-  status: 'outstanding' | 'paid' | 'defaulted';
+  status: 'outstanding' | 'partial' | 'paid' | 'defaulted' | 'reversed' | 'voided';
   branch_id?: string;
-  due_date?: string;
+  due_date?: string | null;
   invoice_number?: string;
+  lastSettlementId?: string;
+  refundDueUGX?: number;
   created_at?: string;
 }
 
