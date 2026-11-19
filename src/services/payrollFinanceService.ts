@@ -1,3 +1,4 @@
+import {payrollRecordView} from '../domain/finance/payrollRecordView';
 import {collection,doc,getDocs,query,runTransaction,serverTimestamp,where,type Firestore} from 'firebase/firestore';
 import {auth,db} from '../firebase';
 import {PAYROLL_BATCHES,PAYROLL_STATUS,PAYROLL_LINES,PAYROLL_EVENTS,PAYROLL_PAYMENTS,emptyPayrollTotals,finalizePayrollLine,
@@ -132,7 +133,7 @@ export async function reviewPayroll(input:{tenantId:string;batchId:string;revisi
 export async function getPayrollRevision(batch:PayrollBatch,database:Firestore=db){
   const rows=await getDocs(query(collection(database,PAYROLL_LINES),where('tenantId','==',batch.tenantId),
     where('batchId','==',batch.id),where('revision','==',batch.revision)));
-  return rows.docs.map(d=>({...d.data(),id:d.id})).sort((a:any,b:any)=>a.index-b.index) as any[];
+  return rows.docs.map(d=>payrollRecordView({...d.data(),id:d.id})).sort((a:any,b:any)=>a.index-b.index) as any[];
 }
 
 export async function paySalary(input:{tenantId:string;batchId:string;staffId:string;revision:number;actorId:string;

@@ -1507,12 +1507,9 @@ service cloud.firestore {
         : ['Finance Head','Accountant','admin','Admin','owner','Owner','CEO','ceo','CEO / MD'];
       return isAuthenticated() && staff.tenantId == tenantId && !staff.get('is_duplicate',false) && staff.get('active',true)
         && staff.get('status','active').lower() == 'active'
-        && (staff.role in central || staff.get('secondaryRoles',[]).hasAny(central)
-          || (((!hr && (staff.role == 'Finance Officer' || 'Finance Officer' in staff.get('secondaryRoles',[])))
-            || staff.role == 'ceo / md' || 'ceo / md' in staff.get('secondaryRoles',[])
-            || request.auth.token.get('email','') in ['peterssentongo61@gmail.com','peter.sentongo@pharmhelm','peter.sentongo@pharmhelm.com']
-            || hasCustomModuleFunctional(hr ? 'hr' : 'finance')) && staff.get('assigned_branches',[]).size() == 0
-            && staff.get('branch_id','') == '' && staff.get('default_branch_id','') == ''));
+        && (hr ? isHR() : isFinance())
+        && (hasAnyRole(central) || (staff.get('assigned_branches',[]).size() == 0
+          && staff.get('branch_id','') == '' && staff.get('default_branch_id','') == ''));
     }
     function viewPayroll(tenantId) {
       return isTenantMember(tenantId) && (isHR() || canViewFinance());
@@ -1638,7 +1635,7 @@ service cloud.firestore {
         let changed = after.diff(before).affectedKeys();
         return payrollActor(before.tenantId,before.status in ['draft','returned']) && after.tenantId == before.tenantId && after.id == before.id && after.updatedAt == request.time
           && ((after.status == before.status && after.revision == before.revision) || payrollStatusMirror(after))
-          && (before.status in ['returned','draft'] && after.status == 'draft' && after.revision == before.revision + 1 
+          && (before.status in ['returned','draft'] && after.status == 'draft' && after.revision == before.revision + 1
             && (before.status == 'returned' || payrollEvent(after,'restart'))
             && after.revision == before.revision + 1 && after.nextIndex == 0 && after.submittedBy == request.auth.uid
             && after.employeeCount is int && after.employeeCount > 0 && after.paidUGX == 0
@@ -1650,18 +1647,18 @@ service cloud.firestore {
             && changed.hasOnly(['nextIndex','totals','lastStaffId','updatedAt'])
             && getAfter(/databases/$(database)/documents/finance_payroll_lines_v1/$(batchId + '_r' + string(before.revision) + '__' + after.lastStaffId)).data.stagedAt == request.time
             && !exists(/databases/$(database)/documents/finance_payroll_lines_v1/$(batchId + '_r' + string(before.revision) + '__' + after.lastStaffId))
-          || before.status == 'draft' && after.status == 'pending_finance' 
+          || before.status == 'draft' && after.status == 'pending_finance'
             && before.nextIndex == before.employeeCount && after.submittedAt == request.time && payrollEvent(after,'submitted')
             && getAfter(/databases/$(database)/documents/management_expenses/$(batchId)).data.revision == after.revision
             && changed.hasOnly(['status','submittedAt','updatedAt'])
-          || before.status == 'pending_finance' && after.status in ['approved','returned'] 
+          || before.status == 'pending_finance' && after.status in ['approved','returned']
             && getAfter(/databases/$(database)/documents/management_expenses/$(batchId)).data.status == (after.status == 'approved' ? 'approved' : 'rejected')
             && (after.status == 'approved' ? after.approvedAt == request.time && after.approvedBy == request.auth.uid
               && payrollEvent(after,'approve') && changed.hasOnly(['status','approvedAt','approvedBy','updatedAt'])
               : after.returnReason is string && after.returnReason.size() >= 5 && after.returnedAt == request.time
                 && after.returnedBy == request.auth.uid && payrollEvent(after,'return')
                 && changed.hasOnly(['status','returnReason','returnedAt','returnedBy','updatedAt']))
-          || before.status in ['approved','partial'] 
+          || before.status in ['approved','partial']
             && changed.hasOnly(['status','paidUGX','lastPaymentId','updatedAt'])
             && freshPayrollBatchPayment(before,after));
       }
@@ -2369,7 +2366,8 @@ service cloud.firestore {
               && (!('cashOutflowPostingId' in request.resource.data) || freshManagementExpensePayment(request.resource.data)));
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId) && !('cashOutflowPostingId' in resource.data)
         && !supplierDraft(resource.data) && resource.data.get('payrollVersion',0) != 11;
-      allow create, update: if validPayrollDraft(expenseId,request.resource.data);
+      allow create, update: if request.resource.data.get('payrollVersion',0) == 11
+        && validPayrollDraft(expenseId,request.resource.data);
     }
 
     match /campaigns/{campaignId} {

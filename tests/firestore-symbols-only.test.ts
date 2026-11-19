@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {compactRuleSymbols,shareFieldReaders,shareRequestFields,packEqualityConjunctions,uniqueLocalFunctions} from '../scripts/build-firestore-release-rules.mjs';
+import {compactRuleSymbols,shareFieldReaders,shareRequestFields,packEqualityConjunctions,uniqueLocalFunctions,elideDuplicateTenantGrants} from '../scripts/build-firestore-release-rules.mjs';
 test('symbols-only diagnostic leaves paths, literals and grants intact without policy transforms',()=>{
  const source=`rules_version = '2'; service cloud.firestore { match /databases/{database}/documents {
  function check(tenantId) { return request.auth != null && tenantId == 'tenant-value'; }
@@ -93,4 +93,17 @@ test('sibling local helper names become unique without changing root lookup, lit
  assert.match(result,/function releaseScopedHelper1\(\)/);
  assert.match(result,/allow create: if releaseScopedHelper1\(\)/);
  assert.match(result,/\/alpha\/\{id\}/);assert.match(result,/'alpha'/);
+});
+
+test('tenant deduplication keeps prior membership and immutable tenant equality',()=>{
+ const source=`allow update: if isAuthenticated() && isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId && request.resource.data.amount > 0;`;
+ const output=elideDuplicateTenantGrants(source);
+ assert.match(output,/isTenantMember\(resource.data.tenantId\)/);
+ assert.match(output,/request.resource.data.tenantId == resource.data.tenantId/);
+ assert.doesNotMatch(output,/isTenantMember\(request.resource.data.tenantId\)/);
+ assert.doesNotMatch(output,/isAuthenticated\(\)/);
+ const noEquality=source.replace('request.resource.data.tenantId == resource.data.tenantId && ','');
+ assert.equal(elideDuplicateTenantGrants(noEquality),noEquality);
+ const alternative=source.replace(' && request.resource.data.amount > 0',' || request.resource.data.public == true');
+ assert.equal(elideDuplicateTenantGrants(alternative),alternative);
 });

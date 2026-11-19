@@ -48,7 +48,10 @@ try{
  await assert.rejects(reviewPayroll({tenantId,batchId:batch.id,revision:1,actorId:'finance',action:'return',reason:''},finance));
  await reviewPayroll({tenantId,batchId:batch.id,revision:1,actorId:'finance',action:'return',reason:'Correct employee allowance'},finance);
  batch=await get('finance_payroll_batches_v1',batch.id);assert.equal(batch.status,'returned');
- assert.equal((await getPayrollRevision(batch,hr)).length,2);
+ const revisionRows=await getPayrollRevision(batch,hr);assert.equal(revisionRows.length,2);
+ assert.equal(revisionRows[0].net_salary,revisionRows[0].line.netSalary);
+ assert.equal(revisionRows[0].gross_salary,revisionRows[0].line.baseSalary+revisionRows[0].line.bonuses);
+ assert.equal(revisionRows[0].staff_name,revisionRows[0].line.staffName);
  const corrected=submit([line('employee1',{bonuses:10000.4,bonusNotes:'Authorized allowance'}),line('employee2')],{batchId:batch.id});
  const second=await submitPayroll(corrected,hr);assert.equal(second.id,batch.id);assert.equal(second.revision,2);
  batch=await get('finance_payroll_batches_v1',batch.id);assert.equal(batch.totals.net,647200);

@@ -10,7 +10,7 @@ const branchB = 'branch-b';
 
 const testEnv = await initializeTestEnvironment({
   projectId,
-  firestore: { rules: readFileSync('firestore.rules', 'utf8') }
+  firestore: { rules: readFileSync(process.env.PHARMHELM_SETTLEMENT_RULES || 'firestore.rules', 'utf8') }
 });
 
 const branchManager = testEnv.authenticatedContext('manager-a', { tenantId, role: 'Branch Manager' }).firestore();

@@ -365,13 +365,39 @@ export function shareRepeatedAllowConditions(source) {
  * This preserves short-circuit evaluation when a read has no write snapshot or
  * a request has no auth object.
  */
-export function shareRequestExpressions(source) {
+// Preserve direct reads and original snapshot binding in the busiest atomic
+// inventory and Treasury validators; these approach Firestore's 1000-step cap.
+function budgetSensitiveRanges(mask){
+ const ranges=[];
+ for(const head of mask.matchAll(/^    match \/(?:identity_sequence_counters|operational_\w+|stock_orders|stock_order_lines|grn_records|transfer_invoices|transfer_invoice_lines|finance_transfers_v1)\/\{\w+\}\s*\{/gm)){
+  let end=head.index+head[0].length,depth=1;for(;end<mask.length&&depth;end++){if(mask[end]==='{')depth++;if(mask[end]==='}')depth--;}
+  ranges.push({from:head.index,to:end});
+ }
+ const declarations=[];
+ for(const head of mask.matchAll(/\bfunction\s+(\w+)\([^)]*\)\s*\{/g)){
+  let end=head.index+head[0].length,depth=1;for(;end<mask.length&&depth;end++){if(mask[end]==='{')depth++;if(mask[end]==='}')depth--;}
+  declarations.push({name:head[1],from:head.index,to:end,body:mask.slice(head.index+head[0].length,end-1)});
+ }
+ const calls=value=>[...value.matchAll(/(?<![.\w])(\w+)\s*\(/g)].map(m=>m[1]);
+ const needed=new Set(ranges.flatMap(r=>calls(mask.slice(r.from,r.to))));
+ for(let pass=0;pass<declarations.length;pass++){
+  const size=needed.size;
+  for(const d of declarations)if(needed.has(d.name))for(const name of calls(d.body))needed.add(name);
+  if(size===needed.size)break;
+ }
+ for(const d of declarations)if(needed.has(d.name))ranges.push({from:d.from,to:d.to});
+ return ranges;
+}
+
+export function shareRequestExpressions(source,{preserveBudget=false}={}) {
  const masked = maskRulesTrivia(source);
  if (!databaseScope.test(masked)) return source;
+ const protectedRanges=preserveBudget?budgetSensitiveRanges(masked):[];
  const paths = [...masked.matchAll(/(?<![.\w])(?:isTenantMember\((?:request\.)?resource\.data\.tenantId\)|(?:(?:request\.)?resource\.data(?:\.(?:tenantId|branchId|status|inventoryClass))?|request\.auth\.uid|request\.time)\b)/g)];
  const helpers = new Map();
  let serial = 0;
  for (const match of paths.reverse()) {
+  if(protectedRanges.some(r=>match.index>=r.from&&match.index<r.to))continue;
   const [path] = match;
   if (!helpers.has(path)) {
    let name;
@@ -477,9 +503,13 @@ export function omitNeverAllow(source){
 export function shareFieldReaders(source){
  const masked=maskRulesTrivia(source),groups=new Map();
  if(!databaseScope.test(masked))return source;
- const protectedRanges=[];
+ const protectedRanges=budgetSensitiveRanges(masked).filter(r=>!/^\s*match\s+\/(?:operational_\w+|stock_orders|stock_order_lines|grn_records|transfer_invoices|transfer_invoice_lines)\//.test(masked.slice(r.from,r.to)));
  const authorityEnd=masked.indexOf('function isPOSOperator(');
  if(authorityEnd>0)protectedRanges.push({from:0,to:authorityEnd});
+ for(const head of masked.matchAll(/\bfunction\s+operationalIdentity\w+\([^)]*\)\s*\{/g)){
+  let end=head.index+head[0].length,depth=1;for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  protectedRanges.push({from:head.index,to:end});
+ }
  const excluded=new Set(['resource','data','auth','token','time']);
  for(const m of masked.matchAll(/(?<![.\w])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.([A-Za-z_]\w{2,})\b(?![\w]|\s*\()/g)){
   if(excluded.has(m[2])||protectedRanges.some(r=>m.index>=r.from&&m.index<r.to))continue;
@@ -499,7 +529,9 @@ export function shareFieldReaders(source){
 
 export function shareRequestFields(source){
  const masked=maskRulesTrivia(source),groups=new Map();
+ const protectedRanges=budgetSensitiveRanges(masked);
  for(const m of masked.matchAll(/(?<![.\w])(?:request\.)?resource\.data\.[A-Za-z_]\w*\b(?![\w]|\s*\()/g)){
+  if(protectedRanges.some(r=>m.index>=r.from&&m.index<r.to))continue;
   if(!groups.has(m[0]))groups.set(m[0],[]);groups.get(m[0]).push(m.index);
  }
  const changes=[],helpers=[];let serial=0;
@@ -547,8 +579,14 @@ export function packEqualityConjunctions(source,{booleanChoices=false}={}){
   let end=h.index+h[0].length,depth=1;for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
   functions.push({name:h[1],from:h.index,to:end});
  }
+ const scalarRanges=[];
+ for(const head of masked.matchAll(/^    match \/(?:identity_sequence_counters|operational_\w+|stock_orders|stock_order_lines|grn_records|transfer_invoices|transfer_invoice_lines)\/\{\w+\}\s*\{/gm)){
+  let end=head.index+head[0].length,depth=1;for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  scalarRanges.push({from:head.index,to:end});
+ }
  const names=new Set(functions.map(f=>f.name)),unsafe=new Set();
  for(const name of names)if(functions.filter(f=>f.name===name).length>1)unsafe.add(name);
+ for(const f of functions)if(scalarRanges.some(r=>f.from>=r.from&&f.from<r.to))unsafe.add(f.name);
  const calls=value=>[...maskRulesTrivia(value).matchAll(/(?<![.\w])(\w+)\s*\(/g)].map(m=>m[1]).filter(n=>names.has(n));
  const unsafeCalls=value=>{
   const inner=unparen(value);if(inner!==null)return unsafeCalls(inner);
@@ -569,6 +607,7 @@ export function packEqualityConjunctions(source,{booleanChoices=false}={}){
   const owner=functions.find(f=>m.index>f.from&&m.index<f.to)?.name;
   return {from,to:from+body.length,body:source.slice(from,from+body.length),owner,positive:m[3]===undefined};
  });
+ for(const st of parsed)if(scalarRanges.some(r=>st.from>=r.from&&st.from<r.to))for(const name of calls(st.body))unsafe.add(name);
  for(const st of parsed)for(const name of st.positive?unsafeCalls(st.body):calls(st.body))unsafe.add(name);
  // A predicate's result must remain in positive boolean contexts all the way
  // to an allow grant. Do not change false/error behavior observed by negation,
@@ -597,7 +636,7 @@ export function packEqualityConjunctions(source,{booleanChoices=false}={}){
   }
   flush();return result.join('&&');
  };
- for(const st of parsed.reverse())if(st.positive&&(!st.owner||!unsafe.has(st.owner)))source=source.slice(0,st.from)+rewrite(st.body)+source.slice(st.to);
+ for(const st of parsed.reverse())if(st.positive&&(!st.owner||!unsafe.has(st.owner))&&!scalarRanges.some(r=>st.from>=r.from&&st.from<r.to))source=source.slice(0,st.from)+rewrite(st.body)+source.slice(st.to);
  return source;
 }
 
@@ -645,13 +684,37 @@ export function uniqueLocalFunctions(source){
  return source;
 }
 
-export const RELEASE_RULE_OPTIONS=Object.freeze({earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:true,booleanChoices:true,uniqueLocals:true});
+export const RELEASE_RULE_OPTIONS=Object.freeze({earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:false,booleanChoices:true,uniqueLocals:true,tenantChecks:true,groupCollections:false});
 
-export function compactRuleSymbols(source,{minimal=false,fieldReaders=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+/** On an update, an unchanged tenant plus membership of the existing tenant
+ * makes the second membership call redundant. Keep both equality and the
+ * original membership check; only simplify a positive top-level conjunction. */
+export function elideDuplicateTenantGrants(source){
+ const mask=maskRulesTrivia(source),grants=[...mask.matchAll(/\ballow\s+update\s*:\s*if\b([^;]+);/g)];
+ for(const g of grants.reverse()){
+  const from=g.index+g[0].indexOf(g[1]),body=source.slice(from,from+g[1].length),text=maskRulesTrivia(body);let depth=0,start=0;const parts=[];let unsupported=false;
+  for(let i=0;i<text.length;i++){
+   if('([{'.includes(text[i]))depth++;
+   else if(')]}'.includes(text[i]))depth--;
+   else if(!depth){if(text.startsWith('||',i)||text[i]==='?'){unsupported=true;break;}if(text.startsWith('&&',i)){parts.push(body.slice(start,i));start=i+2;i++;}}
+  }
+  if(unsupported)continue;parts.push(body.slice(start));
+  const normalized=parts.map(p=>maskRulesTrivia(p).replace(/\s/g,''));
+  const before='isTenantMember(resource.data.tenantId)',after='isTenantMember(request.resource.data.tenantId)';
+  const equal=['request.resource.data.tenantId==resource.data.tenantId','resource.data.tenantId==request.resource.data.tenantId'];
+  if(!normalized.includes(before)||!normalized.includes(after)||!equal.some(e=>normalized.includes(e)))continue;
+  const filtered=parts.filter((p,i)=>normalized[i]!==after&&normalized[i]!=='isAuthenticated()');
+  source=source.slice(0,from)+filtered.join('&&')+source.slice(from+g[1].length);
+ }
+ return source;
+}
+
+export function compactRuleSymbols(source,{minimal=false,fieldReaders=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
  if(!minimal){
  source=omitNeverAllow(source);
+ if(tenantChecks)source=elideDuplicateTenantGrants(source);
  if(broadRequests)source=shareRequestFields(source);
- if(earlyRequests)source=shareRequestExpressions(source);
+ if(earlyRequests)source=shareRequestExpressions(source,{preserveBudget:true});
  if(fieldReaders)source=shareFieldReaders(source);
  if(shareReaders)source=shareSnapshotReaders(source);
  if(shareSchemas)source=shareSchemaChecks(source);
