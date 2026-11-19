@@ -46,24 +46,15 @@ jobs:
           git show HEAD:firestore.rules > /tmp/authored-candidate.rules
           node --input-type=module <<'JS'
           import {readFileSync,writeFileSync} from 'node:fs';
-          import {compactRuleSymbols,wrapReleaseColumns} from './scripts/build-firestore-release-rules.mjs';
+          import {compactRuleSymbols,wrapReleaseColumns,RELEASE_RULE_OPTIONS} from './scripts/build-firestore-release-rules.mjs';
           const source=readFileSync('/tmp/authored-candidate.rules','utf8');
+          const release=RELEASE_RULE_OPTIONS;
           const variants={
-            symbolsOnly:{minimal:true},
-            noPaths:{maxLocalOwners:0,shareConstants:false,sharePaths:false},
-            noArrays:{maxLocalOwners:0,shareConstants:false,packArrays:false},
-            baseline:{maxLocalOwners:0,sharePaths:false,memoize:false,balanceConditions:false,groupCollections:false,packArrays:false,shareReaders:false,shareSchemas:false,shareConstants:false},
-            unbalanced:{balanceConditions:false},
-            shared:{maxLocalOwners:0,balanceConditions:false},
+            noVector:{...release,vectorEquality:false},
+            noFields:{...release,fieldReaders:false},
+            noEarlyRequests:{...release,earlyRequests:false},
           };
           for(const [name,options] of Object.entries(variants)) writeFileSync(`/tmp/${name}.rules`,wrapReleaseColumns(compactRuleSymbols(source,options))+'\n');
-          // Restrictive diagnostic subsets only, never deployment candidates.
-          const blocks=[...source.matchAll(/^    match [^\n]+ \{[\s\S]*?^    }/gm)];
-          for(const half of [0,1]){
-            let reduced=source;
-            for(let index=blocks.length-1;index>=0;index--)if(index%2!==half){const block=blocks[index];reduced=reduced.slice(0,block.index)+reduced.slice(block.index+block[0].length);}
-            writeFileSync(`/tmp/half-${half}.rules`,wrapReleaseColumns(compactRuleSymbols(reduced))+'\n');
-          }
           JS
           cp scripts/diagnose-firestore-compiler.mjs /tmp/rules-size/diagnose.mjs
-          node /tmp/rules-size/diagnose.mjs /tmp/main-control.rules /tmp/symbolsOnly.rules /tmp/noPaths.rules /tmp/noArrays.rules /tmp/baseline.rules /tmp/unbalanced.rules /tmp/shared.rules
+          node /tmp/rules-size/diagnose.mjs /tmp/main-control.rules /tmp/noVector.rules /tmp/noFields.rules /tmp/noEarlyRequests.rules

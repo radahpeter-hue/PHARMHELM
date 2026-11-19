@@ -1,3 +1,4 @@
+import { payrollRecordView } from './payrollRecordView';
 import { LOGISTICS_EXPENSE_COLLECTIONS } from './cashOutflows';
 import { isExcludedFromOpex } from '../../utils/finance';
 import { matchesProfitabilityBranch } from '../../utils/profitabilityScope';
@@ -145,7 +146,7 @@ function expenseEntries(data: ProfitabilityData, tenantId: string): ExpenseEntry
     const end = profitabilityDate(row.periodEnd, row.period_end);
     const staffId = textValue(row.staffId ?? row.staff_id);
     const key = row.payrollVersion===11 ? `payroll/${row.batchId}/${staffId}` : start && end && staffId ? `payroll/${staffId}/${start}/${end}` : 'payroll/' + row.id;
-    const amount = payrollCost(row);
+    const amount = payrollCost(payrollRecordView(row));
     const prior = finalizedPayroll.get(key);
     if (!prior) finalizedPayroll.set(key, { row, amount });
     else if (prior.amount !== amount || (prior.row.branchId ?? prior.row.branch_id) !== (row.branchId ?? row.branch_id)) {

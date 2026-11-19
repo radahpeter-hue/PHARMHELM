@@ -927,21 +927,25 @@ service cloud.firestore {
       let accountPath = /databases/$(database)/documents/finance_payment_accounts/$(data.accountDocumentId);
       let before = get(accountPath).data;
       let after = getAfter(accountPath).data;
+      let payroll = isPayrollMovement(id,data);
+      let receivable = !payroll && isReceivableMovement(id,data);
+      let supplier = !payroll && !receivable && isSupplierMovement(id,data);
+      let transfer = !payroll && !receivable && !supplier
+        && (id.matches('^pt_.*') || data.keys().hasAny(['portfolioTransferId','movementClass']));
       return data.postedBy == request.auth.uid
         && data.amount is int && data.amount > 0
         && data.type in ['incoming','deposit','topup','outgoing','withdrawal']
         && data.accountDeltaUGX == (data.type in ['incoming','deposit','topup'] ? data.amount : -data.amount)
         && before.kind == kind
         && (!data.keys().hasAny(['externalExpenseCollection','externalExpenseId']) || linkedExternalExpense(id, data, before))
-        && (isPayrollMovement(id,data) ? validPayrollMovement(id,data,before,after) : isReceivableMovement(id, data)
-          ? after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.amount
-            && validReceivableMovement(id, data, before)
-          : isSupplierMovement(id, data)
-          ? !data.keys().hasAny(['portfolioTransferId','movementClass','transferId','externalExpenseCollection','externalExpenseId','eodChannel'])
-            && supplierMovement(id, data, before, after)
-          : (id.matches('^pt_.*') || data.keys().hasAny(['portfolioTransferId','movementClass'])
-            ? linkedPortfolioTransfer(id, data, before, after)
-            : (after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX)));
+        && ((payroll && validPayrollMovement(id,data,before,after))
+          || (receivable && after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.amount
+            && validReceivableMovement(id,data,before))
+          || (supplier && !data.keys().hasAny(['portfolioTransferId','movementClass','transferId','externalExpenseCollection','externalExpenseId','eodChannel'])
+            && supplierMovement(id,data,before,after))
+          || (transfer && linkedPortfolioTransfer(id,data,before,after))
+          || (!payroll && !receivable && !supplier && !transfer
+            && after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX));
     }
     // Canonical built-ins and legacy Management accounts have no custom registry.
     // getAfter prevents a posting from racing with lifecycle closure in the same batch.
@@ -954,13 +958,12 @@ service cloud.firestore {
       let movement = getAfter(movementPath).data;
       let transferDebit = movement.get('movementClass', '') == 'transfer_out';
       let supplier = movement.get('supplierPosting', '') in ['cash', 'credit'];
-      return (supplier
-          ? canSettleSupplier(before.tenantId) && eligibleSupplierAccount(before, movement.fundingBranchId)
-          : isTenantMember(before.tenantId) && activePortfolioAccount(before)
-            && (movement.get('externalExpenseCollection', '') == 'branch_expenses'
-              ? before.accountId == 'system_petty_cash_' + before.scope.branchId
-              : ((movement.get('eodChannel', '') != '' && validBranchEodMovement(after.lastPostingId, movement))
-                || isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash()))))
+      let branchExpense = !supplier && movement.get('externalExpenseCollection','') == 'branch_expenses';
+      return ((supplier && canSettleSupplier(before.tenantId) && eligibleSupplierAccount(before,movement.fundingBranchId))
+        || (!supplier && isTenantMember(before.tenantId) && activePortfolioAccount(before)
+          && ((branchExpense && before.accountId == 'system_petty_cash_' + before.scope.branchId)
+            || (!branchExpense && ((movement.get('eodChannel','') != '' && validBranchEodMovement(after.lastPostingId,movement))
+              || isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash()))))))
         // Every ledger create requires this paired update; authorize cash credits once here.
         && (movement.accountDeltaUGX <= 0 || before.accountId != 'management_petty_cash' || isFinance() || isHR())
         && after.diff(before).affectedKeys().hasOnly(['balanceUGX','lastPostingId','updatedAt'])
@@ -1545,18 +1548,9 @@ service cloud.firestore {
         && data.periodStart == before.periodStart && data.periodEnd == before.periodEnd && data.month == before.month
         && data.payrollVersion == 11 && data.payrollReference == before.reference
         && validPayrollComponents(data.line) && payrollTotalsStep(before.totals,after.totals,data.line)
-        && data.base_salary == data.line.baseSalary && data.gross_salary == data.line.baseSalary + data.line.bonuses
-        && data.allowances == data.line.bonuses && data.net_salary == data.line.netSalary
-        && data.deductions == data.line.deductions && data.nssf_employer == data.line.nssfEmployer
-        && data.nssf_employee == data.line.nssfEmployee && data.paye == data.line.paye
-        && data.advance_deduction == data.line.advanceDeduction && data.fine_deduction == data.line.fineDeduction
-        && data.staff_name == data.line.staffName && data.employee_id == data.line.employeeId
-        && data.basePay == data.base_salary && data.netPayable == data.net_salary
-        && data.nssfEmployee == data.nssf_employee && data.nssfEmployer == data.nssf_employer
-        && data.advanceDeduction == data.advance_deduction && data.fineDeduction == data.fine_deduction
-        && data.bonus_notes == data.line.bonusNotes && data.allowancesNotes == data.line.bonusNotes && data.unpaidLeaveDeduction == 0
-        && data.paidUGX == 0 && data.status == 'pending_finance' && data.unpaid_leave_deduction == 0
-        && !data.keys().hasAny(['paid_date','lastPaymentId']);
+        && data.paidUGX == 0 && data.status == 'pending_finance'
+        && data.keys().hasOnly(['tenantId','payrollVersion','batchId','payrollReference','revision','index','staffId',
+          'branch_id','periodStart','periodEnd','month','line','paidUGX','status','stagedAt']);
     }
     function payrollMirrorStaging(id, data) {
       let path = payrollSnapshotPath(data);
@@ -1597,7 +1591,7 @@ service cloud.firestore {
       return !exists(path) && payment.recordedAt == request.time && payment.actorId == request.auth.uid
         && payment.tenantId == before.tenantId && payment.batchId == before.batchId && payment.staffId == before.staffId
         && payment.revision == before.revision && after.paidUGX == before.paidUGX + payment.amountUGX
-        && after.status == (after.paidUGX == before.net_salary ? 'paid' : 'partial')
+        && after.status == (after.paidUGX == before.line.netSalary ? 'paid' : 'partial')
         && (after.status != 'paid' || after.paid_date == payment.date)
         && after.diff(before).affectedKeys().hasOnly(['paidUGX','status','paid_date','lastPaymentId']);
     }
@@ -1744,7 +1738,7 @@ service cloud.firestore {
           && batch.tenantId == p.tenantId && batch.revision == p.revision && batch.status in ['approved','partial']
           && row.tenantId == p.tenantId && row.batchId == p.batchId && row.revision == p.revision && row.staffId == p.staffId
           && row.branch_id == p.branchId && row.paidUGX == p.paidBeforeUGX && p.paidAfterUGX == row.paidUGX + p.amountUGX
-          && p.paidAfterUGX <= row.net_salary && p.outstandingUGX == row.net_salary - p.paidAfterUGX
+          && p.paidAfterUGX <= row.line.netSalary && p.outstandingUGX == row.line.netSalary - p.paidAfterUGX
           && batch.paidUGX == p.batchPaidBeforeUGX && p.batchPaidAfterUGX == batch.paidUGX + p.amountUGX
           && nextBatch.paidUGX == p.batchPaidAfterUGX && nextBatch.lastPaymentId == paymentId
           && getAfter(rowPath).data.lastPaymentId == paymentId
@@ -2369,7 +2363,8 @@ service cloud.firestore {
         && !('cashOutflowPostingId' in resource.data)
         && (resource.data.get('source','') == 'procurement_cash_grn' ? validGrnDraftSettlement(request.resource.data)
           : resource.data.get('source','') == 'credit_payment'
-            ? (validCreditDraftSettlement(request.resource.data) || validCreditDraftRejection(request.resource.data))
+            ? ((request.resource.data.status == 'rejected' && validCreditDraftRejection(request.resource.data))
+              || (request.resource.data.status != 'rejected' && validCreditDraftSettlement(request.resource.data)))
             : isFinance() && !supplierDraft(resource.data) && !supplierDraft(request.resource.data)
               && (!('cashOutflowPostingId' in request.resource.data) || freshManagementExpensePayment(request.resource.data)));
       allow delete: if isAdmin() && isTenantMember(resource.data.tenantId) && !('cashOutflowPostingId' in resource.data)

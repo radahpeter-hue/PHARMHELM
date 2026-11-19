@@ -22,17 +22,9 @@ const publicStatus = (batch:PayrollBatch) => ({tenantId:batch.tenantId,batchId:b
 const clean = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 function employeeRecord(batch: PayrollBatch,line: PayrollLine,index: number) {
   return clean({tenantId:batch.tenantId,payrollVersion:11,batchId:batch.id,payrollReference:batch.reference,
-    revision:batch.revision,index,staffId:line.staffId,staff_name:line.staffName,employee_id:line.employeeId,
-    branch_id:line.branchId,periodStart:batch.periodStart,periodEnd:batch.periodEnd,month:batch.month,
-    year:Number(batch.month.slice(0,4)),line,
-    base_salary:line.baseSalary,gross_salary:line.baseSalary+line.bonuses,allowances:line.bonuses,
-    bonus_notes:line.bonusNotes,allowancesNotes:line.bonusNotes,unpaidLeaveDeduction:0,deductions:line.deductions,advance_deduction:line.advanceDeduction,
-    fine_deduction:line.fineDeduction,nssf_employee:line.nssfEmployee,nssf_employer:line.nssfEmployer,paye:line.paye,
-    net_salary:line.netSalary,unpaid_leave_deduction:0,paidUGX:0,status:'pending_finance',
-    basePay:line.baseSalary,netPayable:line.netSalary,advanceDeduction:line.advanceDeduction,
-    fineDeduction:line.fineDeduction,nssfEmployee:line.nssfEmployee,nssfEmployer:line.nssfEmployer,
-    approvedLeavesDesc:line.approvedLeavesDesc || 'None',rejectedLeavesDesc:line.rejectedLeavesDesc || 'None',
-    advancesDesc:line.advancesDesc || 'None'});
+    revision:batch.revision,index,staffId:line.staffId,branch_id:line.branchId,
+    periodStart:batch.periodStart,periodEnd:batch.periodEnd,month:batch.month,
+    line,paidUGX:0,status:'pending_finance'});
 }
 
 /** Each employee advances a rules-checked accumulator. Only a complete revision can reach Finance.
@@ -170,7 +162,7 @@ export async function paySalary(input:{tenantId:string;batchId:string;staffId:st
     if(!account||!eligibleSupplierFunding(account,input.tenantId,portfolio))throw new Error('Select an active reconciled payment account.');
     if(account.scope?.kind==='branch'&&account.scope.branchId!==row.branch_id)throw new Error('The funding branch must match this employee allocation.');
     if(account.balanceUGX<input.amountUGX)throw new Error('Insufficient funds in the selected account.');
-    const balance=salaryPaymentBalance(row.net_salary,row.paidUGX,input.amountUGX);
+    const balance=salaryPaymentBalance(row.line.netSalary,row.paidUGX,input.amountUGX);
     const paidUGX=batch.paidUGX+input.amountUGX;
     const now=serverTimestamp(),date=kampalaBusinessDate(),movementId='salary_payment_'+paymentId;
     const employeeUpdate={paidUGX:balance.paid,status:balance.outstanding===0?'paid':'partial',lastPaymentId:paymentId,

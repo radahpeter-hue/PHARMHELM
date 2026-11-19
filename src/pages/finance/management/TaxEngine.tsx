@@ -1,3 +1,4 @@
+import { payrollRecordView } from '../../../domain/finance/payrollRecordView';
 import {usePayrollBatches} from '../../../hooks/usePayrollBatches';
 import { operationalStaff } from '../../../utils/operationalStaff';
 import { staffMatchesId } from '../../../utils/operationalStaff';
@@ -74,7 +75,7 @@ export const TaxEngine: React.FC = () => {
 
       // 4. Fetch Payroll (for PAYE & NSSF)
       const paySnap = await getDocs(query(collection(db, 'payroll'), where('tenantId', '==', profile.tenantId)));
-      setPayrollList(paySnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+      setPayrollList(paySnap.docs.map(doc => payrollRecordView({ id: doc.id, ...doc.data() as any })));
 
       // 5. Fetch Staff List (to get correct labels and tins)
       const staffSnap = await getDocs(query(collection(db, 'staff'), where('tenantId', '==', profile.tenantId)));

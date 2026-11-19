@@ -98,9 +98,9 @@ try{
   const payment={tenantId,batchId:extraBatch.id,staffId:'employee1',revision:currentBatch.revision,actorId:'finance',accountId,amountUGX:amount,reference,requestId,paymentId,
    accountDocumentId:tenantId+'_'+accountId,accountKind:'bank',accountName:account.name,movementId,branchId:'masaka',
    paidBeforeUGX:currentRow.paidUGX,paidAfterUGX:currentRow.paidUGX+amount,batchPaidBeforeUGX:currentBatch.paidUGX,
-   batchPaidAfterUGX:currentBatch.paidUGX+amount,outstandingUGX:currentRow.net_salary-currentRow.paidUGX-amount,recordedAt:serverTimestamp(),date};
+   batchPaidAfterUGX:currentBatch.paidUGX+amount,outstandingUGX:currentRow.line.netSalary-currentRow.paidUGX-amount,recordedAt:serverTimestamp(),date};
   const status=payment.batchPaidAfterUGX===currentBatch.totals.net?'paid':'partial';
-  const employeeStatus=payment.paidAfterUGX===currentRow.net_salary?'paid':'partial';
+  const employeeStatus=payment.paidAfterUGX===currentRow.line.netSalary?'paid':'partial';
   const writes=writeBatch(finance);
   writes.set(doc(finance,'finance_payroll_payments_v1',paymentId),payment);
   writes.set(doc(finance,'finance_payroll_payment_requests_v1',requestId),{tenantId,requestId,paymentId,actorId:'finance',recordedAt:serverTimestamp()});

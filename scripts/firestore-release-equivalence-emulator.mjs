@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {initializeTestEnvironment} from '@firebase/rules-unit-testing';
 import {FieldPath,doc,setDoc,updateDoc,deleteDoc,getDoc,getDocs,collection,query,where} from 'firebase/firestore';
-import {compactRuleSymbols,wrapReleaseColumns} from './build-firestore-release-rules.mjs';
+import {compactRuleSymbols,wrapReleaseColumns,RELEASE_RULE_OPTIONS} from './build-firestore-release-rules.mjs';
 
 if(!process.env.FIRESTORE_EMULATOR_HOST)throw Error('Firestore emulator is required.');
 const source=`rules_version = '2'; service cloud.firestore {
@@ -64,6 +64,6 @@ async function evaluate(rules,label){
  }finally{await env.cleanup();}
 }
 const original=await evaluate(source,'original');
-const released=await evaluate(wrapReleaseColumns(compactRuleSymbols(source)),'released');
+const released=await evaluate(wrapReleaseColumns(compactRuleSymbols(source,RELEASE_RULE_OPTIONS)),'released');
 assert.deepEqual(released,original);
 console.log(`PASS ${released.length} original/released authorization decisions: roles, tenants, queries, collection isolation, update ownership and wildcard permissions.`);

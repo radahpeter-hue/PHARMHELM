@@ -472,19 +472,200 @@ export function omitNeverAllow(source){
  return source;
 }
 
-export function compactRuleSymbols(source,{minimal=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+/** Share literal field names through pure accessors. The lookup remains at
+ * its original expression position, including conditional branches. */
+export function shareFieldReaders(source){
+ const masked=maskRulesTrivia(source),groups=new Map();
+ if(!databaseScope.test(masked))return source;
+ const protectedRanges=[];
+ const authorityEnd=masked.indexOf('function isPOSOperator(');
+ if(authorityEnd>0)protectedRanges.push({from:0,to:authorityEnd});
+ const excluded=new Set(['resource','data','auth','token','time']);
+ for(const m of masked.matchAll(/(?<![.\w])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.([A-Za-z_]\w{2,})\b(?![\w]|\s*\()/g)){
+  if(excluded.has(m[2])||protectedRanges.some(r=>m.index>=r.from&&m.index<r.to))continue;
+  if(!groups.has(m[2]))groups.set(m[2],[]);
+  groups.get(m[2]).push({from:m.index,to:m.index+m[0].length,base:m[1]});
+ }
+ const changes=[],helpers=[];let serial=0;
+ for(const [field,items] of groups){
+  if(items.length<4)continue;
+  let name;do{name='releaseFieldReader'+serial++;}while(source.includes(name));
+  helpers.push('function '+name+'(value) { return value.'+field+'; }');
+  for(const item of items)changes.push({...item,text:name+'('+item.base+')'});
+ }
+ for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
+export function shareRequestFields(source){
+ const masked=maskRulesTrivia(source),groups=new Map();
+ for(const m of masked.matchAll(/(?<![.\w])(?:request\.)?resource\.data\.[A-Za-z_]\w*\b(?![\w]|\s*\()/g)){
+  if(!groups.has(m[0]))groups.set(m[0],[]);groups.get(m[0]).push(m.index);
+ }
+ const changes=[],helpers=[];let serial=0;
+ for(const [path,positions] of groups){
+  if(positions.length<3)continue;
+  let name;do{name='releaseRequestField'+serial++;}while(source.includes(name));
+  helpers.push('function '+name+'() { return '+path+'; }');
+  for(const from of positions)changes.push({from,to:from+path.length,text:name+'()'});
+ }
+ for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
+/** A vector comparison retains every corresponding required equality. */
+export function packEqualityConjunctions(source,{booleanChoices=false}={}){
+ const splitTop=(value,operator)=>{
+  const mask=maskRulesTrivia(value);let depth=0,start=0;const parts=[];
+  for(let i=0;i<mask.length;i++){
+   if('([{'.includes(mask[i]))depth++;
+   else if(')]}'.includes(mask[i]))depth--;
+   else if(!depth&&mask.startsWith(operator,i)){parts.push(value.slice(start,i));start=i+operator.length;i+=operator.length-1;}
+  }
+  parts.push(value.slice(start));return parts;
+ };
+ const unparen=value=>{
+  const text=value.trim(),mask=maskRulesTrivia(text);if(mask[0]!=='(')return null;
+  let depth=0;
+  for(let i=0;i<mask.length;i++){if(mask[i]==='(')depth++;if(mask[i]===')')depth--;if(depth===0)return i===mask.length-1?text.slice(1,-1):null;}
+  return null;
+ };
+ const ternary=value=>{
+  const mask=maskRulesTrivia(value);let depth=0,question=-1,nested=0;
+  for(let i=0;i<mask.length;i++){
+   if('([{'.includes(mask[i]))depth++;
+   else if(')]}'.includes(mask[i]))depth--;
+   else if(!depth){
+    if(mask[i]==='?'){if(question<0)question=i;else nested++;}
+    else if(mask[i]===':'&&question>=0){if(nested)nested--;else return [value.slice(0,question),value.slice(question+1,i),value.slice(i+1)];}
+   }
+  }
+  return null;
+ };
+ const masked=maskRulesTrivia(source),functions=[];
+ for(const h of masked.matchAll(/\bfunction\s+(\w+)\([^)]*\)\s*\{/g)){
+  let end=h.index+h[0].length,depth=1;for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  functions.push({name:h[1],from:h.index,to:end});
+ }
+ const names=new Set(functions.map(f=>f.name)),unsafe=new Set();
+ for(const name of names)if(functions.filter(f=>f.name===name).length>1)unsafe.add(name);
+ const calls=value=>[...maskRulesTrivia(value).matchAll(/(?<![.\w])(\w+)\s*\(/g)].map(m=>m[1]).filter(n=>names.has(n));
+ const unsafeCalls=value=>{
+  const inner=unparen(value);if(inner!==null)return unsafeCalls(inner);
+  if(splitTop(value,',').length>1)return calls(value);
+  const choice=ternary(value);if(choice)return booleanChoices?[...calls(choice[0]),...unsafeCalls(choice[1]),...unsafeCalls(choice[2])]:calls(value);
+  for(const op of ['||','&&']){const parts=splitTop(value,op);if(parts.length>1)return parts.flatMap(unsafeCalls);}
+  const text=maskRulesTrivia(value).trim(),head=/^(\w+)\s*\(/.exec(text);
+  if(head&&names.has(head[1])){
+   const start=head[0].length;let end=start,depth=1;
+   for(;end<text.length&&depth;end++){if(text[end]==='(')depth++;if(text[end]===')')depth--;}
+   if(!depth&&end===text.length)return calls(text.slice(start,end-1));
+  }
+  return calls(value);
+ };
+ const statements=[...masked.matchAll(/\breturn\b([^;]+);|\ballow\s+[a-z, ]+:\s*if\b([^;]+);|\blet\s+\w+\s*=([^;]+);/g)];
+ const parsed=statements.map(m=>{
+  const body=m[1]??m[2]??m[3],from=m.index+m[0].indexOf(body);
+  const owner=functions.find(f=>m.index>f.from&&m.index<f.to)?.name;
+  return {from,to:from+body.length,body:source.slice(from,from+body.length),owner,positive:m[3]===undefined};
+ });
+ for(const st of parsed)for(const name of st.positive?unsafeCalls(st.body):calls(st.body))unsafe.add(name);
+ // A predicate's result must remain in positive boolean contexts all the way
+ // to an allow grant. Do not change false/error behavior observed by negation,
+ // equality, let bindings, ternary conditions or another function's arguments.
+ for(let pass=0;pass<functions.length;pass++){
+  const before=unsafe.size;
+  for(const st of parsed)if(st.owner&&unsafe.has(st.owner))for(const name of calls(st.body))unsafe.add(name);
+  if(unsafe.size===before)break;
+ }
+ const rewrite=value=>{
+  const inner=unparen(value);if(inner!==null)return '('+rewrite(inner)+')';
+  if(splitTop(value,',').length>1)return value;
+  const choice=ternary(value);if(choice)return booleanChoices?'(('+choice[0]+')&&('+rewrite(choice[1])+'))||(!( '+choice[0]+')&&('+rewrite(choice[2])+'))':value;
+  const or=splitTop(value,'||');if(or.length>1)return or.map(rewrite).join('||');
+  const parts=splitTop(value,'&&');if(parts.length<3)return parts.length>1?parts.map(rewrite).join('&&'):value;
+  const result=[];let pairs=[];
+  const flush=()=>{
+   if(pairs.length<2)result.push(...pairs.map(pair=>pair.join('==')));
+   else result.push('['+pairs.map(pair=>pair[0]).join(',')+']==['+pairs.map(pair=>pair[1]).join(',')+']');
+   pairs=[];
+  };
+  for(const raw of parts){
+   const pair=splitTop(raw,'==');
+   if(pair.length===2&&!/[?|]/.test(maskRulesTrivia(raw))&&!/^[=]|[=!<>]$/.test(pair[0].trim())&&!/^[=]/.test(pair[1].trim()))pairs.push(pair);
+   else{flush();result.push(rewrite(raw));}
+  }
+  flush();return result.join('&&');
+ };
+ for(const st of parsed.reverse())if(st.positive&&(!st.owner||!unsafe.has(st.owner)))source=source.slice(0,st.from)+rewrite(st.body)+source.slice(st.to);
+ return source;
+}
+
+/** Constant lists are immutable; share the whole split, not only its string. */
+export function shareConstantLists(source){
+ if(!databaseScope.test(maskRulesTrivia(source)))return source;
+ const pattern=/\/\/[^\n]*|\/\*[\s\S]*?\*\/|'(?:\\.|[^'\\])*'\s*\.split\(\s*'(?:\\.|[^'\\])*'\s*\)|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g;
+ const groups=new Map();
+ for(const m of source.matchAll(pattern)){
+  if(!m[0].startsWith("'")||!m[0].includes('.split(')||m[0].length<25)continue;
+  if(!groups.has(m[0]))groups.set(m[0],[]);groups.get(m[0]).push(m.index);
+ }
+ const changes=[],helpers=[];let serial=0;
+ for(const [expression,positions] of groups){
+  if(positions.length<2)continue;
+  let name;do{name='releaseConstantList'+serial++;}while(source.includes(name));
+  helpers.push('function '+name+'() { return '+expression+'; }');
+  for(const from of positions)changes.push({from,to:from+expression.length,text:name+'()'});
+ }
+ for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
+/** Local helpers have match scope. Give each declaration a unique compiler
+ * name so later analysis never confuses unrelated helpers in sibling matches. */
+export function uniqueLocalFunctions(source){
+ const mask=maskRulesTrivia(source),changes=[];let serial=0;
+ for(const head of mask.matchAll(/^    match [^\n]+ \{/gm)){
+  const from=head.index+head[0].length;let end=from,depth=1;
+  for(;end<mask.length&&depth;end++){if(mask[end]==='{')depth++;if(mask[end]==='}')depth--;}
+  const body=mask.slice(from,end-1);
+  if(/\bmatch\s+\//.test(body))continue;
+  const declarations=[...body.matchAll(/\bfunction\s+(\w+)\s*\(/g)],aliases=new Map();
+  for(const d of declarations){
+   if(declarations.filter(other=>other[1]===d[1]).length>1)continue;
+   let name;do{name='releaseScopedHelper'+serial++;}while(source.includes(name));
+   aliases.set(d[1],name);
+  }
+  for(const call of body.matchAll(/(?<![.\w])(\w+)\s*\(/g)){
+   if(!aliases.has(call[1]))continue;
+   const start=from+call.index;changes.push({from:start,to:start+call[1].length,text:aliases.get(call[1])});
+  }
+ }
+ for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return source;
+}
+
+export const RELEASE_RULE_OPTIONS=Object.freeze({earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:true,booleanChoices:true,uniqueLocals:true});
+
+export function compactRuleSymbols(source,{minimal=false,fieldReaders=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
  if(!minimal){
  source=omitNeverAllow(source);
+ if(broadRequests)source=shareRequestFields(source);
+ if(earlyRequests)source=shareRequestExpressions(source);
+ if(fieldReaders)source=shareFieldReaders(source);
  if(shareReaders)source=shareSnapshotReaders(source);
  if(shareSchemas)source=shareSchemaChecks(source);
  if(sharePaths)source=shareDocumentPaths(source);
  source=localizeCollectionHelpers(source,maxLocalOwners);
+ if(uniqueLocals)source=uniqueLocalFunctions(source);
  source=shareRepeatedAllowConditions(source);
  if(groupCollections)source=groupEquivalentCollections(source);
  source=shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(source)));
  if(memoize)source=memoizeRequiredExpressions(source);
  if(packArrays)source=packStringArrays(source);
+ if(listConstants)source=shareConstantLists(source);
  if(shareConstants){source=shareRepeatedStringValues(source);if(memoize)source=memoizeRequiredExpressions(source);}
+ if(vectorEquality){source=packEqualityConjunctions(source,{booleanChoices});if(memoize)source=memoizeRequiredExpressions(source);}
  if(balanceConditions)source=balanceBooleanChains(source);
  }
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
@@ -536,6 +717,6 @@ export function wrapReleaseColumns(source,width=80){
  return output;
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
- const file=process.argv[2]||'firestore.rules',source=readFileSync(file,'utf8'),output=wrapReleaseColumns(compactRuleSymbols(source,{maxLocalOwners:0,shareConstants:false}));
+ const file=process.argv[2]||'firestore.rules',source=readFileSync(file,'utf8'),output=wrapReleaseColumns(compactRuleSymbols(source,RELEASE_RULE_OPTIONS));
  writeFileSync(file,output+'\n');console.log(`Generated equivalent release rules: ${Buffer.byteLength(source)} → ${Buffer.byteLength(output)+1} source bytes.`);
 }
