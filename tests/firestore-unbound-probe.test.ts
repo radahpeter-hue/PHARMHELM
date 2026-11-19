@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validateUnboundProbe,findExactInactiveRuleset} from '../scripts/firestore-unbound-probe.mjs';
+import {validateUnboundProbe,findExactInactiveRuleset,fetchRulesApi} from '../scripts/firestore-unbound-probe.mjs';
 const project='test-project',probeName='projects/test-project/releases/pharmhelm_size_probe_123_1',rulesetName='projects/test-project/rulesets/exact';
 const input={project,token:'test-token',probeName,rulesetName,pause:async()=>{}};
 const response=(status:number,data:any)=>new Response(JSON.stringify(data),{status});
@@ -44,4 +44,22 @@ test('delayed acknowledgement verifies only the exact candidate after the final 
  }});
  assert.equal(result.rulesetName,rulesetName);assert.equal(methods.filter(x=>x==='POST').length,4);
  assert.ok(methods.slice(8).every(x=>x==='GET'));
+});
+
+test('a connection reset still requires exact-candidate recovery before acceptance',async()=>{
+ let calls=0;
+ const result=await validateUnboundProbe({...input,fetchImpl:async()=>{
+  if(calls++===0)throw new TypeError('fetch failed',{cause:{code:'ECONNRESET'}});
+  return response(200,{name:probeName,rulesetName});
+ }});
+ assert.equal(result.rulesetName,rulesetName);assert.equal(calls,2);
+});
+test('persistent transport failures exhaust bounded verification without certifying a control',async()=>{
+ let calls=0;
+ await assert.rejects(validateUnboundProbe({...input,fetchImpl:async()=>{calls++;throw new TypeError('fetch failed',{cause:{code:'ECONNRESET'}});}}),/exact probe not verified/);
+ assert.equal(calls,12);
+});
+test('transport handling does not swallow programming errors or explicit rejection',async()=>{
+ await assert.rejects(fetchRulesApi('test',{},async()=>{throw new Error('unexpected code defect');}),/code defect/);
+ assert.equal((await fetchRulesApi('test',{},async()=>response(400,{error:{message:'oversized'}}))).status,400);
 });
