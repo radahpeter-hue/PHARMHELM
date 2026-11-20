@@ -41,7 +41,7 @@ jobs:
       # write tenant data, or update the Firebase live Hosting channel.
       - name: Publish isolated Hosting preview channel
         # These finance changes require explicit approval for Hosting, including preview channels.
-        if: github.head_ref != 'feature/finance-level8-supplier-payments' && github.head_ref != 'feature/finance-level9-profitability' && github.head_ref != 'feature/finance-level10-credit-receivables'
+        if: github.head_ref != 'feature/finance-level8-supplier-payments' && github.head_ref != 'feature/finance-level9-profitability' && github.head_ref != 'feature/finance-level10-credit-receivables' && github.head_ref != 'feature/finance-level11-payroll-integration'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'

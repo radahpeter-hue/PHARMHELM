@@ -76,6 +76,27 @@ function insertDatabaseHelpers(source, helpers) {
  return source.slice(0, offset) + '\n' + helpers.join('\n') + '\n' + source.slice(offset);
 }
 
+/** Share adjacent type/range guards. The argument is a plain value lookup,
+ * evaluated where the first original guard was evaluated. The helper retains
+ * the original short circuit, type test and bound, including malformed values.
+ */
+export function shareValueChecks(source) {
+ const masked=maskRulesTrivia(source),changes=[],helpers=[];
+ if(!databaseScope.test(masked))return source;
+ for(const [type,tail] of [['int','> 0'],['int','>= 0'],['number','>= 0'],['number','> 0'],['string','.size() > 0'],['string','.size() >= 3'],['string','.size() >= 5'],['string','.size() >= 8']]){
+  const suffix=tail.replace(/[.()]/g,'\\$&').replaceAll(' ','\\s*');
+  const pattern=new RegExp('(?<![.\\w])([A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*)\\s+is\\s+'+type+'\\s*&&\\s*\\1\\s*'+suffix+'(?=\\s*(?:&&|\\|\\||[),;}]|$))','g');
+  const matches=[...masked.matchAll(pattern)];
+  if(matches.length<2)continue;
+  let name='releaseValueCheck'+helpers.length;
+  while(source.includes(name))name+='X';
+  helpers.push('function '+name+'(value) { return value is '+type+' && value '+tail+'; }');
+  for(const match of matches)changes.push({from:match.index,to:match.index+match[0].length,text:name+'('+match[1]+')'});
+ }
+ for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
 /** Collection-specific helpers need not be inherited by every sibling match.
  * Follow the complete helper call graph to identify owning matches. A small
  * number of owners may each receive the identical helper declaration.
@@ -365,13 +386,39 @@ export function shareRepeatedAllowConditions(source) {
  * This preserves short-circuit evaluation when a read has no write snapshot or
  * a request has no auth object.
  */
-export function shareRequestExpressions(source) {
+// Preserve direct reads and original snapshot binding in the busiest atomic
+// inventory and Treasury validators; these approach Firestore's 1000-step cap.
+function budgetSensitiveRanges(mask){
+ const ranges=[];
+ for(const head of mask.matchAll(/^    match \/(?:identity_sequence_counters|operational_\w+|stock_orders|stock_order_lines|grn_records|transfer_invoices|transfer_invoice_lines|finance_transfers_v1)\/\{\w+\}\s*\{/gm)){
+  let end=head.index+head[0].length,depth=1;for(;end<mask.length&&depth;end++){if(mask[end]==='{')depth++;if(mask[end]==='}')depth--;}
+  ranges.push({from:head.index,to:end});
+ }
+ const declarations=[];
+ for(const head of mask.matchAll(/\bfunction\s+(\w+)\([^)]*\)\s*\{/g)){
+  let end=head.index+head[0].length,depth=1;for(;end<mask.length&&depth;end++){if(mask[end]==='{')depth++;if(mask[end]==='}')depth--;}
+  declarations.push({name:head[1],from:head.index,to:end,body:mask.slice(head.index+head[0].length,end-1)});
+ }
+ const calls=value=>[...value.matchAll(/(?<![.\w])(\w+)\s*\(/g)].map(m=>m[1]);
+ const needed=new Set(ranges.flatMap(r=>calls(mask.slice(r.from,r.to))));
+ for(let pass=0;pass<declarations.length;pass++){
+  const size=needed.size;
+  for(const d of declarations)if(needed.has(d.name))for(const name of calls(d.body))needed.add(name);
+  if(size===needed.size)break;
+ }
+ for(const d of declarations)if(needed.has(d.name))ranges.push({from:d.from,to:d.to});
+ return ranges;
+}
+
+export function shareRequestExpressions(source,{preserveBudget=false}={}) {
  const masked = maskRulesTrivia(source);
  if (!databaseScope.test(masked)) return source;
+ const protectedRanges=preserveBudget?budgetSensitiveRanges(masked):[];
  const paths = [...masked.matchAll(/(?<![.\w])(?:isTenantMember\((?:request\.)?resource\.data\.tenantId\)|(?:(?:request\.)?resource\.data(?:\.(?:tenantId|branchId|status|inventoryClass))?|request\.auth\.uid|request\.time)\b)/g)];
  const helpers = new Map();
  let serial = 0;
  for (const match of paths.reverse()) {
+  if(protectedRanges.some(r=>match.index>=r.from&&match.index<r.to))continue;
   const [path] = match;
   if (!helpers.has(path)) {
    let name;
@@ -472,24 +519,326 @@ export function omitNeverAllow(source){
  return source;
 }
 
-export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+/** Share literal field names through pure accessors. The lookup remains at
+ * its original expression position, including conditional branches. */
+export function shareFieldReaders(source,{indexed=false}={}){
+ const masked=maskRulesTrivia(source),groups=new Map();
+ if(!databaseScope.test(masked))return source;
+ const protectedRanges=budgetSensitiveRanges(masked).filter(r=>!/^\s*match\s+\/(?:operational_\w+|stock_orders|stock_order_lines|grn_records|transfer_invoices|transfer_invoice_lines)\//.test(masked.slice(r.from,r.to)));
+ const authorityEnd=masked.indexOf('function isPOSOperator(');
+ if(authorityEnd>0)protectedRanges.push({from:0,to:authorityEnd});
+ for(const head of masked.matchAll(/\bfunction\s+operationalIdentity\w+\([^)]*\)\s*\{/g)){
+  let end=head.index+head[0].length,depth=1;for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  protectedRanges.push({from:head.index,to:end});
+ }
+ const excluded=new Set(['resource','data','auth','token','time']);
+ for(const m of masked.matchAll(/(?<![.\w])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.([A-Za-z_]\w{2,})\b(?![\w]|\s*\()/g)){
+  if(excluded.has(m[2])||protectedRanges.some(r=>m.index>=r.from&&m.index<r.to))continue;
+  if(!groups.has(m[2]))groups.set(m[2],[]);
+  groups.get(m[2]).push({from:m.index,to:m.index+m[0].length,base:m[1]});
+ }
+ const changes=[],helpers=[];let serial=0;
+ for(const [field,items] of groups){
+  if(items.length<4||(field.length-5)*items.length-field.length-10<=0)continue;
+  let name;do{name='releaseFieldReader'+serial++;}while(source.includes(name));
+  helpers.push('function '+name+'(value) { return '+(indexed?'value[\"'+field+'\"]':'value.'+field)+'; }');
+  for(const item of items)changes.push({...item,text:name+'('+item.base+')'});
+ }
+ for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
+export function shareRequestFields(source){
+ const masked=maskRulesTrivia(source),groups=new Map();
+ const protectedRanges=budgetSensitiveRanges(masked);
+ for(const m of masked.matchAll(/(?<![.\w])(?:request\.)?resource\.data\.[A-Za-z_]\w*\b(?![\w]|\s*\()/g)){
+  if(protectedRanges.some(r=>m.index>=r.from&&m.index<r.to))continue;
+  if(!groups.has(m[0]))groups.set(m[0],[]);groups.get(m[0]).push(m.index);
+ }
+ const changes=[],helpers=[];let serial=0;
+ for(const [path,positions] of groups){
+  if(positions.length<3)continue;
+  let name;do{name='releaseRequestField'+serial++;}while(source.includes(name));
+  helpers.push('function '+name+'() { return '+path+'; }');
+  for(const from of positions)changes.push({from,to:from+path.length,text:name+'()'});
+ }
+ for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
+/** A vector comparison retains every corresponding required equality. */
+export function packEqualityConjunctions(source,{booleanChoices=false}={}){
+ const splitTop=(value,operator)=>{
+  const mask=maskRulesTrivia(value);let depth=0,start=0;const parts=[];
+  for(let i=0;i<mask.length;i++){
+   if('([{'.includes(mask[i]))depth++;
+   else if(')]}'.includes(mask[i]))depth--;
+   else if(!depth&&mask.startsWith(operator,i)){parts.push(value.slice(start,i));start=i+operator.length;i+=operator.length-1;}
+  }
+  parts.push(value.slice(start));return parts;
+ };
+ const unparen=value=>{
+  const text=value.trim(),mask=maskRulesTrivia(text);if(mask[0]!=='(')return null;
+  let depth=0;
+  for(let i=0;i<mask.length;i++){if(mask[i]==='(')depth++;if(mask[i]===')')depth--;if(depth===0)return i===mask.length-1?text.slice(1,-1):null;}
+  return null;
+ };
+ const ternary=value=>{
+  const mask=maskRulesTrivia(value);let depth=0,question=-1,nested=0;
+  for(let i=0;i<mask.length;i++){
+   if('([{'.includes(mask[i]))depth++;
+   else if(')]}'.includes(mask[i]))depth--;
+   else if(!depth){
+    if(mask[i]==='?'){if(question<0)question=i;else nested++;}
+    else if(mask[i]===':'&&question>=0){if(nested)nested--;else return [value.slice(0,question),value.slice(question+1,i),value.slice(i+1)];}
+   }
+  }
+  return null;
+ };
+ const masked=maskRulesTrivia(source),functions=[];
+ for(const h of masked.matchAll(/\bfunction\s+(\w+)\([^)]*\)\s*\{/g)){
+  let end=h.index+h[0].length,depth=1;for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  functions.push({name:h[1],from:h.index,to:end});
+ }
+ const scalarRanges=[];
+ for(const head of masked.matchAll(/^    match \/(?:identity_sequence_counters)\/\{\w+\}\s*\{/gm)){
+  let end=head.index+head[0].length,depth=1;for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  scalarRanges.push({from:head.index,to:end});
+ }
+ const names=new Set(functions.map(f=>f.name)),unsafe=new Set();
+ for(const name of names)if(functions.filter(f=>f.name===name).length>1)unsafe.add(name);
+ for(const f of functions)if(scalarRanges.some(r=>f.from>=r.from&&f.from<r.to))unsafe.add(f.name);
+ const calls=value=>[...maskRulesTrivia(value).matchAll(/(?<![.\w])(\w+)\s*\(/g)].map(m=>m[1]).filter(n=>names.has(n));
+ const unsafeCalls=value=>{
+  const inner=unparen(value);if(inner!==null)return unsafeCalls(inner);
+  if(splitTop(value,',').length>1)return calls(value);
+  const choice=ternary(value);if(choice)return booleanChoices?[...calls(choice[0]),...unsafeCalls(choice[1]),...unsafeCalls(choice[2])]:calls(value);
+  for(const op of ['||','&&']){const parts=splitTop(value,op);if(parts.length>1)return parts.flatMap(unsafeCalls);}
+  const text=maskRulesTrivia(value).trim(),head=/^(\w+)\s*\(/.exec(text);
+  if(head&&names.has(head[1])){
+   const start=head[0].length;let end=start,depth=1;
+   for(;end<text.length&&depth;end++){if(text[end]==='(')depth++;if(text[end]===')')depth--;}
+   if(!depth&&end===text.length)return calls(text.slice(start,end-1));
+  }
+  return calls(value);
+ };
+ const statements=[...masked.matchAll(/\breturn\b([^;]+);|\ballow\s+[a-z, ]+:\s*if\b([^;]+);|\blet\s+\w+\s*=([^;]+);/g)];
+ const parsed=statements.map(m=>{
+  const body=m[1]??m[2]??m[3],from=m.index+m[0].indexOf(body);
+  const owner=functions.find(f=>m.index>f.from&&m.index<f.to)?.name;
+  return {from,to:from+body.length,body:source.slice(from,from+body.length),owner,positive:m[3]===undefined};
+ });
+ for(const st of parsed)if(scalarRanges.some(r=>st.from>=r.from&&st.from<r.to))for(const name of calls(st.body))unsafe.add(name);
+ for(const st of parsed)for(const name of st.positive?unsafeCalls(st.body):calls(st.body))unsafe.add(name);
+ // A predicate's result must remain in positive boolean contexts all the way
+ // to an allow grant. Do not change false/error behavior observed by negation,
+ // equality, let bindings, ternary conditions or another function's arguments.
+ for(let pass=0;pass<functions.length;pass++){
+  const before=unsafe.size;
+  for(const st of parsed)if(st.owner&&unsafe.has(st.owner))for(const name of calls(st.body))unsafe.add(name);
+  if(unsafe.size===before)break;
+ }
+ const rewrite=value=>{
+  const inner=unparen(value);if(inner!==null)return '('+rewrite(inner)+')';
+  if(splitTop(value,',').length>1)return value;
+  const choice=ternary(value);if(choice)return booleanChoices?'(('+choice[0]+')&&('+rewrite(choice[1])+'))||(!( '+choice[0]+')&&('+rewrite(choice[2])+'))':value;
+  const or=splitTop(value,'||');if(or.length>1)return or.map(rewrite).join('||');
+  const parts=splitTop(value,'&&');if(parts.length<2)return parts.length>1?parts.map(rewrite).join('&&'):value;
+  const result=[];let pairs=[];
+  const flush=()=>{
+   if(pairs.length<2)result.push(...pairs.map(pair=>pair.join('==')));
+   else result.push('(['+pairs.map(pair=>pair[0]).join(',')+']==['+pairs.map(pair=>pair[1]).join(',')+'])');
+   pairs=[];
+  };
+  for(const raw of parts){
+   const pair=splitTop(raw,'==');
+   if(pair.length===2&&!/[?|]/.test(maskRulesTrivia(raw))&&!/^[=]|[=!<>]$/.test(pair[0].trim())&&!/^[=]/.test(pair[1].trim()))pairs.push(pair);
+   else{flush();result.push(rewrite(raw));}
+  }
+  flush();return result.join('&&');
+ };
+ for(const st of parsed.reverse())if(st.positive&&(!st.owner||!unsafe.has(st.owner))&&!scalarRanges.some(r=>st.from>=r.from&&st.from<r.to))source=source.slice(0,st.from)+rewrite(st.body)+source.slice(st.to);
+ return source;
+}
+
+/** Constant lists are immutable; share the whole split, not only its string. */
+export function shareConstantLists(source){
+ if(!databaseScope.test(maskRulesTrivia(source)))return source;
+ const pattern=/\/\/[^\n]*|\/\*[\s\S]*?\*\/|'(?:\\.|[^'\\])*'\s*\.split\(\s*'(?:\\.|[^'\\])*'\s*\)|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g;
+ const groups=new Map();
+ for(const m of source.matchAll(pattern)){
+  if(!m[0].startsWith("'")||!m[0].includes('.split(')||m[0].length<25)continue;
+  if(!groups.has(m[0]))groups.set(m[0],[]);groups.get(m[0]).push(m.index);
+ }
+ const changes=[],helpers=[];let serial=0;
+ for(const [expression,positions] of groups){
+  if(positions.length<2)continue;
+  let name;do{name='releaseConstantList'+serial++;}while(source.includes(name));
+  helpers.push('function '+name+'() { return '+expression+'; }');
+  for(const from of positions)changes.push({from,to:from+expression.length,text:name+'()'});
+ }
+ for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
+/** Local helpers have match scope. Give each declaration a unique compiler
+ * name so later analysis never confuses unrelated helpers in sibling matches. */
+export function uniqueLocalFunctions(source){
+ const mask=maskRulesTrivia(source),changes=[];let serial=0;
+ for(const head of mask.matchAll(/^    match [^\n]+ \{/gm)){
+  const from=head.index+head[0].length;let end=from,depth=1;
+  for(;end<mask.length&&depth;end++){if(mask[end]==='{')depth++;if(mask[end]==='}')depth--;}
+  const body=mask.slice(from,end-1);
+  if(/\bmatch\s+\//.test(body))continue;
+  const declarations=[...body.matchAll(/\bfunction\s+(\w+)\s*\(/g)],aliases=new Map();
+  for(const d of declarations){
+   if(declarations.filter(other=>other[1]===d[1]).length>1)continue;
+   let name;do{name='releaseScopedHelper'+serial++;}while(source.includes(name));
+   aliases.set(d[1],name);
+  }
+  for(const call of body.matchAll(/(?<![.\w])(\w+)\s*\(/g)){
+   if(!aliases.has(call[1]))continue;
+   const start=from+call.index;changes.push({from:start,to:start+call[1].length,text:aliases.get(call[1])});
+  }
+ }
+ for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return source;
+}
+
+export const RELEASE_RULE_OPTIONS=Object.freeze({inlineSingles:true,valueChecks:true,scopedBindings:true,earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:false,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:false});
+
+/** On an update, an unchanged tenant plus membership of the existing tenant
+ * makes the second membership call redundant. Keep both equality and the
+ * original membership check; only simplify a positive top-level conjunction. */
+export function elideDuplicateTenantGrants(source){
+ const mask=maskRulesTrivia(source),grants=[...mask.matchAll(/\ballow\s+update\s*:\s*if\b([^;]+);/g)];
+ for(const g of grants.reverse()){
+  const from=g.index+g[0].indexOf(g[1]),body=source.slice(from,from+g[1].length),text=maskRulesTrivia(body);let depth=0,start=0;const parts=[];let unsupported=false;
+  for(let i=0;i<text.length;i++){
+   if('([{'.includes(text[i]))depth++;
+   else if(')]}'.includes(text[i]))depth--;
+   else if(!depth){if(text.startsWith('||',i)||text[i]==='?'){unsupported=true;break;}if(text.startsWith('&&',i)){parts.push(body.slice(start,i));start=i+2;i++;}}
+  }
+  if(unsupported)continue;parts.push(body.slice(start));
+  const normalized=parts.map(p=>maskRulesTrivia(p).replace(/\s/g,''));
+  const before='isTenantMember(resource.data.tenantId)',after='isTenantMember(request.resource.data.tenantId)';
+  const equal=['request.resource.data.tenantId==resource.data.tenantId','resource.data.tenantId==request.resource.data.tenantId'];
+  if(!normalized.includes(before)||!normalized.includes(after)||!equal.some(e=>normalized.includes(e)))continue;
+  const filtered=parts.filter((p,i)=>normalized[i]!==after&&normalized[i]!=='isAuthenticated()');
+  source=source.slice(0,from)+filtered.join('&&')+source.slice(from+g[1].length);
+ }
+ return source;
+}
+
+/** Parameters and lets can reuse short names in sibling functions. Keep every
+ * function name, captured match variable and literal path name reserved. This
+ * changes bindings only, without inserting calls or changing evaluation order.
+ */
+export function compactFunctionBindings(source) {
+ const masked=maskRulesTrivia(source);
+ const reserved=new Set([
+  ...[...masked.matchAll(/\bfunction\s+(\w+)\s*\(/g)].map(m=>m[1]),
+  ...[...masked.matchAll(/\{(\w+)(?:=\*\*)?\}/g)].map(m=>m[1]),
+ ]);
+ const paths=new Set([...masked.matchAll(/\/([A-Za-z_]\w*)/g)].map(m=>m[1]));
+ const alphabet='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+ for(const head of [...masked.matchAll(/\bfunction\s+(\w+)\(([^)]*)\)\s*\{/g)].reverse()){
+  const from=head.index;let end=from+head[0].length,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  if(depth)throw Error('Unbalanced function bindings.');
+  const body=masked.slice(from,end);
+  if(/\bfunction\b/.test(body.slice(head[0].length)))continue;
+  const locals=[...head[2].split(',').map(s=>s.trim()).filter(Boolean),...[...body.matchAll(/\blet\s+(\w+)\s*=/g)].map(m=>m[1])];
+  if(new Set(locals).size!==locals.length)continue;
+  // Tokenize punctuation too: whitespace after a dot still introduces a field.
+  const tokens=[...body.matchAll(/[A-Za-z_]\w*|[^\s]/g)],references=[];let previous='';
+  for(const token of tokens){if(/^[A-Za-z_]\w*$/.test(token[0])&&previous!=='.')references.push(token);previous=token[0];}
+  const bound=new Set(locals),free=new Set(reserved);
+  for(const token of references)if(!bound.has(token[0]))free.add(token[0]);
+  const aliases=new Map();let serial=0;
+  for(const local of locals){
+   if(paths.has(local))continue;
+   while(serial<alphabet.length&&free.has(alphabet[serial]))serial++;
+   if(serial===alphabet.length)break;
+   aliases.set(local,alphabet[serial++]);
+  }
+  let rewritten=source.slice(from,end);
+  for(const token of references.reverse())if(aliases.has(token[0]))rewritten=rewritten.slice(0,token.index)+aliases.get(token[0])+rewritten.slice(token.index+token[0].length);
+  source=source.slice(0,from)+rewritten+source.slice(end);
+ }
+ return source;
+}
+
+/** Inline a single invocation of a parameterless, return-only helper. Keep
+ * its expression at the original invocation and refuse captured-name shadowing.
+ * No let or argument evaluation can be moved or duplicated by this pass.
+ */
+export function inlineSingleUseFunctions(source) {
+ for(;;){
+  const masked=maskRulesTrivia(source),functions=[];
+  for(const head of masked.matchAll(/\bfunction\s+(\w+)\(([^)]*)\)\s*\{/g)){
+   let end=head.index+head[0].length,depth=1;
+   for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+   if(depth)throw Error('Unbalanced inline function.');
+   functions.push({name:head[1],args:head[2],from:head.index,start:head.index+head[0].length,to:end});
+  }
+  let changes;
+  for(const fn of functions){
+   if(fn.args.trim()||functions.filter(other=>other.name===fn.name).length!==1)continue;
+   const body=masked.slice(fn.start,fn.to-1),returned=/^\s*return\b([^;]+);\s*$/.exec(body);
+   if(!returned)continue;
+   const calls=[...masked.matchAll(new RegExp('(?<![.\\w])'+fn.name+'\\s*\\(\\s*\\)','g'))];
+   if(calls.length!==2)continue;
+   const call=calls.find(c=>c.index<fn.from||c.index>=fn.to);
+   if(!call)continue;
+   const owner=functions.find(other=>call.index>=other.start&&call.index<other.to);
+   const start=fn.start+returned[0].indexOf(returned[1]);
+   const expression=source.slice(start,start+returned[1].length);
+   if(owner){
+    const ownBody=masked.slice(owner.start,owner.to);
+    const bindings=[...owner.args.split(',').map(s=>s.trim()),...[...ownBody.matchAll(/\blet\s+(\w+)\s*=/g)].map(m=>m[1])].filter(Boolean);
+    if(bindings.some(name=>new RegExp('(?<![.\\w])'+name+'\\b').test(maskRulesTrivia(expression))))continue;
+   }
+   changes=[{from:fn.from,to:fn.to,text:''},{from:call.index,to:call.index+call[0].length,text:'('+expression+')'}];
+   break;
+  }
+  if(!changes)return source;
+  for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ }
+}
+
+export function compactRuleSymbols(source,{minimal=false,inlineSingles=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+ if(!minimal){
+ if(valueChecks)source=shareValueChecks(source);
  source=omitNeverAllow(source);
+ if(tenantChecks)source=elideDuplicateTenantGrants(source);
+ if(broadRequests)source=shareRequestFields(source);
+ if(earlyRequests)source=shareRequestExpressions(source,{preserveBudget:true});
+ if(fieldReaders)source=shareFieldReaders(source,{indexed:indexedFields});
  if(shareReaders)source=shareSnapshotReaders(source);
  if(shareSchemas)source=shareSchemaChecks(source);
  if(sharePaths)source=shareDocumentPaths(source);
  source=localizeCollectionHelpers(source,maxLocalOwners);
+ if(uniqueLocals)source=uniqueLocalFunctions(source);
  source=shareRepeatedAllowConditions(source);
  if(groupCollections)source=groupEquivalentCollections(source);
  source=shareRequestExpressions(compactCollectionSets(bindWriteSnapshots(source)));
  if(memoize)source=memoizeRequiredExpressions(source);
  if(packArrays)source=packStringArrays(source);
+ if(listConstants)source=shareConstantLists(source);
  if(shareConstants){source=shareRepeatedStringValues(source);if(memoize)source=memoizeRequiredExpressions(source);}
+ if(vectorEquality){source=packEqualityConjunctions(source,{booleanChoices});if(memoize)source=memoizeRequiredExpressions(source);}
  if(balanceConditions)source=balanceBooleanChains(source);
+ }
  const tokens=source.match(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g)||[];
  const stripped=tokens.filter(t=>!t.startsWith('//')&&!t.startsWith('/*')).join('');
  const names=new Set(tokens.filter(token=>/^[A-Za-z_]\w*$/.test(token))),symbols=new Set(),aliases=new Map();
  const reservedPaths=new Set([...stripped.matchAll(/\/([A-Za-z_]\w*)/g)].map(m=>m[1]));
  for(const keyword of ['as','break','const','continue','do','else','for','function','if','in','is','let','match','return','service','true','false','null','rules_version','while'])names.add(keyword);
+ // Local bindings are shortened again per function. Reserve a small pool for
+ // that pass and give the remaining short names to shared functions/captures.
+ const scopedGlobalNames=new Set([...stripped.matchAll(/\bfunction\s+(\w+)\(/g)].map(m=>m[1]).concat([...stripped.matchAll(/\{(\w+)(?:=\*\*)?\}/g)].map(m=>m[1])));
+ if(scopedBindings)for(const char of 'abcdefgh')names.add(char);
  const alphabet='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';let serial=0;
  const unique=()=>{for(;;){let index=serial++,name='';do{name=alphabet[index%52]+name;index=Math.floor(index/52)-1;}while(index>=0);if(!names.has(name)){names.add(name);return name;}}};
  // Rule methods can also be local binding names. Keep the method token intact.
@@ -509,7 +858,7 @@ export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memo
   if(last!=='.'&&symbols.has(token))counts.set(token,(counts.get(token)||0)+1);
   last=token;
  }
- for(const name of [...symbols].sort((a,b)=>(counts.get(b)||0)-(counts.get(a)||0)))aliases.set(name,unique());
+ for(const name of [...symbols].sort((a,b)=>(scopedBindings?Number(scopedGlobalNames.has(b))-Number(scopedGlobalNames.has(a)):0)||(counts.get(b)||0)-(counts.get(a)||0)))aliases.set(name,unique());
  let previous='';const output=[];
  for(const token of tokens){
   if(token.startsWith('//')||token.startsWith('/*')){output.push(' ');continue;}
@@ -517,7 +866,9 @@ export function compactRuleSymbols(source,{maxLocalOwners=1,sharePaths=true,memo
   const internal=/^[A-Za-z_]\w*$/.test(token)&&previous!=='.';
   output.push(internal?(aliases.get(token)||token):token);previous=token;
  }
- return output.join('').trim();
+ let result=output.join('').trim();
+ if(scopedBindings)result=compactFunctionBindings(result);
+ return inlineSingles?inlineSingleUseFunctions(result):result;
 }
 
 /** Keep source positions compact as well as identifiers. Replace only existing
@@ -534,6 +885,6 @@ export function wrapReleaseColumns(source,width=80){
  return output;
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
- const file=process.argv[2]||'firestore.rules',source=readFileSync(file,'utf8'),output=wrapReleaseColumns(compactRuleSymbols(source));
+ const file=process.argv[2]||'firestore.rules',source=readFileSync(file,'utf8'),output=wrapReleaseColumns(compactRuleSymbols(source,RELEASE_RULE_OPTIONS));
  writeFileSync(file,output+'\n');console.log(`Generated equivalent release rules: ${Buffer.byteLength(source)} → ${Buffer.byteLength(output)+1} source bytes.`);
 }

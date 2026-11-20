@@ -45,6 +45,7 @@ export function collectCashOutflows(input: {
   movements: CashMovementEvidence[];
   supplierPayments: CashOutflowEvidence[];
   creditPayments: CashOutflowEvidence[];
+  salaryPayments?: CashOutflowEvidence[];
   managementExpenses?: CashOutflowEvidence[];
   staff?: CashOutflowEvidence[];
 }): CashOutflow[] {
@@ -53,6 +54,7 @@ export function collectCashOutflows(input: {
   const accounts = index(input.accounts);
   const suppliers = index(input.supplierPayments);
   const credits = index(input.creditPayments);
+  const salaries=index(input.salaryPayments ?? []);
   const expenses = index(input.managementExpenses ?? []);
   const staff = index(input.staff ?? []);
   const rows = new Map<string, CashOutflow>();
@@ -87,7 +89,13 @@ export function collectCashOutflows(input: {
     let postedByName = '';
     let charge = false;
 
-    if (movement.movementClass === 'transfer_charge' && movement.id === movement.portfolioTransferId + '_fee' && movement.portfolioTransferId) {
+    if (movement.payrollPaymentId) {
+      const payment=salaries.get(str(movement.payrollPaymentId));
+      if(payment && movement.id===payment.movementId && payment.amountUGX===amount && payment.actorId===actorId && payment.accountId===accountId && payment.reference===reference){
+        sourceCollection='finance_payroll_payments_v1';sourceId=payment.id;category='Salary payment';
+        date=businessDate(payment.date)||date;
+      }
+    } else if (movement.movementClass === 'transfer_charge' && movement.id === movement.portfolioTransferId + '_fee' && movement.portfolioTransferId) {
       sourceCollection = 'finance_transfers_v1';
       sourceId = str(movement.portfolioTransferId);
       category = 'Transfer fee';

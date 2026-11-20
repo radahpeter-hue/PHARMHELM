@@ -1,3 +1,5 @@
+import { payrollRecordView } from '../../../domain/finance/payrollRecordView';
+import {usePayrollBatches} from '../../../hooks/usePayrollBatches';
 import { operationalStaff } from '../../../utils/operationalStaff';
 import { staffMatchesId } from '../../../utils/operationalStaff';
 import { isActiveSale } from '../../../utils/activeSales';
@@ -37,6 +39,7 @@ export const TaxEngine: React.FC = () => {
   // RAW lists
   const [sales, setSales] = useState<any[]>([]);
   const [grns, setGrns] = useState<any[]>([]);
+  const payrollBatches=usePayrollBatches(profile?.tenantId);
   const [payrollList, setPayrollList] = useState<any[]>([]);
   const [staffList, setStaffList] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
@@ -72,7 +75,7 @@ export const TaxEngine: React.FC = () => {
 
       // 4. Fetch Payroll (for PAYE & NSSF)
       const paySnap = await getDocs(query(collection(db, 'payroll'), where('tenantId', '==', profile.tenantId)));
-      setPayrollList(paySnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+      setPayrollList(paySnap.docs.map(doc => payrollRecordView({ id: doc.id, ...doc.data() as any })));
 
       // 5. Fetch Staff List (to get correct labels and tins)
       const staffSnap = await getDocs(query(collection(db, 'staff'), where('tenantId', '==', profile.tenantId)));
@@ -114,11 +117,12 @@ export const TaxEngine: React.FC = () => {
 
   const filteredPayroll = useMemo(() => {
     return payrollList.filter(p => {
+      if(p.payrollVersion===11 && !payrollBatches.some(b=>b.id===p.batchId&&b.revision===p.revision&&['approved','partial','paid'].includes(b.status)))return false;
       if (!isDateFilterActive) return true;
-      const d = (p.paid_date || p.generated_at || '').split('T')[0];
+      const d = (p.payrollVersion===11 ? p.periodEnd : p.paid_date || p.generated_at || '').split('T')[0];
       return d && d >= dateRange.start && d <= dateRange.end;
     });
-  }, [payrollList, isDateFilterActive, dateRange]);
+  }, [payrollList, payrollBatches, isDateFilterActive, dateRange]);
 
   // Calculations
   const outputVat = useMemo(() => {

@@ -5,7 +5,7 @@ import {settleReconciledEod} from '../src/domain/finance/eodPortfolioSettlement.
 import {eodIdentity} from '../src/utils/eodShifts.ts';
 const env=await initializeTestEnvironment({
  projectId:'pharmhelm-eod-posting-acceptance',
- firestore:{rules:readFileSync('firestore.rules','utf8')}
+ firestore:{rules:readFileSync(process.env.PHARMHELM_SETTLEMENT_RULES || 'firestore.rules','utf8')}
 });
 const tenant='tenant_a',branchId='masaka';
 const bankId='bank_'+('a'.repeat(64));

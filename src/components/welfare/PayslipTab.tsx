@@ -1,3 +1,7 @@
+import {doc,onSnapshot,where} from 'firebase/firestore';
+import {db} from '../../firebase';
+import {PAYROLL_STATUS,employeePayrollStatus,payrollStatusLabels} from '../../domain/finance/payroll';
+import type {PayrollBatch} from '../../services/payrollFinanceService';
 import React, { useState, useEffect } from 'react';
 import { 
   FileText, 
@@ -19,14 +23,16 @@ import { format } from 'date-fns';
 const PayslipTab: React.FC = () => {
   const { profile } = useAuth();
   const [payslips, setPayslips] = useState<Payslip[]>([]);
+  const [batches,setBatches]=useState<Record<string,PayrollBatch>>({});
+  const statusLabel=(p:any)=>p.payrollVersion===11 ? payrollStatusLabels[employeePayrollStatus(batches[p.batchId]?.status || 'draft',p.paidUGX || 0,p.netPayable)] : 'Legacy payroll: payment evidence unreconciled';
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPayslip, setSelectedPayslip] = useState<any | null>(null);
 
   useEffect(() => {
     if (profile?.uid && profile?.tenantId) {
-      const unsubscribe = firestoreService.subscribeToCollection<Payslip>(
+      const unsubscribe = firestoreService.subscribeToCollectionByQuery<Payslip>(
         'payslips',
-        profile.tenantId,
+        profile.tenantId,[where('staffId','==',profile.uid)],
         (data) => {
           const userPayslips = data.filter(p => p.staffId === profile.uid);
           setPayslips(userPayslips.sort((a, b) => b.month.localeCompare(a.month)));
@@ -35,6 +41,17 @@ const PayslipTab: React.FC = () => {
       return () => unsubscribe();
     }
   }, [profile?.uid, profile?.tenantId]);
+
+  useEffect(()=>{
+    const ids=[...new Set<string>(payslips.filter(p=>p.payrollVersion===11).map(p=>p.batchId!))];
+    const stops=ids.map(id=>onSnapshot(doc(db,PAYROLL_STATUS,id),snapshot=>{
+      if(snapshot.data()?.tenantId===profile?.tenantId)setBatches(current=>({...current,[id]:snapshot.data() as PayrollBatch}));
+    }));
+    return ()=>stops.forEach(stop=>stop());
+  },[payslips,profile?.tenantId]);
+  useEffect(()=>{
+    if(selectedPayslip){const latest=payslips.find(p=>p.id===selectedPayslip.id);if(latest)setSelectedPayslip(latest);}
+  },[payslips]);
 
   const filteredPayslips = payslips.filter(p => 
     p.month.toLowerCase().includes(searchQuery.toLowerCase())
@@ -50,6 +67,12 @@ const PayslipTab: React.FC = () => {
        OFFICIAL SALARY PAYSLIP
 ========================================
 Month/Period: ${payslip.month}
+Payroll: ${payslip.payrollReference || 'Legacy payroll'} / Revision ${payslip.revision || 'legacy'}
+Status: ${statusLabel(payslip)}
+Calculated remuneration: UGX ${payslip.netPayable.toLocaleString()}
+Approved remuneration: ${payslip.payrollVersion===11 && ['approved','partial','paid'].includes(batches[payslip.batchId]?.status) ? 'UGX '+payslip.netPayable.toLocaleString() : 'Not certified by this record'}
+Actual paid: ${payslip.payrollVersion===11 ? 'UGX '+(payslip.paidUGX || 0).toLocaleString() : 'Historical payment evidence not verified'}
+Outstanding: ${payslip.payrollVersion===11 ? 'UGX '+Math.max(0,payslip.netPayable-(payslip.paidUGX || 0)).toLocaleString() : 'Not established'}
 Employee Name: ${profile?.displayName || 'Staff Member'}
 Employee ID: ${payslip.staffId?.slice(0, 8) || 'N/A'}
 ----------------------------------------
@@ -66,7 +89,7 @@ Deductions Breakdown:
 - Total Combined Deductions: UGX ${payslip.deductions?.toLocaleString() || 'N/A'}
 
 ----------------------------------------
-NET PAYABLE REMITTANCE: UGX ${payslip.netPayable?.toLocaleString() || 'N/A'}
+NET REMUNERATION PAYABLE: UGX ${payslip.netPayable?.toLocaleString() || 'N/A'}
 ----------------------------------------
 Leaves Record In Cycle:
 - Approved Leave: ${payslip.approvedLeavesDesc || 'None'}
@@ -76,7 +99,7 @@ Advances History Checked:
 - ${payslip.advancesDesc || 'None'}
 
 Please contact Human Resources for any inquiries regarding this remittance statement.
-Ref: TRANS-${payslip.id || 'EVAL'}
+Ref: ${payslip.payrollReference || payslip.id || 'EVAL'}
 ========================================
 `;
       const blob = new Blob([textContent], { type: 'text/plain' });
@@ -124,6 +147,8 @@ Ref: TRANS-${payslip.id || 'EVAL'}
               </div>
               
               <div className="relative z-10">
+                <p className="mb-3 break-words text-xs font-bold text-slate-700">{payslip.payrollReference || 'Legacy payroll'} · {statusLabel(payslip)}</p>
+                {payslip.payrollVersion===11 && <p className="mb-3 text-sm text-slate-700">Paid: UGX {(payslip.paidUGX || 0).toLocaleString()} · Outstanding: UGX {Math.max(0,payslip.netPayable-(payslip.paidUGX || 0)).toLocaleString()}</p>}
                 <div className="flex items-center justify-between mb-6">
                   <div className="p-3 bg-zinc-900 text-white rounded-2xl">
                     <Calendar size={20} />
@@ -193,11 +218,12 @@ Ref: TRANS-${payslip.id || 'EVAL'}
                 <FileText size={24} />
               </div>
               <div>
-                <h2 className="text-lg font-black text-zinc-900 uppercase tracking-wide">Remittance Advice Details</h2>
+                <h2 className="text-lg font-black text-zinc-900 uppercase tracking-wide">Payslip Details</h2>
                 <p className="text-xs text-zinc-400">Official Payslip Record • {format(new Date(selectedPayslip.month + '-01'), 'MMMM yyyy')}</p>
               </div>
             </div>
 
+            <div className="rounded-xl bg-slate-50 p-3 text-sm"><p className="font-bold break-words">{selectedPayslip.payrollReference || 'Legacy payroll'} · {statusLabel(selectedPayslip)}</p><p>Calculated: UGX {selectedPayslip.netPayable.toLocaleString()}</p><p>Approved: {selectedPayslip.payrollVersion===11 && ['approved','partial','paid'].includes(batches[selectedPayslip.batchId]?.status) ? 'UGX '+selectedPayslip.netPayable.toLocaleString() : 'Not certified by this record'}</p>{selectedPayslip.payrollVersion===11&&<p>Paid: UGX {(selectedPayslip.paidUGX||0).toLocaleString()} · Outstanding: UGX {Math.max(0,selectedPayslip.netPayable-(selectedPayslip.paidUGX||0)).toLocaleString()}</p>}</div>
             {/* Personal credentials strip */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-zinc-50 p-4 rounded-2xl border border-zinc-100 text-xs">
               <div className="space-y-1.5">
@@ -211,7 +237,7 @@ Ref: TRANS-${payslip.id || 'EVAL'}
                 <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-extrabold block">Reference Transaction ID</span>
                 <div className="flex items-center gap-2 text-zinc-800 font-mono">
                   <ShieldCheck size={14} className="text-zinc-400" />
-                  <span>TRANS-{selectedPayslip.id?.slice(0, 8).toUpperCase() || 'EVAL'}</span>
+                  <span>{selectedPayslip.payrollReference || selectedPayslip.id?.slice(0, 8).toUpperCase() || 'EVAL'}</span>
                 </div>
               </div>
             </div>
@@ -306,7 +332,7 @@ Ref: TRANS-${payslip.id || 'EVAL'}
             <div className="p-5 rounded-2.5xl bg-zinc-900 text-white flex flex-col md:flex-row items-center justify-between gap-4">
               <div>
                 <span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest block">Net Disbursed Take-home Pay</span>
-                <p className="text-[9px] text-zinc-400">Direct deposit paid reference: {selectedPayslip.paid_date || 'Approved cycle'}</p>
+                <p className="text-[9px] text-zinc-400">{selectedPayslip.payrollVersion===11 ? 'Actual final settlement date: ' + (selectedPayslip.paid_date || 'Not fully settled') : 'Legacy record: historical payment evidence not verified'}</p>
               </div>
               <div className="text-right">
                 <h3 className="text-2xl font-black tracking-tight text-white">UGX {selectedPayslip.netPayable?.toLocaleString() || 'N/A'}</h3>

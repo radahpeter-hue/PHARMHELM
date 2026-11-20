@@ -1448,6 +1448,7 @@ export interface LeaveRequest {
 }
 
 export interface Payslip {
+  payrollVersion?:number; batchId?:string; payrollReference?:string; revision?:number; paidUGX?:number; status?:string;
   id: string;
   tenantId?: string;
   staffId: string;
@@ -1460,6 +1461,7 @@ export interface Payslip {
 }
 
 export interface AttendanceRecord {
+  verificationStatus?:string; verifiedBy?:string | null; verifiedAt?:any;
   id: string;
   staffId: string;
   tenantId?: string;

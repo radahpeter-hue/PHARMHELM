@@ -27,3 +27,10 @@ test('named database compilation context is sent without changing release target
  assert.equal(JSON.parse(calls[0].options.body).attachment_point,'firestore.googleapis.com/projects/123/databases/named-database');
  assert.ok(calls.every(c=>!c.url.includes('/releases/cloud.firestore')));
 });
+test('retried compiler diagnostics retain a definitive compiled-size rejection',async()=>{
+ const rulesetName='projects/test-project/rulesets/control';
+ const replies=[response(200,{name:rulesetName}),response(400,{error:{message:'Total size exceeds 256000 bytes (actual: 290466 bytes).'}}),response(200),response(200)];
+ const result=await diagnoseCompiler({...input,retryProbes:true,fetchImpl:async()=>replies.shift()});
+ assert.equal(result[0].exactProbeVerified,undefined);
+ assert.match(result[0].error,/290466 bytes/);
+});
