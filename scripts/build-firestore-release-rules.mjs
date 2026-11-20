@@ -622,7 +622,7 @@ export function packEqualityConjunctions(source,{booleanChoices=false}={}){
   if(splitTop(value,',').length>1)return value;
   const choice=ternary(value);if(choice)return booleanChoices?'(('+choice[0]+')&&('+rewrite(choice[1])+'))||(!( '+choice[0]+')&&('+rewrite(choice[2])+'))':value;
   const or=splitTop(value,'||');if(or.length>1)return or.map(rewrite).join('||');
-  const parts=splitTop(value,'&&');if(parts.length<3)return parts.length>1?parts.map(rewrite).join('&&'):value;
+  const parts=splitTop(value,'&&');if(parts.length<2)return parts.length>1?parts.map(rewrite).join('&&'):value;
   const result=[];let pairs=[];
   const flush=()=>{
    if(pairs.length<2)result.push(...pairs.map(pair=>pair.join('==')));
