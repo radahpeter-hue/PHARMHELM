@@ -165,3 +165,21 @@ test('shared value checks retain exact bounds and ignore literal text and longer
  assert.match(result,/\/\/ d.a is number && d.a >= 0/);
  assert.equal((result.match(/releaseValueCheck0\(d\./g)||[]).length,2);
 });
+
+test('single-use inlining preserves lazy invocation, captures, arguments and repeated helpers',async()=>{
+ const {inlineSingleUseFunctions}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`function repeated() { return true; }
+ function captured() { return outer; }
+ function parameter(value) { return value; }
+ function once() { return request.resource.data.value; }
+ function check(outer, input) { return captured() && repeated() && repeated() && parameter(outer) && (outer ? once() : false); }`;
+ const output=inlineSingleUseFunctions(source);
+ assert.match(output,/function captured\(/);
+ assert.match(output,/function parameter\(/);
+ assert.match(output,/function repeated\(/);
+ assert.doesNotMatch(output,/function once\(/);
+ assert.match(output,/outer \? \( request.resource.data.value\)/);
+ const simple=`function once() { return true; } function check() { return once(); }`;
+ assert.doesNotMatch(inlineSingleUseFunctions(simple),/function once/);
+ assert.equal(Function(inlineSingleUseFunctions(simple)+';return check();')(),true);
+});

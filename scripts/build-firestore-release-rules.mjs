@@ -705,7 +705,7 @@ export function uniqueLocalFunctions(source){
  return source;
 }
 
-export const RELEASE_RULE_OPTIONS=Object.freeze({valueChecks:true,scopedBindings:true,earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:false,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:false});
+export const RELEASE_RULE_OPTIONS=Object.freeze({inlineSingles:true,valueChecks:true,scopedBindings:true,earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:false,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:false});
 
 /** On an update, an unchanged tenant plus membership of the existing tenant
  * makes the second membership call redundant. Keep both equality and the
@@ -769,7 +769,45 @@ export function compactFunctionBindings(source) {
  return source;
 }
 
-export function compactRuleSymbols(source,{minimal=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+/** Inline a single invocation of a parameterless, return-only helper. Keep
+ * its expression at the original invocation and refuse captured-name shadowing.
+ * No let or argument evaluation can be moved or duplicated by this pass.
+ */
+export function inlineSingleUseFunctions(source) {
+ for(;;){
+  const masked=maskRulesTrivia(source),functions=[];
+  for(const head of masked.matchAll(/\bfunction\s+(\w+)\(([^)]*)\)\s*\{/g)){
+   let end=head.index+head[0].length,depth=1;
+   for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+   if(depth)throw Error('Unbalanced inline function.');
+   functions.push({name:head[1],args:head[2],from:head.index,start:head.index+head[0].length,to:end});
+  }
+  let changes;
+  for(const fn of functions){
+   if(fn.args.trim()||functions.filter(other=>other.name===fn.name).length!==1)continue;
+   const body=masked.slice(fn.start,fn.to-1),returned=/^\s*return\b([^;]+);\s*$/.exec(body);
+   if(!returned)continue;
+   const calls=[...masked.matchAll(new RegExp('(?<![.\\w])'+fn.name+'\\s*\\(\\s*\\)','g'))];
+   if(calls.length!==2)continue;
+   const call=calls.find(c=>c.index<fn.from||c.index>=fn.to);
+   if(!call)continue;
+   const owner=functions.find(other=>call.index>=other.start&&call.index<other.to);
+   const start=fn.start+returned[0].indexOf(returned[1]);
+   const expression=source.slice(start,start+returned[1].length);
+   if(owner){
+    const ownBody=masked.slice(owner.start,owner.to);
+    const bindings=[...owner.args.split(',').map(s=>s.trim()),...[...ownBody.matchAll(/\blet\s+(\w+)\s*=/g)].map(m=>m[1])].filter(Boolean);
+    if(bindings.some(name=>new RegExp('(?<![.\\w])'+name+'\\b').test(maskRulesTrivia(expression))))continue;
+   }
+   changes=[{from:fn.from,to:fn.to,text:''},{from:call.index,to:call.index+call[0].length,text:'('+expression+')'}];
+   break;
+  }
+  if(!changes)return source;
+  for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ }
+}
+
+export function compactRuleSymbols(source,{minimal=false,inlineSingles=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
  if(!minimal){
  if(valueChecks)source=shareValueChecks(source);
  source=omitNeverAllow(source);
@@ -828,8 +866,9 @@ export function compactRuleSymbols(source,{minimal=false,valueChecks=false,scope
   const internal=/^[A-Za-z_]\w*$/.test(token)&&previous!=='.';
   output.push(internal?(aliases.get(token)||token):token);previous=token;
  }
- const result=output.join('').trim();
- return scopedBindings?compactFunctionBindings(result):result;
+ let result=output.join('').trim();
+ if(scopedBindings)result=compactFunctionBindings(result);
+ return inlineSingles?inlineSingleUseFunctions(result):result;
 }
 
 /** Keep source positions compact as well as identifiers. Replace only existing
