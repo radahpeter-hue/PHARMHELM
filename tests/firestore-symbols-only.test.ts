@@ -149,3 +149,19 @@ test('binding compaction reuses names only within functions and preserves observ
   assert.equal(run(result),run(source));
  }
 });
+
+test('shared value checks retain exact bounds and ignore literal text and longer expressions',async()=>{
+ const {shareValueChecks}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`service cloud.firestore { match /databases/{database}/documents {
+ function check(d) { return d.a is number && d.a >= 0 && d.b is number && d.b >= 0 && d.c is number && d.c >= 0 + 1; }
+ // d.a is number && d.a >= 0
+ function literal() { return 'd.a is number && d.a >= 0'; }
+ match /rows/{id} { allow create: if check(request.resource.data); }
+ } }`;
+ const result=shareValueChecks(source);
+ assert.match(result,/return value is number && value >= 0;/);
+ assert.match(result,/d.c is number && d.c >= 0 \+ 1/);
+ assert.match(result,/'d.a is number && d.a >= 0'/);
+ assert.match(result,/\/\/ d.a is number && d.a >= 0/);
+ assert.equal((result.match(/releaseValueCheck0\(d\./g)||[]).length,2);
+});

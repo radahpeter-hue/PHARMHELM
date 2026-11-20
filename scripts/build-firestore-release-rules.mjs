@@ -76,6 +76,27 @@ function insertDatabaseHelpers(source, helpers) {
  return source.slice(0, offset) + '\n' + helpers.join('\n') + '\n' + source.slice(offset);
 }
 
+/** Share adjacent type/range guards. The argument is a plain value lookup,
+ * evaluated where the first original guard was evaluated. The helper retains
+ * the original short circuit, type test and bound, including malformed values.
+ */
+export function shareValueChecks(source) {
+ const masked=maskRulesTrivia(source),changes=[],helpers=[];
+ if(!databaseScope.test(masked))return source;
+ for(const [type,tail] of [['int','> 0'],['int','>= 0'],['number','>= 0'],['number','> 0'],['string','.size() > 0'],['string','.size() >= 3'],['string','.size() >= 5'],['string','.size() >= 8']]){
+  const suffix=tail.replace(/[.()]/g,'\\$&').replaceAll(' ','\\s*');
+  const pattern=new RegExp('(?<![.\\w])([A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*)\\s+is\\s+'+type+'\\s*&&\\s*\\1\\s*'+suffix+'(?=\\s*(?:&&|\\|\\||[),;}]|$))','g');
+  const matches=[...masked.matchAll(pattern)];
+  if(matches.length<2)continue;
+  let name='releaseValueCheck'+helpers.length;
+  while(source.includes(name))name+='X';
+  helpers.push('function '+name+'(value) { return value is '+type+' && value '+tail+'; }');
+  for(const match of matches)changes.push({from:match.index,to:match.index+match[0].length,text:name+'('+match[1]+')'});
+ }
+ for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
 /** Collection-specific helpers need not be inherited by every sibling match.
  * Follow the complete helper call graph to identify owning matches. A small
  * number of owners may each receive the identical helper declaration.
@@ -684,7 +705,7 @@ export function uniqueLocalFunctions(source){
  return source;
 }
 
-export const RELEASE_RULE_OPTIONS=Object.freeze({scopedBindings:true,earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:false,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:false});
+export const RELEASE_RULE_OPTIONS=Object.freeze({valueChecks:true,scopedBindings:true,earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:false,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:false});
 
 /** On an update, an unchanged tenant plus membership of the existing tenant
  * makes the second membership call redundant. Keep both equality and the
@@ -748,8 +769,9 @@ export function compactFunctionBindings(source) {
  return source;
 }
 
-export function compactRuleSymbols(source,{minimal=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+export function compactRuleSymbols(source,{minimal=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
  if(!minimal){
+ if(valueChecks)source=shareValueChecks(source);
  source=omitNeverAllow(source);
  if(tenantChecks)source=elideDuplicateTenantGrants(source);
  if(broadRequests)source=shareRequestFields(source);
