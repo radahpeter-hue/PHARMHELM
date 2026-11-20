@@ -580,7 +580,7 @@ export function packEqualityConjunctions(source,{booleanChoices=false}={}){
   functions.push({name:h[1],from:h.index,to:end});
  }
  const scalarRanges=[];
- for(const head of masked.matchAll(/^    match \/(?:identity_sequence_counters|operational_\w+|stock_orders|stock_order_lines|grn_records|transfer_invoices|transfer_invoice_lines)\/\{\w+\}\s*\{/gm)){
+ for(const head of masked.matchAll(/^    match \/(?:identity_sequence_counters)\/\{\w+\}\s*\{/gm)){
   let end=head.index+head[0].length,depth=1;for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
   scalarRanges.push({from:head.index,to:end});
  }
@@ -626,7 +626,7 @@ export function packEqualityConjunctions(source,{booleanChoices=false}={}){
   const result=[];let pairs=[];
   const flush=()=>{
    if(pairs.length<2)result.push(...pairs.map(pair=>pair.join('==')));
-   else result.push('['+pairs.map(pair=>pair[0]).join(',')+']==['+pairs.map(pair=>pair[1]).join(',')+']');
+   else result.push('(['+pairs.map(pair=>pair[0]).join(',')+']==['+pairs.map(pair=>pair[1]).join(',')+'])');
    pairs=[];
   };
   for(const raw of parts){
@@ -684,7 +684,7 @@ export function uniqueLocalFunctions(source){
  return source;
 }
 
-export const RELEASE_RULE_OPTIONS=Object.freeze({earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:false,booleanChoices:true,uniqueLocals:true,tenantChecks:true,groupCollections:false});
+export const RELEASE_RULE_OPTIONS=Object.freeze({earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:false,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:false});
 
 /** On an update, an unchanged tenant plus membership of the existing tenant
  * makes the second membership call redundant. Keep both equality and the
