@@ -797,6 +797,10 @@ export function compactRuleSymbols(source,{minimal=false,valueChecks=false,scope
  const names=new Set(tokens.filter(token=>/^[A-Za-z_]\w*$/.test(token))),symbols=new Set(),aliases=new Map();
  const reservedPaths=new Set([...stripped.matchAll(/\/([A-Za-z_]\w*)/g)].map(m=>m[1]));
  for(const keyword of ['as','break','const','continue','do','else','for','function','if','in','is','let','match','return','service','true','false','null','rules_version','while'])names.add(keyword);
+ // Local bindings are shortened again per function. Reserve a small pool for
+ // that pass and give the remaining short names to shared functions/captures.
+ const scopedGlobalNames=new Set([...stripped.matchAll(/\bfunction\s+(\w+)\(/g)].map(m=>m[1]).concat([...stripped.matchAll(/\{(\w+)(?:=\*\*)?\}/g)].map(m=>m[1])));
+ if(scopedBindings)for(const char of 'abcdefgh')names.add(char);
  const alphabet='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';let serial=0;
  const unique=()=>{for(;;){let index=serial++,name='';do{name=alphabet[index%52]+name;index=Math.floor(index/52)-1;}while(index>=0);if(!names.has(name)){names.add(name);return name;}}};
  // Rule methods can also be local binding names. Keep the method token intact.
@@ -816,7 +820,7 @@ export function compactRuleSymbols(source,{minimal=false,valueChecks=false,scope
   if(last!=='.'&&symbols.has(token))counts.set(token,(counts.get(token)||0)+1);
   last=token;
  }
- for(const name of [...symbols].sort((a,b)=>(counts.get(b)||0)-(counts.get(a)||0)))aliases.set(name,unique());
+ for(const name of [...symbols].sort((a,b)=>(scopedBindings?Number(scopedGlobalNames.has(b))-Number(scopedGlobalNames.has(a)):0)||(counts.get(b)||0)-(counts.get(a)||0)))aliases.set(name,unique());
  let previous='';const output=[];
  for(const token of tokens){
   if(token.startsWith('//')||token.startsWith('/*')){output.push(' ');continue;}
