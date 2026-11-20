@@ -684,7 +684,7 @@ export function uniqueLocalFunctions(source){
  return source;
 }
 
-export const RELEASE_RULE_OPTIONS=Object.freeze({earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:false,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:false});
+export const RELEASE_RULE_OPTIONS=Object.freeze({scopedBindings:true,earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:false,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:false});
 
 /** On an update, an unchanged tenant plus membership of the existing tenant
  * makes the second membership call redundant. Keep both equality and the
@@ -709,7 +709,46 @@ export function elideDuplicateTenantGrants(source){
  return source;
 }
 
-export function compactRuleSymbols(source,{minimal=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+/** Parameters and lets can reuse short names in sibling functions. Keep every
+ * function name, captured match variable and literal path name reserved. This
+ * changes bindings only, without inserting calls or changing evaluation order.
+ */
+export function compactFunctionBindings(source) {
+ const masked=maskRulesTrivia(source);
+ const reserved=new Set([
+  ...[...masked.matchAll(/\bfunction\s+(\w+)\s*\(/g)].map(m=>m[1]),
+  ...[...masked.matchAll(/\{(\w+)(?:=\*\*)?\}/g)].map(m=>m[1]),
+ ]);
+ const paths=new Set([...masked.matchAll(/\/([A-Za-z_]\w*)/g)].map(m=>m[1]));
+ const alphabet='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+ for(const head of [...masked.matchAll(/\bfunction\s+(\w+)\(([^)]*)\)\s*\{/g)].reverse()){
+  const from=head.index;let end=from+head[0].length,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  if(depth)throw Error('Unbalanced function bindings.');
+  const body=masked.slice(from,end);
+  if(/\bfunction\b/.test(body.slice(head[0].length)))continue;
+  const locals=[...head[2].split(',').map(s=>s.trim()).filter(Boolean),...[...body.matchAll(/\blet\s+(\w+)\s*=/g)].map(m=>m[1])];
+  if(new Set(locals).size!==locals.length)continue;
+  // Tokenize punctuation too: whitespace after a dot still introduces a field.
+  const tokens=[...body.matchAll(/[A-Za-z_]\w*|[^\s]/g)],references=[];let previous='';
+  for(const token of tokens){if(/^[A-Za-z_]\w*$/.test(token[0])&&previous!=='.')references.push(token);previous=token[0];}
+  const bound=new Set(locals),free=new Set(reserved);
+  for(const token of references)if(!bound.has(token[0]))free.add(token[0]);
+  const aliases=new Map();let serial=0;
+  for(const local of locals){
+   if(paths.has(local))continue;
+   while(serial<alphabet.length&&free.has(alphabet[serial]))serial++;
+   if(serial===alphabet.length)break;
+   aliases.set(local,alphabet[serial++]);
+  }
+  let rewritten=source.slice(from,end);
+  for(const token of references.reverse())if(aliases.has(token[0]))rewritten=rewritten.slice(0,token.index)+aliases.get(token[0])+rewritten.slice(token.index+token[0].length);
+  source=source.slice(0,from)+rewritten+source.slice(end);
+ }
+ return source;
+}
+
+export function compactRuleSymbols(source,{minimal=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
  if(!minimal){
  source=omitNeverAllow(source);
  if(tenantChecks)source=elideDuplicateTenantGrants(source);
@@ -763,7 +802,8 @@ export function compactRuleSymbols(source,{minimal=false,fieldReaders=false,inde
   const internal=/^[A-Za-z_]\w*$/.test(token)&&previous!=='.';
   output.push(internal?(aliases.get(token)||token):token);previous=token;
  }
- return output.join('').trim();
+ const result=output.join('').trim();
+ return scopedBindings?compactFunctionBindings(result):result;
 }
 
 /** Keep source positions compact as well as identifiers. Replace only existing

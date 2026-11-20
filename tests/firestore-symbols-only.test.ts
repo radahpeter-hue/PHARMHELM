@@ -121,3 +121,31 @@ test('indexed diagnostic readers retain literal keys and pure map access',()=>{
   assert.equal(evaluate(output),evaluate(source));
  }
 });
+
+test('function binding compaction preserves captures, literal paths, fields and sibling calls',async()=>{
+ const {compactFunctionBindings}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`function a() { return database; }
+ function b(tenant) { let staff = get(/databases/$(database)/documents/staff/$(tenant)).data; return staff.tenantId == tenant && a() != null; }
+ function c(inputValue) { let resultValue = inputValue.value; return b(resultValue) && inputValue . resultValue == 'inputValue'; }`;
+ const result=compactFunctionBindings(source);
+ assert.match(result,/documents\/staff\//);
+ assert.match(result,/let staff =/);
+ assert.match(result,/\$\(database\)/);
+ assert.match(result,/return database;/);
+ assert.match(result,/inputValue'/);
+ assert.match(result,/\. resultValue/);
+ assert.match(result,/b\(/);
+ assert.equal(compactFunctionBindings(result),result);
+});
+
+test('binding compaction reuses names only within functions and preserves observable results',async()=>{
+ const {compactFunctionBindings}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`function f(longArgument) { let longLocal = longArgument.amount; return longLocal > 0 && g(longArgument); }
+ function g(otherArgument) { let otherLocal = otherArgument.limit; return otherArgument.amount <= otherLocal; }`;
+ const result=compactFunctionBindings(source);
+ assert.ok(result.length<source.length);
+ for(const row of [{amount:1,limit:2},{amount:3,limit:2},{amount:0,limit:2},{amount:-1,limit:2},{amount:1}]){
+  const run=(text:string)=>Function(text+'; return f(arguments[0]);')(row);
+  assert.equal(run(result),run(source));
+ }
+});
