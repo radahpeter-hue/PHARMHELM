@@ -107,3 +107,17 @@ test('tenant deduplication keeps prior membership and immutable tenant equality'
  const alternative=source.replace(' && request.resource.data.amount > 0',' || request.resource.data.public == true');
  assert.equal(elideDuplicateTenantGrants(alternative),alternative);
 });
+
+test('indexed diagnostic readers retain literal keys and pure map access',()=>{
+ const source=`service cloud.firestore { match /databases/{database}/documents {
+ function permitted(row) { return row == null || (row.amountUGX > 0 && row.amountUGX < 10 && row.amountUGX != 3 && row.amountUGX != 4 && row.amountUGX != 5); }
+ match /records/{id} { allow read: if permitted(resource.data); }
+ } }`;
+ const output=shareFieldReaders(source,{indexed:true});
+ assert.match(output,/value\["amountUGX"\]/);
+ const extract=(text:string)=>text.slice(text.indexOf('function '),text.indexOf('match /records/'));
+ for(const row of [null,{}, {amountUGX:-1},{amountUGX:1},{amountUGX:3},{amountUGX:10}]){
+  const evaluate=(text:string)=>{try{return Function(extract(text)+';return permitted(arguments[0]);')(row)===true;}catch{return false;}};
+  assert.equal(evaluate(output),evaluate(source));
+ }
+});

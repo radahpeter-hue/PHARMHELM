@@ -51,10 +51,11 @@ jobs:
           const release=RELEASE_RULE_OPTIONS;
           const variants={
             noVector:{...release,vectorEquality:false},
+            indexedFields:{...release,indexedFields:true},
             noFields:{...release,fieldReaders:false},
             noEarlyRequests:{...release,earlyRequests:false},
           };
           for(const [name,options] of Object.entries(variants)) writeFileSync(`/tmp/${name}.rules`,wrapReleaseColumns(compactRuleSymbols(source,options))+'\n');
           JS
           cp scripts/diagnose-firestore-compiler.mjs /tmp/rules-size/diagnose.mjs
-          node /tmp/rules-size/diagnose.mjs /tmp/main-control.rules /tmp/noVector.rules /tmp/noFields.rules /tmp/noEarlyRequests.rules
+          node /tmp/rules-size/diagnose.mjs /tmp/main-control.rules /tmp/noVector.rules /tmp/noFields.rules /tmp/noEarlyRequests.rules /tmp/indexedFields.rules

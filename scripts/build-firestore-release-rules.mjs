@@ -500,7 +500,7 @@ export function omitNeverAllow(source){
 
 /** Share literal field names through pure accessors. The lookup remains at
  * its original expression position, including conditional branches. */
-export function shareFieldReaders(source){
+export function shareFieldReaders(source,{indexed=false}={}){
  const masked=maskRulesTrivia(source),groups=new Map();
  if(!databaseScope.test(masked))return source;
  const protectedRanges=budgetSensitiveRanges(masked).filter(r=>!/^\s*match\s+\/(?:operational_\w+|stock_orders|stock_order_lines|grn_records|transfer_invoices|transfer_invoice_lines)\//.test(masked.slice(r.from,r.to)));
@@ -518,9 +518,9 @@ export function shareFieldReaders(source){
  }
  const changes=[],helpers=[];let serial=0;
  for(const [field,items] of groups){
-  if(items.length<4)continue;
+  if(items.length<4||(field.length-5)*items.length-field.length-10<=0)continue;
   let name;do{name='releaseFieldReader'+serial++;}while(source.includes(name));
-  helpers.push('function '+name+'(value) { return value.'+field+'; }');
+  helpers.push('function '+name+'(value) { return '+(indexed?'value[\"'+field+'\"]':'value.'+field)+'; }');
   for(const item of items)changes.push({...item,text:name+'('+item.base+')'});
  }
  for(const {from,to,text} of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
@@ -709,13 +709,13 @@ export function elideDuplicateTenantGrants(source){
  return source;
 }
 
-export function compactRuleSymbols(source,{minimal=false,fieldReaders=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+export function compactRuleSymbols(source,{minimal=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
  if(!minimal){
  source=omitNeverAllow(source);
  if(tenantChecks)source=elideDuplicateTenantGrants(source);
  if(broadRequests)source=shareRequestFields(source);
  if(earlyRequests)source=shareRequestExpressions(source,{preserveBudget:true});
- if(fieldReaders)source=shareFieldReaders(source);
+ if(fieldReaders)source=shareFieldReaders(source,{indexed:indexedFields});
  if(shareReaders)source=shareSnapshotReaders(source);
  if(shareSchemas)source=shareSchemaChecks(source);
  if(sharePaths)source=shareDocumentPaths(source);
