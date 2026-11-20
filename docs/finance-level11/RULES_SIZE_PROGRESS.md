@@ -13,7 +13,8 @@ All figures labelled local are stripped emulator-compiler AST estimates, not Fir
 | Targeted pass 4, 8453c9e, function bindings | 260,329 | 2,541 | Local tests and POS/payroll/Finance Level 4/preview CI passed; hosted gates HTTP 503 |
 | Targeted pass 5, fb6a8e4, shared value guards | 256,309 | 4,020 | Local tests passed; hosted verification pending |
 | Targeted pass 6, df68519, global/local name allocation | 255,972 | 337 | Hosted rejection: **262,286 compiled bytes**, 6,286 over limit |
-| Targeted pass 7, single-use no-argument helpers | 255,643 | 329 | All local tests passed; hosted verification pending |
+| Targeted pass 7, edbf952, single-use no-argument helpers | 255,643 | 329 | All local tests passed; hosted verification pending |
+| Targeted pass 8, implied authority checks | 254,939 | 704 | All local tests passed; hosted verification pending |
 | Scalar-choice experiment, rejected | 255,348 | 4,981 | Not pushed; inventory runtime evaluation error |
 | Path-sharing experiment, rejected | 261,912 | 1,586 | Not submitted; receivable test failed |
 
@@ -34,3 +35,5 @@ Pass 5 shares 78 adjacent integer/number/string type-and-bound checks in pure he
 Pass 6 allocates short names to shared functions/captured match bindings before local function bindings, reserving eight letters for the latter. It changes identifiers only. The exact candidate passed 928 unit tests, 176 release comparisons, 512 value-guard comparisons and all five integration scripts. This 28-byte estimated margin is not hosted proof.
 
 Pass 7 inlines 19 unique, single-use, parameterless return-only helpers at their invocation sites. It refuses captured-name collisions and leaves argument/let evaluation intact. The exact release passed 929 unit tests, 176 release comparisons, 385 vector comparisons, 512 type/range comparisons and all five integration scripts. The compiled-size gap remains measured against Firebase, not against this estimate.
+
+Pass 8 removes 33 redundant authentication/admin checks from the authored rules. Authentication remains inside the adjacent authority predicate, and removed admin alternatives were already included by that predicate. 929 unit tests, 432 original/reduced/released authority comparisons (anonymous, absent staff, role, secondary-role, custom-role and cross-tenant cases) and all five authenticated workflow scripts passed. No role, tenant, active-state or financial check was removed.

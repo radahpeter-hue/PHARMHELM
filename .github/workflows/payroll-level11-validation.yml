@@ -40,7 +40,7 @@ jobs:
       - run: npm run build
       - run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
       - name: Authored payroll rules, large-batch recovery and atomic security acceptance
-        run: npx firebase emulators:exec --only firestore --project demo-pharmhelm-payroll11 "node scripts/payroll-level11-rules-emulator.mjs && node scripts/firestore-vector-equivalence-emulator.mjs && node scripts/firestore-value-equivalence-emulator.mjs"
+        run: npx firebase emulators:exec --only firestore --project demo-pharmhelm-payroll11 "node scripts/payroll-level11-rules-emulator.mjs && node scripts/firestore-vector-equivalence-emulator.mjs && node scripts/firestore-value-equivalence-emulator.mjs && node scripts/firestore-authority-equivalence-emulator.mjs"
       - name: Generate equivalent release rules without replacing authored source
         run: |
           cp firestore.rules /tmp/payroll-release.rules
