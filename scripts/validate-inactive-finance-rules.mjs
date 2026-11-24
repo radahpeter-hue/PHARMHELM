@@ -3,7 +3,7 @@
  */
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-import {validateUnboundProbe,findExactInactiveRuleset,fetchRulesApi} from './firestore-unbound-probe.mjs';
+import {validateExactCandidateProbe,findExactInactiveRuleset,fetchRulesApi} from './firestore-unbound-probe.mjs';
 const {GoogleAuth}=await import('google-auth-library');
 const token=process.env.GOOGLE_OAUTH_ACCESS_TOKEN || await new GoogleAuth({scopes:['https://www.googleapis.com/auth/cloud-platform']}).getAccessToken();
 if(!token)throw new Error('Scoped CI authentication is required.');
@@ -27,12 +27,12 @@ for(let attempt=1;attempt<=4;attempt++) {
  await new Promise(resolve=>setTimeout(resolve,attempt*5000));
 }
 if(!result.name?.startsWith(`projects/${project}/rulesets/`))throw new Error('Unexpected inactive ruleset response.');
-const probeName=`projects/${project}/releases/pharmhelm_size_probe_${process.env.GITHUB_RUN_ID||Date.now()}_${process.env.GITHUB_RUN_ATTEMPT||1}`;
-if(!/^projects\/gen-lang-client-0911422817\/releases\/pharmhelm_size_probe_[0-9]+_[0-9]+$/.test(probeName))throw new Error('Unsafe validation release name.');
-const release=await validateUnboundProbe({project,token,rulesetName:result.name,probeName});
+const initialProbeName=`projects/${project}/releases/pharmhelm_size_probe_${process.env.GITHUB_RUN_ID||Date.now()}_${process.env.GITHUB_RUN_ATTEMPT||1}`;
+if(!/^projects\/gen-lang-client-0911422817\/releases\/pharmhelm_size_probe_[0-9]+_[0-9]+$/.test(initialProbeName))throw new Error('Unsafe validation release name.');
+const {release,rulesetName,probeName}=await validateExactCandidateProbe({project,token,rules,rulesetName:result.name,probeName:initialProbeName});
 try{
- if(release.name!==probeName||release.rulesetName!==result.name)throw new Error('Unexpected size-validation release.');
- console.log(JSON.stringify({mode:'UNBOUND_RELEASE_SIZE_VALIDATION',ruleset:result.name,sourceSHA256,sourceBytes:Buffer.byteLength(rules),productionReleaseModified:false}));
+ if(release.name!==probeName||release.rulesetName!==rulesetName)throw new Error('Unexpected size-validation release.');
+ console.log(JSON.stringify({mode:'UNBOUND_RELEASE_SIZE_VALIDATION',ruleset:rulesetName,sourceSHA256,sourceBytes:Buffer.byteLength(rules),productionReleaseModified:false}));
 }finally{
  const cleanup=await fetchRulesApi(`https://firebaserules.googleapis.com/v1/${probeName}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
  if(!cleanup.ok)throw new Error(`Temporary validation release cleanup failed (${cleanup.status}).`);

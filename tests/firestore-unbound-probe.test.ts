@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validateUnboundProbe,findExactInactiveRuleset,fetchRulesApi} from '../scripts/firestore-unbound-probe.mjs';
+import {validateUnboundProbe,validateExactCandidateProbe,findExactInactiveRuleset,fetchRulesApi} from '../scripts/firestore-unbound-probe.mjs';
 const project='test-project',probeName='projects/test-project/releases/pharmhelm_size_probe_123_1',rulesetName='projects/test-project/rulesets/exact';
 const input={project,token:'test-token',probeName,rulesetName,pause:async()=>{}};
 const response=(status:number,data:any)=>new Response(JSON.stringify(data),{status});
@@ -62,4 +62,54 @@ test('persistent transport failures exhaust bounded verification without certify
 test('transport handling does not swallow programming errors or explicit rejection',async()=>{
  await assert.rejects(fetchRulesApi('test',{},async()=>{throw new Error('unexpected code defect');}),/code defect/);
  assert.equal((await fetchRulesApi('test',{},async()=>response(400,{error:{message:'oversized'}}))).status,400);
+});
+
+
+test('unavailable stored executable may recover through a separately verified byte-identical candidate',async()=>{
+ const alternate='projects/test-project/rulesets/older-exact',calls:any[]=[];
+ const result=await validateExactCandidateProbe({...input,rules:'exact input',log:()=>{},fetchImpl:async(url:any,options:any)=>{
+  calls.push({url,options});
+  if(url.endsWith('/rulesets?pageSize=32'))return response(200,{rulesets:[{name:rulesetName},{name:alternate}]});
+  if(url.endsWith('/rulesets/older-exact'))return response(200,{name:alternate,source:{files:[{name:'firestore.rules',content:'exact input'}]}});
+  if(options.method==='POST'){
+   const data=JSON.parse(options.body);
+   return data.rulesetName===alternate?response(200,data):response(503,{});
+  }
+  return response(404,{});
+ }});
+ assert.equal(result.rulesetName,alternate);
+ assert.equal(result.probeName,'projects/test-project/releases/pharmhelm_size_probe_123_1001');
+ assert.ok(calls.some(x=>x.options.method==='POST'&&JSON.parse(x.options.body).rulesetName===alternate));
+ assert.ok(!calls.some(x=>x.url===`https://firebaserules.googleapis.com/v1/${rulesetName}`));
+});
+test('alternate recovery never retries an explicit size rejection, foreign response or authorization error',async()=>{
+ for(const status of [400,403,200]){
+  let calls=0;
+  await assert.rejects(validateExactCandidateProbe({...input,rules:'exact',fetchImpl:async()=>{
+   calls++;return response(status,status===200?{name:probeName,rulesetName:'projects/foreign/rulesets/x'}:{error:{message:'explicit rejection'}});
+  }}),status===200?/Conflicting/:/explicit rejection/);
+  assert.equal(calls,1);
+ }
+});
+test('alternate recovery fails closed when only mismatched or malformed source copies exist',async()=>{
+ let lookups=0;
+ await assert.rejects(validateExactCandidateProbe({...input,rules:'exact',fetchImpl:async(url:any,options:any)=>{
+  if(url.endsWith('/rulesets?pageSize=32'))return response(200,{rulesets:['different','extra-file','wrong-name','wrong-file','foreign'].map(name=>({name:`projects/test-project/rulesets/${name}`}))});
+  if(url.includes('/rulesets/')){
+   lookups++;const name=url.slice('https://firebaserules.googleapis.com/v1/'.length);
+   return response(200,{name:name.endsWith('wrong-name')?'projects/foreign/rulesets/x':name,source:{files:name.endsWith('extra-file')?[{name:'firestore.rules',content:'exact'},{name:'extra',content:''}]:[{name:name.endsWith('wrong-file')?'other.rules':'firestore.rules',content:name.endsWith('different')||name.endsWith('foreign')?'not exact':'exact'}]}});
+  }
+  return response(options.method==='POST'?503:404,{});
+ }}),/not verified/);
+ assert.equal(lookups,5);
+});
+test('alternate recovery is bounded to three hosted candidates and never reuses a tried ruleset',async()=>{
+ const posts:string[]=[];let lists=0;
+ await assert.rejects(validateExactCandidateProbe({...input,rules:'exact',log:()=>{},fetchImpl:async(url:any,options:any)=>{
+  if(url.endsWith('/rulesets?pageSize=32')){lists++;return response(200,{rulesets:[rulesetName,'projects/test-project/rulesets/b','projects/test-project/rulesets/c','projects/test-project/rulesets/d'].map(name=>({name}))});}
+  if(url.includes('/rulesets/'))return response(200,{name:url.slice('https://firebaserules.googleapis.com/v1/'.length),source:{files:[{name:'firestore.rules',content:'exact'}]}});
+  if(options.method==='POST'){posts.push(JSON.parse(options.body).rulesetName);return response(503,{});}
+  return response(404,{});
+ }}),/not verified/);
+ assert.equal(lists,2);assert.equal(posts.length,12);assert.equal(new Set(posts).size,3);
 });

@@ -14,14 +14,15 @@ export async function fetchRulesApi(url,options,fetchImpl=fetch) {
 /** Locate exact persisted input after an ambiguous ruleset-create response.
  * Persistence is never acceptance: the caller must still verify a release.
  */
-export async function findExactInactiveRuleset({project,token,rules,fetchImpl=fetch}) {
+export async function findExactInactiveRuleset({project,token,rules,fetchImpl=fetch,excludeNames=[],pageSize=8}) {
  if(!/^[a-z0-9-]+$/.test(project))throw Error('Unsafe ruleset project.');
+ if(!Number.isInteger(pageSize)||pageSize<1||pageSize>32)throw Error('Unsafe recovery page size.');
  const root=`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,headers={Authorization:`Bearer ${token}`};
- const listed=await fetchRulesApi(root+'?pageSize=8',{headers,signal:AbortSignal.timeout(60000)},fetchImpl);
+ const listed=await fetchRulesApi(root+`?pageSize=${pageSize}`,{headers,signal:AbortSignal.timeout(60000)},fetchImpl);
  if(!listed.ok)return null;
  const {rulesets=[]}=await listed.json();
- for(const row of rulesets.slice(0,8)){
-  if(!row.name?.startsWith(`projects/${project}/rulesets/`))continue;
+ for(const row of rulesets.slice(0,pageSize)){
+  if(!row.name?.startsWith(`projects/${project}/rulesets/`)||excludeNames.includes(row.name))continue;
   const response=await fetchRulesApi('https://firebaserules.googleapis.com/v1/'+row.name,{headers,signal:AbortSignal.timeout(60000)},fetchImpl);
   if(!response.ok)continue;
   const saved=await response.json(),files=saved.source?.files;
@@ -54,10 +55,37 @@ export async function validateUnboundProbe({project,token,rulesetName,probeName,
     if(late.ok)return exact(await late.json());
     if(![404,429,500,502,503,504].includes(late.status))throw Error(`Unbound probe verification failed (${late.status}).`);
    }
-   throw Error(`Compiled executable activation-size validation unavailable (${response.status}); exact probe not verified.`);
+   const error=Error(`Compiled executable activation-size validation unavailable (${response.status}); exact probe not verified.`);
+   error.code='RULES_PROBE_UNAVAILABLE';
+   throw error;
   }
   console.log(`Unbound probe HTTP ${response.status}; retry ${attempt}/4. No production release modified.`);
   await pause(attempt*5000);
  }
  throw Error('Unbound probe was not verified.');
+}
+
+/** A persisted source can outlive an ambiguous compiler response. On unavailable
+ * verification only, try at most two other byte-identical candidate copies.
+ * Each copy requires its own successful hosted probe; persistence is no proof.
+ * Explicit compiler rejection and identity/auth errors are never retried here.
+ */
+export async function validateExactCandidateProbe({project,token,rules,rulesetName,probeName,fetchImpl=fetch,pause,log=console.log}) {
+ const tried=[];
+ let current=rulesetName;
+ for(let index=0;index<3;index++){
+  const name=index===0?probeName:probeName.replace(/_(\d+)$/,(_,attempt)=>`_${Number(attempt)+index*1000}`);
+  tried.push(current);
+  try{
+   const release=await validateUnboundProbe({project,token,rulesetName:current,probeName:name,fetchImpl,pause});
+   return {release,rulesetName:current,probeName:name};
+  }catch(error){
+   if(error.code!=='RULES_PROBE_UNAVAILABLE'||index===2)throw error;
+   const alternate=await findExactInactiveRuleset({project,token,rules,fetchImpl,excludeNames:tried,pageSize:32});
+   if(!alternate)throw error;
+   current=alternate.name;
+   log('Retrying hosted verification with another byte-identical candidate ruleset. No acceptance inferred from stored source.');
+  }
+ }
+ throw Error('Exact candidate probe was not verified.');
 }
