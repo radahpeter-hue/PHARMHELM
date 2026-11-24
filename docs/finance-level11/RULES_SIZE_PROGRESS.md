@@ -45,3 +45,7 @@ Pass 9: cached staff authority and specialized paths. Previous local estimate 25
 The generated tokens exactly match the locally accepted cached-alias-fields-10 artifact. That artifact passed inventory, transfers, payroll, supplier settlements and receivables, including an explicit assigned-branch Finance Officer collection into a custom account. Fresh comparison/regression execution is in progress. 929 existing unit tests pass after updating the source-structure assertion to follow the extracted active-profile predicate; the additional specialization/forwarding test passes separately.
 
 Changes preserve the guarded active-profile lookup, reuse the collector's already-loaded staff roles, specialize frequently repeated collection paths, share long field readers and remove pure forwarding frames. Rejected conditional packing, consolidated collection grants and unbudgeted path experiments remain excluded. Hosted verification and all required exact-head CI remain mandatory.
+
+Pass 9 was pushed as 7f5608c. Fresh local execution passed the 176 release comparisons, 385 vector comparisons, 512 type/range comparisons, 432 authority comparisons, all five workflow scripts, TypeScript and production build.
+
+Pass 10 shares immutable constant lists. Local estimate **249,961**, down from 250,336, saving **375 bytes**. Inventory, transfers, 13 payroll groups, supplier settlements and receivable settlements (including the explicit branch Finance Officer custom-account case) all passed. Hosted acceptance remains pending; this is not a verified Firebase size.

@@ -754,7 +754,7 @@ export function uniqueLocalFunctions(source){
  return source;
 }
 
-export const RELEASE_RULE_OPTIONS=Object.freeze({specializedPaths:true,protectedFieldLength:10,collapseAliases:true,inlineSingles:true,valueChecks:true,scopedBindings:true,earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:false,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:false});
+export const RELEASE_RULE_OPTIONS=Object.freeze({specializedPaths:true,protectedFieldLength:10,collapseAliases:true,inlineSingles:true,valueChecks:true,scopedBindings:true,earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:true,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:false});
 
 /** On an update, an unchanged tenant plus membership of the existing tenant
  * makes the second membership call redundant. Keep both equality and the
