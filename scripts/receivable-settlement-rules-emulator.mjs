@@ -137,7 +137,12 @@ try {
   }));
   assert.equal(await balance(mtn),200000);
   assert.equal((await get('credit_receivables','different')).outstanding_ugx,70000);
-  console.log('PASS Airtel concurrency, custom account, branch history and incomplete/replayed journal rejection.');
+  await admin(db=>setDoc(doc(db,'credit_receivables','officer'),{...row(10000),receipt_id:'officer-sale'}));
+  const officerPayment=await settleCreditReceivable(request('officer',safe,1000,{receivableId:'officer',actorId:'another'}),
+    env.authenticatedContext('another').firestore());
+  assert.equal(officerPayment.remainingUGX,9000);
+  assert.equal(await balance(safe),21000);
+  console.log('PASS Airtel concurrency, custom account, explicit branch Finance Officer collection, branch history and incomplete/replayed journal rejection.');
 } finally {
   await env.cleanup();
 }

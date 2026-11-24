@@ -247,6 +247,55 @@ export function shareDocumentPaths(source) {
   ...[...methods].map(method=>`function ${name}${method==='get'?'Before':'After'}(collection,id) { return ${method}(/databases/$(${database})/documents/$(collection)/$(id)).data; }`)]);
 }
 
+/** Specialize frequently reused collection paths to one argument. Less common
+ * paths retain the shared two-argument builder. Reads stay at their original
+ * positions; generated helper bodies are left intact on repeated passes.
+ */
+export function shareSpecializedDocumentPaths(source) {
+ const masked=maskRulesTrivia(source),database=masked.match(/match\s+\/databases\/\{(\w+)\}\/documents\s*\{/)?.[1];
+ if(!database)return source;
+ const generated=[];
+ for(const h of masked.matchAll(/\bfunction\s+releaseSpecialPath\d+\([^)]*\)\s*\{/g)){
+  let end=h.index+h[0].length,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='{')depth++;if(masked[end]==='}')depth--;}
+  generated.push({from:h.index,to:end});
+ }
+ const groups=new Map();let covered=0;
+ for(const head of masked.matchAll(/\/databases\/\$\((\w+)\)\/documents\/([A-Za-z_]\w*)\/\$\(/g)){
+  if(head[1]!==database||head.index<covered||generated.some(r=>head.index>=r.from&&head.index<r.to))continue;
+  const start=head.index+head[0].length;let end=start,depth=1;
+  for(;end<masked.length&&depth;end++){if(masked[end]==='(')depth++;if(masked[end]===')')depth--;}
+  if(depth)throw Error('Unbalanced specialized path.');
+  if(masked[end]==='/')continue;
+  const prefix=masked.slice(0,head.index).match(/(?<![.\w])(get|getAfter)\(\s*$/),suffix=masked.slice(end).match(/^\s*\)\s*\.data\b/);
+  const method=prefix&&suffix?prefix[1]:'path',collection=head[2];
+  const from=method!=='path'?head.index-prefix[0].length:head.index,to=method!=='path'?end+suffix[0].length:end;
+  const key=collection+':'+method;
+  if(!groups.has(key))groups.set(key,{method,collection,items:[]});
+  groups.get(key).items.push({from,to,id:source.slice(start,end-1)});covered=to;
+ }
+ const helpers=[],changes=[],generic=new Map();let serial=0;
+ const unique=()=>{let name;do{name='releaseSpecialPath'+serial++;}while(source.includes(name));return name;};
+ for(const group of groups.values()){
+  const specialized=group.items.length>=6;
+  let name;
+  if(specialized){
+   name=unique();const path=`/databases/$(${database})/documents/${group.collection}/$(id)`;
+   helpers.push(`function ${name}(id) { return ${group.method==='path'?path:group.method+'('+path+').data'}; }`);
+  }else{
+   if(!generic.has(group.method)){
+    const method=group.method,path=`/databases/$(${database})/documents/$(collection)/$(id)`;
+    const helper=unique();generic.set(method,helper);
+    helpers.push(`function ${helper}(collection,id) { return ${method==='path'?path:method+'('+path+').data'}; }`);
+   }
+   name=generic.get(group.method);
+  }
+  for(const item of group.items)changes.push({...item,text:name+'('+(specialized?'':"'"+group.collection+"',")+item.id+')'});
+ }
+ for(const {from,to,text}of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
 /** Reuse pure values required by an unconditional conjunct. A successful rule
  * must evaluate that conjunct already. Never hoist out of an OR or ternary.
  * Keep the language's ten-let limit and all validation predicates intact.
@@ -521,7 +570,7 @@ export function omitNeverAllow(source){
 
 /** Share literal field names through pure accessors. The lookup remains at
  * its original expression position, including conditional branches. */
-export function shareFieldReaders(source,{indexed=false}={}){
+export function shareFieldReaders(source,{indexed=false,protectedFieldLength=Infinity}={}){
  const masked=maskRulesTrivia(source),groups=new Map();
  if(!databaseScope.test(masked))return source;
  const protectedRanges=budgetSensitiveRanges(masked).filter(r=>!/^\s*match\s+\/(?:operational_\w+|stock_orders|stock_order_lines|grn_records|transfer_invoices|transfer_invoice_lines)\//.test(masked.slice(r.from,r.to)));
@@ -533,7 +582,7 @@ export function shareFieldReaders(source,{indexed=false}={}){
  }
  const excluded=new Set(['resource','data','auth','token','time']);
  for(const m of masked.matchAll(/(?<![.\w])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.([A-Za-z_]\w{2,})\b(?![\w]|\s*\()/g)){
-  if(excluded.has(m[2])||protectedRanges.some(r=>m.index>=r.from&&m.index<r.to))continue;
+  if(excluded.has(m[2])||(m[2].length<protectedFieldLength&&protectedRanges.some(r=>m.index>=r.from&&m.index<r.to)))continue;
   if(!groups.has(m[2]))groups.set(m[2],[]);
   groups.get(m[2]).push({from:m.index,to:m.index+m[0].length,base:m[1]});
  }
@@ -705,7 +754,7 @@ export function uniqueLocalFunctions(source){
  return source;
 }
 
-export const RELEASE_RULE_OPTIONS=Object.freeze({inlineSingles:true,valueChecks:true,scopedBindings:true,earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:false,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:false});
+export const RELEASE_RULE_OPTIONS=Object.freeze({specializedPaths:true,protectedFieldLength:10,collapseAliases:true,inlineSingles:true,valueChecks:true,scopedBindings:true,earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:false,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:false});
 
 /** On an update, an unchanged tenant plus membership of the existing tenant
  * makes the second membership call redundant. Keep both equality and the
@@ -807,17 +856,41 @@ export function inlineSingleUseFunctions(source) {
  }
 }
 
-export function compactRuleSymbols(source,{minimal=false,inlineSingles=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+/** Remove pure forwarding frames without moving argument evaluation. All
+ * references target a unique declared function, never a shadowed binding.
+ */
+export function collapseAliasFunctions(source) {
+for(;;){
+ const mask=maskRulesTrivia(source);
+ const all=[...mask.matchAll(/\bfunction\s+(\w+)\(([^)]*)\)/g)],bindings=new Set([...mask.matchAll(/\blet\s+(\w+)|\{(\w+)(?:=\*\*)?\}/g)].map(m=>m[1]||m[2]));
+ for(const h of all)for(const param of h[2].split(',').map(s=>s.trim()).filter(Boolean))bindings.add(param);
+ let changes;
+ for(const fn of mask.matchAll(/\bfunction\s+(\w+)\(([^)]*)\)\s*\{\s*return\s*(\w+)\(([^()]*)\);\s*\}/g)){
+  const [name,params,target,args]=fn.slice(1);
+  if(name===target||params.replace(/\s/g,'')!==args.replace(/\s/g,''))continue;
+  if(all.filter(h=>h[1]===name).length!==1||all.filter(h=>h[1]===target).length!==1||bindings.has(target))continue;
+  changes=[{from:fn.index,to:fn.index+fn[0].length,text:''}];
+  for(const call of mask.matchAll(new RegExp('(?<![.\\w])'+name+'(?=\\s*\\()','g')))if(call.index<fn.index||call.index>=fn.index+fn[0].length)changes.push({from:call.index,to:call.index+name.length,text:target});
+  break;
+ }
+ if(!changes)break;
+ for(const c of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,c.from)+c.text+source.slice(c.to);
+
+}
+ return source;
+}
+
+export function compactRuleSymbols(source,{minimal=false,specializedPaths=false,protectedFieldLength=Infinity,collapseAliases=false,inlineSingles=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
  if(!minimal){
  if(valueChecks)source=shareValueChecks(source);
  source=omitNeverAllow(source);
  if(tenantChecks)source=elideDuplicateTenantGrants(source);
  if(broadRequests)source=shareRequestFields(source);
  if(earlyRequests)source=shareRequestExpressions(source,{preserveBudget:true});
- if(fieldReaders)source=shareFieldReaders(source,{indexed:indexedFields});
+ if(fieldReaders)source=shareFieldReaders(source,{indexed:indexedFields,protectedFieldLength});
  if(shareReaders)source=shareSnapshotReaders(source);
  if(shareSchemas)source=shareSchemaChecks(source);
- if(sharePaths)source=shareDocumentPaths(source);
+ if(sharePaths)source=specializedPaths?shareSpecializedDocumentPaths(source):shareDocumentPaths(source);
  source=localizeCollectionHelpers(source,maxLocalOwners);
  if(uniqueLocals)source=uniqueLocalFunctions(source);
  source=shareRepeatedAllowConditions(source);
@@ -868,7 +941,8 @@ export function compactRuleSymbols(source,{minimal=false,inlineSingles=false,val
  }
  let result=output.join('').trim();
  if(scopedBindings)result=compactFunctionBindings(result);
- return inlineSingles?inlineSingleUseFunctions(result):result;
+ if(inlineSingles)result=inlineSingleUseFunctions(result);
+ return collapseAliases?collapseAliasFunctions(result):result;
 }
 
 /** Keep source positions compact as well as identifiers. Replace only existing

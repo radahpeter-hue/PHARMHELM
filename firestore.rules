@@ -193,19 +193,14 @@ service cloud.firestore {
       );
     }
 
+    function activeStaffFields(profile) {
+      return ('active' in profile && profile.active)
+        || ('status' in profile && profile.status in ['active', 'Active', 'ACTIVE']);
+    }
     function hasActiveStaffProfile() {
       return isAuthenticated()
         && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
-        && (
-          (
-            'active' in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data &&
-            get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.active
-          ) ||
-          (
-            'status' in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data &&
-            get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.status in ['active', 'Active', 'ACTIVE']
-          )
-        );
+        && activeStaffFields(get(/databases/$(database)/documents/staff/$(request.auth.uid)).data);
     }
 
     function isPOSOperator() {
@@ -820,11 +815,13 @@ service cloud.firestore {
     function canCollectReceivable(tenantId, branchId) {
       let staff = get(/databases/$(database)/documents/staff/$(request.auth.uid)).data;
       let branch = get(/databases/$(database)/documents/branches/$(branchId)).data;
+      let centralRoles = ['Finance Head', 'Accountant', 'admin', 'Admin'];
       return isFinance() && staff.tenantId == tenantId && hasActiveStaffProfile()
         && !staff.get('is_duplicate', false) && staff.get('active', true)
         && staff.get('status', 'active').lower() == 'active'
         && branch.tenantId == tenantId && branch.get('status','active').lower() == 'active'
-        && (isAssignedToBranch(branchId) || hasAnyRole(['Finance Head', 'Accountant', 'admin', 'Admin'])
+        && (staff.role in centralRoles || (('secondaryRoles' in staff) && staff.secondaryRoles.hasAny(centralRoles))
+          || isAssignedToBranch(branchId)
           || (staff.get('assigned_branches', []).size() == 0 && staff.get('branch_id', '') == ''
             && staff.get('default_branch_id', '') == ''));
     }

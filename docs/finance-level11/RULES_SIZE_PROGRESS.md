@@ -37,3 +37,11 @@ Pass 6 allocates short names to shared functions/captured match bindings before 
 Pass 7 inlines 19 unique, single-use, parameterless return-only helpers at their invocation sites. It refuses captured-name collisions and leaves argument/let evaluation intact. The exact release passed 929 unit tests, 176 release comparisons, 385 vector comparisons, 512 type/range comparisons and all five integration scripts. The compiled-size gap remains measured against Firebase, not against this estimate.
 
 Pass 8 removes 33 redundant authentication/admin checks from the authored rules. Authentication remains inside the adjacent authority predicate, and removed admin alternatives were already included by that predicate. 929 unit tests, 432 original/reduced/released authority comparisons (anonymous, absent staff, role, secondary-role, custom-role and cross-tenant cases) and all five authenticated workflow scripts passed. No role, tenant, active-state or financial check was removed.
+
+## Resumed 24 November 2026
+
+Pass 9: cached staff authority and specialized paths. Previous local estimate 254,939; new local estimate **250,336**, saving **4,603 bytes**. This remains an emulator AST estimate. The last numerical Firebase rejection remains 262,286 bytes for df68519; no numerical hosted certification is claimed for this candidate.
+
+The generated tokens exactly match the locally accepted cached-alias-fields-10 artifact. That artifact passed inventory, transfers, payroll, supplier settlements and receivables, including an explicit assigned-branch Finance Officer collection into a custom account. Fresh comparison/regression execution is in progress. 929 existing unit tests pass after updating the source-structure assertion to follow the extracted active-profile predicate; the additional specialization/forwarding test passes separately.
+
+Changes preserve the guarded active-profile lookup, reuse the collector's already-loaded staff roles, specialize frequently repeated collection paths, share long field readers and remove pure forwarding frames. Rejected conditional packing, consolidated collection grants and unbudgeted path experiments remain excluded. Hosted verification and all required exact-head CI remain mandatory.

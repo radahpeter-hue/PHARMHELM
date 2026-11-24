@@ -33,8 +33,10 @@ test('POS V2 revision requests have a dedicated create-only client boundary', ()
 test('POS operator authority requires a current active authoritative staff record', () => {
   assert.match(rules, /function hasActiveStaffProfile\(\)/);
   assert.match(rules, /exists\(\/databases\/\$\(database\)\/documents\/staff\/\$\(request\.auth\.uid\)\)/);
-  assert.match(rules, /'active' in get\([\s\S]*data\.active(?: == true)?/);
-  assert.match(rules, /'status' in get\([\s\S]*data\.status in \['active', 'Active', 'ACTIVE'\]/);
+  const activeFields = rules.slice(rules.indexOf('function activeStaffFields('), rules.indexOf('function isPOSOperator()'));
+  assert.match(activeFields, /'active' in profile && profile\.active/);
+  assert.match(activeFields, /'status' in profile && profile\.status in \['active', 'Active', 'ACTIVE'\]/);
+  assert.match(activeFields, /isAuthenticated\(\)[\s\S]*exists\([\s\S]*activeStaffFields\(get\(/);
 
   const posOperatorStart = rules.indexOf('function isPOSOperator()');
   const posOperatorEnd = rules.indexOf('function isMarketing()', posOperatorStart);

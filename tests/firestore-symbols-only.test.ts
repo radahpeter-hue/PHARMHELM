@@ -183,3 +183,17 @@ test('single-use inlining preserves lazy invocation, captures, arguments and rep
  assert.doesNotMatch(inlineSingleUseFunctions(simple),/function once/);
  assert.equal(Function(inlineSingleUseFunctions(simple)+';return check();')(),true);
 });
+
+test('specialized paths remain idempotent and forwarding aliases preserve argument order',async()=>{
+ const {shareSpecializedDocumentPaths,collapseAliasFunctions}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`service cloud.firestore { match /databases/{database}/documents {
+ function repeated(id) { return ${Array.from({length:6},()=>"get(/databases/$(database)/documents/accounts/$(id)).data.enabled").join(' && ')}; }
+ match /rows/{id} { allow read: if repeated(id); } } }`;
+ const output=shareSpecializedDocumentPaths(source);
+ assert.match(output,/documents\/accounts\/\$\(id\)/);
+ assert.equal(shareSpecializedDocumentPaths(output),output);
+ const wrapper='function target(a,b) { return a - b; } function forward(a,b) { return target(a,b); } function check() { return forward(5,2); }';
+ const collapsed=collapseAliasFunctions(wrapper);
+ assert.doesNotMatch(collapsed,/function forward/);
+ assert.equal(Function(collapsed+'; return check();')(),3);
+});
