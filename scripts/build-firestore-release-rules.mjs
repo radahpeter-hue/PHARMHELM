@@ -542,9 +542,13 @@ export function shareRepeatedStringValues(source){
   if(excluded.has(literal.slice(1,-1))||/^(?:operational_|stock_orders$|opening_stock_sessions$)/.test(literal.slice(1,-1)))continue;
   if(!groups.has(literal))groups.set(literal,[]);groups.get(literal).push(match.index);
  }
+ // Keep established sharing intact; add new helpers only outside busy paths.
+ const protectedRanges=budgetSensitiveRanges(masked);
  const changes=[],helpers=[];let serial=0;
- for(const [literal,positions] of groups){
-  if(positions.length<3||(literal.length-4)*(positions.length-1)-28<40)continue;
+ for(const [literal,allPositions] of groups){
+  const existing=allPositions.length>=3&&(literal.length-4)*(allPositions.length-1)-28>=40;
+  const positions=existing?allPositions:allPositions.filter(at=>!protectedRanges.some(r=>at>=r.from&&at<r.to));
+  if(positions.length<2||(literal.length-4)*(positions.length-1)-28<0)continue;
   let name;do{name='releaseStringValue'+serial++;}while(source.includes(name));
   helpers.push('function '+name+'() { return '+literal+'; }');
   for(const from of positions)changes.push({from,to:from+literal.length,text:name+'()'});

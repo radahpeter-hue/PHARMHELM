@@ -49,3 +49,7 @@ Changes preserve the guarded active-profile lookup, reuse the collector's alread
 Pass 9 was pushed as 7f5608c. Fresh local execution passed the 176 release comparisons, 385 vector comparisons, 512 type/range comparisons, 432 authority comparisons, all five workflow scripts, TypeScript and production build.
 
 Pass 10 shares immutable constant lists. Local estimate **249,961**, down from 250,336, saving **375 bytes**. Inventory, transfers, 13 payroll groups, supplier settlements and receivable settlements (including the explicit branch Finance Officer custom-account case) all passed. Hosted acceptance remains pending; this is not a verified Firebase size.
+
+Pass 11: additional literal sharing outside the protected inventory/Treasury call graph. Previous local estimate 249,961; new estimate **249,365**, saving **596 bytes**. Exact generated output matched the tested artifact. 931 unit tests, TypeScript, production build, 176 release authorization comparisons, 385 vector comparisons, 512 type/range comparisons, 432 authority comparisons and all five workflow scripts passed. Both unprotected attempts (248,991 and 249,321 estimates) were rejected for inventory expression-budget failures and were not pushed.
+
+At head 0ff1220 both hosted gates failed with HTTP 503. Cash/Bank settlement, receivables and mobile UI steps passed before that final gate. Neither that HTTP failure nor any successful base control certifies the candidate. Pass 11 is locally accepted only, pending exact-candidate hosted verification and CI.

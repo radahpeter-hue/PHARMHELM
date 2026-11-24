@@ -197,3 +197,16 @@ test('specialized paths remain idempotent and forwarding aliases preserve argume
  assert.doesNotMatch(collapsed,/function forward/);
  assert.equal(Function(collapsed+'; return check();')(),3);
 });
+
+test('additional literal sharing preserves existing busy-path literal evaluation',async()=>{
+ const {shareRepeatedStringValues}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`service cloud.firestore { match /databases/{database}/documents {
+    function sensitive() { return 'busy_literal_with_long_policy_name' == 'busy_literal_with_long_policy_name'; }
+    function quiet() { return 'quiet_literal_with_long_policy_name' == 'quiet_literal_with_long_policy_name'; }
+    match /finance_transfers_v1/{id} { allow read: if sensitive(); }
+    match /other/{id} { allow read: if quiet(); }
+ } }`;
+ const output=shareRepeatedStringValues(source);
+ assert.match(output,/function sensitive\(\) \{ return 'busy_literal_with_long_policy_name' == 'busy_literal_with_long_policy_name';/);
+ assert.match(output,/function quiet\(\) \{ return releaseStringValue\d+\(\) == releaseStringValue\d+\(\);/);
+});
