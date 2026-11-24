@@ -14,7 +14,7 @@ permissions:
 jobs:
   activation-size:
     if: github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -23,18 +23,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+      - run: npm ci
       - name: Compile compact equivalent rule symbols
         run: node scripts/build-firestore-release-rules.mjs
       - uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
-      - run: npm install --prefix /tmp/rules-size --no-save --ignore-scripts google-auth-library
+      - run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
       - name: Require actual compiled executable to fit the activation limit
         id: candidate
         run: |
-          cp scripts/validate-inactive-finance-rules.mjs /tmp/rules-size/validate.mjs
-          cp scripts/firestore-unbound-probe.mjs /tmp/rules-size/firestore-unbound-probe.mjs
-          node /tmp/rules-size/validate.mjs
+          node scripts/validate-inactive-finance-rules.mjs
       - name: Diagnose compiler failure against deny-all and exact PR base controls
         if: failure() && steps.candidate.outcome == 'failure'
         env:
@@ -57,5 +57,4 @@ jobs:
           };
           for(const [name,options] of Object.entries(variants)) writeFileSync(`/tmp/${name}.rules`,wrapReleaseColumns(compactRuleSymbols(source,options))+'\n');
           JS
-          cp scripts/diagnose-firestore-compiler.mjs /tmp/rules-size/diagnose.mjs
-          node /tmp/rules-size/diagnose.mjs /tmp/main-control.rules /tmp/noVector.rules /tmp/noFields.rules /tmp/noEarlyRequests.rules /tmp/indexedFields.rules
+          node scripts/diagnose-firestore-compiler.mjs /tmp/main-control.rules /tmp/noVector.rules /tmp/noFields.rules /tmp/noEarlyRequests.rules /tmp/indexedFields.rules
