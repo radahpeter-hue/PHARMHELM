@@ -71,3 +71,10 @@ The next validator change preserves all rules bytes and the 249,365-byte local e
 Commit 16e285d passed [standalone run 45413001760](https://github.com/radahpeter-hue/PHARMHELM/actions/runs/45413001760), job 138511548261, at 2026-11-24 14:22:42 UTC. The fresh unbound probe verified ruleset 866e4620-baf0-4723-9c51-95b466cbbedf with exact tested source SHA-256 a671b5a21389fc463eb311eb3cc29c807a43eb2a56c619137abba150dc75cf87; probe cleanup passed. The first recovered byte-identical ruleset verified after bounded retries, so alternate-copy recovery was not exercised in this hosted success. The underlying service error is not established. This proves the hosted executable fits below 256,000 bytes; no exact hosted byte count was returned.
 
 Previous local estimate 249,365; current 249,365; validator-only saving 0. Last rules reduction saved 596 from 249,961; total local estimated saving from 266,092 is 16,727. Rules candidate accepted by hosted exact-source verification; final review readiness also requires all functional checks on the latest PR head. The implementation report contains links, test totals, limitations and the owner acceptance checklist. No merge or deployment performed.
+
+
+## Post-deployment payroll recovery, PR #129
+
+The production baseline remains 249,365 local estimated bytes with its separately recorded Firebase verification. The recovery candidate b52ff2f estimated 252,478 bytes and failed hosted validation with HTTP 503. Its previous controls verified; the candidate did not.
+
+A targeted bounded-guard compaction reduces **252,478 → 251,823**, saving **655 local estimated bytes**. Local validation passed 944 unit tests, TypeScript/build, 176 release, 968 type/range, 385 vector and 432 authority comparisons, 20 payroll groups, inventory/procurement, transfers, supplier payments and receivables. Accepted locally; exact Firebase verification and required CI remain blocking. No source-byte figure is being reported as executable size. No new recovery changes have been merged or deployed.

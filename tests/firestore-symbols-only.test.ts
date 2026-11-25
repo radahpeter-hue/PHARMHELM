@@ -210,3 +210,18 @@ test('additional literal sharing preserves existing busy-path literal evaluation
  assert.match(output,/function sensitive\(\) \{ return 'busy_literal_with_long_policy_name' == 'busy_literal_with_long_policy_name';/);
  assert.match(output,/function quiet\(\) \{ return releaseStringValue\d+\(\) == releaseStringValue\d+\(\);/);
 });
+
+test('bounded value sharing preserves exact bounds and excludes arithmetic tails and literal text',async()=>{
+ const {shareBoundedValueChecks}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`rules_version = '2';service cloud.firestore {match /databases/{database}/documents {
+ function first(d){return d.score is number && d.score >= 0 && d.score <= 100;}
+ function second(d){return d.score is number && d.score >= 0 && d.score <= 100;}
+ function untouched(d){return d.score is number && d.score >= 0 && d.score <= 100 + 2;}
+ function literal(){return 'd.score is number && d.score >= 0 && d.score <= 100';}
+ }} `;
+ const result=shareBoundedValueChecks(source);
+ assert.match(result,/return value is number && value >= 0 && value <= 100/);
+ assert.equal((result.match(/releaseBoundedValue0\(d.score\)/g)||[]).length,2);
+ assert.ok(result.includes('d.score <= 100 + 2'));
+ assert.ok(result.includes("'d.score is number && d.score >= 0 && d.score <= 100'"));
+});

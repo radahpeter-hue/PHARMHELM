@@ -80,6 +80,27 @@ function insertDatabaseHelpers(source, helpers) {
  * evaluated where the first original guard was evaluated. The helper retains
  * the original short circuit, type test and bound, including malformed values.
  */
+export function shareBoundedValueChecks(source) {
+ const masked=maskRulesTrivia(source),groups=new Map();
+ if(!databaseScope.test(masked))return source;
+ const pattern=/(?<![.\w])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+is\s+(int|number|string)\s*&&\s*\1(\s*\.size\(\))?\s*(>=|>)\s*(\d+)\s*&&\s*\1\3\s*(<=|<)\s*(\d+)(?=\s*(?:&&|\|\||[),;}]|$))/g;
+ for(const m of masked.matchAll(pattern)){
+  if((m[2]==='string')!==!!m[3])continue;
+  const key=[m[2],!!m[3],m[4],m[5],m[6],m[7]].join(':');
+  if(!groups.has(key))groups.set(key,[]);groups.get(key).push(m);
+ }
+ const changes=[],helpers=[];
+ for(const matches of groups.values()){
+  if(matches.length<2)continue;
+  const m=matches[0],suffix=m[3]?'.size()':'';let name='releaseBoundedValue'+helpers.length;
+  while(source.includes(name))name+='X';
+  helpers.push('function '+name+'(value) { return value is '+m[2]+' && value'+suffix+' '+m[4]+' '+m[5]+' && value'+suffix+' '+m[6]+' '+m[7]+'; }');
+  for(const match of matches)changes.push({from:match.index,to:match.index+match[0].length,text:name+'('+match[1]+')'});
+ }
+ for(const {from,to,text}of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
 export function shareValueChecks(source) {
  const masked=maskRulesTrivia(source),changes=[],helpers=[];
  if(!databaseScope.test(masked))return source;
@@ -886,7 +907,7 @@ for(;;){
 
 export function compactRuleSymbols(source,{minimal=false,specializedPaths=false,protectedFieldLength=Infinity,collapseAliases=false,inlineSingles=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
  if(!minimal){
- if(valueChecks)source=shareValueChecks(source);
+ if(valueChecks)source=shareValueChecks(shareBoundedValueChecks(source));
  source=omitNeverAllow(source);
  if(tenantChecks)source=elideDuplicateTenantGrants(source);
  if(broadRequests)source=shareRequestFields(source);
