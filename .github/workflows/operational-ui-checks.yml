@@ -10,6 +10,9 @@ on:
       - 'src/components/procurement/OperationalHQStoreTab.tsx'
       - 'src/components/procurement/OperationalGrnRouteSelector.tsx'
       - 'src/pages/Procurement.tsx'
+      - 'src/pages/Clients.tsx'
+      - 'src/components/procurement/SupplierEditor.tsx'
+      - 'scripts/supplier-registry-ui-smoke.mjs'
       - 'src/pages/StockInOut.tsx'
       - 'scripts/operational-receipt-identity-ui-smoke.mjs'
       - 'scripts/operational-grn-route-ui-smoke.mjs'
@@ -35,6 +38,7 @@ jobs:
         env:
           PLAYWRIGHT_MODULE: /tmp/browser-check/node_modules/playwright
         run: |
+          node scripts/supplier-registry-ui-smoke.mjs
           node scripts/operational-ui-smoke.mjs
           node scripts/operational-grn-route-ui-smoke.mjs
           node scripts/operational-receipt-identity-ui-smoke.mjs
@@ -46,6 +50,7 @@ jobs:
         with:
           name: operational-ui-screenshots
           path: |
+            /tmp/supplier-registry-ui-*/*.png
             /tmp/operational-ui-*/*.png
             /tmp/operational-route-ui-*/*.png
             /tmp/receipt-identity-*/*.png

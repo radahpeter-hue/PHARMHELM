@@ -4,9 +4,10 @@ import { OperationalItemCode } from '../components/inventory/OperationalItemCode
 import { OperationalGrnRouteSelector } from '../components/procurement/OperationalGrnRouteSelector';
 import type { OperationalDeliveryRoute } from '../services/operationalDeliveryRoute';
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { 
   Plus, Search, Filter, CheckCircle2, AlertCircle, Clock, Package, Truck, FileText,
-  ChevronRight, AlertTriangle, Users, Building2, DollarSign, ShoppingCart,
+  ChevronRight, AlertTriangle, Building2, DollarSign, ShoppingCart,
   MoreVertical, Edit2, Trash2, ExternalLink, Eye, Download, FileSpreadsheet,
   File as FileIcon, Check, X, ArrowRight, ArrowLeft, ArrowRightLeft
 } from 'lucide-react';
@@ -35,7 +36,6 @@ import { isBranchReturnToHq, isHqProcurementDelivery, receiveHqTransfer } from '
 import { isOperationalInventoryRecord } from '../services/inventoryClassification';
 import { useOperationalInventoryFeature } from '../hooks/useOperationalInventoryFeature';
 import OperationalHQStoreTab from '../components/procurement/OperationalHQStoreTab';
-import { SupplierEditor } from '../components/procurement/SupplierEditor';
 import { supplierEligibleForStream } from '../services/supplierRegistryPolicy';
 import { procurementRequestingBranchLabel } from '../services/procurementBranchDisplay';
 
@@ -69,10 +69,10 @@ async function fetchOperationalGrnLines(tenantId: string, grnId: string): Promis
 }
 
 const Procurement: React.FC = () => {
-  const { profile } = useAuth();
+  const { profile, hasPermission } = useAuth();
   const operationalInventoryEnabled = useOperationalInventoryFeature();
   const [activeMode, setActiveMode] = useState<'hq_store' | 'procurement'>('hq_store');
-  const [activeTab, setActiveTab] = useState<'hq_inventory' | 'hq_stock_io' | 'operational_hq_inventory' | 'requisitions' | 'sourcing' | 'finance' | 'grn' | 'dispatch' | 'unsupplied' | 'deferred' | 'suppliers' | 'queries'>('hq_inventory');
+  const [activeTab, setActiveTab] = useState<'hq_inventory' | 'hq_stock_io' | 'operational_hq_inventory' | 'requisitions' | 'sourcing' | 'finance' | 'grn' | 'dispatch' | 'unsupplied' | 'deferred' | 'queries'>('hq_inventory');
 
   const hqTabs = [
     { id: 'hq_inventory', label: 'HQ Store Inventory', icon: Package },
@@ -89,7 +89,6 @@ const Procurement: React.FC = () => {
     { id: 'queries', label: 'Query Handling', icon: AlertCircle },
     { id: 'unsupplied', label: 'Unsupplied Logs', icon: AlertTriangle },
     { id: 'deferred', label: 'Deferred Logs', icon: Clock },
-    { id: 'suppliers', label: 'Supplier Registry', icon: Users },
   ];
 
   const currentTabs = activeMode === 'hq_store' ? hqTabs : procurementTabs;
@@ -143,6 +142,17 @@ const Procurement: React.FC = () => {
         </div>
       </div>
 
+      {activeMode === 'procurement' && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-700">
+          <p>Supplier registration and updates are managed in CRM.</p>
+          {hasPermission('clients', 'view') && (
+            <Link to="../clients?tab=suppliers" relative="path" className="inline-flex min-h-11 items-center gap-2 font-semibold text-emerald-700 underline">
+              Open CRM Suppliers <ExternalLink size={16} />
+            </Link>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-nowrap border-b border-zinc-200 overflow-x-auto pb-2">
         {currentTabs.map((tab) => (
           <button
@@ -173,7 +183,6 @@ const Procurement: React.FC = () => {
         {activeTab === 'queries' && <QueriesTab />}
         {activeTab === 'unsupplied' && <UnsuppliedTab />}
         {activeTab === 'deferred' && <DeferredTab />}
-        {activeTab === 'suppliers' && <SupplierRegistryTab />}
       </div>
     </div>
   );
@@ -4091,138 +4100,6 @@ const DeferredTab: React.FC = () => {
     </div>
   );
 };
-
-const SupplierRegistryTab: React.FC = () => {
-  const { profile, hasPermission } = useAuth();
-  const canMaintainSupplier = hasPermission('procurement', 'operate');
-  const [suppliers, setSuppliers] = useState<InstitutionRegistry[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingSupplier, setEditingSupplier] = useState<InstitutionRegistry | null>(null);
-
-  useEffect(() => {
-    if (profile?.tenantId) {
-      firestoreService.subscribeToCollection<InstitutionRegistry>('supplier_registry', profile.tenantId, setSuppliers);
-    }
-  }, [profile?.tenantId]);
-
-  const filtered = suppliers.filter(s => 
-    (s.supplier_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (s.supplier_id || '').toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-          <input 
-            type="text" 
-            placeholder="Search suppliers..." 
-            className="w-full pl-10 pr-4 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-        <button 
-          onClick={() => {
-            setEditingSupplier(null);
-            setIsModalOpen(true);
-          }}
-          disabled={!canMaintainSupplier}
-          className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl font-medium transition-colors flex items-center gap-2 disabled:opacity-50"
-        >
-          <Plus size={20} />
-          Add Supplier
-        </button>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 bg-zinc-50/50">
-                <th className="px-6 py-4">Supplier Name</th>
-                <th className="px-6 py-4">Category</th>
-                <th className="px-6 py-4">NDA Licence</th>
-                <th className="px-6 py-4">Status</th>
-                <th className="px-6 py-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {filtered.map((supplier) => (
-                <tr key={supplier.id} className="hover:bg-zinc-50/50 transition-colors">
-                  <td className="px-6 py-4">
-                    <p className="font-bold text-zinc-900">{supplier.supplier_name}</p>
-                    <p className="break-all font-mono text-[10px] text-zinc-500">{supplier.supplier_id}</p>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-zinc-600">
-                    <div>{supplier.commercial_category}</div>
-                    {supplier.inventoryCapabilities?.length ? (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {supplier.inventoryCapabilities.map(capability => (
-                          <span key={capability} className="px-1.5 py-0.5 bg-zinc-100 text-zinc-600 rounded text-[9px] font-bold uppercase">{capability.replace(/_/g, ' ')}</span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={cn(
-                      "px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider",
-                      supplier.nda_licence_status === 'valid' ? "bg-emerald-50 text-emerald-600" : 
-                      supplier.nda_licence_status === 'expiring_soon' ? "bg-amber-50 text-amber-600" : "bg-red-50 text-red-600"
-                    )}>
-                      {(supplier.nda_licence_status || 'Not recorded').replace(/_/g, ' ')}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    {supplier.is_suspended ? (
-                      <span className="px-2 py-1 bg-red-500 text-white rounded-md text-[10px] font-bold uppercase tracking-wider">Suspended</span>
-                    ) : (
-                      <span className="px-2 py-1 bg-zinc-100 text-zinc-600 rounded-md text-[10px] font-bold uppercase tracking-wider">Active</span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button 
-                        onClick={() => {
-                          setEditingSupplier(supplier);
-                          setIsModalOpen(true);
-                        }}
-                        aria-label={`Edit supplier ${supplier.supplier_name}`}
-                        disabled={!canMaintainSupplier}
-                        className="text-zinc-400 hover:text-emerald-500 p-1 disabled:opacity-50"
-                      >
-                        <Edit2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-zinc-400 italic">
-                    No suppliers found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {isModalOpen && (
-        <SupplierEditor
-          sourceModule="procurement"
-          onClose={() => setIsModalOpen(false)}
-          supplier={editingSupplier}
-        />
-      )}
-    </div>
-  );
-};
-
 
 // ==========================================
 // 1. HQ STORE INVENTORY TAB (REPLICA)

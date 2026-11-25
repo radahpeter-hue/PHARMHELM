@@ -3,6 +3,7 @@ import { historicalSaleLineCost } from '../domain/finance/profitabilitySales';
 import { createScopedIdentity, type ScopedIdentityCollection } from '../services/systemIdentityService';
 import { isActiveSale } from '../utils/activeSales';
 import React, { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { 
   Users, 
   Building2, 
@@ -48,7 +49,8 @@ function cn(...inputs: ClassValue[]) {
 
 const Clients: React.FC = () => {
   const { profile, hasPermission } = useAuth();
-  const [activeTab, setActiveTab] = useState<'patients' | 'institutions' | 'prescribers' | 'suppliers' | 'reports'>('patients');
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<'patients' | 'institutions' | 'prescribers' | 'suppliers' | 'reports'>(() => searchParams.get('tab') === 'suppliers' ? 'suppliers' : 'patients');
   const [patients, setPatients] = useState<Client[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [institutions, setInstitutions] = useState<InstitutionRegistry[]>([]);
