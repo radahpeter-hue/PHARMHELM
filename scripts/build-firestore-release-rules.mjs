@@ -391,10 +391,11 @@ export function groupEquivalentCollections(source) {
   groups.get(key).push({from:head.index,to:end,body,bodyMask,collection:head[1]});
  }
  const removals=[],policies=[];
+ let collection='releaseGroupedCollection',document='releaseGroupedDocument';
+ while(source.includes(collection)||source.includes(document)){collection+='X';document+='X';}
  for(const members of groups.values()){
   if(members.length<2)continue;
-  let guard,collection,document;
-  do{const suffix=serial++;guard='releaseGroupGuard'+suffix;collection='releaseGroupCollection'+suffix;document='releaseGroupDocument'+suffix;}while([guard,collection,document].some(name=>source.includes(name)));
+  let guard;do{guard='releaseGroupGuard'+serial++;}while(source.includes(guard));
   const first=members[0];let body=first.body;
   for(const grant of [...first.bodyMask.matchAll(/\ballow\s+[a-z, ]+:\s*if\s+/g)].reverse()){
    const at=grant.index+grant[0].length;body=body.slice(0,at)+guard+'() && ('+body.slice(at);
@@ -402,7 +403,7 @@ export function groupEquivalentCollections(source) {
    const end=maskRulesTrivia(body).indexOf(';',at);body=body.slice(0,end)+')'+body.slice(end);
   }
   const names=[...new Set(members.map(member=>member.collection))];
-  policies.push(`    match /{${collection}}/{${document}} {\n      function ${guard}() { return ${collection}.matches('${exactCollectionPattern(names)}'); }\n${body}\n    }`);
+  policies.push(`      function ${guard}() { return ${collection}.matches('${exactCollectionPattern(names)}'); }\n${body}`);
   removals.push(...members);
  }
  if(!policies.length)return source;
@@ -410,7 +411,7 @@ export function groupEquivalentCollections(source) {
  const root=databaseScope.exec(maskRulesTrivia(source));if(!root)throw Error('Missing database scope.');
  const start=root.index+root[0].length;let end=start,depth=1;const remaining=maskRulesTrivia(source);
  for(;end<remaining.length&&depth;end++){if(remaining[end]==='{')depth++;if(remaining[end]==='}')depth--;}
- return source.slice(0,end-1)+'\n'+policies.join('\n')+'\n'+source.slice(end-1);
+ return source.slice(0,end-1)+`\n    match /{${collection}}/{${document}} {\n`+policies.join('\n')+'\n    }\n'+source.slice(end-1);
 }
 
 /** Move identical direct grants into shared predicates. Keep every allow at its
@@ -925,7 +926,7 @@ export function compactLocalFunctionNames(source){
  return source;
 }
 
-export function compactRuleSymbols(source,{minimal=false,specializedPaths=false,protectedFieldLength=Infinity,collapseAliases=false,inlineSingles=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+export function compactRuleSymbols(source,{minimal=false,specializedPaths=false,protectedFieldLength=Infinity,collapseAliases=false,inlineSingles=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,localFunctionNames=true,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
  if(!minimal){
  if(valueChecks)source=shareValueChecks(shareBoundedValueChecks(source));
  source=omitNeverAllow(source);
@@ -988,7 +989,7 @@ export function compactRuleSymbols(source,{minimal=false,specializedPaths=false,
  if(scopedBindings)result=compactFunctionBindings(result);
  if(inlineSingles)result=inlineSingleUseFunctions(result);
  result=collapseAliases?collapseAliasFunctions(result):result;
- return !minimal&&scopedBindings&&uniqueLocals?compactLocalFunctionNames(result):result;
+ return !minimal&&scopedBindings&&uniqueLocals&&localFunctionNames?compactLocalFunctionNames(result):result;
 }
 
 /** Keep source positions compact as well as identifiers. Replace only existing

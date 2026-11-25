@@ -136,3 +136,31 @@ for(const [variant,source]of [['authored',lexicalSource],['local',compactLocalFu
  }finally{await env.cleanup();}
 }
 console.log(`PASS ${lexicalCases} global/local lexical binding and wildcard capture cases.`);
+
+// Collection families with different policies must not inherit one another's grants.
+const {groupEquivalentCollections}=await import('./build-firestore-release-rules.mjs');
+const familySource=`rules_version='2';service cloud.firestore {match /databases/{database}/documents {
+    match /readA/{id} {allow read:if request.auth!=null && resource.data.tenant==request.auth.token.tenantId;}
+    match /readB/{id} {allow read:if request.auth!=null && resource.data.tenant==request.auth.token.tenantId;}
+    match /writeA/{id} {allow create:if request.auth!=null && request.auth.uid=='editor' && request.resource.data.tenant==request.auth.token.tenantId;}
+    match /writeB/{id} {allow create:if request.auth!=null && request.auth.uid=='editor' && request.resource.data.tenant==request.auth.token.tenantId;}
+}}`;
+let familyCases=0;
+for(const [variant,source]of [['authored',familySource],['grouped',groupEquivalentCollections(familySource)],['released',wrapReleaseColumns(compactRuleSymbols(familySource,RELEASE_RULE_OPTIONS))]]){
+ const env=await initializeTestEnvironment({projectId:'demo-policy-families-'+variant,firestore:{rules:source}});
+ try{
+  for(const actor of [null,{uid:'editor',tenantId:'a'},{uid:'viewer',tenantId:'a'},{uid:'foreign',tenantId:'b'}]){
+   const db=(actor?env.authenticatedContext(actor.uid,{tenantId:actor.tenantId}):env.unauthenticatedContext()).firestore();
+   for(const name of ['readA','readB','writeA','writeB','readA_extra','unrelated'])for(const method of ['get','list','create','delete']){
+    const ref=doc(db,name,(actor?.uid||'anonymous')+'_'+method);
+    if(method!=='create')await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),name,ref.id),{tenant:'a'}));
+    let permitted=true;
+    try{await(method==='get'?getDoc(ref):method==='list'?getDocs(query(collection(db,name),where('tenant','==','a'))):method==='create'?setDoc(ref,{tenant:'a'}):deleteDoc(ref));}
+    catch(error){if(error.code!=='permission-denied')throw error;permitted=false;}
+    const expected=Boolean(actor?.tenantId==='a'&&(['readA','readB'].includes(name)&&['get','list'].includes(method)||actor.uid==='editor'&&['writeA','writeB'].includes(name)&&method==='create'));
+    assert.equal(permitted,expected,`${variant}/${actor?.uid}/${name}/${method}`);familyCases++;
+   }
+  }
+ }finally{await env.cleanup();}
+}
+console.log(`PASS ${familyCases} independent policy-family, tenant, method, query and prefix-isolation decisions.`);

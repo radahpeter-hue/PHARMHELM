@@ -240,3 +240,14 @@ test('private function names reuse short sibling names without shadowing referen
  assert.ok(result.includes('d.id==c'));
  assert.equal(compactLocalFunctionNames(result),result);
 });
+
+test('private name reuse can be isolated without disabling other release transformations',async()=>{
+ const {RELEASE_RULE_OPTIONS}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`rules_version='2';service cloud.firestore {match /databases/{database}/documents {\n${Array.from({length:80},(_,i)=>`    match /case${i}/{id} {function localCheck${i}(d){return d.value==${i};} allow create:if localCheck${i}(request.resource.data);}`).join('\n')}\n}}`;
+ const candidate=compactRuleSymbols(source,RELEASE_RULE_OPTIONS);
+ const isolated=compactRuleSymbols(source,{...RELEASE_RULE_OPTIONS,localFunctionNames:false});
+ const names=(text:string)=>new Set([...text.matchAll(/function (\w+)\(/g)].map(m=>m[1]));
+ assert.equal((candidate.match(/allow create:/g)||[]).length,80);
+ assert.equal((isolated.match(/allow create:/g)||[]).length,80);
+ assert.ok(names(isolated).size>names(candidate).size);
+});
