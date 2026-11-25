@@ -25,13 +25,14 @@ test('supplier field policy normalizes capabilities without accepting editable c
   assert.throws(()=>supplierRegistryFields({supplier_name:'',inventoryCapabilities:[]}));
   assert.throws(()=>supplierRegistryFields({supplier_name:'Vendor',inventoryCapabilities:['INVALID']}));
 });
-test('Procurement and CRM use one supplier editor and the same live register',()=>{
-  for(const page of ['Procurement','Clients']) {
-    const source=readFileSync(new URL(`../src/pages/${page}.tsx`,import.meta.url),'utf8');
-    assert.match(source,/SupplierEditor/);
-    assert.match(source,/'supplier_registry'/);
-    assert.doesNotMatch(source,/Supplier ID \/ Code/);
-  }
+test('CRM owns supplier maintenance while procurement consumes the same live register',()=>{
+  const crm=readFileSync(new URL('../src/pages/Clients.tsx',import.meta.url),'utf8');
+  const procurement=readFileSync(new URL('../src/pages/Procurement.tsx',import.meta.url),'utf8');
+  assert.match(crm,/<SupplierEditor sourceModule="clients"/);
+  assert.match(crm,/'supplier_registry'/);
+  assert.match(procurement,/'supplier_registry'/);
+  assert.doesNotMatch(procurement,/SupplierEditor|SupplierRegistryTab|id: 'suppliers'/);
+  assert.match(procurement,/to="\.\.\/clients\?tab=suppliers"/);
 });
 test('supplier modal bounds mobile height, scrolls its body and keeps controls outside that body',()=>{
   const source=readFileSync(new URL('../src/components/procurement/SupplierEditor.tsx',import.meta.url),'utf8');
