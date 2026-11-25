@@ -1,3 +1,4 @@
+import { payrollRecordView } from './payrollRecordView';
 import { LOGISTICS_EXPENSE_COLLECTIONS } from './cashOutflows';
 import { isExcludedFromOpex } from '../../utils/finance';
 import { matchesProfitabilityBranch } from '../../utils/profitabilityScope';
@@ -21,7 +22,7 @@ type OperatingCategory = keyof typeof operatingExpenseLabels;
 type Category = OperatingCategory | 'financialCharges' | 'otherIncome' | 'nonoperatingExpenses';
 type Source = 'branch_expenses' | 'management_expenses' | 'payroll' | 'marketing_expenses' |
   'operational_inventory_maintenance' | 'operational_finance_events' | 'inventoryMovementEvents' |
-  'petty_cash_ledger' | 'banking_records' | 'finance_ledger' | typeof LOGISTICS_EXPENSE_COLLECTIONS[number];
+  'petty_cash_ledger' | 'banking_records' | 'finance_ledger' | 'finance_payroll_batches_v1' | typeof LOGISTICS_EXPENSE_COLLECTIONS[number];
 export type ProfitabilityData = Partial<Record<Source | 'sales' | 'grn_records', ProfitabilityRecord[]>>;
 export type ProfitabilityScope = { tenantId: string; branchId?: string; range?: FinanceDateRange };
 type ExpenseEntry = {
@@ -135,13 +136,17 @@ function expenseEntries(data: ProfitabilityData, tenantId: string): ExpenseEntry
   }
 
   const finalizedPayroll = new Map<string, { row: ProfitabilityRecord; amount: number | null }>();
+  const payrollBatches = new Map(rows('finance_payroll_batches_v1').map(batch=>[batch.id,batch]));
   for (const row of rows('payroll')) {
-    if (!finalized.has(code(row.status))) continue;
+    if (row.payrollVersion===11) {
+      const batch=payrollBatches.get(textValue(row.batchId));
+      if (!batch || batch.revision!==row.revision || !['approved','partial','paid'].includes(code(batch.status))) continue;
+    } else if (!finalized.has(code(row.status))) continue;
     const start = profitabilityDate(row.periodStart, row.period_start);
     const end = profitabilityDate(row.periodEnd, row.period_end);
     const staffId = textValue(row.staffId ?? row.staff_id);
-    const key = start && end && staffId ? `payroll/${staffId}/${start}/${end}` : 'payroll/' + row.id;
-    const amount = payrollCost(row);
+    const key = row.payrollVersion===11 ? `payroll/${row.batchId}/${staffId}` : start && end && staffId ? `payroll/${staffId}/${start}/${end}` : 'payroll/' + row.id;
+    const amount = payrollCost(payrollRecordView(row));
     const prior = finalizedPayroll.get(key);
     if (!prior) finalizedPayroll.set(key, { row, amount });
     else if (prior.amount !== amount || (prior.row.branchId ?? prior.row.branch_id) !== (row.branchId ?? row.branch_id)) {

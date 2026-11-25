@@ -1,15 +1,15 @@
 // Diagnostic only. Never targets a backend-bound release or changes document data.
 import {readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
-import {findExactInactiveRuleset} from './firestore-unbound-probe.mjs';
+import {findExactInactiveRuleset,validateUnboundProbe} from './firestore-unbound-probe.mjs';
 
-export async function diagnoseCompiler({project,token,controls,runId,attachmentPoint=undefined,recoverPersisted=false,fetchImpl=fetch,log=console.log}) {
+export async function diagnoseCompiler({project,token,controls,runId,attachmentPoint=undefined,recoverPersisted=false,retryProbes=false,fetchImpl=fetch,log=console.log}) {
  if(!/^[a-z0-9-]+$/.test(project)||!/^\d+$/.test(String(runId)))throw Error('Unsafe diagnostic identity.');
  const root=`https://firebaserules.googleapis.com/v1/projects/${project}`;
  const headers={Authorization:`Bearer ${token}`,'Content-Type':'application/json'};
  const results=[];
  for(const [index,control] of controls.entries()) {
-  const result={label:control.label};
+  const result={label:control.label,sourceBytes:Buffer.byteLength(control.source)};
   let rulesetName,probeName;
   try {
    const source={files:[{name:'firestore.rules',content:control.source}]};
@@ -24,6 +24,10 @@ export async function diagnoseCompiler({project,token,controls,runId,attachmentP
    if(!body.name?.startsWith(`projects/${project}/rulesets/`))throw Error('Unexpected diagnostic ruleset.');
    rulesetName=body.name;
    probeName=`projects/${project}/releases/pharmhelm_size_probe_${runId}_${index+100}`;
+   if(retryProbes){
+    await validateUnboundProbe({project,token,rulesetName,probeName,fetchImpl,log});
+    result.exactProbeVerified=true;
+   }else{
    const activated=await fetchImpl(root+'/releases',{method:'POST',headers,body:JSON.stringify({name:probeName,rulesetName}),signal:AbortSignal.timeout(60000)});
    result.releaseStatus=activated.status;
    if(!activated.ok)result.releaseError=(await activated.json()).error?.message;
@@ -34,6 +38,7 @@ export async function diagnoseCompiler({project,token,controls,runId,attachmentP
     const data=await verified.json();
     if(data.name!==probeName||data.rulesetName!==rulesetName)throw Error('Conflicting diagnostic probe.');
     result.exactProbeVerified=true;
+   }
    }
   } catch(error){result.error=error.message;}
   finally {
@@ -68,7 +73,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
   if(!file)throw Error('Active Firestore source unavailable.');
   activeControls.push({label:'Exact currently deployed source control',source:file.content});
  }catch(error){console.log(JSON.stringify({label:'Active source control unavailable',error:error.message}));}
- await diagnoseCompiler({project:'gen-lang-client-0911422817',token,recoverPersisted:true,attachmentPoint:'firestore.googleapis.com/projects/161921807585/databases/ai-studio-f7d8654b-e089-425a-a506-38159afe1e75',runId:process.env.GITHUB_RUN_ID||Date.now(),controls:[
+ await diagnoseCompiler({project:'gen-lang-client-0911422817',token,recoverPersisted:true,retryProbes:true,attachmentPoint:'firestore.googleapis.com/projects/161921807585/databases/ai-studio-f7d8654b-e089-425a-a506-38159afe1e75',runId:process.env.GITHUB_RUN_ID||Date.now(),controls:[
   {label:'Minimal deny-all control',source:"rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read, write: if false; } } }"},
   {label:'Current PR base control',source:readFileSync(process.argv[2],'utf8')},
   ...activeControls,

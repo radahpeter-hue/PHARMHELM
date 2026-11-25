@@ -1,3 +1,6 @@
+import {PayrollReviewPanel} from '../../../components/finance/PayrollReviewPanel';
+import {usePayrollBatches} from '../../../hooks/usePayrollBatches';
+import {payrollStatusLabels} from '../../../domain/finance/payroll';
 import { rejectSupplierCreditDraft } from '../../../services/creditGrnSettlementService';
 import { CashOutflowReport } from '../../../components/finance/CashOutflowReport';
 import { kampalaBusinessDate } from '../../../utils/eodBusinessDate';
@@ -28,12 +31,18 @@ import { db } from '../../../firebase';
 import { toast } from 'sonner';
 import { exportRecordsToExcel } from '../../../utils/excelExport';
 
+function isPayrollDraft(expense: {payrollVersion?:number;batchId?:string}) {return expense.payrollVersion===11 && !!expense.batchId;}
+
 function isSupplierDraft(expense: { source?: string; sourceType?: string }) {
   return expense.source === 'procurement_cash_grn' || expense.source === 'credit_payment';
 }
 
 interface ManagementExpense {
   id: string;
+  payrollVersion?:number;
+  batchId?:string;
+  payrollReference?:string;
+  revision?:number;
   tenantId: string;
   date: string;
   expense_date: string;
@@ -59,6 +68,9 @@ interface ManagementExpense {
 
 export const ManagementExpenseLedger: React.FC = () => {
   const { profile } = useAuth();
+  const payrollBatches = usePayrollBatches(profile?.tenantId);
+  const payrollLabel = (exp:ManagementExpense) => isPayrollDraft(exp) ? payrollStatusLabels[payrollBatches.find(b=>b.id===exp.batchId)?.status || 'draft'] : exp.status;
+  const actualPaid = (exp:ManagementExpense) => isPayrollDraft(exp) ? payrollBatches.find(b=>b.id===exp.batchId)?.paidUGX || 0 : isSupplierDraft(exp) ? exp.paidAmountUGX ?? (exp.status==='approved'?exp.amount:0) : exp.status==='approved'?exp.amount:0;
   const [expenses, setExpenses] = useState<ManagementExpense[]>([]);
   const { accounts } = useManagementPaymentAccounts();
   const cashAccount = accounts.find(account => account.accountId === MANAGEMENT_CASH_ACCOUNT && account.initialized);
@@ -353,7 +365,7 @@ export const ManagementExpenseLedger: React.FC = () => {
   // Confirm and Issue draft
   const handleConfirmAndIssue = async () => {
     if (!profile?.tenantId || !reviewingExpense || postingLock.current) return;
-    if (isSupplierDraft(reviewingExpense) || reviewingExpense.sourceType === 'procurement' ||
+    if (isPayrollDraft(reviewingExpense) || reviewingExpense.source === 'hr_salary' || isSupplierDraft(reviewingExpense) || reviewingExpense.sourceType === 'procurement' ||
         reviewingExpense.sourceType === 'credit' || reviewingExpense.source === 'cash_grn') {
       toast.error('Use the linked supplier invoice to record this payment.');
       return;
@@ -436,7 +448,7 @@ export const ManagementExpenseLedger: React.FC = () => {
   // Reject draft
   const handleRejectDraft = async () => {
     if (!profile?.tenantId || !reviewingExpense) return;
-    if (reviewingExpense.source === 'procurement_cash_grn') {
+    if (isPayrollDraft(reviewingExpense) || reviewingExpense.source === 'hr_salary' || reviewingExpense.source === 'procurement_cash_grn') {
       toast.error('Supplier invoice payment drafts must be reconciled through the dedicated procurement workflow.');
       return;
     }
@@ -679,7 +691,7 @@ export const ManagementExpenseLedger: React.FC = () => {
         </div>
       </div>
 
-      <div className="space-y-3 md:hidden">{loading?<p className="text-sm text-zinc-700">Loading expenses…</p>:filteredExpenses.map(exp=><article key={exp.id} className="min-w-0 space-y-3 rounded-2xl border border-zinc-300 bg-white p-4 text-zinc-900"><div className="min-w-0"><p className="break-words font-bold text-zinc-950">{exp.invoiceRef || exp.category}</p><p className="break-words text-sm text-zinc-700">{exp.department} · {exp.status}</p><p className="mt-1 break-words text-sm text-zinc-700">{exp.description}</p></div><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-zinc-700">Invoice / expense</p><p className="font-bold text-zinc-950">UGX {Number(exp.originalAmount||exp.amount||0).toLocaleString()}</p></div><div><p className="text-zinc-700">Paid / issued</p><p className="font-bold text-zinc-950">UGX {Number(isSupplierDraft(exp)?exp.paidAmountUGX??(exp.status==='approved'?exp.amount:0):exp.status==='approved'?exp.amount:0).toLocaleString()}</p></div></div>{(['draft','pending','partial'].includes(exp.status.toLowerCase())||isSupplierDraft(exp))&&<button onClick={()=>handleOpenReview(exp)} className="min-h-11 w-full rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 font-bold text-emerald-950">{isSupplierDraft(exp)?'Supplier invoice & payments':'Review draft'}</button>}</article>)}</div>
+      <div className="space-y-3 md:hidden">{loading?<p className="text-sm text-zinc-700">Loading expenses…</p>:filteredExpenses.map(exp=><article key={exp.id} className="min-w-0 space-y-3 rounded-2xl border border-zinc-300 bg-white p-4 text-zinc-900"><div className="min-w-0"><p className="break-words font-bold text-zinc-950">{exp.invoiceRef || exp.category}</p><p className="break-words text-sm text-zinc-700">{exp.department} · {payrollLabel(exp)}</p><p className="mt-1 break-words text-sm text-zinc-700">{exp.description}</p></div><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-zinc-700">Invoice / expense</p><p className="font-bold text-zinc-950">UGX {Number(exp.originalAmount||exp.amount||0).toLocaleString()}</p></div><div><p className="text-zinc-700">Paid / issued</p><p className="font-bold text-zinc-950">UGX {actualPaid(exp).toLocaleString()}</p></div></div>{(['draft','pending','partial'].includes(exp.status.toLowerCase())||isSupplierDraft(exp)||isPayrollDraft(exp))&&<button onClick={()=>handleOpenReview(exp)} className="min-h-11 w-full rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 font-bold text-emerald-950">{isPayrollDraft(exp)?'Payroll approval & payments':isSupplierDraft(exp)?'Supplier invoice & payments':'Review draft'}</button>}</article>)}</div>
       {/* Main Table / Logs Section */}
       <div className="hidden bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden md:block">
         {loading ? (
@@ -735,7 +747,7 @@ export const ManagementExpenseLedger: React.FC = () => {
                       UGX {(exp.originalAmount || exp.amount || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 text-right text-sm font-mono font-black text-zinc-950">
-                      UGX {(isSupplierDraft(exp)?Number(exp.paidAmountUGX??(exp.status==='approved'?exp.amount:0)):exp.status==='approved'?exp.amount:0).toLocaleString()}
+                      UGX {actualPaid(exp).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 text-center">
                       <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${
@@ -744,17 +756,17 @@ export const ManagementExpenseLedger: React.FC = () => {
                         exp.status?.toLowerCase() === 'rejected' ? "bg-red-50 text-red-600 border border-red-100" :
                         "bg-zinc-100 text-zinc-500"
                       }`}>
-                        {exp.status?.toLowerCase() === 'approved' ? 'issued' : exp.status}
+                        {isPayrollDraft(exp) ? payrollLabel(exp) : exp.status?.toLowerCase() === 'approved' ? 'issued' : exp.status}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-center">
-                      {(isSupplierDraft(exp) || exp.status?.toLowerCase() === 'draft' || exp.status?.toLowerCase() === 'pending' || exp.status?.toLowerCase() === 'partial') ? (
+                      {(isPayrollDraft(exp) || isSupplierDraft(exp) || exp.status?.toLowerCase() === 'draft' || exp.status?.toLowerCase() === 'pending' || exp.status?.toLowerCase() === 'partial') ? (
                         <button
                           onClick={() => handleOpenReview(exp)}
                           className="px-3 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 text-[10px] font-black uppercase tracking-wider rounded-lg border border-amber-200 transition-all flex items-center gap-1 mx-auto"
                         >
                           <Eye size={12} />
-                          {isSupplierDraft(exp) ? 'Supplier invoice & payments' : 'Review Draft'}
+                          {isPayrollDraft(exp) ? 'Payroll approval & payments' : isSupplierDraft(exp) ? 'Supplier invoice & payments' : 'Review Draft'}
                         </button>
                       ) : (
                         <span className="text-[10px] text-zinc-400 italic">No actions</span>
@@ -894,8 +906,9 @@ export const ManagementExpenseLedger: React.FC = () => {
       )}
 
       {isReviewModalOpen && reviewingExpense && isSupplierDraft(reviewingExpense)&&<div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3"><div role="dialog" aria-modal="true" aria-label="Supplier payment" className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-lg min-w-0 flex-col overflow-hidden rounded-2xl bg-white text-zinc-900 shadow-2xl"><div className="flex shrink-0 items-center justify-between border-b border-zinc-200 p-4"><h3 className="font-bold text-zinc-950">Supplier payment</h3><button aria-label="Close supplier payment" onClick={()=>setIsReviewModalOpen(false)} className="min-h-11 min-w-11 rounded-xl border border-zinc-300 bg-white text-zinc-900"><X size={20} className="mx-auto"/></button></div><div className="min-h-0 overflow-y-auto overscroll-contain p-4"><SupplierInvoicePaymentPanel draftId={reviewingExpense.id} onRejected={reviewingExpense.source === 'credit_payment' ? handleRejectDraft : undefined} onSettled={()=>{setIsReviewModalOpen(false);setReviewingExpense(null);toast.success('Supplier payment recorded.');setPaymentRefresh(value=>value+1);void fetchData();}}/></div></div></div>}
+      {isReviewModalOpen && reviewingExpense && isPayrollDraft(reviewingExpense) && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3"><div role="dialog" aria-modal="true" aria-label="Payroll review" className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-5xl min-w-0 flex-col overflow-hidden rounded-2xl bg-white text-slate-900 shadow-2xl"><div className="flex shrink-0 items-center justify-between border-b border-slate-200 p-4"><h3 className="font-bold">Payroll approval and settlement</h3><button aria-label="Close payroll review" onClick={()=>setIsReviewModalOpen(false)} className="min-h-11 min-w-11 rounded-xl border border-slate-300"><X size={20} className="mx-auto"/></button></div><div className="min-h-0 overflow-y-auto overscroll-contain p-4"><PayrollReviewPanel batchId={reviewingExpense.batchId!} onChanged={()=>{setPaymentRefresh(v=>v+1);void fetchData();}}/></div></div></div>}
       {/* Review Draft Modal */}
-      {isReviewModalOpen && reviewingExpense && !isSupplierDraft(reviewingExpense) && (
+      {isReviewModalOpen && reviewingExpense && !isSupplierDraft(reviewingExpense) && !isPayrollDraft(reviewingExpense) && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-[32px] w-full max-w-lg overflow-hidden shadow-2xl border border-zinc-100 animate-in zoom-in-95 duration-150">
             <div className="p-8 space-y-6">

@@ -3,7 +3,7 @@
  */
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-import {validateUnboundProbe,findExactInactiveRuleset} from './firestore-unbound-probe.mjs';
+import {validateExactCandidateProbe,findExactInactiveRuleset,fetchRulesApi} from './firestore-unbound-probe.mjs';
 const {GoogleAuth}=await import('google-auth-library');
 const token=process.env.GOOGLE_OAUTH_ACCESS_TOKEN || await new GoogleAuth({scopes:['https://www.googleapis.com/auth/cloud-platform']}).getAccessToken();
 if(!token)throw new Error('Scoped CI authentication is required.');
@@ -11,9 +11,11 @@ const project='gen-lang-client-0911422817',rules=readFileSync(process.argv[2]||'
 // Match the official Firebase CLI's named-database compilation context.
 // This creates an inactive ruleset, without updating any database release.
 const attachment_point='firestore.googleapis.com/projects/161921807585/databases/ai-studio-f7d8654b-e089-425a-a506-38159afe1e75';
+const sourceSHA256=createHash('sha256').update(rules).digest('hex');
+console.log(JSON.stringify({mode:'UNBOUND_RELEASE_SIZE_VALIDATION_START',sourceSHA256,sourceBytes:Buffer.byteLength(rules),productionReleaseModified:false}));
 let result;
 for(let attempt=1;attempt<=4;attempt++) {
- const response=await fetch(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({source:{files:[{name:'firestore.rules',content:rules}]} ,attachment_point}),signal:AbortSignal.timeout(60000)});
+ const response=await fetchRulesApi(`https://firebaserules.googleapis.com/v1/projects/${project}/rulesets`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({source:{files:[{name:'firestore.rules',content:rules}]} ,attachment_point}),signal:AbortSignal.timeout(60000)});
  result=await response.json();
  if(response.ok)break;
  if([500,502,503,504].includes(response.status)){
@@ -25,14 +27,14 @@ for(let attempt=1;attempt<=4;attempt++) {
  await new Promise(resolve=>setTimeout(resolve,attempt*5000));
 }
 if(!result.name?.startsWith(`projects/${project}/rulesets/`))throw new Error('Unexpected inactive ruleset response.');
-const probeName=`projects/${project}/releases/pharmhelm_size_probe_${process.env.GITHUB_RUN_ID||Date.now()}_${process.env.GITHUB_RUN_ATTEMPT||1}`;
-if(!/^projects\/gen-lang-client-0911422817\/releases\/pharmhelm_size_probe_[0-9]+_[0-9]+$/.test(probeName))throw new Error('Unsafe validation release name.');
-const release=await validateUnboundProbe({project,token,rulesetName:result.name,probeName});
+const initialProbeName=`projects/${project}/releases/pharmhelm_size_probe_${process.env.GITHUB_RUN_ID||Date.now()}_${process.env.GITHUB_RUN_ATTEMPT||1}`;
+if(!/^projects\/gen-lang-client-0911422817\/releases\/pharmhelm_size_probe_[0-9]+_[0-9]+$/.test(initialProbeName))throw new Error('Unsafe validation release name.');
+const {release,rulesetName,probeName}=await validateExactCandidateProbe({project,token,rules,rulesetName:result.name,probeName:initialProbeName});
 try{
- if(release.name!==probeName||release.rulesetName!==result.name)throw new Error('Unexpected size-validation release.');
- console.log(JSON.stringify({mode:'UNBOUND_RELEASE_SIZE_VALIDATION',ruleset:result.name,sourceSHA256:createHash('sha256').update(rules).digest('hex'),sourceBytes:Buffer.byteLength(rules),productionReleaseModified:false}));
+ if(release.name!==probeName||release.rulesetName!==rulesetName)throw new Error('Unexpected size-validation release.');
+ console.log(JSON.stringify({mode:'UNBOUND_RELEASE_SIZE_VALIDATION',ruleset:rulesetName,sourceSHA256,sourceBytes:Buffer.byteLength(rules),productionReleaseModified:false}));
 }finally{
- const cleanup=await fetch(`https://firebaserules.googleapis.com/v1/${probeName}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
+ const cleanup=await fetchRulesApi(`https://firebaserules.googleapis.com/v1/${probeName}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
  if(!cleanup.ok)throw new Error(`Temporary validation release cleanup failed (${cleanup.status}).`);
 }
 

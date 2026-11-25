@@ -1,7 +1,7 @@
 import {readFileSync} from 'node:fs';
 import {initializeTestEnvironment,assertFails,assertSucceeds} from '@firebase/rules-unit-testing';
 import {doc,setDoc,updateDoc,deleteDoc,deleteField,getDoc,getDocs,query,collection,where,writeBatch,increment} from 'firebase/firestore';
-const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-l4-portfolio-test',firestore:{rules:readFileSync('firestore.rules','utf8')}});
+const env=await initializeTestEnvironment({projectId:'pharmhelm-finance-l4-portfolio-test',firestore:{rules:readFileSync(process.env.PHARMHELM_SETTLEMENT_RULES || 'firestore.rules','utf8')}});
 const originalAssertSucceeds=assertSucceeds;
 let successStep=0;
 const checkedSucceeds=async promise=>{const step=++successStep;try{return await originalAssertSucceeds(promise);}catch(error){console.error('Finance Level 4 emulator unexpected denial at successful-operation step',step);throw error;}};

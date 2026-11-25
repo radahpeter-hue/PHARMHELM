@@ -1,3 +1,4 @@
+import { payrollRecordView } from '../domain/finance/payrollRecordView';
 import { operationalStaff } from '../utils/operationalStaff';
 import { postManagementCashEntry, createManagementFinanceWriteGroup } from './managementCashPosting';
 import { auth } from '../firebase';
@@ -68,7 +69,7 @@ export const firestoreService = {
   subscribeToCollection: <T>(path: string, tenantId: string, callback: (data: T[]) => void, options: { includeStaffAliases?: boolean } = {}) => {
     const q = query(collection(db, path), where('tenantId', '==', tenantId));
     return onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as T));
+      const data = snapshot.docs.map(doc => { const row={ ...(doc.data() as any), id: doc.id }; return ((path==='payroll'||path==='payslips')?payrollRecordView(row):row) as T; });
       callback(path === 'staff' && !options.includeStaffAliases ? operationalStaff(data as any[]) as T[] : data);
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, path);
@@ -79,7 +80,7 @@ export const firestoreService = {
     const colRef = collection(db, path);
     const q = query(colRef, where('tenantId', '==', tenantId), ...constraints);
     return onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as T));
+      const data = snapshot.docs.map(doc => { const row={ ...(doc.data() as any), id: doc.id }; return ((path==='payroll'||path==='payslips')?payrollRecordView(row):row) as T; });
       callback(path === 'staff' ? operationalStaff(data as any[]) as T[] : data);
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, path);
