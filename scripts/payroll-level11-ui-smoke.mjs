@@ -47,6 +47,9 @@ try{
   await page.getByRole('button',{name:'HR payroll',exact:true}).click();
   await page.locator('input[type=date]').nth(0).fill('2026-11-01');await page.locator('input[type=date]').nth(1).fill('2026-11-30');
   await page.getByRole('button',{name:'Prepare Payroll Draft',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'Review & Adjust',exact:true}).count(),0,'partially paid dates cannot be regenerated');
+  await page.locator('input[type=date]').nth(0).fill('2026-12-01');await page.locator('input[type=date]').nth(1).fill('2026-12-31');
+  await page.getByRole('button',{name:'Prepare Payroll Draft',exact:true}).click();
   await page.getByRole('button',{name:'Review & Adjust',exact:true}).click();
   const hrDialog=page.getByRole('dialog',{name:'Employee payroll review'});
   const hrRect=await hrDialog.boundingBox();assert.ok(hrRect.height<=740&&hrRect.y>=0,'HR review fits viewport');
@@ -56,6 +59,11 @@ try{
   await hrDialog.screenshot({path:'/tmp/payroll-level11-mobile-proof/hr-'+width+'.png'});
   await page.getByRole('button',{name:'Update Draft Invoice',exact:true}).click();
   await page.getByRole('button',{name:'Submit to Finance',exact:true}).click();
+  assert.equal(await page.evaluate(()=>!!window.__submitted),false,'opening confirmation must not submit');
+  await page.getByRole('button',{name:'Go back',exact:true}).click();
+  assert.equal(await page.evaluate(()=>!!window.__submitted),false,'cancel must not submit');
+  await page.getByRole('button',{name:'Submit to Finance',exact:true}).click();
+  await page.getByRole('button',{name:'Confirm submission',exact:true}).click();
   await page.waitForFunction(()=>!!window.__submitted);
   const line=await page.evaluate(()=>window.__submitted.lines[0]);
   assert.equal(line.loggedHours,120);assert.equal(line.baseSalary,360000);assert.equal(line.netSalary,340600);

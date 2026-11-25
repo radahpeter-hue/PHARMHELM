@@ -1,0 +1,18 @@
+# Payroll recovery and submission safeguards
+
+Base: 543177c. Draft candidate; no live records modified.
+
+- HR distinguishes approved outstanding, recorded Level 11 payments, pending Finance, returned, and unconfirmed legacy payroll. Legacy automatic paid labels are not payment evidence.
+- Rejected legacy salary requests appear in HR. Recovery requires the operator to review dates and payment evidence; it retains the rejected expense unchanged and records one immutable source-to-replacement link. Requests with recorded payment evidence cannot use this recovery path. Historical records do not contain reliable original date ranges, so HR must explicitly select them.
+- Recorded and verified attendance hours are shown separately. No expected-hours fallback or automatic verification was introduced. Existing Attendance verification remains the authorized review path. Generation waits for attendance loading.
+- Payroll dates are locked while a draft is open. Kampala month defaults preserve the local calendar date. Submit appears below the employee table and opens a cancelable summary confirmation; an immediate in-memory lock prevents double-click submissions.
+- The service rejects overlapping submitted/returned/approved/paid batches before staging. Exact-period retries and returned same-ID revisions remain resumable.
+- New batches reserve each employee/calendar day through immutable documents. A reservation's predecessor proves contiguous coverage from the batch start. Employee staging requires the final day's reservation. Concurrent different period IDs cannot reserve the same employee/day. Reservations persist through returns and incomplete submissions: resume or correct the owning batch rather than starting another overlapping batch. No release/delete operation is provided.
+- Reservations are staged in groups of eight to preserve atomic document-access limits; monthly payroll adds roughly one reservation write per employee/day. Interrupted reservation staging resumes by checking existing ownership. Plan the Spark daily write budget for large or unusually long payroll periods.
+- Existing Level 11 batches retain their existing revision/payment path. Their historical dates are checked by the service/UI; the new reservation proof is mandatory for newly created batches. Pre-upgrade records remain subject to legacy reconciliation, not automatic inferred payments or mass migration.
+
+Local validation: 939 unit tests and 17 authored-rule acceptance groups passed, including 130 employees, interrupted recovery, immutable claims, differently ranged overlaps, concurrent submissions, legacy one-to-one recovery and payment-evidence refusal. TypeScript/build and exact generated-rule financial regressions are checked separately. Hosted acceptance is mandatory before readiness.
+
+Size baseline: local stripped AST estimate 249,365 bytes. First rules candidate: 251,930, increase 2,565. These are local estimates, not exact hosted executable sizes. Latest measurement and hosted outcomes must be reported before acceptance.
+
+Owner testing after separately authorized deployment: locate the old rejected request; review original dates and payment evidence; verify attendance; generate and review the draft; cancel confirmation once; submit and confirm once; return/correct/resubmit; approve, partially pay and settle; attempt an overlapping range and confirm rejection. Legacy historical amounts must never enter approved outstanding balances merely because old rows were labelled paid.

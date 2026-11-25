@@ -1,10 +1,12 @@
+import {payrollMonthStart,payrollMonthEnd,payrollSummary,legacyRejectedPayroll,validatePayrollPeriod,payrollOverlap} from '../../domain/finance/payrollRecovery';
+import {kampalaBusinessDate} from '../../utils/eodBusinessDate';
 import {payrollStatutory} from '../../domain/finance/payrollStatutory';
 import {payableAttendance} from '../../domain/finance/payrollAttendance';
 import {employeePayrollStatus,payrollStatusLabels,finalizePayrollLine,type PayrollLine} from '../../domain/finance/payroll';
 import {submitPayroll,getPayrollRevision,type PayrollBatch} from '../../services/payrollFinanceService';
 import {usePayrollBatches} from '../../hooks/usePayrollBatches';
 import { staffMatchesId } from '../../utils/operationalStaff';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   DollarSign, Calculator, Download, Search, CheckCircle2, Clock, 
   User, Calendar, ArrowUpRight, Save, Trash2, Edit2, X, Plus, AlertCircle, FileText,
@@ -52,6 +54,11 @@ export const PayrollManager: React.FC = () => {
   const { profile } = useAuth();
   const { tenant } = useTenant();
   const batches = usePayrollBatches(profile?.tenantId);
+  const submissionLock=useRef(false);
+  const [recoveryConfirmed,setRecoveryConfirmed]=useState(false);
+  const [confirmSubmission,setConfirmSubmission] = useState(false);
+  const [legacyExpenses,setLegacyExpenses] = useState<any[]>([]);
+  const [recoverySource,setRecoverySource] = useState<any>();
   const [correctionBatchId,setCorrectionBatchId] = useState<string>();
   const [restartIncomplete,setRestartIncomplete] = useState(false);
   // Payroll tax processing is controlled by tenant settings, not subscription tier.
@@ -59,28 +66,17 @@ export const PayrollManager: React.FC = () => {
   const [payroll, setPayroll] = useState<any[]>([]);
   const [advances, setAdvances] = useState<AdvanceRequest[]>([]);
   const [fines, setFines] = useState<TrafficFineLog[]>([]);
+  const [attendanceLoaded,setAttendanceLoaded]=useState(false);
   const [attendance, setAttendance] = useState<any[]>([]);
   const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
   // Date range selectors for payment period
-  const getFirstDayOfMonth = () => {
-    const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
-  };
-  const [fromDate, setFromDate] = useState(getFirstDayOfMonth());
-  const [toDate, setToDate] = useState(new Date().toISOString().split('T')[0]);
-
-  // Date range selectors for statutory report
-  const [reportStartDate, setReportStartDate] = useState(() => {
-    const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
-  });
-  const [reportEndDate, setReportEndDate] = useState(() => {
-    const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
-  });
+  const [fromDate, setFromDate] = useState(()=>payrollMonthStart());
+  const [toDate, setToDate] = useState(()=>kampalaBusinessDate());
+  const [reportStartDate, setReportStartDate] = useState(()=>payrollMonthStart());
+  const [reportEndDate, setReportEndDate] = useState(()=>payrollMonthEnd());
 
   // Drafts State
   const [draftPayroll, setDraftPayroll] = useState<DraftPayrollRecord[]>([]);
@@ -105,7 +101,9 @@ export const PayrollManager: React.FC = () => {
       firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setStaff);
       firestoreService.subscribeToCollection<AdvanceRequest>('advance_requests', profile.tenantId, setAdvances);
       firestoreService.subscribeToCollection<TrafficFineLog>('traffic_fine_logs', profile.tenantId, setFines);
-      firestoreService.subscribeToCollection<any>('attendance', profile.tenantId, setAttendance);
+      firestoreService.subscribeToCollection<any>('management_expenses', profile.tenantId, setLegacyExpenses);
+      setAttendanceLoaded(false);
+      firestoreService.subscribeToCollection<any>('attendance', profile.tenantId, data=>{setAttendance(data);setAttendanceLoaded(true);});
       firestoreService.subscribeToCollection<any>('cme_sessions', profile.tenantId, setCmeSessions);
       firestoreService.subscribeToCollection<any>('leave_requests', profile.tenantId, setLeaveRequests);
       firestoreService.subscribeToCollection<any>('system_settings', profile.tenantId, (docs) => {
@@ -164,7 +162,11 @@ export const PayrollManager: React.FC = () => {
       return;
     }
 
-    if (!fromDate || !toDate || fromDate > toDate || (Date.parse(toDate)-Date.parse(fromDate))/86400000 > 366) { toast.error('Select a valid payroll period of no more than 367 days.'); return; }
+    try {validatePayrollPeriod(fromDate,toDate);} catch(error) {toast.error((error as Error).message);return;}
+    const resumable=batches.find(b=>b.periodStart===fromDate&&b.periodEnd===toDate&&b.status==='draft');
+    const overlap=payrollOverlap(fromDate,toDate,batches,correctionBatchId||resumable?.id);
+    if(overlap){toast.error(`Dates overlap locked payroll ${overlap.reference}. Open that payroll instead.`);return;}
+    if(!attendanceLoaded){toast.error('Attendance is still loading. Payroll cannot be calculated yet.');return;}
     const draftRecords: DraftPayrollRecord[] = [];
 
     canonicalStaff.forEach(member => {
@@ -245,6 +247,7 @@ export const PayrollManager: React.FC = () => {
         paidLeaveHours,
         branchId: member.branch_id || 'HQ',
         customDeduction: 0,
+        recordedHours: attendance.filter(a=>staffMatchesId(member,a.staffId)&&a.date>=fromDate&&a.date<=toDate&&a.status==='present').reduce((sum,a)=>sum+Number(a.hours_worked||0),0),
         attendanceState: attendanceResult.attendanceState,
         attendanceWarnings: attendanceResult.warnings,
         unroundedBaseSalary:basePay,
@@ -325,17 +328,19 @@ export const PayrollManager: React.FC = () => {
   };
 
   const handleFinalizeAndCommit = async () => {
-    if (!profile?.tenantId || isGenerating) return;
+    if (!profile?.tenantId || isGenerating || submissionLock.current) return;
+    if(recoverySource&&!recoveryConfirmed){toast.error('Confirm the legacy payment review before recovery.');return;}
     if (draftPayroll.some(line => !line.reviewed)) { toast.error('Review every employee, including attendance exceptions, before submission.'); return; }
+    submissionLock.current=true;
     setIsGenerating(true);
     try {
       const result = await submitPayroll({tenantId:profile.tenantId,actorId:profile.uid,
         actorName:profile.fullName || profile.email || profile.uid,periodStart:fromDate,periodEnd:toDate,
-        lines:draftPayroll,batchId:correctionBatchId,restartIncomplete});
+        lines:draftPayroll,batchId:correctionBatchId,restartIncomplete,legacySourceId:recoverySource?.id});
       toast.success(`Payroll revision ${result.revision} submitted to Finance. No salary has been paid.`);
-      setIsDraftMode(false);setDraftPayroll([]);setCorrectionBatchId(undefined);setRestartIncomplete(false);
+      setIsDraftMode(false);setDraftPayroll([]);setCorrectionBatchId(undefined);setRestartIncomplete(false);setRecoverySource(undefined);setRecoveryConfirmed(false);
     } catch (error) { toast.error(error instanceof Error ? error.message : 'Payroll submission failed. Retry to resume.'); }
-    finally {setIsGenerating(false);}
+    finally {submissionLock.current=false;setIsGenerating(false);}
   };
 
   const openReturnedPayroll = async (batch:PayrollBatch) => {
@@ -545,10 +550,21 @@ export const PayrollManager: React.FC = () => {
     toast.success(`Statutory PAYE report downloaded: ${Object.keys(aggregates).length} staff members aggregated.`);
   };
 
-  const cumulativeSpend = payroll.reduce((sum, p) => sum + (p.net_salary || 0), 0);
+  const summary = payrollSummary(batches,payroll);
 
   return (
     <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-3 text-sm">
+        <p>Pending Finance: UGX {summary.pending.toLocaleString()}</p><p>Returned: UGX {summary.returned.toLocaleString()}</p>
+        <p>Verified payments: UGX {summary.paid.toLocaleString()}</p><p>Legacy records (payment unconfirmed): UGX {Math.round(summary.legacy).toLocaleString()}</p>
+      </div>
+      {legacyRejectedPayroll(legacyExpenses).filter(expense=>!batches.some(b=>b.legacySourceId===expense.id)).map(expense=><div key={expense.id} className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950">
+        <p className="font-bold">Legacy payroll rejected by Finance</p><p>{expense.description}</p>
+        <p>UGX {Math.round(Number(expense.amount_ugx??expense.amount??0)).toLocaleString()} · Historical record, excluded from approved salary outstanding.</p>
+        <p>Verify attendance and confirm that no payment was made before preparing a replacement linked to this request.</p>
+        <button type="button" className="mt-3 min-h-11 rounded-lg bg-slate-900 px-4 text-white" onClick={()=>{setRecoverySource(expense);setRecoveryConfirmed(false);setIsDraftMode(false);setDraftPayroll([]);setCorrectionBatchId(undefined);}}>Prepare correction for this legacy request</button>
+      </div>)}
+      {recoverySource&&<div role="status" className="rounded-xl bg-amber-50 p-4 text-amber-950">Recovering rejected request: {recoverySource.description}. Select its original dates, verify attendance, then prepare the corrected draft. <label className="mt-3 flex gap-2"><input type="checkbox" checked={recoveryConfirmed} onChange={e=>setRecoveryConfirmed(e.target.checked)}/>I reviewed the original request and payment evidence. These salaries were not paid, and the selected dates are correct.</label> <button type="button" onClick={()=>{setRecoverySource(undefined);setDraftPayroll([]);setIsDraftMode(false);setConfirmSubmission(false);}}>Cancel recovery</button></div>}
       {/* Financial Info Banner */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-slate-900 p-6 rounded-[32px] text-white shadow-xl shadow-slate-200 relative overflow-hidden group">
@@ -560,12 +576,12 @@ export const PayrollManager: React.FC = () => {
               <DollarSign size={20} />
             </div>
             <div>
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Cumulative Payroll</p>
-              <h3 className="text-3xl font-black tracking-tight">UGX {cumulativeSpend.toLocaleString()}</h3>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Approved Salary Outstanding</p>
+              <h3 className="text-3xl font-black tracking-tight">UGX {summary.outstanding.toLocaleString()}</h3>
             </div>
             <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold">
               <ArrowUpRight size={14} />
-              <span>Integrated with Finance Tax Engine</span>
+              <span>Approved obligations awaiting settlement</span>
             </div>
           </div>
         </div>
@@ -650,10 +666,11 @@ export const PayrollManager: React.FC = () => {
               <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
               <input 
                 type="date"
+                disabled={isDraftMode||!!correctionBatchId}
                 required
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none"
                 value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
+                onChange={(e) => {setFromDate(e.target.value);setRecoveryConfirmed(false);}}
               />
             </div>
           </div>
@@ -664,10 +681,11 @@ export const PayrollManager: React.FC = () => {
               <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
               <input 
                 type="date"
+                disabled={isDraftMode||!!correctionBatchId}
                 required
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none"
                 value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
+                onChange={(e) => {setToDate(e.target.value);setRecoveryConfirmed(false);}}
               />
             </div>
           </div>
@@ -686,6 +704,7 @@ export const PayrollManager: React.FC = () => {
             </button>
           ) : (
             <button 
+              disabled={!attendanceLoaded}
               onClick={handleGeneratePayrollDraft}
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 shadow-lg shadow-indigo-100 uppercase tracking-wider"
             >
@@ -718,13 +737,7 @@ export const PayrollManager: React.FC = () => {
               >
                 <Download size={14} /> Export Draft CSV
               </button>
-              <button 
-                onClick={handleFinalizeAndCommit}
-                disabled={isGenerating}
-                className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors flex items-center gap-1.5"
-              >
-                <Save size={14} /> Submit to Finance
-              </button>
+
             </div>
           </div>
 
@@ -753,8 +766,10 @@ export const PayrollManager: React.FC = () => {
                       <td className="px-6 py-4">
                         <span className="text-xs font-bold text-slate-800 block">UGX {item.baseSalary.toLocaleString()}</span>
                         <p className="text-[9px] text-slate-400 font-semibold uppercase mt-0.5">
-                          {item.loggedHours.toFixed(1)} hrs @ UGX {Math.round(item.hourlyRate || 0).toLocaleString()}/hr
+                          {item.loggedHours.toFixed(1)} verified hrs @ UGX {Math.round(item.hourlyRate || 0).toLocaleString()}/hr
                         </p>
+                        <p className="text-xs text-amber-800">{item.attendanceState as string} · {Number(item.recordedHours??item.loggedHours).toFixed(1)} recorded hrs</p>
+                        {Array.isArray(item.attendanceWarnings)&&item.attendanceWarnings.map((warning:string)=><p key={warning} className="max-w-xs whitespace-normal text-xs text-amber-800">{warning}</p>)}
                       </td>
                       <td className="px-6 py-4 text-right">
                         <span className="text-xs font-bold text-emerald-600">+UGX {item.bonuses.toLocaleString()}</span>
@@ -789,6 +804,19 @@ export const PayrollManager: React.FC = () => {
               </table>
             </div>
           </div>
+          <div className="rounded-xl border bg-white p-4 text-slate-900">
+            <p className="font-bold">Reviewed draft total: UGX {draftPayroll.reduce((sum,line)=>sum+line.netSalary,0).toLocaleString()}</p>
+            <button type="button" disabled={isGenerating||draftPayroll.some(line=>!line.reviewed)||(!!recoverySource&&!recoveryConfirmed)} onClick={()=>setConfirmSubmission(true)} className="mt-3 min-h-11 rounded-xl bg-slate-900 px-5 text-white disabled:opacity-50">Submit to Finance</button>
+          </div>
+          {confirmSubmission&&<div role="dialog" aria-modal="true" aria-label="Confirm payroll submission" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 text-slate-900">
+              <h3 className="text-lg font-bold">Confirm payroll submission</h3><p>{fromDate} to {toDate} · {draftPayroll.length} employees</p>
+              <p>Net salary: UGX {draftPayroll.reduce((sum,line)=>sum+line.netSalary,0).toLocaleString()}</p>
+              <p>{draftPayroll.filter(line=>line.attendanceState!=='verified').length} employees have attendance exceptions. Submission sends a locked request for Finance approval; it does not pay salaries.</p>
+              <button type="button" disabled={isGenerating} onClick={()=>{setConfirmSubmission(false);handleFinalizeAndCommit();}} className="mt-4 min-h-11 rounded-lg bg-indigo-600 px-4 text-white">Confirm submission</button>
+              <button type="button" disabled={isGenerating} onClick={()=>setConfirmSubmission(false)} className="ml-3 min-h-11 px-4">Go back</button>
+            </div>
+          </div>}
         </div>
       ) : (
         <div className="space-y-4">

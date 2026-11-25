@@ -1,3 +1,4 @@
+import {validatePayrollPeriod,payrollOverlap} from '../domain/finance/payrollRecovery';
 import {payrollRecordView} from '../domain/finance/payrollRecordView';
 import {collection,doc,getDocs,query,runTransaction,serverTimestamp,where,type Firestore} from 'firebase/firestore';
 import {auth,db} from '../firebase';
@@ -11,6 +12,7 @@ import {kampalaBusinessDate} from '../utils/eodBusinessDate';
 export interface PayrollBatch {
   id: string; tenantId: string; reference: string; periodStart: string; periodEnd: string; month: string;
   revision: number; status: PayrollStatus; employeeCount: number; nextIndex: number; totals: PayrollTotals;
+  coverageVersion?:number; legacySourceId?:string;
   paidUGX: number; submittedBy: string; submittedByName: string; planHash: string;
   returnReason?: string; approvedAt?: any; submittedAt?: any; [key: string]: any;
 }
@@ -31,13 +33,17 @@ function employeeRecord(batch: PayrollBatch,line: PayrollLine,index: number) {
 /** Each employee advances a rules-checked accumulator. Only a complete revision can reach Finance.
  * Transactions are bounded to five writes, independently of payroll size. Retrying resumes the same plan. */
 export async function submitPayroll(input:{tenantId:string;actorId:string;actorName:string;periodStart:string;periodEnd:string;
-  lines:PayrollLine[];batchId?:string;restartIncomplete?:boolean},database: Firestore=db) {
+  lines:PayrollLine[];batchId?:string;restartIncomplete?:boolean;legacySourceId?:string},database: Firestore=db) {
   authenticated(input.actorId,database);
+  validatePayrollPeriod(input.periodStart,input.periodEnd);
   const lines=input.lines.map(finalizePayrollLine).sort((a,b)=>a.staffId<b.staffId?-1:a.staffId>b.staffId?1:0);
   const totals=reconcilePayroll(lines);
   const identity=await payrollIdentity(input.tenantId,input.periodStart,input.periodEnd);
   if(input.batchId && input.batchId!==identity.id)throw new Error('A correction must retain the original payroll period and ID.');
   const planHash=await payrollDigest(lines);
+  const existing=await getDocs(query(collection(database,PAYROLL_BATCHES),where('tenantId','==',input.tenantId)));
+  const conflict=payrollOverlap(input.periodStart,input.periodEnd,existing.docs.map(d=>({...d.data(),id:d.id})),identity.id);
+  if(conflict)throw Error(`Dates overlap locked payroll ${conflict.reference}. Open that payroll instead.`);
   const batchRef=doc(database,PAYROLL_BATCHES,identity.id);
   const draftRef=doc(database,'management_expenses',identity.id);
   let batch=await runTransaction(database,async tx=>{
@@ -45,6 +51,7 @@ export async function submitPayroll(input:{tenantId:string;actorId:string;actorN
     if(prior.exists()){
       const current=prior.data() as PayrollBatch;
       if(current.tenantId!==input.tenantId)throw new Error('Payroll belongs to a different tenant.');
+      if(input.legacySourceId&&current.legacySourceId!==input.legacySourceId)throw Error('This payroll already exists and is not the replacement for that legacy request.');
       const restart=current.status==='draft' && current.planHash!==planHash && input.restartIncomplete===true;
       if(current.status!=='returned' && !restart){
         if(current.planHash!==planHash)throw new Error('A different payroll revision already exists for this period. Return it to HR before changing it.');
@@ -56,15 +63,35 @@ export async function submitPayroll(input:{tenantId:string;actorId:string;actorN
       if(restart)tx.set(doc(database,PAYROLL_EVENTS,revisionKey(next.id,next.revision)+'_restart'),{tenantId:next.tenantId,batchId:next.id,revision:next.revision,action:'restart',actorId:input.actorId,recordedAt:serverTimestamp(),totals:next.totals,previousPlanHash:current.planHash,previousStagedEmployees:current.nextIndex,reason:'HR replaced incomplete staging after reviewing a new payroll draft'});
       return next;
     }
-    const created:PayrollBatch={id:identity.id,tenantId:input.tenantId,reference:identity.reference,
+    if(input.legacySourceId){
+      const [legacy,recovery]=await Promise.all([tx.get(doc(database,'management_expenses',input.legacySourceId)),tx.get(doc(database,'finance_payroll_recovery_v1',input.legacySourceId))]);
+      const e=legacy.data();
+      if(recovery.exists())throw Error('This rejected payroll already has a replacement. Open the linked payroll.');
+      if(!e||e.tenantId!==input.tenantId||e.payrollVersion===11||e.source!=='hr_salary'||String(e.status).toLowerCase()!=='rejected'||Number(e.paidAmountUGX||0)>0||e.cashOutflowPostingId)throw Error('Only an unpaid rejected legacy payroll can be recovered. Finance must reconcile other records first.');
+    }
+    const created:PayrollBatch={coverageVersion:1,...(input.legacySourceId?{legacySourceId:input.legacySourceId}:{}),id:identity.id,tenantId:input.tenantId,reference:identity.reference,
       periodStart:input.periodStart,periodEnd:input.periodEnd,month:input.periodEnd.slice(0,7),revision:1,
       status:'draft',employeeCount:lines.length,nextIndex:0,totals:emptyPayrollTotals(),paidUGX:0,
       submittedBy:input.actorId,submittedByName:input.actorName,planHash};
+    if(input.legacySourceId)tx.set(doc(database,'finance_payroll_recovery_v1',input.legacySourceId),{tenantId:input.tenantId,batchId:identity.id});
     tx.set(batchRef,{...created,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});tx.set(doc(database,PAYROLL_STATUS,created.id),publicStatus(created));return created;
   });
   if(batch.status!=='draft')return {id:identity.id,revision:batch.revision,replayed:true};
   for(let index=batch.nextIndex;index<lines.length;index++){
     const line=lines[index];
+    if(batch.coverageVersion===1){
+      const start=Date.parse(input.periodStart)/86400000,end=Date.parse(input.periodEnd)/86400000;
+      for(let first=start;first<=end;first+=8)await runTransaction(database,async tx=>{
+        const days=Array.from({length:Math.min(8,end-first+1)},(_,i)=>first+i);
+        const refs=days.map(day=>doc(database,'finance_payroll_days_v1',line.staffId+'_'+day));
+        const prior=await Promise.all(refs.map(ref=>tx.get(ref)));
+        prior.forEach((saved,i)=>{
+          if(saved.exists()){
+            if(saved.data().tenantId!==input.tenantId||saved.data().batchId!==identity.id)throw Error(`${line.staffName}: these dates are reserved by another payroll. Open the existing payroll instead.`);
+          }else tx.set(refs[i],{tenantId:input.tenantId,staffId:line.staffId,batchId:identity.id,day:days[i]});
+        });
+      });
+    }
     await runTransaction(database,async tx=>{
       const live=await tx.get(batchRef);const current=live.data() as PayrollBatch;
       if(current.planHash!==planHash || current.revision!==batch.revision)throw new Error('Payroll revision changed; reload HR.');

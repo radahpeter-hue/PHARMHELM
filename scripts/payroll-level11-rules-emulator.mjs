@@ -174,5 +174,41 @@ try{
  await assertFails(setDoc(doc(employeeDb,'leave_requests','fake-paid-leave'),{tenantId,staffId:'employee1',status:'Approved',leave_type:'Annual'}));
  await assertFails(setDoc(doc(employeeDb,'payslips','fake'),{tenantId,staffId:'employee1',netPayable:1000000}));
  pass('attendance requires HR verification, edits revoke verification and employees cannot approve their own paid leave');
+
+ // Date locks must survive different period IDs, returned revisions and concurrent submissions.
+ const dayNumber=date=>Date.parse(date)/86400000;
+ const dayDoc=(staffId,date)=>doc(hr,'finance_payroll_days_v1',staffId+'_'+dayNumber(date));
+ await assertFails(deleteDoc(dayDoc('employee1','2026-11-01')));
+ await assertFails(updateDoc(dayDoc('employee1','2026-11-01'),{batchId:'other'}));
+ await assert.rejects(submitPayroll(submit([line('employee1')],{periodStart:'2026-11-20',periodEnd:'2026-12-02'}),hr),/overlap/);
+ const oldBatch=await get('finance_payroll_batches_v1',result.id);
+ assert.equal(oldBatch.paidUGX,oldBatch.totals.net);
+ pass('paid dates cannot be resubmitted with a different range and date locks are immutable');
+
+ await admin(db=>setDoc(doc(db,'management_expenses','legacy-rejected'),{tenantId,source:'hr_salary',status:'rejected',amount_ugx:12345}));
+ const recoveryIntent=submit([line('employee1')],{periodStart:'2027-03-01',periodEnd:'2027-03-02',legacySourceId:'legacy-rejected'});
+ const recovered=await submitPayroll(recoveryIntent,hr);
+ assert.equal((await get('management_expenses','legacy-rejected')).status,'rejected');
+ assert.equal((await get('finance_payroll_recovery_v1','legacy-rejected')).batchId,recovered.id);
+ assert.equal((await get('finance_payroll_batches_v1',recovered.id)).legacySourceId,'legacy-rejected');
+ await assert.rejects(submitPayroll({...recoveryIntent,periodStart:'2027-04-01',periodEnd:'2027-04-02'},hr),/already has a replacement/);
+ await admin(db=>setDoc(doc(db,'management_expenses','legacy-paid'),{tenantId,source:'hr_salary',status:'rejected',paidAmountUGX:1}));
+ await assert.rejects(submitPayroll({...recoveryIntent,legacySourceId:'legacy-paid',periodStart:'2027-04-01',periodEnd:'2027-04-02'},hr),/unpaid rejected legacy/);
+ pass('legacy recovery retains history, links exactly one replacement and rejects payment evidence');
+
+ const attemptA=submit([line('employee2')],{periodStart:'2027-05-01',periodEnd:'2027-05-02'});
+ const attemptB=submit([line('employee2')],{periodStart:'2027-05-02',periodEnd:'2027-05-03'});
+ const racing=await Promise.allSettled([submitPayroll(attemptA,hr),submitPayroll(attemptB,hr)]);
+ assert.equal(racing.filter(r=>r.status==='fulfilled').length,1);
+ assert.equal(racing.filter(r=>r.status==='rejected').length,1);
+ pass('concurrent overlapping period IDs cannot both submit the same employee dates');
+
+ // A forged final-day reservation cannot bypass the chain proving full period coverage.
+ const hole=submit([line('employee1')],{periodStart:'2027-06-01',periodEnd:'2027-06-03'});
+ await assert.rejects(submitPayroll({...hole,lines:[line('missing-proof-staff')]},hr));
+ const holeId=tenantId+'_PAY_2027-06-01_2027-06-03';
+ await assertFails(setDoc(dayDoc('employee1','2027-06-03'),{tenantId,staffId:'employee1',batchId:holeId,day:dayNumber('2027-06-03')}));
+ await assertFails(setDoc(dayDoc('employee1','2027-07-01'),{tenantId,staffId:'employee1',batchId:holeId,day:dayNumber('2027-07-01')}));
+ pass('missing predecessor and out-of-period date claim forgeries rejected');
  console.log(`PAYROLL LEVEL 11: ${checks} acceptance groups passed.`);
 }finally{await env.cleanup();}
