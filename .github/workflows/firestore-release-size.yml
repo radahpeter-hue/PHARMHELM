@@ -8,6 +8,7 @@ on:
       - 'scripts/validate-inactive-finance-rules.mjs'
       - 'scripts/firestore-unbound-probe.mjs'
       - 'scripts/diagnose-firestore-compiler.mjs'
+      - 'scripts/diagnose-payroll-coverage-compiler.mjs'
       - '.github/workflows/firestore-release-size.yml'
 permissions:
   contents: read
@@ -57,4 +58,5 @@ jobs:
           };
           for(const [name,options] of Object.entries(variants)) writeFileSync(`/tmp/${name}.rules`,wrapReleaseColumns(compactRuleSymbols(source,options))+'\n');
           JS
-          node scripts/diagnose-firestore-compiler.mjs /tmp/main-control.rules /tmp/noVector.rules /tmp/noFields.rules /tmp/noEarlyRequests.rules /tmp/indexedFields.rules
+          node scripts/diagnose-payroll-coverage-compiler.mjs
+          node scripts/diagnose-firestore-compiler.mjs /tmp/main-control.rules /tmp/noVector.rules /tmp/noFields.rules /tmp/noEarlyRequests.rules /tmp/indexedFields.rules /tmp/payroll-noCoverage.rules /tmp/payroll-noRecovery.rules /tmp/payroll-dateConversionStub.rules

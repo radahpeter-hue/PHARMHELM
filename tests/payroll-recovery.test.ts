@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {payrollMonthStart,payrollMonthEnd,payrollSummary,legacyRejectedPayroll,validatePayrollPeriod,payrollOverlap} from '../src/domain/finance/payrollRecovery';
+import {payrollMonthStart,payrollMonthEnd,payrollSummary,legacyRejectedPayroll,validatePayrollPeriod,payrollOverlap,legacyPayrollOverlap} from '../src/domain/finance/payrollRecovery';
 test('Kampala month defaults do not slip into the preceding UTC day',()=>{
  assert.equal(payrollMonthStart(new Date('2026-10-31T22:00:00Z')),'2026-11-01');
  assert.equal(payrollMonthEnd(new Date('2028-02-10T00:00:00Z')),'2028-02-29');
@@ -19,4 +19,14 @@ test('overlap includes inclusive boundaries and returned reservations, excludes 
 test('legacy recovery lists only rejected payroll expenses, not unrelated HR or Level 11 requests',()=>{
  const e={id:'legacy',source:'hr_salary',status:'Rejected'};
  assert.deepEqual(legacyRejectedPayroll([e,{...e,payrollVersion:11},{...e,source:'advance',sourceType:'hr'},{...e,status:'approved'}]),[e]);
+});
+
+test('known legacy periods block silent regeneration without inventing a payment or rewriting history',()=>{
+ const rows=[{month:'November 2026',status:'paid',net_salary:1}];
+ assert.ok(legacyPayrollOverlap('2026-10-31','2026-11-01',rows));
+ assert.ok(legacyPayrollOverlap('2026-11-30','2026-12-01',rows));
+ assert.equal(legacyPayrollOverlap('2026-12-01','2026-12-31',rows),undefined);
+ assert.equal(legacyPayrollOverlap('2026-11-01','2026-11-30',[{...rows[0],payrollVersion:11}]),undefined);
+ assert.ok(legacyPayrollOverlap('2026-11-15','2026-11-15',[{month:'2026-11'}]));
+ assert.equal(rows[0].status,'paid');
 });

@@ -1,4 +1,4 @@
-import {payrollMonthStart,payrollMonthEnd,payrollSummary,legacyRejectedPayroll,validatePayrollPeriod,payrollOverlap} from '../../domain/finance/payrollRecovery';
+import {payrollMonthStart,payrollMonthEnd,payrollSummary,legacyRejectedPayroll,validatePayrollPeriod,payrollOverlap,legacyPayrollOverlap} from '../../domain/finance/payrollRecovery';
 import {kampalaBusinessDate} from '../../utils/eodBusinessDate';
 import {payrollStatutory} from '../../domain/finance/payrollStatutory';
 import {payableAttendance} from '../../domain/finance/payrollAttendance';
@@ -167,6 +167,7 @@ export const PayrollManager: React.FC = () => {
     const overlap=payrollOverlap(fromDate,toDate,batches,correctionBatchId||resumable?.id);
     if(overlap){toast.error(`Dates overlap locked payroll ${overlap.reference}. Open that payroll instead.`);return;}
     if(!attendanceLoaded){toast.error('Attendance is still loading. Payroll cannot be calculated yet.');return;}
+    if(!recoverySource&&!batches.some(b=>b.id===correctionBatchId&&b.legacySourceId)&&legacyPayrollOverlap(fromDate,toDate,payroll)){toast.error('Legacy payroll exists for these dates. Recover the rejected Finance request, or ask Finance to reconcile historical payment evidence before generating another payroll.');return;}
     const draftRecords: DraftPayrollRecord[] = [];
 
     canonicalStaff.forEach(member => {
@@ -719,6 +720,7 @@ export const PayrollManager: React.FC = () => {
         <div className="flex flex-wrap items-center justify-between gap-3"><p className="font-bold break-words">{batch.reference} · Revision {batch.revision} · {payrollStatusLabels[batch.status]}</p>
         {batch.status==='returned' && <button type="button" onClick={()=>openReturnedPayroll(batch)} className="min-h-11 rounded-xl bg-indigo-600 px-4 text-white">Correct and resubmit</button>}</div>
         <p>{batch.periodStart} to {batch.periodEnd} · {batch.employeeCount} employees · Net: UGX {batch.totals.net.toLocaleString()} · Paid: UGX {batch.paidUGX.toLocaleString()} · Outstanding: UGX {(batch.totals.net-batch.paidUGX).toLocaleString()}</p>
+        {batch.legacySourceId&&<p>Recovered legacy request: {legacyExpenses.find(e=>e.id===batch.legacySourceId)?.description||'Historical rejected payroll'}</p>}
         {batch.returnReason && <p className="mt-2 text-amber-800">Finance correction reason: {batch.returnReason}</p>}
         {batch.status==='draft' && <p className="text-amber-800">Submission incomplete ({batch.nextIndex}/{batch.employeeCount}). Retry the same reviewed payroll to resume.</p>}
       </div>)}</div>}

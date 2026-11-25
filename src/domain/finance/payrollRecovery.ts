@@ -22,3 +22,22 @@ export function payrollOverlap(start:string,end:string,batches:any[],ownId?:stri
  return batches.find(b=>b.id!==ownId && ['draft','pending_finance','returned','approved','partial','paid'].includes(b.status) && b.periodStart<=end && b.periodEnd>=start);
 }
 export const legacyRejectedPayroll = (expenses:any[]) => expenses.filter(e=>e.payrollVersion!==11 && e.source==='hr_salary' && String(e.status).toLowerCase()==='rejected');
+
+/** Legacy paid labels are not proof of payment. Reserve known historical coverage
+ * for reconciliation instead of silently treating it as either payable or unpaid. */
+export function legacyPayrollOverlap(start:string,end:string,rows:any[]) {
+ return rows.find(row=>{
+  if(row.payrollVersion===11)return false;
+  if(isBusinessDate(row.periodStart)&&isBusinessDate(row.periodEnd))return row.periodStart<=end&&row.periodEnd>=start;
+  let month=String(row.month||'');
+  const named=month.match(/^([a-z]+)\s+(\d{4})$/i);
+  if(named){
+   const index=['january','february','march','april','may','june','july','august','september','october','november','december'].indexOf(named[1].toLowerCase());
+   if(index<0)return false;
+   month=named[2]+'-'+String(index+1).padStart(2,'0');
+  }
+  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))return false;
+  const last=new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5,7)),0)).toISOString().slice(0,10);
+  return month+'-01'<=end&&last>=start;
+ });
+}

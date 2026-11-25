@@ -187,6 +187,8 @@ try{
 
  await admin(db=>setDoc(doc(db,'management_expenses','legacy-rejected'),{tenantId,source:'hr_salary',status:'rejected',amount_ugx:12345}));
  const recoveryIntent=submit([line('employee1')],{periodStart:'2027-03-01',periodEnd:'2027-03-02',legacySourceId:'legacy-rejected'});
+ await admin(db=>setDoc(doc(db,'payroll','legacy-auto-paid-label'),{tenantId,staffId:'employee1',month:'March 2027',status:'paid',net_salary:12345}));
+ await assert.rejects(submitPayroll({...recoveryIntent,legacySourceId:undefined},hr),/Legacy payroll/);
  const recovered=await submitPayroll(recoveryIntent,hr);
  assert.equal((await get('management_expenses','legacy-rejected')).status,'rejected');
  assert.equal((await get('finance_payroll_recovery_v1','legacy-rejected')).batchId,recovered.id);
@@ -194,6 +196,9 @@ try{
  await assert.rejects(submitPayroll({...recoveryIntent,periodStart:'2027-04-01',periodEnd:'2027-04-02'},hr),/already has a replacement/);
  await admin(db=>setDoc(doc(db,'management_expenses','legacy-paid'),{tenantId,source:'hr_salary',status:'rejected',paidAmountUGX:1}));
  await assert.rejects(submitPayroll({...recoveryIntent,legacySourceId:'legacy-paid',periodStart:'2027-04-01',periodEnd:'2027-04-02'},hr),/unpaid rejected legacy/);
+ await reviewPayroll({tenantId,batchId:recovered.id,revision:1,actorId:'finance',action:'return',reason:'Review historical attendance'},finance);
+ const correctedRecovery=await submitPayroll({...recoveryIntent,legacySourceId:undefined,batchId:recovered.id},hr);
+ assert.equal(correctedRecovery.revision,2);
  pass('legacy recovery retains history, links exactly one replacement and rejects payment evidence');
 
  const attemptA=submit([line('employee2')],{periodStart:'2027-05-01',periodEnd:'2027-05-02'});

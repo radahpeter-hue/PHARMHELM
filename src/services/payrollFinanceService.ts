@@ -1,4 +1,4 @@
-import {validatePayrollPeriod,payrollOverlap} from '../domain/finance/payrollRecovery';
+import {validatePayrollPeriod,payrollOverlap,legacyPayrollOverlap} from '../domain/finance/payrollRecovery';
 import {payrollRecordView} from '../domain/finance/payrollRecordView';
 import {collection,doc,getDocs,query,runTransaction,serverTimestamp,where,type Firestore} from 'firebase/firestore';
 import {auth,db} from '../firebase';
@@ -44,6 +44,11 @@ export async function submitPayroll(input:{tenantId:string;actorId:string;actorN
   const existing=await getDocs(query(collection(database,PAYROLL_BATCHES),where('tenantId','==',input.tenantId)));
   const conflict=payrollOverlap(input.periodStart,input.periodEnd,existing.docs.map(d=>({...d.data(),id:d.id})),identity.id);
   if(conflict)throw Error(`Dates overlap locked payroll ${conflict.reference}. Open that payroll instead.`);
+  const ownRecovery=existing.docs.find(d=>d.id===identity.id)?.data()?.legacySourceId;
+  if(!input.legacySourceId&&!ownRecovery){
+    const history=await getDocs(query(collection(database,'payroll'),where('tenantId','==',input.tenantId)));
+    if(legacyPayrollOverlap(input.periodStart,input.periodEnd,history.docs.map(d=>d.data())))throw Error('Legacy payroll covers these dates. Reconcile historical payment evidence or recover its rejected Finance request first.');
+  }
   const batchRef=doc(database,PAYROLL_BATCHES,identity.id);
   const draftRef=doc(database,'management_expenses',identity.id);
   let batch=await runTransaction(database,async tx=>{
