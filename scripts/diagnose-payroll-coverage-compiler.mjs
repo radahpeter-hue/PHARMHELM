@@ -8,7 +8,7 @@ const remove=(text,first,last)=>{
  return text.slice(0,start)+text.slice(end);
 };
 let noCoverage=remove(source,'    function payrollDay(value)','    function validPayrollSnapshot(data)');
-const check="        && (before.get('coverageVersion',0) == 0 || get(payrollDayPath(data.staffId,payrollDay(before.periodEnd))).data.batchId == before.id)\n";
+const check="        && (before.get('coverageVersion',0) == 0 || getAfter(payrollDayPath(data.staffId,payrollDay(before.periodEnd))).data.batchId == before.id)\n";
 if(!noCoverage.includes(check))throw Error('Coverage diagnostic marker missing.');
 noCoverage=noCoverage.replace(check,'');
 let noRecovery=remove(source,'    function validLegacyPayrollRecovery(b)','    match /finance_payroll_batches_v1/');

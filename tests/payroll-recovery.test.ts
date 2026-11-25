@@ -30,3 +30,19 @@ test('known legacy periods block silent regeneration without inventing a payment
  assert.ok(legacyPayrollOverlap('2026-11-15','2026-11-15',[{month:'2026-11'}]));
  assert.equal(rows[0].status,'paid');
 });
+
+test('legacy replacement identity is permanently anchored to the original request, while ordinary periods retain their identity',async()=>{
+ const {payrollIdentity}=await import('../src/domain/finance/payroll');
+ const first=await payrollIdentity('tenant','2026-11-01','2026-11-30','old-request');
+ const changed=await payrollIdentity('tenant','2026-12-01','2026-12-31','old-request');
+ assert.equal(first.id,'tenant_REC_old-request');assert.equal(changed.id,first.id);
+ assert.equal((await payrollIdentity('tenant','2026-11-01','2026-11-30')).id,'tenant_PAY_2026-11-01_2026-11-30');
+ await assert.rejects(payrollIdentity('tenant','2026-11-01','2026-11-30','bad/path'));
+});
+
+test('failed initial atomic staging does not lock otherwise unpaid dates',()=>{
+ const b={id:'empty',periodStart:'2026-11-01',periodEnd:'2026-11-30',status:'draft',coverageVersion:1,revision:1,nextIndex:0};
+ assert.equal(payrollOverlap('2026-11-02','2026-11-03',[b]),undefined);
+ assert.ok(payrollOverlap('2026-11-02','2026-11-03',[{...b,nextIndex:1}]));
+ assert.ok(payrollOverlap('2026-11-02','2026-11-03',[{...b,revision:2}]));
+});

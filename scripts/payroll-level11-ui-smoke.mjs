@@ -44,7 +44,10 @@ try{
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),'No document horizontal overflow');
   await dialog.screenshot({path:'/tmp/payroll-level11-mobile-proof/finance-'+width+'.png'});
   await page.getByRole('button',{name:'Close payroll review'}).click();
+  await page.evaluate(()=>{window.__holdAttendance=true;});
   await page.getByRole('button',{name:'HR payroll',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'Prepare Payroll Draft',exact:true}).isDisabled(),true,'attendance still loading must block preparation');
+  await page.evaluate(()=>{window.__holdAttendance=false;window.__deliverAttendance();});
   await page.locator('input[type=date]').nth(0).fill('2026-11-01');await page.locator('input[type=date]').nth(1).fill('2026-11-30');
   await page.getByRole('button',{name:'Prepare Payroll Draft',exact:true}).click();
   assert.equal(await page.getByRole('button',{name:'Review & Adjust',exact:true}).count(),0,'partially paid dates cannot be regenerated');
@@ -63,12 +66,21 @@ try{
   await page.getByRole('button',{name:'Go back',exact:true}).click();
   assert.equal(await page.evaluate(()=>!!window.__submitted),false,'cancel must not submit');
   await page.getByRole('button',{name:'Submit to Finance',exact:true}).click();
-  await page.getByRole('button',{name:'Confirm submission',exact:true}).click();
+  await page.getByRole('button',{name:'Confirm submission',exact:true}).dblclick();
   await page.waitForFunction(()=>!!window.__submitted);
+  assert.equal(await page.evaluate(()=>window.__submitCalls),1,'double-clicking confirmation must submit once');
   const line=await page.evaluate(()=>window.__submitted.lines[0]);
   assert.equal(line.loggedHours,120);assert.equal(line.baseSalary,360000);assert.equal(line.netSalary,340600);
   await page.close();
   console.log('PASS actual HR/Finance payroll controls and scrolling at width '+width);
  }
+ const blocked=await browser.newPage({viewport:{width:390,height:740}});
+ await blocked.addInitScript(()=>{window.__failBatchHistory=true;});
+ await blocked.goto('http://127.0.0.1:'+server.address().port);
+ await blocked.getByRole('button',{name:'HR payroll',exact:true}).click();
+ await blocked.getByRole('alert').filter({hasText:'Unable to load payroll history'}).waitFor();
+ assert.equal(await blocked.getByRole('button',{name:'Prepare Payroll Draft',exact:true}).isDisabled(),true,'unavailable history must fail closed');
+ await blocked.close();
+ console.log('PASS loading and unavailable-history safeguards');
  assert.deepEqual(errors,[]);
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

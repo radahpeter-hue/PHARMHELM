@@ -19,7 +19,7 @@ export function payrollSummary(batches:any[],legacy:any[]) {
  };
 }
 export function payrollOverlap(start:string,end:string,batches:any[],ownId?:string) {
- return batches.find(b=>b.id!==ownId && ['draft','pending_finance','returned','approved','partial','paid'].includes(b.status) && b.periodStart<=end && b.periodEnd>=start);
+ return batches.find(b=>b.id!==ownId && !(b.status==='draft'&&b.coverageVersion===1&&b.revision===1&&b.nextIndex===0) && ['draft','pending_finance','returned','approved','partial','paid'].includes(b.status) && b.periodStart<=end && b.periodEnd>=start);
 }
 export const legacyRejectedPayroll = (expenses:any[]) => expenses.filter(e=>e.payrollVersion!==11 && e.source==='hr_salary' && String(e.status).toLowerCase()==='rejected');
 

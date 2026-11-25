@@ -1539,7 +1539,9 @@ service cloud.firestore {
       allow create: if validDay(request.resource.data);
       function validDay(d) {
         let b = get(payrollBatchPath(d.batchId)).data;
+      let after = getAfter(payrollBatchPath(d.batchId)).data;
         return payrollActor(b.tenantId,true) && d.tenantId == b.tenantId
+          && after.nextIndex == b.nextIndex + 1 && after.lastStaffId == d.staffId
           && dayId == d.staffId + '_' + string(d.day) && d.day is int
           && d.day >= payrollDay(b.periodStart) && d.day <= payrollDay(b.periodEnd)
           && (d.day == payrollDay(b.periodStart) || getAfter(payrollDayPath(d.staffId,d.day - 1)).data.batchId == b.id)
@@ -1560,7 +1562,7 @@ service cloud.firestore {
         && data.branch_id == allocation && data.line.branchId == data.branch_id
         && data.periodStart == before.periodStart && data.periodEnd == before.periodEnd && data.month == before.month
         && data.payrollVersion == 11 && data.payrollReference == before.reference
-        && (before.get('coverageVersion',0) == 0 || get(payrollDayPath(data.staffId,payrollDay(before.periodEnd))).data.batchId == before.id)
+        && (before.get('coverageVersion',0) == 0 || getAfter(payrollDayPath(data.staffId,payrollDay(before.periodEnd))).data.batchId == before.id)
         && validPayrollComponents(data.line) && payrollTotalsStep(before.totals,after.totals,data.line)
         && data.paidUGX == 0 && data.status == 'pending_finance'
         && data.keys().hasOnly(['tenantId','payrollVersion','batchId','payrollReference','revision','index','staffId',
@@ -1592,6 +1594,7 @@ service cloud.firestore {
       let before = get(payrollBatchPath(id)).data;
       let after = getAfter(payrollBatchPath(id)).data;
       return id == data.batchId && payrollDraftLink(data)
+        && (resource == null || (resource.data.get('payrollVersion',0) == 11 && resource.data.batchId == id && resource.data.tenantId == data.tenantId))
         && (before.status == 'draft' && after.status == 'pending_finance' && data.status == 'pending'
 
           || before.status == 'pending_finance' && after.status in ['approved','returned']
@@ -1639,21 +1642,12 @@ service cloud.firestore {
       let e = get(/databases/$(database)/documents/management_expenses/$(b.legacySourceId)).data;
       return e.tenantId == b.tenantId && e.get('payrollVersion',0) != 11
         && e.source == 'hr_salary' && e.status.lower() == 'rejected'
-        && e.get('paidAmountUGX',0) == 0 && e.get('cashOutflowPostingId','') == ''
-        && !exists(/databases/$(database)/documents/finance_payroll_recovery_v1/$(b.legacySourceId))
-        && getAfter(/databases/$(database)/documents/finance_payroll_recovery_v1/$(b.legacySourceId)).data.batchId == b.id;
-    }
-    match /finance_payroll_recovery_v1/{sourceId} {
-      allow read: if isAuthenticated() && (resource == null ? isHR() : viewPayroll(resource.data.tenantId));
-      allow create: if payrollActor(request.resource.data.tenantId,true)
-        && getAfter(payrollBatchPath(request.resource.data.batchId)).data.legacySourceId == sourceId
-        && getAfter(payrollBatchPath(request.resource.data.batchId)).data.createdAt == request.time
-        && request.resource.data.keys().hasOnly(['tenantId','batchId']);
+        && e.get('paidAmountUGX',0) == 0 && e.get('cashOutflowPostingId','') == '';
     }
     match /finance_payroll_batches_v1/{batchId} {
       function validStart(data) {
         return payrollActor(data.tenantId,true) && payrollStatusMirror(data) && data.id == batchId
-          && batchId == data.tenantId + '_PAY_' + data.periodStart + '_' + data.periodEnd
+          && batchId == (data.get('legacySourceId','') == '' ? data.tenantId + '_PAY_' + data.periodStart + '_' + data.periodEnd : data.tenantId + '_REC_' + data.legacySourceId)
           && data.periodStart.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && data.periodEnd.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
           && data.periodStart <= data.periodEnd && data.periodEnd.matches('^' + data.month + '-[0-9]{2}$')
           && (data.get('legacySourceId','') == '' || validLegacyPayrollRecovery(data))

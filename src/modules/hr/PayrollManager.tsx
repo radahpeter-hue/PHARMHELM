@@ -4,7 +4,7 @@ import {payrollStatutory} from '../../domain/finance/payrollStatutory';
 import {payableAttendance} from '../../domain/finance/payrollAttendance';
 import {employeePayrollStatus,payrollStatusLabels,finalizePayrollLine,type PayrollLine} from '../../domain/finance/payroll';
 import {submitPayroll,getPayrollRevision,type PayrollBatch} from '../../services/payrollFinanceService';
-import {usePayrollBatches} from '../../hooks/usePayrollBatches';
+import {usePayrollBatchState} from '../../hooks/usePayrollBatches';
 import { staffMatchesId } from '../../utils/operationalStaff';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
@@ -53,7 +53,7 @@ interface DraftPayrollRecord extends PayrollLine {
 export const PayrollManager: React.FC = () => {
   const { profile } = useAuth();
   const { tenant } = useTenant();
-  const batches = usePayrollBatches(profile?.tenantId);
+  const {rows:batches,loading:batchesLoading,error:batchesError} = usePayrollBatchState(profile?.tenantId);
   const submissionLock=useRef(false);
   const [recoveryConfirmed,setRecoveryConfirmed]=useState(false);
   const [confirmSubmission,setConfirmSubmission] = useState(false);
@@ -66,6 +66,9 @@ export const PayrollManager: React.FC = () => {
   const [payroll, setPayroll] = useState<any[]>([]);
   const [advances, setAdvances] = useState<AdvanceRequest[]>([]);
   const [fines, setFines] = useState<TrafficFineLog[]>([]);
+  const [inputsLoaded,setInputsLoaded]=useState(false);
+  const [staffLoaded,setStaffLoaded]=useState(false);
+  const [payrollLoaded,setPayrollLoaded]=useState(false);
   const [attendanceLoaded,setAttendanceLoaded]=useState(false);
   const [attendance, setAttendance] = useState<any[]>([]);
   const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
@@ -97,26 +100,27 @@ export const PayrollManager: React.FC = () => {
   const [editCustomDeduction, setEditCustomDeduction] = useState(0);
 
   useEffect(() => {
-    if (profile?.tenantId) {
-      firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setStaff);
-      firestoreService.subscribeToCollection<AdvanceRequest>('advance_requests', profile.tenantId, setAdvances);
-      firestoreService.subscribeToCollection<TrafficFineLog>('traffic_fine_logs', profile.tenantId, setFines);
-      firestoreService.subscribeToCollection<any>('management_expenses', profile.tenantId, setLegacyExpenses);
-      setAttendanceLoaded(false);
-      firestoreService.subscribeToCollection<any>('attendance', profile.tenantId, data=>{setAttendance(data);setAttendanceLoaded(true);});
-      firestoreService.subscribeToCollection<any>('cme_sessions', profile.tenantId, setCmeSessions);
-      firestoreService.subscribeToCollection<any>('leave_requests', profile.tenantId, setLeaveRequests);
-      firestoreService.subscribeToCollection<any>('system_settings', profile.tenantId, (docs) => {
-        if (docs.length > 0) setSystemSettings(docs[0]);
-      });
-      return firestoreService.subscribeToCollection<any>(
-        'payroll',
-        profile.tenantId,
-        (data) => {
-          setPayroll(data.sort((a, b) => (b.month || '').localeCompare(a.month || '')));
-        }
-      );
-    }
+    setStaff([]);setAttendance([]);setPayroll([]);setLegacyExpenses([]);setAdvances([]);setFines([]);setCmeSessions([]);setLeaveRequests([]);setSystemSettings(null);
+    setInputsLoaded(false);setStaffLoaded(false);setAttendanceLoaded(false);setPayrollLoaded(false);
+    setDraftPayroll([]);setIsDraftMode(false);setConfirmSubmission(false);setRecoverySource(undefined);setCorrectionBatchId(undefined);
+    if(!profile?.tenantId)return;
+    const tenantId=profile.tenantId;
+    const ready=new Set<string>();let active=true;
+    const subscribe=<T,>(name:string,callback:(data:T[])=>void)=>firestoreService.subscribeToCollection<T>(name,tenantId,data=>{
+      if(!active)return;callback(data);ready.add(name);if(ready.size===9)setInputsLoaded(true);
+    });
+    const stops=[
+      subscribe<Staff>('staff',data=>{setStaff(data);setStaffLoaded(true);}),
+      subscribe<AdvanceRequest>('advance_requests',setAdvances),
+      subscribe<TrafficFineLog>('traffic_fine_logs',setFines),
+      subscribe<any>('management_expenses',setLegacyExpenses),
+      subscribe<any>('attendance',data=>{setAttendance(data);setAttendanceLoaded(true);}),
+      subscribe<any>('cme_sessions',setCmeSessions),
+      subscribe<any>('leave_requests',setLeaveRequests),
+      subscribe<any>('system_settings',data=>setSystemSettings(data[0]||null)),
+      subscribe<any>('payroll',data=>{setPayroll([...data].sort((a,b)=>(b.month||'').localeCompare(a.month||'')));setPayrollLoaded(true);})
+    ];
+    return ()=>{active=false;stops.forEach(stop=>stop?.());};
   }, [profile?.tenantId]);
 
   const canonicalStaff = operationalStaff(staff);
@@ -166,7 +170,7 @@ export const PayrollManager: React.FC = () => {
     const resumable=batches.find(b=>b.periodStart===fromDate&&b.periodEnd===toDate&&b.status==='draft');
     const overlap=payrollOverlap(fromDate,toDate,batches,correctionBatchId||resumable?.id);
     if(overlap){toast.error(`Dates overlap locked payroll ${overlap.reference}. Open that payroll instead.`);return;}
-    if(!attendanceLoaded){toast.error('Attendance is still loading. Payroll cannot be calculated yet.');return;}
+    if(!inputsLoaded||!attendanceLoaded||!staffLoaded||!payrollLoaded||batchesLoading||batchesError){toast.error(batchesError||'Staff, attendance and payroll history must finish loading before calculation.');return;}
     if(!recoverySource&&!batches.some(b=>b.id===correctionBatchId&&b.legacySourceId)&&legacyPayrollOverlap(fromDate,toDate,payroll)){toast.error('Legacy payroll exists for these dates. Recover the rejected Finance request, or ask Finance to reconcile historical payment evidence before generating another payroll.');return;}
     const draftRecords: DraftPayrollRecord[] = [];
 
@@ -338,7 +342,7 @@ export const PayrollManager: React.FC = () => {
       const result = await submitPayroll({tenantId:profile.tenantId,actorId:profile.uid,
         actorName:profile.fullName || profile.email || profile.uid,periodStart:fromDate,periodEnd:toDate,
         lines:draftPayroll,batchId:correctionBatchId,restartIncomplete,legacySourceId:recoverySource?.id});
-      toast.success(`Payroll revision ${result.revision} submitted to Finance. No salary has been paid.`);
+      toast.success(result.replayed?'This payroll already exists. No duplicate submission or payment was created.':`Payroll revision ${result.revision} submitted to Finance. No salary has been paid.`);
       setIsDraftMode(false);setDraftPayroll([]);setCorrectionBatchId(undefined);setRestartIncomplete(false);setRecoverySource(undefined);setRecoveryConfirmed(false);
     } catch (error) { toast.error(error instanceof Error ? error.message : 'Payroll submission failed. Retry to resume.'); }
     finally {submissionLock.current=false;setIsGenerating(false);}
@@ -563,9 +567,11 @@ export const PayrollManager: React.FC = () => {
         <p className="font-bold">Legacy payroll rejected by Finance</p><p>{expense.description}</p>
         <p>UGX {Math.round(Number(expense.amount_ugx??expense.amount??0)).toLocaleString()} · Historical record, excluded from approved salary outstanding.</p>
         <p>Verify attendance and confirm that no payment was made before preparing a replacement linked to this request.</p>
-        <button type="button" className="mt-3 min-h-11 rounded-lg bg-slate-900 px-4 text-white" onClick={()=>{setRecoverySource(expense);setRecoveryConfirmed(false);setIsDraftMode(false);setDraftPayroll([]);setCorrectionBatchId(undefined);}}>Prepare correction for this legacy request</button>
+        <button type="button" disabled={isGenerating} className="mt-3 min-h-11 rounded-lg bg-slate-900 px-4 text-white" onClick={()=>{setRecoverySource(expense);setRecoveryConfirmed(false);setIsDraftMode(false);setDraftPayroll([]);setCorrectionBatchId(undefined);}}>Prepare correction for this legacy request</button>
       </div>)}
-      {recoverySource&&<div role="status" className="rounded-xl bg-amber-50 p-4 text-amber-950">Recovering rejected request: {recoverySource.description}. Select its original dates, verify attendance, then prepare the corrected draft. <label className="mt-3 flex gap-2"><input type="checkbox" checked={recoveryConfirmed} onChange={e=>setRecoveryConfirmed(e.target.checked)}/>I reviewed the original request and payment evidence. These salaries were not paid, and the selected dates are correct.</label> <button type="button" onClick={()=>{setRecoverySource(undefined);setDraftPayroll([]);setIsDraftMode(false);setConfirmSubmission(false);}}>Cancel recovery</button></div>}
+      {recoverySource&&<div role="status" className="rounded-xl bg-amber-50 p-4 text-amber-950">Recovering rejected request: {recoverySource.description}. Select its original dates, verify attendance, then prepare the corrected draft. <label className="mt-3 flex gap-2"><input type="checkbox" disabled={isGenerating} checked={recoveryConfirmed} onChange={e=>setRecoveryConfirmed(e.target.checked)}/>I reviewed the original request and payment evidence. These salaries were not paid, and the selected dates are correct.</label> <button type="button" disabled={isGenerating} onClick={()=>{setRecoverySource(undefined);setDraftPayroll([]);setIsDraftMode(false);setConfirmSubmission(false);}}>Cancel recovery</button></div>}
+      {batchesError&&<p role="alert" className="rounded-xl bg-amber-50 p-3 text-amber-950">{batchesError}</p>}
+      {(!inputsLoaded||!attendanceLoaded||!staffLoaded||!payrollLoaded||batchesLoading)&&<p role="status" className="text-sm text-slate-700">Loading staff, attendance and payroll history before payroll can be prepared…</p>}
       {/* Financial Info Banner */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-slate-900 p-6 rounded-[32px] text-white shadow-xl shadow-slate-200 relative overflow-hidden group">
@@ -694,7 +700,8 @@ export const PayrollManager: React.FC = () => {
 
         <div className="flex gap-2 shrink-0">
           {isDraftMode ? (
-            <button 
+            <button
+              disabled={isGenerating}
               onClick={() => {
                 setDraftPayroll([]);
                 setIsDraftMode(false);
@@ -705,7 +712,7 @@ export const PayrollManager: React.FC = () => {
             </button>
           ) : (
             <button 
-              disabled={!attendanceLoaded}
+              disabled={!inputsLoaded||!attendanceLoaded||!staffLoaded||!payrollLoaded||batchesLoading||!!batchesError}
               onClick={handleGeneratePayrollDraft}
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 shadow-lg shadow-indigo-100 uppercase tracking-wider"
             >

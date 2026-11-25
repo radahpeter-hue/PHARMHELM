@@ -191,9 +191,9 @@ try{
  await assert.rejects(submitPayroll({...recoveryIntent,legacySourceId:undefined},hr),/Legacy payroll/);
  const recovered=await submitPayroll(recoveryIntent,hr);
  assert.equal((await get('management_expenses','legacy-rejected')).status,'rejected');
- assert.equal((await get('finance_payroll_recovery_v1','legacy-rejected')).batchId,recovered.id);
+ assert.equal(recovered.id,tenantId+'_REC_legacy-rejected');
  assert.equal((await get('finance_payroll_batches_v1',recovered.id)).legacySourceId,'legacy-rejected');
- await assert.rejects(submitPayroll({...recoveryIntent,periodStart:'2027-04-01',periodEnd:'2027-04-02'},hr),/already has a replacement/);
+ await assert.rejects(submitPayroll({...recoveryIntent,periodStart:'2027-04-01',periodEnd:'2027-04-02'},hr),/retain its original selected dates/);
  await admin(db=>setDoc(doc(db,'management_expenses','legacy-paid'),{tenantId,source:'hr_salary',status:'rejected',paidAmountUGX:1}));
  await assert.rejects(submitPayroll({...recoveryIntent,legacySourceId:'legacy-paid',periodStart:'2027-04-01',periodEnd:'2027-04-02'},hr),/unpaid rejected legacy/);
  await reviewPayroll({tenantId,batchId:recovered.id,revision:1,actorId:'finance',action:'return',reason:'Review historical attendance'},finance);
@@ -206,6 +206,13 @@ try{
  const racing=await Promise.allSettled([submitPayroll(attemptA,hr),submitPayroll(attemptB,hr)]);
  assert.equal(racing.filter(r=>r.status==='fulfilled').length,1);
  assert.equal(racing.filter(r=>r.status==='rejected').length,1);
+ const winning=racing.find(r=>r.status==='fulfilled').value;
+ const winner=await get('finance_payroll_batches_v1',winning.id);
+ const loserId=winner.periodStart===attemptA.periodStart?tenantId+'_PAY_2027-05-02_2027-05-03':tenantId+'_PAY_2027-05-01_2027-05-02';
+ assert.equal((await get('finance_payroll_batches_v1',loserId)).nextIndex,0);
+ assert.equal((await admin(db=>getDocs(query(collection(db,'finance_payroll_days_v1'),where('batchId','==',loserId))))).size,0);
+ const freeDay=winner.periodStart===attemptA.periodStart?'2027-05-03':'2027-05-01';
+ await submitPayroll(submit([line('employee2')],{periodStart:freeDay,periodEnd:freeDay}),hr);
  pass('concurrent overlapping period IDs cannot both submit the same employee dates');
 
  // A forged final-day reservation cannot bypass the chain proving full period coverage.
@@ -215,5 +222,22 @@ try{
  await assertFails(setDoc(dayDoc('employee1','2027-06-03'),{tenantId,staffId:'employee1',batchId:holeId,day:dayNumber('2027-06-03')}));
  await assertFails(setDoc(dayDoc('employee1','2027-07-01'),{tenantId,staffId:'employee1',batchId:holeId,day:dayNumber('2027-07-01')}));
  pass('missing predecessor and out-of-period date claim forgeries rejected');
+ const collisionId=tenantId+'_PAY_2027-08-01_2027-08-02';
+ await admin(db=>setDoc(doc(db,'management_expenses',collisionId),{tenantId,source:'manual',status:'draft',amount:500}));
+ await assert.rejects(submitPayroll(submit([line('employee1')],{periodStart:'2027-08-01',periodEnd:'2027-08-02'}),hr));
+ assert.equal((await get('management_expenses',collisionId)).amount,500);
+ assert.equal((await get('management_expenses',collisionId)).payrollVersion,undefined);
+ pass('a payroll cannot overwrite an unrelated Finance expense');
+ const forgedId=tenantId+'_PAY_2027-09-01_2027-09-02';
+ const forged=writeBatch(hr);
+ forged.set(doc(hr,'finance_payroll_batches_v1',forgedId),{id:forgedId,tenantId,reference:'PAY-FORGED',periodStart:'2027-09-01',periodEnd:'2027-09-02',month:'2027-09',revision:1,status:'draft',employeeCount:1,nextIndex:0,totals:{net:0,gross:0,employerNssf:0,employeeNssf:0,paye:0,otherDeductions:0},paidUGX:0,submittedBy:'hr',submittedByName:'HR Test',planHash:'0'.repeat(64),createdAt:serverTimestamp(),updatedAt:serverTimestamp(),coverageVersion:1,legacySourceId:'legacy-rejected'});
+ forged.set(doc(hr,'finance_payroll_status_v1',forgedId),{tenantId,batchId:forgedId,revision:1,status:'draft'});
+ await assertFails(forged.commit());
+ pass('raw Rules reject a second legacy replacement hidden behind a different period identity');
+
+
+ const annual=await submitPayroll(submit([line('employee1')],{periodStart:'2028-01-01',periodEnd:'2029-01-01'}),hr);
+ assert.equal((await get('finance_payroll_batches_v1',annual.id)).status,'pending_finance');
+ pass('367-day maximum period reserves and stages atomically within write/access budgets');
  console.log(`PAYROLL LEVEL 11: ${checks} acceptance groups passed.`);
 }finally{await env.cleanup();}
