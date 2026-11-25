@@ -1,3 +1,60 @@
+# Level 11 recovery completion, 25 November 2026
+
+Recovery PR: https://github.com/radahpeter-hue/PHARMHELM/pull/129. Validated code commit: `42f4bab55c66a6c79271176b1af5753ea551e39f`. All six required workflows on that exact commit passed. Recovery changes remain unmerged and undeployed; no live financial records or production rules were modified. The original implementation history below is retained as a historical record, not the current recovery release status.
+
+## Result and verified size
+
+The recovery keeps the existing payroll, Treasury and profitability engines. HR can identify an unpaid rejected pre-Level 11 Finance request, explicitly reconcile its historical employee entries, verify attendance and prepare a replacement. The original request and employee rows remain unchanged. Finance must confirm the linked historical entries before approval. Approval supersedes only those entries in P&L/statutory reports, preventing duplicate payroll cost. The recovery has one permanent source-based identity; corrections keep that identity and selected dates. Historical selections are immutable once submitted.
+
+The HR summary separates approved outstanding salaries, pending/returned payroll, actual Level 11 payments and unconfirmed legacy history. A historical paid label alone is never payment proof. Missing and unverified attendance remain distinct from verified zero hours. Kampala month boundaries are generated as business dates. Submission is at the bottom of the reviewed draft and requires a separate confirmation; cancellation submits nothing and duplicate confirmation submits once. New employee/date reservations protect overlapping periods and stage atomically with each employee snapshot. Existing Level 11 records retain their revision/payment path.
+
+| Evidence | Previous | New | Saved | Interpretation |
+| --- | ---: | ---: | ---: | --- |
+| Last targeted reduction | 249,877 | 249,605 | 272 | Local stripped emulator AST estimates |
+| Recovery peak to accepted code | 252,478 | 249,605 | 2,873 | Local estimates, not hosted byte counts |
+| Firebase compiled executable | Unverified preceding candidate | Smaller than 256,000 bytes | Exact saving unavailable | Exact candidate verified through hosted unbound release validation |
+
+The [standalone size workflow](https://github.com/radahpeter-hue/PHARMHELM/actions/runs/45631741205), job `139266477724`, passed at 14:15:18 UTC (17:15:18 Kampala). It verified ruleset `2799a91f-4381-4d45-a58e-70ac22f94670` and generated source SHA-256 `ca4cc2f01419d590826396873c233bca22145e7a57e2b5d732e7636161b4c7b1`, matching the locally tested artifact. Probe identity and ruleset identity were checked and cleanup passed. This was neither a control nor an upload-only result. Firebase did not return an exact executable byte count. The source file's 140,405 bytes are not an executable-size measurement.
+
+## Validation and CI
+
+Local checks passed 948 unit tests, TypeScript and the production build. Authorization comparisons passed 176 release, 480 identity, 12 lexical binding, 288 policy-family isolation, 968 type/range, 385 vector and 432 authority cases. Authenticated acceptance passed all 20 payroll groups, including 130 employees, interrupted resume, immutable revisions, returns, legacy recovery, concurrent overlapping dates, account controls, overpayment protection and the 367-day emulator case.
+
+The exact generated rules also passed POS corrections/RBAC, operational inventory/procurement, portfolio transfers, Management Cash/supplier payments and receivables, including assigned-branch Finance Officer collection into a custom account. Additional tests passed 210-line Sellable/Operational orders and approvals, interrupted recovery/audit, GRN cash drafts, concurrent receipts, dispatch, supplier registration, automatic orders and Martin Pharma identity staging. Real-component UI tests covered 360/390/768/1280 pixels, legacy selection, Finance confirmation, cancellation and duplicate clicks.
+
+| Required workflow | Exact code result |
+| --- | --- |
+| [Compiled executable size](https://github.com/radahpeter-hue/PHARMHELM/actions/runs/45631741205) | Passed |
+| [Management Cash, supplier and receivables](https://github.com/radahpeter-hue/PHARMHELM/actions/runs/45631741132) | Passed, including its hosted size gate |
+| [Level 11 payroll](https://github.com/radahpeter-hue/PHARMHELM/actions/runs/45631741345) | Passed |
+| [POS and inventory](https://github.com/radahpeter-hue/PHARMHELM/actions/runs/45631745096) | Passed |
+| [Finance Level 4](https://github.com/radahpeter-hue/PHARMHELM/actions/runs/45631740954) | Passed |
+| [Preview/build](https://github.com/radahpeter-hue/PHARMHELM/actions/runs/45631740946) | Passed |
+
+Administrative/migration skips are intentional. Documentation follow-up checks must also pass on the final PR head before final sign-off.
+
+## Remaining boundaries and owner acceptance
+
+No production payroll reconciliation or financial acceptance has been performed. HR/Finance must verify the original dates, employee selection and actual payment evidence; mismatched historical totals remain blocked. Recorded attendance still needs authorized verification. Existing statutory assessment policy is retained, and statutory remittance processing is outside this change. Funding accounts must already be eligible, reconciled and funded.
+
+Date reservations add approximately one write per employee/day; unusually long/large payrolls can consume the Spark daily write allowance and require resumable staging. The 367-day case passed in the emulator, not against live financial data. A cumulative 2 GB local emulator heap failure after large-order suites was recorded; the remaining suites passed unchanged in fresh instances, and required CI passed. This does not certify a production transaction workload beyond the tested evidence. No deployment-dependent policy document or production configuration seed was introduced.
+
+After separately authorized deployment, the owner should:
+
+1. Open the old rejected Martin Pharma request and confirm its original dates and historical employee entries against payment evidence.
+2. Verify attendance for Masaka; check missing, unverified and verified-zero cases. Recalculate and review the corrected draft.
+3. Check that legacy unconfirmed amounts are separate from approved outstanding salaries.
+4. Cancel submission confirmation once, then confirm once; verify one pending Finance request and no account debit.
+5. Return with a reason, correct/recalculate under the same ID, and confirm the higher revision preserves earlier history.
+6. Review the historical reconciliation in Finance, approve and confirm the employer cost appears once in P&L/statutory reporting.
+7. Make an authorized partial payment from an eligible account, check the account debit, payslip and remaining balance, then settle the remainder.
+8. Retry the payment reference and attempt overpayment and an overlapping period; confirm no duplicate debit or duplicate salary obligation.
+9. Review the HR and Finance dialogs on phone and desktop. Confirm the original rejected request and legacy entries remain in audit history.
+
+---
+
+## Historical original Level 11 implementation report
+
 # PHARMHELM PRO ERP: LEVEL 11 IMPLEMENTATION REPORT
 
 Starting repository commit: `6bb897d29173447fed8d0451df10ccdee5963a7a`.

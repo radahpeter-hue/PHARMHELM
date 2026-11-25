@@ -1,3 +1,11 @@
+# Current recovery acceptance evidence
+
+Validated code: `42f4bab55c66a6c79271176b1af5753ea551e39f`. All six required workflows passed, including exact hosted compiled executable validation below **256,000 bytes**. Exact hosted byte count was not returned; **249,605 bytes is still a local estimate**. Source SHA-256: `ca4cc2f01419d590826396873c233bca22145e7a57e2b5d732e7636161b4c7b1`. No recovery changes have been merged/deployed and no live financial data was modified.
+
+See [the implementation report](IMPLEMENTATION.md) for certified evidence, CI links, limitations and the owner acceptance checklist. The chronological development record follows; earlier pending/rejected statuses refer to their corresponding older candidates. The final documentation head must retain passing required checks.
+
+---
+
 # Payroll recovery and submission safeguards
 
 Base: 543177c. Draft candidate; no live records modified.
