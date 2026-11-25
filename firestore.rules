@@ -1,6 +1,9 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function preservesExistingField(key) {
+      return !(key in resource.data) || request.resource.data[key] == resource.data[key];
+    }
 
     // ===============================================================
     // Helper Functions
@@ -1334,8 +1337,7 @@ service cloud.firestore {
       allow read: if true; // Allow public read for tenant detection
       allow create: if isAdmin();
       allow update: if isAdmin()
-        && (!('tenant_code' in resource.data)
-          || request.resource.data.tenant_code == resource.data.tenant_code);
+        && preservesExistingField('tenant_code');
       allow delete: if isAdmin();
 
       match /usernameRegistry/{handle} {
@@ -1413,7 +1415,7 @@ service cloud.firestore {
         && (!changed.hasAny(['canonical_staff_id']) || isIT())
         && (request.resource.data.get('staff_code', '') == resource.data.get('staff_code', '')
           || (resource.data.get('staff_code', '') in ['', null] && validStaffIdentity(staffId, request.resource.data)))
-        && (!('employee_id' in resource.data) || request.resource.data.employee_id == resource.data.employee_id)
+        && preservesExistingField('employee_id')
         && (
         isAdmin() || isHR() ||
         (isITPersonnel() &&
@@ -4370,16 +4372,11 @@ service cloud.firestore {
       }
       function immutableFallbackIdentities() {
         return true
-        && (collectionName != 'staff' || !('employee_id' in resource.data)
-          || request.resource.data.employee_id == resource.data.employee_id)
-        && (collectionName != 'staff' || !('staff_code' in resource.data)
-          || request.resource.data.staff_code == resource.data.staff_code)
-        && (collectionName != 'clients' || !('patient_code' in resource.data)
-          || request.resource.data.patient_code == resource.data.patient_code)
-        && (collectionName != 'prescribers' || !('prescriber_code' in resource.data)
-          || request.resource.data.prescriber_code == resource.data.prescriber_code)
-        && (collectionName != 'institutions' || !('institution_code' in resource.data)
-          || request.resource.data.institution_code == resource.data.institution_code);
+        && (collectionName != 'staff' || preservesExistingField('employee_id'))
+        && (collectionName != 'staff' || preservesExistingField('staff_code'))
+        && (collectionName != 'clients' || preservesExistingField('patient_code'))
+        && (collectionName != 'prescribers' || preservesExistingField('prescriber_code'))
+        && (collectionName != 'institutions' || preservesExistingField('institution_code'));
       }
       allow read: if !dedicatedCollection() && !isProtectedFinanceCollection(collectionName)
         && isAuthenticated()

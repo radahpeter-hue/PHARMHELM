@@ -76,3 +76,37 @@ const original=await evaluate(source,'original');
 const released=await evaluate(wrapReleaseColumns(compactRuleSymbols(source,RELEASE_RULE_OPTIONS)),'released');
 assert.deepEqual(released,original);
 console.log(`PASS ${released.length} original/released authorization decisions: roles, tenants, queries, collection isolation, update ownership and wildcard permissions.`);
+
+// Compare the actual shared identity predicate with its previous scalar form.
+const {readFileSync}=await import('node:fs');
+const identityBody=readFileSync('firestore.rules','utf8').match(/function preservesExistingField\(key\) \{([\s\S]*?)\n    \}/)?.[1];
+if(!identityBody)throw Error('Identity guard fixture missing.');
+const identityValues=[undefined,null,false,0,1,'','code',[],{},['code']];
+let identityComparisons=0;
+for(const [context,wrap]of [p=>p,p=>`!(${p})`,p=>`(${p}) || true`,p=>`(${p}) == false`].entries()){
+ const outcomes=[];
+ for(const variant of ['scalar','shared']){
+  const predicate=wrap(variant==='scalar'?"!('identity' in resource.data) || request.resource.data.identity == resource.data.identity":"preservesExistingField('identity')");
+  const rules=`rules_version = '2';service cloud.firestore {match /databases/{database}/documents {function preservesExistingField(key){${identityBody}} match /identity/{id}{allow write: if ${predicate};}}}`;
+  const env=await initializeTestEnvironment({projectId:`demo-preserve-${context}-${variant}`,firestore:{rules}}),decisions=[];
+  const allowed=async operation=>{try{await operation;return true;}catch(error){if(error.code==='permission-denied')return false;throw error;}};
+  try{
+   const db=env.authenticatedContext('actor').firestore();let id=0;
+   const data=value=>value===undefined?{}:{identity:value};
+   for(const before of identityValues)for(const after of identityValues){
+    const ref=doc(db,'identity',String(id++));
+    await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),'identity',ref.id),data(before)));
+    decisions.push(await allowed(setDoc(ref,data(after))));
+   }
+   for(const before of identityValues){
+    const ref=doc(db,'identity',String(id++));
+    await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),'identity',ref.id),data(before)));
+    decisions.push(await allowed(deleteDoc(ref)));
+   }
+   for(const after of identityValues)decisions.push(await allowed(setDoc(doc(db,'identity',String(id++)),data(after))));
+   outcomes.push(decisions);
+  }finally{await env.cleanup();}
+ }
+ assert.deepEqual(outcomes[1],outcomes[0],`Existing identity context ${context}`);identityComparisons+=outcomes[0].length;
+}
+console.log(`PASS ${identityComparisons} scalar/shared identity decisions: absent, null, malformed, retained, changed and removed values; create/update/delete; positive/negated/boolean contexts.`);

@@ -31,6 +31,7 @@ test('identity counters are monotonic and protected from deletion', () => {
 });
 
 test('tenant and branch codes cannot be changed after creation', () => {
-  assert.ok(rules.includes('request.resource.data.tenant_code == resource.data.tenant_code'));
+  assert.ok(rules.includes("preservesExistingField('tenant_code')"));
+  assert.ok(rules.includes('return !(key in resource.data) || request.resource.data[key] == resource.data[key];'));
   assert.ok(rules.includes('request.resource.data.branch_code == resource.data.branch_code'));
 });
