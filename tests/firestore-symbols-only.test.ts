@@ -225,3 +225,18 @@ test('bounded value sharing preserves exact bounds and excludes arithmetic tails
  assert.ok(result.includes('d.score <= 100 + 2'));
  assert.ok(result.includes("'d.score is number && d.score >= 0 && d.score <= 100'"));
 });
+
+test('private function names reuse short sibling names without shadowing referenced globals or captures',async()=>{
+ const {compactLocalFunctionNames}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`service cloud.firestore { match /databases/{database}/documents {
+ function a(){return false;} function b(){return a();}
+ match /alpha/{c} {function longAlpha(d){return d.id==c;} allow create:if b() || longAlpha(request.resource.data);}
+ match /beta/{c} {function longBeta(d){return d.id==c;} allow create:if b() || longBeta(request.resource.data);}
+ }}`;
+ const result=compactLocalFunctionNames(source);
+ assert.ok(result.includes('function a(){return false;} function b(){return a();}'));
+ assert.equal((result.match(/function a\(d\)/g)||[]).length,2);
+ assert.ok(result.includes('b() || a(request.resource.data)'));
+ assert.ok(result.includes('d.id==c'));
+ assert.equal(compactLocalFunctionNames(result),result);
+});

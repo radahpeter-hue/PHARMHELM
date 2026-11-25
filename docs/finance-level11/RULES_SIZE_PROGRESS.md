@@ -81,3 +81,6 @@ A targeted bounded-guard compaction reduces **252,478 → 251,823**, saving **65
 
 
 PR129 identity pass: **251,823 → 251,258**, saving **565 local estimated bytes**. Tenant/staff and generic CRM identity preservation only. A broader 1,813-byte experiment was rejected because inventory exceeded its runtime expression budget; it was not pushed. The narrowed candidate passed 944 unit tests, TypeScript/build, 176 release and 480 scalar/shared identity decisions, 20 payroll groups and inventory, transfers, supplier and receivable acceptance. Accepted locally; exact hosted verification remains blocking. The preceding 169bcc5 candidate failed its mandatory probe with 503, while controls verified.
+
+
+PR129 private helper names: **251,258 → 250,797**, saving **461 local estimated bytes**. Pure identifier compaction within leaf match scopes; no evaluation steps added. Accepted locally after 945 unit tests, TypeScript/build, 176 release, 480 identity, 12 lexical, 968 type/range, 385 vector, 432 authority cases and all payroll/inventory/transfer/supplier/receivable acceptance. Exact hosted verification remains blocking. The preceding c301b07 probe failed with 503; a separate Cash comparison-harness failure caused by reading renamed root rules was reproduced and fixed, including a generated-root regression run.

@@ -905,6 +905,26 @@ for(;;){
  return source;
 }
 
+// Rename only private helpers after all policy transforms. Reserve every existing
+// identifier in the match, including free globals, parameters and captures.
+export function compactLocalFunctionNames(source){
+ const trivia=/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
+ const mask=source.replace(trivia,v=>' '.repeat(v.length)),changes=[];
+ for(const head of mask.matchAll(/\bmatch\s+[^{}]+\/\{\w+\}\s*\{/g)){
+  const from=head.index;let to=from+head[0].length,depth=1;
+  for(;to<mask.length&&depth;to++){if(mask[to]==='{')depth++;if(mask[to]==='}')depth--;}
+  const body=mask.slice(from,to);
+  if(/\bmatch\b/.test(body.slice(head[0].length)))continue;
+  const names=[...body.matchAll(/\bfunction\s+(\w+)\s*\(/g)].map(m=>m[1]);
+  if(!names.length||new Set(names).size!==names.length)continue;
+  const used=new Set([...body.matchAll(/\b[A-Za-z_]\w*\b/g)].map(m=>m[0])),aliases=new Map();
+  for(const name of names){if(name.length===1)continue;const alias=[...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'].find(n=>!used.has(n));if(!alias)break;used.add(alias);aliases.set(name,alias);}
+  for(const m of body.matchAll(/(?<![.\w])(\w+)\s*\(/g))if(aliases.has(m[1]))changes.push({from:from+m.index,to:from+m.index+m[1].length,text:aliases.get(m[1])});
+ }
+ for(const c of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,c.from)+c.text+source.slice(c.to);
+ return source;
+}
+
 export function compactRuleSymbols(source,{minimal=false,specializedPaths=false,protectedFieldLength=Infinity,collapseAliases=false,inlineSingles=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
  if(!minimal){
  if(valueChecks)source=shareValueChecks(shareBoundedValueChecks(source));
@@ -967,7 +987,8 @@ export function compactRuleSymbols(source,{minimal=false,specializedPaths=false,
  let result=output.join('').trim();
  if(scopedBindings)result=compactFunctionBindings(result);
  if(inlineSingles)result=inlineSingleUseFunctions(result);
- return collapseAliases?collapseAliasFunctions(result):result;
+ result=collapseAliases?collapseAliasFunctions(result):result;
+ return !minimal&&scopedBindings&&uniqueLocals?compactLocalFunctionNames(result):result;
 }
 
 /** Keep source positions compact as well as identifiers. Replace only existing
