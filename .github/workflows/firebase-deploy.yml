@@ -82,12 +82,20 @@ jobs:
           RELEASE_NAME="projects/${FIREBASE_PROJECT_ID}/releases/cloud.firestore/${FIRESTORE_DATABASE_ID}"
           patch_body=$(jq -n --arg name "$RELEASE_NAME" --arg rulesetName "$ruleset_name" \
             '{release: {name: $name, rulesetName: $rulesetName}, updateMask: "rulesetName"}')
+          set +e
           curl --retry 4 --retry-all-errors --retry-delay 10 --fail-with-body --silent --show-error \
             -X PATCH -H "Authorization: Bearer ${FIREBASE_ACCESS_TOKEN}" \
             -H "Content-Type: application/json" --data "$patch_body" \
             "https://firebaserules.googleapis.com/v1/${RELEASE_NAME}" > /tmp/activated-release.json
-          jq -e --arg name "$RELEASE_NAME" --arg ruleset "$ruleset_name" \
-            '.name == $name and .rulesetName == $ruleset' /tmp/activated-release.json
+          activation_status=$?
+          set -e
+          if [ "$activation_status" -eq 0 ]; then
+            jq -e --arg name "$RELEASE_NAME" --arg ruleset "$ruleset_name" \
+              '.name == $name and .rulesetName == $ruleset' /tmp/activated-release.json
+          else
+            echo "Activation response unavailable; exact active-source verification is mandatory."
+          fi
+          bash scripts/verify-active-firestore-rules.sh
           echo "Verified candidate activated; exact active-source verification follows."
 
       - name: Verify exact active Firestore rules fingerprint
@@ -162,3 +170,4 @@ jobs:
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
           channelId: live
           projectId: gen-lang-client-0911422817
+
