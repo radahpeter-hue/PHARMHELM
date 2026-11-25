@@ -41,3 +41,8 @@ export function legacyPayrollOverlap(start:string,end:string,rows:any[]) {
   return month+'-01'<=end&&last>=start;
  });
 }
+
+/** Only explicitly reconciled, Finance-approved replacements supersede old cost. */
+export function supersededLegacyPayrollIds(batches:any[],tenantId:string) {
+ return new Set<string>(batches.filter(b=>b.tenantId===tenantId&&b.legacySourceId&&['approved','partial','paid'].includes(b.status)).flatMap(b=>Array.isArray(b.legacyPayrollIds)?b.legacyPayrollIds.filter((id:unknown)=>typeof id==='string'):[]));
+}

@@ -1651,12 +1651,13 @@ service cloud.firestore {
           && data.periodStart.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && data.periodEnd.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
           && data.periodStart <= data.periodEnd && data.periodEnd.matches('^' + data.month + '-[0-9]{2}$')
           && (data.get('legacySourceId','') == '' || validLegacyPayrollRecovery(data))
+          && (data.get('legacySourceId','') == '' ? data.get('legacyPayrollIds',[]).size() == 0 : data.legacyPayrollIds is list && data.legacyPayrollIds.size() > 0)
           && data.coverageVersion == 1 && data.status == 'draft' && data.revision == 1 && data.nextIndex == 0 && data.employeeCount is int && data.employeeCount > 0
           && data.totals == {'net':0,'gross':0,'employerNssf':0,'employeeNssf':0,'paye':0,'otherDeductions':0}
           && data.paidUGX == 0 && data.submittedBy == request.auth.uid && data.planHash is string && data.planHash.size() == 64
           && data.createdAt == request.time && data.updatedAt == request.time
           && data.keys().hasOnly(['id','tenantId','reference','periodStart','periodEnd','month','revision','status','employeeCount',
-            'nextIndex','totals','paidUGX','submittedBy','submittedByName','planHash','createdAt','updatedAt','coverageVersion','legacySourceId']);
+            'nextIndex','totals','paidUGX','submittedBy','submittedByName','planHash','createdAt','updatedAt','coverageVersion','legacySourceId','legacyPayrollIds']);
       }
       function validTransition(before, after) {
         let changed = after.diff(before).affectedKeys();
@@ -1725,6 +1726,8 @@ service cloud.firestore {
       let before = get(payrollBatchPath(data.batchId)).data;
       let after = getAfter(payrollBatchPath(data.batchId)).data;
       return before.tenantId == data.tenantId && data.revision == after.revision && data.totals == after.totals
+        && data.get('legacyPayrollIds',[]) == after.get('legacyPayrollIds',[])
+        && (data.action != 'approve' || after.get('legacySourceId','') == '' || data.legacyRecoveryConfirmed == true)
         && (data.action == 'restart' ? before.status == 'draft' && after.status == 'draft' && after.revision == before.revision + 1
           && data.previousPlanHash == before.planHash && data.previousStagedEmployees == before.nextIndex
           : data.action == 'submitted' ? before.status == 'draft' && after.status == 'pending_finance'

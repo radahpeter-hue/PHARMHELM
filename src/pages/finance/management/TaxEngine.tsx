@@ -1,3 +1,4 @@
+import {supersededLegacyPayrollIds} from '../../../domain/finance/payrollRecovery';
 import { payrollRecordView } from '../../../domain/finance/payrollRecordView';
 import {usePayrollBatches} from '../../../hooks/usePayrollBatches';
 import { operationalStaff } from '../../../utils/operationalStaff';
@@ -116,7 +117,9 @@ export const TaxEngine: React.FC = () => {
   }, [grns, isDateFilterActive, dateRange]);
 
   const filteredPayroll = useMemo(() => {
+    const superseded=supersededLegacyPayrollIds(payrollBatches,profile?.tenantId||'');
     return payrollList.filter(p => {
+      if(p.payrollVersion!==11&&superseded.has(p.id))return false;
       if(p.payrollVersion===11 && !payrollBatches.some(b=>b.id===p.batchId&&b.revision===p.revision&&['approved','partial','paid'].includes(b.status)))return false;
       if (!isDateFilterActive) return true;
       const d = (p.payrollVersion===11 ? p.periodEnd : p.paid_date || p.generated_at || '').split('T')[0];

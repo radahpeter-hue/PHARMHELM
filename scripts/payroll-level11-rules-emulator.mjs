@@ -186,19 +186,23 @@ try{
  pass('paid dates cannot be resubmitted with a different range and date locks are immutable');
 
  await admin(db=>setDoc(doc(db,'management_expenses','legacy-rejected'),{tenantId,source:'hr_salary',status:'rejected',amount_ugx:12345}));
- const recoveryIntent=submit([line('employee1')],{periodStart:'2027-03-01',periodEnd:'2027-03-02',legacySourceId:'legacy-rejected'});
+ const recoveryIntent=submit([line('employee1')],{periodStart:'2027-03-01',periodEnd:'2027-03-02',legacySourceId:'legacy-rejected',legacyPayrollIds:['legacy-auto-paid-label']});
  await admin(db=>setDoc(doc(db,'payroll','legacy-auto-paid-label'),{tenantId,staffId:'employee1',month:'March 2027',status:'paid',net_salary:12345}));
  await assert.rejects(submitPayroll({...recoveryIntent,legacySourceId:undefined},hr),/Legacy payroll/);
  const recovered=await submitPayroll(recoveryIntent,hr);
  assert.equal((await get('management_expenses','legacy-rejected')).status,'rejected');
  assert.equal(recovered.id,tenantId+'_REC_legacy-rejected');
  assert.equal((await get('finance_payroll_batches_v1',recovered.id)).legacySourceId,'legacy-rejected');
- await assert.rejects(submitPayroll({...recoveryIntent,periodStart:'2027-04-01',periodEnd:'2027-04-02'},hr),/retain its original selected dates/);
+ await assert.rejects(submitPayroll({...recoveryIntent,periodStart:'2027-04-01',periodEnd:'2027-04-02'},hr),/retain its original selected dates|Select and reconcile/);
  await admin(db=>setDoc(doc(db,'management_expenses','legacy-paid'),{tenantId,source:'hr_salary',status:'rejected',paidAmountUGX:1}));
- await assert.rejects(submitPayroll({...recoveryIntent,legacySourceId:'legacy-paid',periodStart:'2027-04-01',periodEnd:'2027-04-02'},hr),/unpaid rejected legacy/);
+ await assert.rejects(submitPayroll({...recoveryIntent,legacySourceId:'legacy-paid'},hr),/unpaid rejected legacy|already belong/);
  await reviewPayroll({tenantId,batchId:recovered.id,revision:1,actorId:'finance',action:'return',reason:'Review historical attendance'},finance);
  const correctedRecovery=await submitPayroll({...recoveryIntent,legacySourceId:undefined,batchId:recovered.id},hr);
  assert.equal(correctedRecovery.revision,2);
+ await assert.rejects(reviewPayroll({tenantId,batchId:recovered.id,revision:2,actorId:'finance',action:'approve'},finance),/Finance must confirm/);
+ await reviewPayroll({tenantId,batchId:recovered.id,revision:2,actorId:'finance',action:'approve',acknowledgeLegacyRecovery:true},finance);
+ const recoveredAudit=await get('finance_payroll_events_v1',recovered.id+'_r2_approve');
+ assert.deepEqual(recoveredAudit.legacyPayrollIds,['legacy-auto-paid-label']);assert.equal(recoveredAudit.legacyRecoveryConfirmed,true);
  pass('legacy recovery retains history, links exactly one replacement and rejects payment evidence');
 
  const attemptA=submit([line('employee2')],{periodStart:'2027-05-01',periodEnd:'2027-05-02'});

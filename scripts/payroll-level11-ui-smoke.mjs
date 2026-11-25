@@ -82,5 +82,41 @@ try{
  assert.equal(await blocked.getByRole('button',{name:'Prepare Payroll Draft',exact:true}).isDisabled(),true,'unavailable history must fail closed');
  await blocked.close();
  console.log('PASS loading and unavailable-history safeguards');
+ const recoveryPage=await browser.newPage({viewport:{width:390,height:740}});
+ await recoveryPage.goto('http://127.0.0.1:'+server.address().port);
+ await recoveryPage.evaluate(()=>{
+  const old={id:'old-payroll',tenantId:'fixture',staffId:'employee1',staff_name:'Historical employee',month:'December 2026',status:'paid',net_salary:12345};
+  window.__records.payroll.push(old);
+  window.__records.management_expenses.push({id:'old-rejected',tenantId:'fixture',source:'hr_salary',status:'rejected',description:'Historical December request',amount_ugx:12345});
+  const batch=window.__records.finance_payroll_batches_v1[0];batch.legacySourceId='old-rejected';batch.legacyPayrollIds=['old-payroll'];
+  window.__refresh();
+ });
+ await recoveryPage.locator('button:visible').filter({hasText:'Payroll approval & payments'}).first().click();
+ const recoveryDialog=recoveryPage.getByRole('dialog',{name:'Payroll review'});
+ await recoveryDialog.getByText('Legacy payroll reconciliation',{exact:true}).waitFor();
+ await recoveryDialog.getByText(/Historical employee/).waitFor();
+ assert.equal(await recoveryDialog.getByRole('button',{name:'Approve Payroll',exact:true}).isDisabled(),true,'legacy approval requires explicit reconciliation');
+ await recoveryDialog.getByRole('checkbox').check();
+ await recoveryDialog.getByRole('button',{name:'Approve Payroll',exact:true}).click();
+ assert.equal(await recoveryPage.evaluate(()=>window.__reviewed.acknowledgeLegacyRecovery),true);
+ await recoveryPage.getByRole('button',{name:'Close payroll review'}).click();
+ await recoveryPage.getByRole('button',{name:'HR payroll',exact:true}).click();
+ // Make the rejected request available for the independent HR recovery exercise.
+ await recoveryPage.getByRole('button',{name:'Finance payroll',exact:true}).click();
+ await recoveryPage.evaluate(()=>{delete window.__records.finance_payroll_batches_v1[0].legacySourceId;delete window.__records.finance_payroll_batches_v1[0].legacyPayrollIds;});
+ await recoveryPage.getByRole('button',{name:'HR payroll',exact:true}).click();
+ await recoveryPage.getByRole('button',{name:'Prepare correction for this legacy request',exact:true}).click();
+ await recoveryPage.locator('input[type=date]').nth(0).fill('2026-12-01');await recoveryPage.locator('input[type=date]').nth(1).fill('2026-12-31');
+ await recoveryPage.getByRole('checkbox',{name:/Historical employee/}).check();
+ await recoveryPage.getByRole('checkbox',{name:/I reviewed the original request/}).check();
+ await recoveryPage.getByRole('button',{name:'Prepare Payroll Draft',exact:true}).click();
+ await recoveryPage.getByRole('button',{name:'Review & Adjust',exact:true}).click();
+ await recoveryPage.getByRole('button',{name:'Update Draft Invoice',exact:true}).click();
+ await recoveryPage.getByRole('button',{name:'Submit to Finance',exact:true}).click();
+ await recoveryPage.getByRole('button',{name:'Confirm submission',exact:true}).click();
+ await recoveryPage.waitForFunction(()=>!!window.__submitted);
+ assert.deepEqual(await recoveryPage.evaluate(()=>window.__submitted.legacyPayrollIds),['old-payroll']);
+ await recoveryPage.close();
+ console.log('PASS HR historical entry selection and explicit Finance reconciliation');
  assert.deepEqual(errors,[]);
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

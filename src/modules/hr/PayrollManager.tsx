@@ -1,4 +1,4 @@
-import {payrollMonthStart,payrollMonthEnd,payrollSummary,legacyRejectedPayroll,validatePayrollPeriod,payrollOverlap,legacyPayrollOverlap} from '../../domain/finance/payrollRecovery';
+import {payrollMonthStart,payrollMonthEnd,payrollSummary,legacyRejectedPayroll,validatePayrollPeriod,payrollOverlap,legacyPayrollOverlap,supersededLegacyPayrollIds} from '../../domain/finance/payrollRecovery';
 import {kampalaBusinessDate} from '../../utils/eodBusinessDate';
 import {payrollStatutory} from '../../domain/finance/payrollStatutory';
 import {payableAttendance} from '../../domain/finance/payrollAttendance';
@@ -56,6 +56,7 @@ export const PayrollManager: React.FC = () => {
   const {rows:batches,loading:batchesLoading,error:batchesError} = usePayrollBatchState(profile?.tenantId);
   const submissionLock=useRef(false);
   const [recoveryConfirmed,setRecoveryConfirmed]=useState(false);
+  const [legacySelection,setLegacySelection]=useState<string[]>([]);
   const [confirmSubmission,setConfirmSubmission] = useState(false);
   const [legacyExpenses,setLegacyExpenses] = useState<any[]>([]);
   const [recoverySource,setRecoverySource] = useState<any>();
@@ -102,7 +103,7 @@ export const PayrollManager: React.FC = () => {
   useEffect(() => {
     setStaff([]);setAttendance([]);setPayroll([]);setLegacyExpenses([]);setAdvances([]);setFines([]);setCmeSessions([]);setLeaveRequests([]);setSystemSettings(null);
     setInputsLoaded(false);setStaffLoaded(false);setAttendanceLoaded(false);setPayrollLoaded(false);
-    setDraftPayroll([]);setIsDraftMode(false);setConfirmSubmission(false);setRecoverySource(undefined);setCorrectionBatchId(undefined);
+    setDraftPayroll([]);setIsDraftMode(false);setConfirmSubmission(false);setRecoverySource(undefined);setLegacySelection([]);setCorrectionBatchId(undefined);
     if(!profile?.tenantId)return;
     const tenantId=profile.tenantId;
     const ready=new Set<string>();let active=true;
@@ -334,14 +335,14 @@ export const PayrollManager: React.FC = () => {
 
   const handleFinalizeAndCommit = async () => {
     if (!profile?.tenantId || isGenerating || submissionLock.current) return;
-    if(recoverySource&&!recoveryConfirmed){toast.error('Confirm the legacy payment review before recovery.');return;}
+    if(recoverySource&&(!recoveryConfirmed||!legacySelection.length)){toast.error('Confirm the legacy payment review before recovery.');return;}
     if (draftPayroll.some(line => !line.reviewed)) { toast.error('Review every employee, including attendance exceptions, before submission.'); return; }
     submissionLock.current=true;
     setIsGenerating(true);
     try {
       const result = await submitPayroll({tenantId:profile.tenantId,actorId:profile.uid,
         actorName:profile.fullName || profile.email || profile.uid,periodStart:fromDate,periodEnd:toDate,
-        lines:draftPayroll,batchId:correctionBatchId,restartIncomplete,legacySourceId:recoverySource?.id});
+        lines:draftPayroll,batchId:correctionBatchId,restartIncomplete,legacySourceId:recoverySource?.id,legacyPayrollIds:legacySelection});
       toast.success(result.replayed?'This payroll already exists. No duplicate submission or payment was created.':`Payroll revision ${result.revision} submitted to Finance. No salary has been paid.`);
       setIsDraftMode(false);setDraftPayroll([]);setCorrectionBatchId(undefined);setRestartIncomplete(false);setRecoverySource(undefined);setRecoveryConfirmed(false);
     } catch (error) { toast.error(error instanceof Error ? error.message : 'Payroll submission failed. Retry to resume.'); }
@@ -352,6 +353,7 @@ export const PayrollManager: React.FC = () => {
     try {
       const rows = await getPayrollRevision(batch);
       setFromDate(batch.periodStart);setToDate(batch.periodEnd);setCorrectionBatchId(batch.id);
+      setRecoverySource(batch.legacySourceId?legacyExpenses.find(e=>e.id===batch.legacySourceId):undefined);setLegacySelection(batch.legacyPayrollIds||[]);setRecoveryConfirmed(false);
       setDraftPayroll(rows.map(row=>({...row.line,reviewed:false})) as DraftPayrollRecord[]);setIsDraftMode(true);
     } catch {toast.error('Unable to open the returned payroll.');}
   };
@@ -427,7 +429,9 @@ export const PayrollManager: React.FC = () => {
     }
 
     // Filter payroll records in period
+    const superseded=supersededLegacyPayrollIds(batches,profile?.tenantId||'');
     const matchedRecords = payroll.filter(p => {
+      if(p.payrollVersion!==11&&superseded.has(p.id))return false;
       if (p.payrollVersion===11) return ['approved','partial','paid'].includes(batches.find(b=>b.id===p.batchId)?.status || '') && p.periodEnd>=reportStartDate && p.periodEnd<=reportEndDate;
       // Check date range
       if (p.paid_date && p.paid_date >= reportStartDate && p.paid_date <= reportEndDate) {
@@ -555,7 +559,9 @@ export const PayrollManager: React.FC = () => {
     toast.success(`Statutory PAYE report downloaded: ${Object.keys(aggregates).length} staff members aggregated.`);
   };
 
-  const summary = payrollSummary(batches,payroll);
+  const superseded=supersededLegacyPayrollIds(batches,profile?.tenantId||'');
+  const summary = payrollSummary(batches,payroll.filter(p=>!superseded.has(p.id)));
+  const legacyCandidates=payroll.filter(p=>p.payrollVersion!==11&&!superseded.has(p.id)&&legacyPayrollOverlap(fromDate,toDate,[p]));
 
   return (
     <div className="space-y-6">
@@ -567,9 +573,9 @@ export const PayrollManager: React.FC = () => {
         <p className="font-bold">Legacy payroll rejected by Finance</p><p>{expense.description}</p>
         <p>UGX {Math.round(Number(expense.amount_ugx??expense.amount??0)).toLocaleString()} · Historical record, excluded from approved salary outstanding.</p>
         <p>Verify attendance and confirm that no payment was made before preparing a replacement linked to this request.</p>
-        <button type="button" disabled={isGenerating} className="mt-3 min-h-11 rounded-lg bg-slate-900 px-4 text-white" onClick={()=>{setRecoverySource(expense);setRecoveryConfirmed(false);setIsDraftMode(false);setDraftPayroll([]);setCorrectionBatchId(undefined);}}>Prepare correction for this legacy request</button>
+        <button type="button" disabled={isGenerating} className="mt-3 min-h-11 rounded-lg bg-slate-900 px-4 text-white" onClick={()=>{setRecoverySource(expense);setLegacySelection([]);setRecoveryConfirmed(false);setIsDraftMode(false);setDraftPayroll([]);setCorrectionBatchId(undefined);}}>Prepare correction for this legacy request</button>
       </div>)}
-      {recoverySource&&<div role="status" className="rounded-xl bg-amber-50 p-4 text-amber-950">Recovering rejected request: {recoverySource.description}. Select its original dates, verify attendance, then prepare the corrected draft. <label className="mt-3 flex gap-2"><input type="checkbox" disabled={isGenerating} checked={recoveryConfirmed} onChange={e=>setRecoveryConfirmed(e.target.checked)}/>I reviewed the original request and payment evidence. These salaries were not paid, and the selected dates are correct.</label> <button type="button" disabled={isGenerating} onClick={()=>{setRecoverySource(undefined);setDraftPayroll([]);setIsDraftMode(false);setConfirmSubmission(false);}}>Cancel recovery</button></div>}
+      {recoverySource&&<div role="status" className="rounded-xl bg-amber-50 p-4 text-amber-950">Recovering rejected request: {recoverySource.description}. Select its original dates, verify attendance, then prepare the corrected draft. <label className="mt-3 flex gap-2"><input type="checkbox" disabled={isGenerating} checked={recoveryConfirmed} onChange={e=>setRecoveryConfirmed(e.target.checked)}/>I reviewed the original request and payment evidence. These salaries were not paid, and the selected dates are correct.</label> <fieldset className="mt-3 space-y-2"><legend className="font-bold">Historical employee entries replaced by this correction</legend><p>Select only entries belonging to this rejected request. Finance will review them before replacing their historical payroll cost. Original entries stay in the audit history.</p>{legacyCandidates.map(row=><label key={row.id} className="flex gap-2"><input type="checkbox" disabled={isGenerating||isDraftMode} checked={legacySelection.includes(row.id)} onChange={e=>{setLegacySelection(ids=>e.target.checked?[...ids,row.id]:ids.filter(id=>id!==row.id));setRecoveryConfirmed(false);}}/>{row.staff_name||row.staffId||row.id} · {row.month} · UGX {Number(row.net_salary||0).toLocaleString()}</label>)}<p>Selected historical net: UGX {legacyCandidates.filter(row=>legacySelection.includes(row.id)).reduce((sum,row)=>sum+Number(row.net_salary||0),0).toLocaleString()}</p></fieldset> <button type="button" disabled={isGenerating} onClick={()=>{setRecoverySource(undefined);setDraftPayroll([]);setIsDraftMode(false);setConfirmSubmission(false);}}>Cancel recovery</button></div>}
       {batchesError&&<p role="alert" className="rounded-xl bg-amber-50 p-3 text-amber-950">{batchesError}</p>}
       {(!inputsLoaded||!attendanceLoaded||!staffLoaded||!payrollLoaded||batchesLoading)&&<p role="status" className="text-sm text-slate-700">Loading staff, attendance and payroll history before payroll can be prepared…</p>}
       {/* Financial Info Banner */}
@@ -677,7 +683,7 @@ export const PayrollManager: React.FC = () => {
                 required
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none"
                 value={fromDate}
-                onChange={(e) => {setFromDate(e.target.value);setRecoveryConfirmed(false);}}
+                onChange={(e) => {setFromDate(e.target.value);setLegacySelection([]);setRecoveryConfirmed(false);}}
               />
             </div>
           </div>
@@ -692,7 +698,7 @@ export const PayrollManager: React.FC = () => {
                 required
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none"
                 value={toDate}
-                onChange={(e) => {setToDate(e.target.value);setRecoveryConfirmed(false);}}
+                onChange={(e) => {setToDate(e.target.value);setLegacySelection([]);setRecoveryConfirmed(false);}}
               />
             </div>
           </div>
@@ -815,7 +821,7 @@ export const PayrollManager: React.FC = () => {
           </div>
           <div className="rounded-xl border bg-white p-4 text-slate-900">
             <p className="font-bold">Reviewed draft total: UGX {draftPayroll.reduce((sum,line)=>sum+line.netSalary,0).toLocaleString()}</p>
-            <button type="button" disabled={isGenerating||draftPayroll.some(line=>!line.reviewed)||(!!recoverySource&&!recoveryConfirmed)} onClick={()=>setConfirmSubmission(true)} className="mt-3 min-h-11 rounded-xl bg-slate-900 px-5 text-white disabled:opacity-50">Submit to Finance</button>
+            <button type="button" disabled={isGenerating||draftPayroll.some(line=>!line.reviewed)||(!!recoverySource&&(!recoveryConfirmed||!legacySelection.length))} onClick={()=>setConfirmSubmission(true)} className="mt-3 min-h-11 rounded-xl bg-slate-900 px-5 text-white disabled:opacity-50">Submit to Finance</button>
           </div>
           {confirmSubmission&&<div role="dialog" aria-modal="true" aria-label="Confirm payroll submission" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <div className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 text-slate-900">
@@ -943,12 +949,12 @@ export const PayrollManager: React.FC = () => {
                           </td>
                           <td className="px-6 py-4 text-center">
                             <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-600 border border-emerald-100">
-                              {pay.payrollVersion===11 ? payrollStatusLabels[employeePayrollStatus(batches.find(b=>b.id===pay.batchId)?.status || 'draft',pay.paidUGX || 0,pay.net_salary)] : 'Legacy: ' + (pay.status || 'unreconciled')}
+                              {pay.payrollVersion===11 ? payrollStatusLabels[employeePayrollStatus(batches.find(b=>b.id===pay.batchId)?.status || 'draft',pay.paidUGX || 0,pay.net_salary)] : superseded.has(pay.id) ? 'Replaced by approved recovery' : 'Legacy: ' + (pay.status || 'unreconciled')}
                             </span>
                           </td>
                           <td className="px-6 py-4 text-right">
                             <div className="flex gap-2 justify-end">
-                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest pl-2">{pay.payrollVersion===11 ? pay.payrollReference + ' · R' + pay.revision : 'Legacy: payment evidence unreconciled'}</span>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest pl-2">{pay.payrollVersion===11 ? pay.payrollReference + ' · R' + pay.revision : superseded.has(pay.id) ? 'Historical entry retained for audit' : 'Legacy: payment evidence unreconciled'}</span>
                             </div>
                           </td>
                         </tr>
