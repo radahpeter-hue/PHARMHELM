@@ -1,7 +1,7 @@
 // Diagnostic variants only: never deployment input, never evidence for the real candidate.
 import {readFileSync,writeFileSync} from 'node:fs';
 import {compactRuleSymbols,wrapReleaseColumns,RELEASE_RULE_OPTIONS} from './build-firestore-release-rules.mjs';
-const source=readFileSync('firestore.rules','utf8');
+const source=readFileSync(process.argv[2]||'firestore.rules','utf8');
 const remove=(text,first,last)=>{
  const start=text.indexOf(first),end=text.indexOf(last,start);
  if(start<0||end<0)throw Error('Diagnostic source markers missing.');
