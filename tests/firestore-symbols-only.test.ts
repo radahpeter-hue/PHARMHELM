@@ -210,3 +210,44 @@ test('additional literal sharing preserves existing busy-path literal evaluation
  assert.match(output,/function sensitive\(\) \{ return 'busy_literal_with_long_policy_name' == 'busy_literal_with_long_policy_name';/);
  assert.match(output,/function quiet\(\) \{ return releaseStringValue\d+\(\) == releaseStringValue\d+\(\);/);
 });
+
+test('bounded value sharing preserves exact bounds and excludes arithmetic tails and literal text',async()=>{
+ const {shareBoundedValueChecks}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`rules_version = '2';service cloud.firestore {match /databases/{database}/documents {
+ function first(d){return d.score is number && d.score >= 0 && d.score <= 100;}
+ function second(d){return d.score is number && d.score >= 0 && d.score <= 100;}
+ function untouched(d){return d.score is number && d.score >= 0 && d.score <= 100 + 2;}
+ function literal(){return 'd.score is number && d.score >= 0 && d.score <= 100';}
+ }} `;
+ const result=shareBoundedValueChecks(source);
+ assert.match(result,/return value is number && value >= 0 && value <= 100/);
+ assert.equal((result.match(/releaseBoundedValue0\(d.score\)/g)||[]).length,2);
+ assert.ok(result.includes('d.score <= 100 + 2'));
+ assert.ok(result.includes("'d.score is number && d.score >= 0 && d.score <= 100'"));
+});
+
+test('private function names reuse short sibling names without shadowing referenced globals or captures',async()=>{
+ const {compactLocalFunctionNames}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`service cloud.firestore { match /databases/{database}/documents {
+ function a(){return false;} function b(){return a();}
+ match /alpha/{c} {function longAlpha(d){return d.id==c;} allow create:if b() || longAlpha(request.resource.data);}
+ match /beta/{c} {function longBeta(d){return d.id==c;} allow create:if b() || longBeta(request.resource.data);}
+ }}`;
+ const result=compactLocalFunctionNames(source);
+ assert.ok(result.includes('function a(){return false;} function b(){return a();}'));
+ assert.equal((result.match(/function a\(d\)/g)||[]).length,2);
+ assert.ok(result.includes('b() || a(request.resource.data)'));
+ assert.ok(result.includes('d.id==c'));
+ assert.equal(compactLocalFunctionNames(result),result);
+});
+
+test('private name reuse can be isolated without disabling other release transformations',async()=>{
+ const {RELEASE_RULE_OPTIONS}=await import('../scripts/build-firestore-release-rules.mjs');
+ const source=`rules_version='2';service cloud.firestore {match /databases/{database}/documents {\n${Array.from({length:80},(_,i)=>`    match /case${i}/{id} {function localCheck${i}(d){return d.value==${i};} allow create:if localCheck${i}(request.resource.data);}`).join('\n')}\n}}`;
+ const candidate=compactRuleSymbols(source,RELEASE_RULE_OPTIONS);
+ const isolated=compactRuleSymbols(source,{...RELEASE_RULE_OPTIONS,localFunctionNames:false});
+ const names=(text:string)=>new Set([...text.matchAll(/function (\w+)\(/g)].map(m=>m[1]));
+ assert.equal((candidate.match(/allow create:/g)||[]).length,80);
+ assert.equal((isolated.match(/allow create:/g)||[]).length,80);
+ assert.ok(names(isolated).size>names(candidate).size);
+});

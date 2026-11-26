@@ -6,8 +6,11 @@ if(!process.env.FIRESTORE_EMULATOR_HOST)throw Error('Isolated emulator required.
 const guards=['d.value is int && d.value > 0','d.value is int && d.value >= 0',
  'd.value is number && d.value >= 0','d.value is number && d.value > 0',
  'd.value is string && d.value.size() > 0','d.value is string && d.value.size() >= 3',
- 'd.value is string && d.value.size() >= 5','d.value is string && d.value.size() >= 8'];
-const values=[undefined,null,false,true,-1,0,1,3.5,'','ab','abc','abcde','abcdefgh',[],{},[1]];
+ 'd.value is string && d.value.size() >= 5','d.value is string && d.value.size() >= 8',
+ 'd.value is number && d.value >= 0 && d.value <= 100',
+ 'd.value is int && d.value >= 0 && d.value <= 9007199254740991',
+ 'd.value is string && d.value.size() >= 3 && d.value.size() <= 120'];
+const values=[undefined,null,false,true,-1,0,1,3.5,100,101,9007199254740991,9007199254740992,'x'.repeat(120),'x'.repeat(121),'','ab','abc','abcde','abcdefgh',[],{},[1]];
 let comparisons=0;
 for(let index=0;index<guards.length;index++)for(const [context,wrap] of [p=>p,p=>`!(${p})`,p=>`(${p}) || true`,p=>`(${p}) == false`].entries()){
  const predicate=wrap(guards[index]);

@@ -332,3 +332,18 @@ test('deny-only match scopes retain a valid default denial declaration',()=>{
  assert.ok(result.includes('allow read, write: if false;'));
  assert.equal(omitNeverAllow(result),result);
 });
+
+test('separate equivalent policy families share one scope while retaining separate collection guards',()=>{
+ const source=`service cloud.firestore {match /databases/{database}/documents {
+    match /readA/{id} {allow read:if request.auth!=null;}
+    match /readB/{id} {allow read:if request.auth!=null;}
+    match /writeA/{id} {allow create:if request.auth.uid=='editor';}
+    match /writeB/{id} {allow create:if request.auth.uid=='editor';}
+ }}`;
+ const grouped=groupEquivalentCollections(source);
+ assert.equal((grouped.match(/match \/\{releaseGroupedCollection\}\/\{releaseGroupedDocument\}/g)||[]).length,1);
+ assert.equal((grouped.match(/function releaseGroupGuard/g)||[]).length,2);
+ assert.match(grouped,/allow read:if releaseGroupGuard0\(\) &&/);
+ assert.match(grouped,/allow create:if releaseGroupGuard1\(\) &&/);
+ assert.equal(groupEquivalentCollections(grouped),grouped);
+});

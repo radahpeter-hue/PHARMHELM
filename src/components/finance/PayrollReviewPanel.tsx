@@ -14,6 +14,7 @@ export function PayrollReviewPanel({batchId,onChanged}:{batchId:string;onChanged
   const {profile,hasPermission}=useAuth();
   const tenantId=profile?.tenantId || '';
   const [batch,setBatch]=useState<PayrollBatch>();
+  const [legacyRows,setLegacyRows]=useState<any[]>([]),[legacyConfirmed,setLegacyConfirmed]=useState(false),[legacyLoaded,setLegacyLoaded]=useState(false);
   const [rows,setRows]=useState<any[]>([]),[history,setHistory]=useState<any[]>([]),[events,setEvents]=useState<any[]>([]);
   const [registry,setRegistry]=useState<FinancialPortfolio[]>([]);
   const [reason,setReason]=useState(''),[staffId,setStaffId]=useState(''),[accountId,setAccountId]=useState('');
@@ -37,6 +38,15 @@ export function PayrollReviewPanel({batchId,onChanged}:{batchId:string;onChanged
     }).catch(()=>{if(active)setMessage('Unable to verify the payroll detail or payment accounts.');});
     return ()=>{active=false;};
   },[batch?.revision,batchId,tenantId]);
+  useEffect(()=>{
+    setLegacyConfirmed(false);setLegacyRows([]);setLegacyLoaded(false);
+    if(!batch?.legacySourceId){setLegacyLoaded(true);return;}
+    let active=true;
+    void getDocs(query(collection(db,'payroll'),where('tenantId','==',tenantId))).then(snapshot=>{
+      if(active){setLegacyRows(snapshot.docs.filter(d=>batch.legacyPayrollIds?.includes(d.id)).map(d=>({...d.data(),id:d.id})));setLegacyLoaded(true);}
+    }).catch(()=>{if(active)setMessage('Unable to load the historical entries for reconciliation.');});
+    return ()=>{active=false;};
+  },[batch?.id,batch?.revision,tenantId]);
   useEffect(()=>{
     if(!tenantId)return;
     const stopPayments=onSnapshot(query(collection(db,PAYROLL_PAYMENTS),where('tenantId','==',tenantId),where('batchId','==',batchId)),s=>setHistory(s.docs.map(d=>({...d.data(),id:d.id}))),()=>setMessage('Unable to load payment history.'));
@@ -65,10 +75,11 @@ export function PayrollReviewPanel({batchId,onChanged}:{batchId:string;onChanged
     <p>Unremitted obligations at approval: PAYE {ugx(batch.totals.paye)}; NSSF {ugx(batch.totals.employeeNssf+batch.totals.employerNssf)}; other deductions {ugx(batch.totals.otherDeductions)}. Salary payments below settle net salaries only.</p>
     <div className="overflow-x-auto rounded-xl border border-slate-200"><table className="w-full min-w-[850px] text-left text-xs"><thead className="bg-slate-50"><tr>{['Employee / ID','Branch','Verified hours / paid leave','Gross','Allowances','Deductions','Net salary','Paid / outstanding','Status'].map(label=><th key={label} className="p-3">{label}</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.id} className="border-t border-slate-100"><td className="min-w-40 whitespace-normal break-words p-3 font-semibold">{row.staff_name}<br/>{row.employee_id}</td><td className="p-3">{row.branch_id}</td><td className="p-3">{row.line.loggedHours.toFixed(2)} / {row.line.paidLeaveHours.toFixed(2)}</td><td className="p-3">{ugx(row.gross_salary)}</td><td className="p-3">{ugx(row.allowances)}</td><td className="p-3">{ugx(row.deductions)}</td><td className="p-3 font-bold">{ugx(row.net_salary)}</td><td className="p-3">{ugx(paid(row.staffId))}<br/>{ugx(row.net_salary-paid(row.staffId))}</td><td className="p-3">{payrollStatusLabels[employeePayrollStatus(batch.status,paid(row.staffId),row.net_salary)]}</td></tr>)}</tbody></table></div>
     {batch.returnReason&&<p className="rounded-xl bg-amber-50 p-3 text-amber-900">Return reason: {batch.returnReason}</p>}
+    {batch.legacySourceId&&<div className="space-y-2 rounded-xl bg-amber-50 p-3 text-amber-950"><h4 className="font-bold">Legacy payroll reconciliation</h4><p>This correction replaces the linked historical payroll cost on approval. Review the original rejected request and payment evidence before approving. Original records remain in history.</p>{legacyRows.map(row=><p key={row.id}>{row.staff_name||row.staffId||row.id} · {row.month} · {ugx(Number(row.net_salary||0))}</p>)}{batch.status==='pending_finance'&&<label className="flex gap-2"><input type="checkbox" disabled={busy||!legacyLoaded||legacyRows.length!==batch.legacyPayrollIds?.length} checked={legacyConfirmed} onChange={e=>setLegacyConfirmed(e.target.checked)}/>I reconciled these historical entries to the rejected request, confirmed these salaries were not paid, and approve replacing their recorded cost.</label>}</div>}
     {canOperate&&batch.status==='pending_finance'&&<div className="space-y-3">
       <p>Approval recognizes the expense and salary liabilities. It does not disburse money.</p>
       <label className="block">Correction reason<textarea value={reason} onChange={e=>setReason(e.target.value)} className={field}/></label>
-      <div className="flex flex-wrap gap-3"><button disabled={busy} onClick={()=>run(()=>reviewPayroll({tenantId,batchId,revision:batch.revision,actorId:profile!.uid,action:'approve'}))} className="min-h-11 rounded-xl bg-emerald-700 px-4 font-bold text-white disabled:opacity-50">Approve Payroll</button>
+      <div className="flex flex-wrap gap-3"><button disabled={busy||(!!batch.legacySourceId&&(!legacyConfirmed||!legacyLoaded))} onClick={()=>run(()=>reviewPayroll({tenantId,batchId,revision:batch.revision,actorId:profile!.uid,action:'approve',acknowledgeLegacyRecovery:legacyConfirmed}))} className="min-h-11 rounded-xl bg-emerald-700 px-4 font-bold text-white disabled:opacity-50">Approve Payroll</button>
       <button disabled={busy||reason.trim().length<5} onClick={()=>run(()=>reviewPayroll({tenantId,batchId,revision:batch.revision,actorId:profile!.uid,action:'return',reason}))} className="min-h-11 rounded-xl border border-amber-400 bg-amber-50 px-4 font-bold text-amber-950 disabled:opacity-50">Return to HR</button></div>
     </div>}
     {canOperate&&['approved','partial'].includes(batch.status)&&batch.totals.net>batch.paidUGX&&<form className="space-y-3 rounded-xl border border-slate-200 p-3" onSubmit={e=>{

@@ -34,3 +34,12 @@ test('retried compiler diagnostics retain a definitive compiled-size rejection',
  assert.equal(result[0].exactProbeVerified,undefined);
  assert.match(result[0].error,/290466 bytes/);
 });
+
+test('compiler diagnostics preserve bounded backend error details without certifying failure',async()=>{
+ const details=[{reason:'COMPILER_RESOURCE_LIMIT',domain:'rules.test'}];
+ const result=await diagnoseCompiler({...input,fetchImpl:async()=>response(503,{error:{message:'unavailable',status:'UNAVAILABLE',details}})});
+ assert.equal(result[0].compilerErrorStatus,'UNAVAILABLE');
+ assert.deepEqual(JSON.parse(result[0].compilerDetails),details);
+ assert.ok(result[0].compilerElapsedMs>=0);
+ assert.equal(result[0].exactProbeVerified,undefined);
+});

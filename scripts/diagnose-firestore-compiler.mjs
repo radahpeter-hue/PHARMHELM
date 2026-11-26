@@ -13,9 +13,12 @@ export async function diagnoseCompiler({project,token,controls,runId,attachmentP
   let rulesetName,probeName;
   try {
    const source={files:[{name:'firestore.rules',content:control.source}]};
+   const compilerStarted=Date.now();
    const compiled=await fetchImpl(root+'/rulesets',{method:'POST',headers,body:JSON.stringify({source,...(attachmentPoint?{attachment_point:attachmentPoint}:{})}),signal:AbortSignal.timeout(60000)});
-   result.compilerStatus=compiled.status;
+   result.compilerStatus=compiled.status;result.compilerElapsedMs=Date.now()-compilerStarted;
    let body=await compiled.json();
+   if(body.error?.status)result.compilerErrorStatus=body.error.status;
+   if(body.error?.details)result.compilerDetails=JSON.stringify(body.error.details).slice(0,4000);
    if(!compiled.ok&&recoverPersisted&&[500,502,503,504].includes(compiled.status)){
     const recovered=await findExactInactiveRuleset({project,token,rules:control.source,fetchImpl}).catch(()=>null);
     if(recovered){body=recovered;result.exactSourceRecovered=true;}

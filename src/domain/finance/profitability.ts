@@ -1,3 +1,4 @@
+import {supersededLegacyPayrollIds} from './payrollRecovery';
 import { payrollRecordView } from './payrollRecordView';
 import { LOGISTICS_EXPENSE_COLLECTIONS } from './cashOutflows';
 import { isExcludedFromOpex } from '../../utils/finance';
@@ -137,7 +138,9 @@ function expenseEntries(data: ProfitabilityData, tenantId: string): ExpenseEntry
 
   const finalizedPayroll = new Map<string, { row: ProfitabilityRecord; amount: number | null }>();
   const payrollBatches = new Map(rows('finance_payroll_batches_v1').map(batch=>[batch.id,batch]));
+  const superseded=supersededLegacyPayrollIds(rows('finance_payroll_batches_v1'),tenantId);
   for (const row of rows('payroll')) {
+    if(row.payrollVersion!==11&&superseded.has(String(row.id)))continue;
     if (row.payrollVersion===11) {
       const batch=payrollBatches.get(textValue(row.batchId));
       if (!batch || batch.revision!==row.revision || !['approved','partial','paid'].includes(code(batch.status))) continue;

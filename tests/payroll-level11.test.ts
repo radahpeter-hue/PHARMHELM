@@ -108,3 +108,16 @@ test('actual salary account movements appear once as verified cash outflows',()=
  const result=collectCashOutflows({tenantId:'tenant',accounts:[account],movements:[movement,movement],supplierPayments:[],creditPayments:[],salaryPayments:[payment]});
  assert.equal(result.length,1);assert.equal(result[0].status,'posted');assert.equal(result[0].category,'Salary payment');
 });
+
+test('recovery replaces only explicitly linked historical cost after Finance approval',()=>{
+ const tenantId='tenant',legacy={id:'old',tenantId,staffId:'employee',status:'paid',month:'2026-11',base_salary:360000,gross_salary:370000,allowances:10000,net_salary:340600,nssf_employer:36000};
+ const employee={...legacy,id:'new',payrollVersion:11,batchId:'recovery',revision:1,periodStart:start,periodEnd:end};
+ const batch={id:'recovery',tenantId,legacySourceId:'rejected',legacyPayrollIds:['old'],revision:1};
+ const report=(status:string,extra:any={})=>calculateProfitability({payroll:[legacy,employee],finance_payroll_batches_v1:[{...batch,status,...extra}]},{tenantId}).totals.payroll;
+ assert.equal(report('pending_finance'),406000);assert.equal(report('returned'),406000);
+ for(const status of ['approved','partial','paid'])assert.equal(report(status),406000);
+ assert.equal(report('approved',{legacyPayrollIds:[]}),812000);
+ assert.equal(report('approved',{tenantId:'other'}),406000);
+ const unrelated={...legacy,id:'unrelated',staffId:'other'};
+ assert.equal(calculateProfitability({payroll:[legacy,employee,unrelated],finance_payroll_batches_v1:[{...batch,status:'approved'}]},{tenantId}).totals.payroll,812000);
+});

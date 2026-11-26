@@ -65,8 +65,9 @@ export async function payrollDigest(value: unknown) {
   return Array.from(new Uint8Array(bytes), x => x.toString(16).padStart(2, '0')).join('');
 }
 /** One permanent, tenant-scoped obligation for the exact selected payroll period. */
-export async function payrollIdentity(tenantId: string, start: string, end: string) {
+export async function payrollIdentity(tenantId: string, start: string, end: string, legacySourceId?:string) {
   if (!tenantId || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || start > end) throw new Error('Select a valid payroll period.');
-  const hash = await payrollDigest([tenantId,start,end]);
-  return {id: tenantId + '_PAY_' + start + '_' + end, reference: 'PAY-' + end.slice(0,7).replace('-','') + '-' + hash.slice(0,10).toUpperCase()};
+  if(legacySourceId&&(legacySourceId.includes('/')||legacySourceId.length>500))throw Error('Invalid legacy payroll reference.');
+  const hash = await payrollDigest(legacySourceId?[tenantId,start,end,legacySourceId]:[tenantId,start,end]);
+  return {id: legacySourceId?tenantId+'_REC_'+legacySourceId:tenantId + '_PAY_' + start + '_' + end, reference: 'PAY-' + end.slice(0,7).replace('-','') + '-' + hash.slice(0,10).toUpperCase()};
 }

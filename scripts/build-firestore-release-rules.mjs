@@ -80,6 +80,27 @@ function insertDatabaseHelpers(source, helpers) {
  * evaluated where the first original guard was evaluated. The helper retains
  * the original short circuit, type test and bound, including malformed values.
  */
+export function shareBoundedValueChecks(source) {
+ const masked=maskRulesTrivia(source),groups=new Map();
+ if(!databaseScope.test(masked))return source;
+ const pattern=/(?<![.\w])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+is\s+(int|number|string)\s*&&\s*\1(\s*\.size\(\))?\s*(>=|>)\s*(\d+)\s*&&\s*\1\3\s*(<=|<)\s*(\d+)(?=\s*(?:&&|\|\||[),;}]|$))/g;
+ for(const m of masked.matchAll(pattern)){
+  if((m[2]==='string')!==!!m[3])continue;
+  const key=[m[2],!!m[3],m[4],m[5],m[6],m[7]].join(':');
+  if(!groups.has(key))groups.set(key,[]);groups.get(key).push(m);
+ }
+ const changes=[],helpers=[];
+ for(const matches of groups.values()){
+  if(matches.length<2)continue;
+  const m=matches[0],suffix=m[3]?'.size()':'';let name='releaseBoundedValue'+helpers.length;
+  while(source.includes(name))name+='X';
+  helpers.push('function '+name+'(value) { return value is '+m[2]+' && value'+suffix+' '+m[4]+' '+m[5]+' && value'+suffix+' '+m[6]+' '+m[7]+'; }');
+  for(const match of matches)changes.push({from:match.index,to:match.index+match[0].length,text:name+'('+match[1]+')'});
+ }
+ for(const {from,to,text}of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,from)+text+source.slice(to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
 export function shareValueChecks(source) {
  const masked=maskRulesTrivia(source),changes=[],helpers=[];
  if(!databaseScope.test(masked))return source;
@@ -370,10 +391,11 @@ export function groupEquivalentCollections(source) {
   groups.get(key).push({from:head.index,to:end,body,bodyMask,collection:head[1]});
  }
  const removals=[],policies=[];
+ let collection='releaseGroupedCollection',document='releaseGroupedDocument';
+ while(source.includes(collection)||source.includes(document)){collection+='X';document+='X';}
  for(const members of groups.values()){
   if(members.length<2)continue;
-  let guard,collection,document;
-  do{const suffix=serial++;guard='releaseGroupGuard'+suffix;collection='releaseGroupCollection'+suffix;document='releaseGroupDocument'+suffix;}while([guard,collection,document].some(name=>source.includes(name)));
+  let guard;do{guard='releaseGroupGuard'+serial++;}while(source.includes(guard));
   const first=members[0];let body=first.body;
   for(const grant of [...first.bodyMask.matchAll(/\ballow\s+[a-z, ]+:\s*if\s+/g)].reverse()){
    const at=grant.index+grant[0].length;body=body.slice(0,at)+guard+'() && ('+body.slice(at);
@@ -381,7 +403,7 @@ export function groupEquivalentCollections(source) {
    const end=maskRulesTrivia(body).indexOf(';',at);body=body.slice(0,end)+')'+body.slice(end);
   }
   const names=[...new Set(members.map(member=>member.collection))];
-  policies.push(`    match /{${collection}}/{${document}} {\n      function ${guard}() { return ${collection}.matches('${exactCollectionPattern(names)}'); }\n${body}\n    }`);
+  policies.push(`      function ${guard}() { return ${collection}.matches('${exactCollectionPattern(names)}'); }\n${body}`);
   removals.push(...members);
  }
  if(!policies.length)return source;
@@ -389,7 +411,7 @@ export function groupEquivalentCollections(source) {
  const root=databaseScope.exec(maskRulesTrivia(source));if(!root)throw Error('Missing database scope.');
  const start=root.index+root[0].length;let end=start,depth=1;const remaining=maskRulesTrivia(source);
  for(;end<remaining.length&&depth;end++){if(remaining[end]==='{')depth++;if(remaining[end]==='}')depth--;}
- return source.slice(0,end-1)+'\n'+policies.join('\n')+'\n'+source.slice(end-1);
+ return source.slice(0,end-1)+`\n    match /{${collection}}/{${document}} {\n`+policies.join('\n')+'\n    }\n'+source.slice(end-1);
 }
 
 /** Move identical direct grants into shared predicates. Keep every allow at its
@@ -758,7 +780,7 @@ export function uniqueLocalFunctions(source){
  return source;
 }
 
-export const RELEASE_RULE_OPTIONS=Object.freeze({specializedPaths:true,protectedFieldLength:10,collapseAliases:true,inlineSingles:true,valueChecks:true,scopedBindings:true,earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:true,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:false});
+export const RELEASE_RULE_OPTIONS=Object.freeze({specializedPaths:true,protectedFieldLength:10,collapseAliases:true,inlineSingles:true,valueChecks:true,scopedBindings:true,earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:true,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:true});
 
 /** On an update, an unchanged tenant plus membership of the existing tenant
  * makes the second membership call redundant. Keep both equality and the
@@ -884,9 +906,29 @@ for(;;){
  return source;
 }
 
-export function compactRuleSymbols(source,{minimal=false,specializedPaths=false,protectedFieldLength=Infinity,collapseAliases=false,inlineSingles=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+// Rename only private helpers after all policy transforms. Reserve every existing
+// identifier in the match, including free globals, parameters and captures.
+export function compactLocalFunctionNames(source){
+ const trivia=/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
+ const mask=source.replace(trivia,v=>' '.repeat(v.length)),changes=[];
+ for(const head of mask.matchAll(/\bmatch\s+[^{}]+\/\{\w+\}\s*\{/g)){
+  const from=head.index;let to=from+head[0].length,depth=1;
+  for(;to<mask.length&&depth;to++){if(mask[to]==='{')depth++;if(mask[to]==='}')depth--;}
+  const body=mask.slice(from,to);
+  if(/\bmatch\b/.test(body.slice(head[0].length)))continue;
+  const names=[...body.matchAll(/\bfunction\s+(\w+)\s*\(/g)].map(m=>m[1]);
+  if(!names.length||new Set(names).size!==names.length)continue;
+  const used=new Set([...body.matchAll(/\b[A-Za-z_]\w*\b/g)].map(m=>m[0])),aliases=new Map();
+  for(const name of names){if(name.length===1)continue;const alias=[...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'].find(n=>!used.has(n));if(!alias)break;used.add(alias);aliases.set(name,alias);}
+  for(const m of body.matchAll(/(?<![.\w])(\w+)\s*\(/g))if(aliases.has(m[1]))changes.push({from:from+m.index,to:from+m.index+m[1].length,text:aliases.get(m[1])});
+ }
+ for(const c of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,c.from)+c.text+source.slice(c.to);
+ return source;
+}
+
+export function compactRuleSymbols(source,{minimal=false,specializedPaths=false,protectedFieldLength=Infinity,collapseAliases=false,inlineSingles=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,localFunctionNames=true,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
  if(!minimal){
- if(valueChecks)source=shareValueChecks(source);
+ if(valueChecks)source=shareValueChecks(shareBoundedValueChecks(source));
  source=omitNeverAllow(source);
  if(tenantChecks)source=elideDuplicateTenantGrants(source);
  if(broadRequests)source=shareRequestFields(source);
@@ -946,7 +988,8 @@ export function compactRuleSymbols(source,{minimal=false,specializedPaths=false,
  let result=output.join('').trim();
  if(scopedBindings)result=compactFunctionBindings(result);
  if(inlineSingles)result=inlineSingleUseFunctions(result);
- return collapseAliases?collapseAliasFunctions(result):result;
+ result=collapseAliases?collapseAliasFunctions(result):result;
+ return !minimal&&scopedBindings&&uniqueLocals&&localFunctionNames?compactLocalFunctionNames(result):result;
 }
 
 /** Keep source positions compact as well as identifiers. Replace only existing
