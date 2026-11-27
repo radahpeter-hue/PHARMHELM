@@ -1,4 +1,6 @@
-import { createManagementFinanceWriteGroup } from '../services/managementCashPosting';
+import {collection,onSnapshot,query,where} from 'firebase/firestore';
+import {db} from '../firebase';
+import {useWelfareFund,WelfareHistory} from '../components/finance/WelfareFundManagement';
 import React, { useState, useEffect } from 'react';
 import { 
   Heart, 
@@ -44,6 +46,9 @@ type TabType = 'portal' | 'leave' | 'advances' | 'payslips' | 'cme' | 'performan
 
 const Welfare: React.FC = () => {
   const { profile } = useAuth();
+  const fundedWelfare=useWelfareFund(profile?.tenantId||'',profile?.uid||'');
+  const fundedEmployee=fundedWelfare.rows.find(r=>r.kind==='employee');
+  const fundedEvents=fundedWelfare.rows.filter(r=>r.kind==='event');
   const [activeTab, setActiveTab] = useState<TabType>('portal');
   const [welfare, setWelfare] = useState<WelfareRecord[]>([]);
   const [csr, setCsr] = useState<CSRProject[]>([]);
@@ -55,9 +60,10 @@ const Welfare: React.FC = () => {
 
   useEffect(() => {
     if (profile?.tenantId) {
-      firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setStaff);
-      firestoreService.subscribeToCollection<WelfareRecord>('welfare', profile.tenantId, setWelfare);
-      firestoreService.subscribeToCollection<CSRProject>('csr', profile.tenantId, setCsr);
+      const stopStaff=firestoreService.subscribeToCollection<Staff>('staff', profile.tenantId, setStaff);
+      const stopCSR=firestoreService.subscribeToCollection<CSRProject>('csr', profile.tenantId, setCsr);
+      const stopWelfare=onSnapshot(query(collection(db,'welfare'),where('tenantId','==',profile.tenantId),where('staffId','==',profile.uid)),snap=>setWelfare(snap.docs.map(d=>({...d.data(),id:d.id}) as WelfareRecord)),()=>toast.error('Historical welfare records could not be loaded.'));
+      return ()=>{stopStaff();stopCSR();stopWelfare();};
     }
   }, [profile?.tenantId]);
 
@@ -69,39 +75,6 @@ const Welfare: React.FC = () => {
       } catch (error) {
         toast.error('Failed to delete entry');
       }
-    }
-  };
-
-  const handleUpdateWelfareLimit = async (staffMember: Staff, newLimit: number) => {
-    if (!profile?.tenantId) return;
-    const oldLimit = staffMember.welfare_limit || 50000;
-    const difference = newLimit - oldLimit;
-
-    try {
-      const financeMessages: {kind:'success'|'info';message:string}[] = [];
-      const financeWrites = createManagementFinanceWriteGroup(profile?.tenantId || '', profile?.uid || '');
-      await financeWrites.updateDocument('staff', staffMember.id, {
-        welfare_limit: newLimit
-      });
-
-      if (difference !== 0) {
-        await financeWrites.addDocument('petty_cash_ledger', {
-          tenantId: profile.tenantId,
-          amount: Math.abs(difference),
-          type: difference > 0 ? 'withdrawal' : 'incoming',
-          category: 'Staff Welfare',
-          notes: `Welfare limit adjustment for ${staffMember.full_name || staffMember.username} (${oldLimit.toLocaleString()} -> ${newLimit.toLocaleString()})`,
-          date: new Date().toISOString(),
-          created_by_name: profile.full_name || 'HR Administrator'
-        });
-      }
-      await financeWrites.commit();
-      financeMessages.forEach(({kind,message})=>toast[kind](message));
-
-      financeMessages.push({kind:'success',message:`Welfare limit successfully adjusted for ${staffMember.full_name || staffMember.username}`});
-    } catch (e) {
-      console.error(e);
-      toast.error('Failed to adjust welfare limit.');
     }
   };
 
@@ -130,11 +103,11 @@ const Welfare: React.FC = () => {
                     </div>
                     <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
                       <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Welfare Used</p>
-                      <p className="text-xl font-black">UGX {(profile?.welfare_spent || (profile as any)?.welfare_used_ytd || 0).toLocaleString()}</p>
+                      <p className="text-xl font-black">UGX {(fundedEmployee?.utilizedUGX || 0).toLocaleString()}</p>
                     </div>
                     <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
                       <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Welfare Balance</p>
-                      <p className="text-xl font-black text-emerald-300">UGX {((profile?.welfare_limit || 50000) - (profile?.welfare_spent || (profile as any)?.welfare_used_ytd || 0)).toLocaleString()}</p>
+                      <p className="text-xl font-black text-emerald-300">UGX {(fundedEmployee?.balanceUGX || 0).toLocaleString()}</p>
                     </div>
                   </div>
                 </div>
@@ -199,67 +172,12 @@ const Welfare: React.FC = () => {
       case 'cme': return <CMETab />;
       case 'performance': return <AppraisalTab />;
       case 'welfare_log' as any:
-        return <WelfareLogTab staffId={profile?.id || profile?.uid || ''} welfare={welfare} />;
+        return <div className="space-y-6 rounded-2xl bg-white p-4">{fundedWelfare.error&&<p role="alert">{fundedWelfare.error}</p>}<p className="text-sm">Remaining funded balance: UGX {(fundedEmployee?.balanceUGX||0).toLocaleString()}. Committed: UGX {(fundedEmployee?.committedUGX||0).toLocaleString()}.</p><WelfareHistory events={fundedEvents}/><details><summary>Historical welfare records</summary><WelfareLogTab staffId={profile?.id || profile?.uid || ''} welfare={welfare}/></details></div>;
       case 'admin_welfare':
+        return <div className="rounded-2xl border bg-white p-5"><h3 className="font-bold">Staff Welfare Allocations</h3><p className="mt-2 text-sm">Manage funding, allocations, recalls, utilization and transfers in Finance → Management → Welfare Fund.</p></div>;
       case 'admin_csr':
         return (
           <div className="space-y-6">
-            {activeTab === 'admin_welfare' && (
-              <div className="bg-white rounded-[32px] border border-zinc-200 shadow-sm p-6 space-y-6">
-                <div>
-                  <h3 className="text-lg font-black text-zinc-900 uppercase tracking-tight">Staff Welfare Allocations</h3>
-                  <p className="text-zinc-500 text-xs font-medium">Assign and manage welfare balances for staff members. Allocating limits will withdraw funds from the HQ Petty Cash balance.</p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {staff.map((s) => {
-                    const limit = s.welfare_limit || 50000;
-                    const spent = s.welfare_spent || 0;
-                    const balance = limit - spent;
-                    
-                    return (
-                      <div key={s.id} className="p-5 bg-zinc-50 border border-zinc-200 rounded-3xl space-y-4">
-                        <div>
-                          <p className="font-bold text-sm text-zinc-900">{s.full_name || s.username}</p>
-                          <p className="text-[10px] text-zinc-400 font-mono">ROLE: {s.role}</p>
-                        </div>
-                        <div className="grid grid-cols-3 gap-2 text-center text-xs font-sans">
-                          <div className="p-2 bg-white rounded-xl border border-zinc-100">
-                            <p className="text-[8px] font-black text-zinc-400 uppercase tracking-wider mb-0.5">Limit</p>
-                            <p className="font-bold text-zinc-800">UGX {limit.toLocaleString()}</p>
-                          </div>
-                          <div className="p-2 bg-white rounded-xl border border-zinc-100">
-                            <p className="text-[8px] font-black text-zinc-400 uppercase tracking-wider mb-0.5">Spent</p>
-                            <p className="font-bold text-zinc-850">UGX {spent.toLocaleString()}</p>
-                          </div>
-                          <div className="p-2 bg-emerald-50 rounded-xl border border-emerald-100">
-                            <p className="text-[8px] font-black text-emerald-600 uppercase tracking-wider mb-0.5">Balance</p>
-                            <p className="font-bold text-emerald-700">UGX {balance.toLocaleString()}</p>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => {
-                            const newLimit = window.prompt(`Set new Welfare Limit for ${s.full_name || s.username}:`, limit.toString());
-                            if (newLimit !== null) {
-                              const val = parseFloat(newLimit);
-                              if (!isNaN(val) && val >= 0) {
-                                handleUpdateWelfareLimit(s, val);
-                              } else {
-                                toast.error('Invalid limit amount entered.');
-                              }
-                            }
-                          }}
-                          className="w-full py-2.5 bg-zinc-900 hover:bg-zinc-850 text-white rounded-xl font-bold uppercase text-[9px] tracking-wider transition-all"
-                        >
-                          Adjust Limit
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
             <div className="bg-white rounded-[32px] border border-zinc-200 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
@@ -361,7 +279,7 @@ const Welfare: React.FC = () => {
           <h1 className="text-3xl font-black text-zinc-900 tracking-tight uppercase">Welfare Portal</h1>
           <p className="text-zinc-500 text-sm font-medium">Employee self-service and community engagement.</p>
         </div>
-        {(activeTab === 'admin_welfare' || activeTab === 'admin_csr') && (
+        {activeTab === 'admin_csr' && (
           <button 
             onClick={() => {
               setEditingItem(null);
@@ -479,7 +397,7 @@ const Welfare: React.FC = () => {
         {renderContent()}
       </div>
 
-      {isModalOpen && (activeTab === 'admin_welfare' || activeTab === 'admin_csr') && (
+      {isModalOpen && activeTab === 'admin_csr' && (
         <WelfareModal 
           type={activeTab === 'admin_welfare' ? 'welfare' : 'csr'}
           isOpen={isModalOpen}

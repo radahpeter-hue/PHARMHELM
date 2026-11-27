@@ -780,6 +780,27 @@ export function uniqueLocalFunctions(source){
  return source;
 }
 
+/** Share identical optional field reads outside the established hot validators.
+ * Calls stay at the original position and retain the exact default and missing-map behavior.
+ */
+export function shareOptionalFieldReaders(source) {
+ const masked=maskRulesTrivia(source),protectedRanges=budgetSensitiveRanges(masked),groups=new Map();
+ const pattern=/(?<![.\w])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.get\(\s*('[A-Za-z_]\w*')\s*,\s*('(?:[^'\\]|\\.)*'|true|false|null|0|\[\])\s*\)/g;
+ for(const m of source.matchAll(pattern)){
+  if(masked.slice(m.index,m.index+m[1].length)!==m[1]||protectedRanges.some(r=>m.index>=r.from&&m.index<r.to))continue;
+  const key=m[2]+','+m[3];if(!groups.has(key))groups.set(key,[]);groups.get(key).push(m);
+ }
+ const changes=[],helpers=[];let serial=0;
+ for(const [key,items] of groups){
+  if(items.length<3)continue;
+  let name;do{name='releaseOptionalField'+serial++;}while(source.includes(name));
+  helpers.push('function '+name+'(value) { return value.get('+key+'); }');
+  for(const m of items)changes.push({from:m.index,to:m.index+m[0].length,text:name+'('+m[1]+')'});
+ }
+ for(const c of changes.sort((a,b)=>b.from-a.from))source=source.slice(0,c.from)+c.text+source.slice(c.to);
+ return insertDatabaseHelpers(source,helpers);
+}
+
 export const RELEASE_RULE_OPTIONS=Object.freeze({specializedPaths:true,protectedFieldLength:10,collapseAliases:true,inlineSingles:true,valueChecks:true,scopedBindings:true,earlyRequests:true,broadRequests:true,fieldReaders:true,vectorEquality:true,listConstants:true,booleanChoices:false,uniqueLocals:true,tenantChecks:true,groupCollections:true});
 
 /** On an update, an unchanged tenant plus membership of the existing tenant
@@ -926,8 +947,9 @@ export function compactLocalFunctionNames(source){
  return source;
 }
 
-export function compactRuleSymbols(source,{minimal=false,specializedPaths=false,protectedFieldLength=Infinity,collapseAliases=false,inlineSingles=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,localFunctionNames=true,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true}={}){
+export function compactRuleSymbols(source,{minimal=false,specializedPaths=false,protectedFieldLength=Infinity,collapseAliases=false,inlineSingles=false,valueChecks=false,scopedBindings=false,fieldReaders=false,indexedFields=false,earlyRequests=false,broadRequests=false,vectorEquality=false,listConstants=false,booleanChoices=false,uniqueLocals=false,tenantChecks=false,localFunctionNames=true,maxLocalOwners=1,sharePaths=true,memoize=true,balanceConditions=true,groupCollections=true,packArrays=true,shareReaders=true,shareSchemas=true,shareConstants=true,optionalReaders=true}={}){
  if(!minimal){
+ if(optionalReaders)source=shareOptionalFieldReaders(source);
  if(valueChecks)source=shareValueChecks(shareBoundedValueChecks(source));
  source=omitNeverAllow(source);
  if(tenantChecks)source=elideDuplicateTenantGrants(source);

@@ -1,3 +1,4 @@
+import {WelfareFundManagement,useWelfareFund} from './WelfareFundManagement';
 import React,{useEffect,useMemo,useState} from 'react';
 import {ArrowLeft,ArrowUpRight,Wallet,Smartphone,Landmark,CreditCard,Coins,Users,Plus,RefreshCw,ShieldCheck,AlertCircle,ArrowLeftRight,CalendarDays,ChevronRight} from 'lucide-react';
 import {collection,getDocs,query,where} from 'firebase/firestore';
@@ -38,6 +39,7 @@ function TreasuryWorkspace(){
  const [branches,setBranches]=useState<Array<{id:string;name:string;active:boolean}>>([]),[items,setItems]=useState<FinancialPortfolio[]>([]);
  const [registryError,setRegistryError]=useState(''),[registryLoading,setRegistryLoading]=useState(true),[refresh,setRefresh]=useState(0);
  const welfareEvidence=useTreasuryWelfareEvidence(tenantId,refresh);
+ const welfareFund=useWelfareFund(tenantId);
  const [bankTab,setBankTab]=useState('Unified Ledger');
  const [activityDate,setActivityDate]=useState('');
  const [entryId,setEntryId]=useState('');
@@ -79,13 +81,13 @@ function TreasuryWorkspace(){
  const ledgerComplete=workspaceAccounts.length>0&&workspaceAccounts.every(a=>workspaceLedgers.some(l=>l.account.accountId===a.accountId));
  const heading=accountId?(selectedPortfolio?.name||selectedAccount?.name||accountId):(workspace==='bank'?'Bank Portfolio':current?.name)||customPortfolio?.name||'Global Treasury Overview';
  const open=(id:string)=>{setWorkspace(id);setAccountId('');setCreateOpen(false);setBankTab('Unified Ledger');setEntryId('');};
- const positionText=(id:string,balance:number|null)=>loading?'Loading…':error?'Balance unavailable':id==='credit'?credit.loading?'Loading…':credit.error?'Balance unavailable':'UGX '+credit.data!.totalOutstandingUGX.toLocaleString():id==='welfare'?(welfareEvidence.historicalNet===null?'Balance unavailable':money(welfareEvidence.historicalNet)):money(balance);
+ const positionText=(id:string,balance:number|null)=>loading?'Loading…':error?'Balance unavailable':id==='credit'?credit.loading?'Loading…':credit.error?'Balance unavailable':'UGX '+credit.data!.totalOutstandingUGX.toLocaleString():id==='welfare'?(welfareFund.fund?money(welfareFund.fund.balanceUGX):'Reconciliation required'):money(balance);
  const positions=model.positions.length?model.positions:DEFAULT_TREASURY_PORTFOLIOS.map(p=>({...p,balanceUGX:null,accounts:[],reason:''}));
  const statusFor=(id:string,balance:number|null)=>{
   if(loading||(id==='credit'&&credit.loading))return 'Loading';
   if(error)return 'Unavailable';
   if(id==='credit')return credit.data?'Non-cash receivables':'Unavailable';
-  if(id==='welfare')return welfareEvidence.historicalNet===null?'Balance unavailable':'Historical ledger estimate';
+  if(id==='welfare')return welfareFund.fund?'Read-only':'Reconciliation required';
   return balance===null?'Reconciliation required':'Verified';
  };
  const statuses=positions.map(p=>statusFor(p.id,p.balanceUGX));
@@ -173,7 +175,7 @@ function TreasuryWorkspace(){
    </div>
   </>:<>
    {workspace==='credit'?<>{credit.error?<p role="alert">{credit.error}</p>:credit.data?<CreditReceivablesLedger data={credit.data} branches={branches}
-    historyReady={!!credit.historyReady} evidenceIncomplete={!!credit.evidencePending||!!credit.evidenceError?.length}/>:<p>Loading receivables…</p>}</>:workspace==='welfare'?<div key={'welfare-'+refresh}><TreasuryWelfareRecords evidence={welfareEvidence}/></div>:<>
+    historyReady={!!credit.historyReady} evidenceIncomplete={!!credit.evidencePending||!!credit.evidenceError?.length}/>:<p>Loading receivables…</p>}</>:workspace==='welfare'?<div key={'welfare-'+refresh}><WelfareFundManagement readOnly/><details className="mt-4"><summary className="cursor-pointer font-semibold">Historical welfare records requiring reconciliation</summary><TreasuryWelfareRecords evidence={welfareEvidence}/></details></div>:<>
     {bankRoot&&<nav aria-label="Bank portfolio views" className="flex flex-wrap gap-2 border-b border-zinc-200">
      {['Unified Ledger','Bank Accounts',...(canRegister?['Account Management']:[]),'Reconciliations','Audit Trail'].map(tab=><button key={tab} aria-pressed={bankTab===tab} onClick={()=>setBankTab(tab)} className={`min-h-11 border-b-2 px-3 text-sm font-semibold ${bankTab===tab?'border-emerald-700 text-emerald-800':'border-transparent text-zinc-600'}`}>{tab}</button>)}
     </nav>}
