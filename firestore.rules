@@ -4090,6 +4090,7 @@ service cloud.firestore {
     }
 
     match /welfare/{recordId} {
+      allow get: if isPOSOperator() && (resource == null || canReadPosFinancial());
       allow read: if resource.data.tenantId == getUserData().tenantId && (resource.data.staffId == request.auth.uid || canViewFinance());
       allow create: if atomicWelfareRecord(recordId, 'welfare');
     }
