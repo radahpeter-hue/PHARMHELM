@@ -57,3 +57,19 @@ test('reject invalid class mixing, supplier mixing, missing accounting treatment
   assert.throws(()=>planCentralGrnFinance({...input,invoiceRef:''}),/invoice reference/);
   assert.throws(()=>planCentralGrnFinance({...input,grnId:'bad/grn'}),/canonical GRN/);
 });
+
+
+test('GRN financial contract rejects fractional and overflowing UGX', () => {
+  assert.throws(() => planCentralGrnFinance({ ...input, lines: [{ ...input.lines[0], unitCostUGX: 3500.5 }] }), /positive whole/);
+  assert.throws(() => planCentralGrnFinance({ ...input, lines: [{ ...input.lines[0], quantity: 1.5 }] }), /positive whole/);
+  assert.throws(() => planCentralGrnFinance({ ...input, lines: [{ ...input.lines[0], quantity: Number.MAX_SAFE_INTEGER, unitCostUGX: 2 }] }), /safe integer/);
+});
+
+test('Sellable procurement validates GRN amounts before Firestore posting', async () => {
+  const { readFileSync } = await import('node:fs');
+  const service = readFileSync(new URL('../src/services/procurementFinanceService.ts', import.meta.url), 'utf8');
+  assert.ok(service.includes('Number.isSafeInteger(edit.qty)'));
+  assert.ok(service.includes('Number.isSafeInteger(line.unit_cost_ugx)'));
+  assert.ok(service.includes('Number.isSafeInteger(financeValue)'));
+  assert.ok(service.indexOf('Number.isSafeInteger(edit.qty)') < service.indexOf('runTransaction(db'));
+});
