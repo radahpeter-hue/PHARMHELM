@@ -1,3 +1,6 @@
+import {WelfareFundManagement} from '../components/finance/WelfareFundManagement';
+import {transitionWelfareFunding} from '../services/welfareFundService';
+import {WELFARE_SOURCE} from '../domain/finance/welfareFund';
 import { receivableDate } from '../domain/finance/creditReceivablesPortfolio';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -206,6 +209,7 @@ const BranchFinance: React.FC = () => {
     { id: 'expenses', label: 'Expense Log', icon: Receipt },
     { id: 'credit', label: 'Credit View', icon: CreditCard },
     { id: 'petty_cash', label: 'Petty Cash', icon: Wallet },
+    { id: 'welfare_fund', label: 'Welfare Fund', icon: Users },
   ];
 
   return (
@@ -2176,7 +2180,7 @@ const OldGlobalExpenseLedger: React.FC = () => {
 };
 
 const ManagementFinance: React.FC<{ settings: SystemSettings | null }> = ({ settings }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'invoices' | 'management_expenses' | 'global_expenses' | 'profitability' | 'branch_profitability' | 'credit_ledger' | 'oversight' | 'inbox' | 'petty_cash' | 'tax_engine'>('invoices');
+  const [activeSubTab, setActiveSubTab] = useState<'invoices' | 'management_expenses' | 'global_expenses' | 'profitability' | 'branch_profitability' | 'credit_ledger' | 'oversight' | 'inbox' | 'petty_cash' | 'welfare_fund' | 'tax_engine'>('invoices');
   const { tenant } = useTenant();
 
   const tabs = [
@@ -2187,6 +2191,7 @@ const ManagementFinance: React.FC<{ settings: SystemSettings | null }> = ({ sett
     { id: 'profitability', label: 'Consolidated Organisation P&L', icon: BarChart3 },
     { id: 'credit_ledger', label: 'Credit Ledger', icon: CreditCard },
     { id: 'petty_cash', label: 'Petty Cash', icon: Wallet },
+    { id: 'welfare_fund', label: 'Welfare Fund', icon: Users },
     { id: 'tax_engine', label: 'Tax Engine', icon: Sliders, hidden: !settings?.taxEngineEnabled },
     { id: 'oversight', label: 'Cash & Banking', icon: Building2 },
     { id: 'inbox', label: 'Reconciliation Inbox', icon: History },
@@ -2220,6 +2225,7 @@ const ManagementFinance: React.FC<{ settings: SystemSettings | null }> = ({ sett
         {activeSubTab === 'profitability' && <ProfitabilityLedger />}
         {activeSubTab === 'credit_ledger' && <CreditLedgerPanel />}
         {activeSubTab === 'petty_cash' && <PettyCashManagement />}
+        {activeSubTab === 'welfare_fund' && <WelfareFundManagement />}
         {activeSubTab === 'tax_engine' && <TaxEngine />}
         {activeSubTab === 'oversight' && <CashBankingOversight />}
         {activeSubTab === 'inbox' && <ReconciliationInbox />}
@@ -2680,6 +2686,7 @@ const PettyCashManagement: React.FC = () => {
 
   const handleApproveFinance = async (reqId: string) => {
     try {
+      if(requisitions.find(r=>r.id===reqId)?.source===WELFARE_SOURCE){await transitionWelfareFunding({tenantId:profile!.tenantId,actorId:profile!.uid,requisitionId:reqId,action:'finance_approve'});toast.success('Welfare requisition updated');return;}
       await firestoreService.updateDocument('petty_cash_requisitions', reqId, { 
         status: 'finance_approved',
         finance_approval_by: profile?.uid,
@@ -2693,6 +2700,7 @@ const PettyCashManagement: React.FC = () => {
 
   const handleApproveCEO = async (reqId: string) => {
     try {
+      if(requisitions.find(r=>r.id===reqId)?.source===WELFARE_SOURCE){await transitionWelfareFunding({tenantId:profile!.tenantId,actorId:profile!.uid,requisitionId:reqId,action:'ceo_approve'});toast.success('Welfare requisition updated');return;}
       await firestoreService.updateDocument('petty_cash_requisitions', reqId, { 
         status: 'approved', // Both approved
         ceo_approval_by: profile?.uid,
@@ -2725,6 +2733,7 @@ const PettyCashManagement: React.FC = () => {
 
   const handleReject = async (reqId: string) => {
     try {
+      if(requisitions.find(r=>r.id===reqId)?.source===WELFARE_SOURCE){await transitionWelfareFunding({tenantId:profile!.tenantId,actorId:profile!.uid,requisitionId:reqId,action:'reject'});toast.success('Welfare requisition updated');return;}
       await firestoreService.updateDocument('petty_cash_requisitions', reqId, { status: 'rejected' });
       toast.success('Requisition rejected');
     } catch (error) {
@@ -2733,6 +2742,7 @@ const PettyCashManagement: React.FC = () => {
   };
 
   const handleCompleteIssue = async (issue: PettyCashIssue) => {
+    if(requisitions.find(r=>r.id===issue.requisition_id)?.source===WELFARE_SOURCE){try{await transitionWelfareFunding({tenantId:profile!.tenantId,actorId:profile!.uid,requisitionId:issue.requisition_id,action:'issue'});toast.success('Welfare funding issued; receipt confirmation pending');}catch(e){toast.error(e instanceof Error?e.message:'Issue failed');}return;}
     if (balance < issue.amount) {
       toast.error('Insufficient petty cash balance');
       return;
@@ -2795,6 +2805,7 @@ const PettyCashManagement: React.FC = () => {
   };
 
   const handleDisburse = async (req: PettyCashRequisition) => {
+    if(req.source===WELFARE_SOURCE){toast.info('Issue the linked Welfare funding form, then confirm receipt in Welfare Fund Management.');return;}
     if (balance < req.amount_requested) {
       toast.error('Insufficient petty cash balance');
       return;

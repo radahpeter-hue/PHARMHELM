@@ -623,7 +623,7 @@ service cloud.firestore {
 
     function isProtectedFinanceCollection(collectionName) {
       return collectionName in [
-        'finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
+        'petty_cash_requisitions','petty_cash_issues','welfare','welfareAllocations', 'finance_ledger', 'eod_reconciliations', 'branch_expenses', 'cash_requisitions',
         'credit_receivables', 'supplier_payables', 'banking_records',
         'client_credit_ledger', 'institution_credit_ledger', 'supplier_credit_ledger',
         'petty_cash_ledger', 'finance_payment_accounts', 'cash_grn_payments', 'cashTransfers', 'invoices', 'procurement_invoices', 'creditLedger', 'creditPayments', 'financial_posting_audit', 'financial_metrics', 'management_expenses',
@@ -926,10 +926,11 @@ service cloud.firestore {
       let accountPath = /databases/$(database)/documents/finance_payment_accounts/$(data.accountDocumentId);
       let before = get(accountPath).data;
       let after = getAfter(accountPath).data;
-      let payroll = isPayrollMovement(id,data);
-      let receivable = !payroll && isReceivableMovement(id,data);
-      let supplier = !payroll && !receivable && isSupplierMovement(id,data);
-      let transfer = !payroll && !receivable && !supplier
+      let welfare = data.keys().hasAny(['welfareEventId','welfareRequisitionId']);
+      let payroll = !welfare && isPayrollMovement(id,data);
+      let receivable = !welfare && !payroll && isReceivableMovement(id,data);
+      let supplier = !welfare && !payroll && !receivable && isSupplierMovement(id,data);
+      let transfer = !welfare && !payroll && !receivable && !supplier
         && (id.matches('^pt_.*') || data.keys().hasAny(['portfolioTransferId','movementClass']));
       return data.postedBy == request.auth.uid
         && data.amount is int && data.amount > 0
@@ -937,14 +938,15 @@ service cloud.firestore {
         && data.accountDeltaUGX == (data.type in ['incoming','deposit','topup'] ? data.amount : -data.amount)
         && before.kind == kind
         && (!data.keys().hasAny(['externalExpenseCollection','externalExpenseId']) || linkedExternalExpense(id, data, before))
-        && ((payroll && validPayrollMovement(id,data,before,after))
-          || (receivable && after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.amount
-            && validReceivableMovement(id,data,before))
-          || (supplier && !data.keys().hasAny(['portfolioTransferId','movementClass','transferId','externalExpenseCollection','externalExpenseId','eodChannel'])
-            && supplierMovement(id,data,before,after))
-          || (transfer && linkedPortfolioTransfer(id,data,before,after))
-          || (!payroll && !receivable && !supplier && !transfer
-            && after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX));
+        && (welfare ? welfareLinkedMovement(id,data) && after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX
+          : payroll ? validPayrollMovement(id,data,before,after)
+          : receivable ? after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.amount
+            && validReceivableMovement(id,data,before)
+          : supplier ? !data.keys().hasAny(['portfolioTransferId','movementClass','transferId','externalExpenseCollection','externalExpenseId','eodChannel'])
+            && supplierMovement(id,data,before,after)
+          : transfer ? linkedPortfolioTransfer(id,data,before,after)
+          : before.accountId != 'system_welfare_fund'
+            && after.lastPostingId == id && after.balanceUGX == before.balanceUGX + data.accountDeltaUGX);
     }
     // Canonical built-ins and legacy Management accounts have no custom registry.
     // getAfter prevents a posting from racing with lifecycle closure in the same batch.
@@ -958,8 +960,10 @@ service cloud.firestore {
       let transferDebit = movement.get('movementClass', '') == 'transfer_out';
       let supplier = movement.get('supplierPosting', '') in ['cash', 'credit'];
       let branchExpense = !supplier && movement.get('externalExpenseCollection','') == 'branch_expenses';
-      return ((supplier && canSettleSupplier(before.tenantId) && eligibleSupplierAccount(before,movement.fundingBranchId))
-        || (!supplier && isTenantMember(before.tenantId) && activePortfolioAccount(before)
+      return ((before.accountId == 'system_welfare_fund' && (movement.get('portfolioTransferId','') != ''
+        ? getUserData().tenantId == before.tenantId && isFinance() : welfareLinkedMovement(after.lastPostingId,movement)))
+        || (supplier && canSettleSupplier(before.tenantId) && eligibleSupplierAccount(before,movement.fundingBranchId))
+        || (!supplier && before.accountId != 'system_welfare_fund' && isTenantMember(before.tenantId) && activePortfolioAccount(before)
           && ((branchExpense && before.accountId == 'system_petty_cash_' + before.scope.branchId)
             || (!branchExpense && ((movement.get('eodChannel','') != '' && validBranchEodMovement(after.lastPostingId,movement))
               || isFinance() || (before.accountId == 'management_petty_cash' && canPostManagementCash()))))))
@@ -1046,8 +1050,20 @@ service cloud.firestore {
         && data.name is string
         && data.reconciliationReference is string && data.reconciliationReference.size() >= 5;
       }
-      allow create: if validAccountRegistration(request.resource.data);
-      allow update: if validManagementAccountUpdate(accountId, resource.data, request.resource.data);
+      allow create: if request.resource.data.accountId == 'system_welfare_fund'
+        ? isCEO() && getUserData().tenantId == request.resource.data.tenantId && hasActiveStaffProfile()
+          && accountId == request.resource.data.tenantId + '_system_welfare_fund'
+          && request.resource.data.balanceUGX == 0 && request.resource.data.openingBalanceUGX == 0
+          && request.resource.data.reservedUGX == 0 && request.resource.data.initialized && request.resource.data.currency == 'UGX'
+          && request.resource.data.kind == 'petty_cash' && request.resource.data.portfolioId == 'system_welfare_fund'
+          && request.resource.data.scope == {'kind':'organisation'} && request.resource.data.registeredBy == request.auth.uid
+          && request.resource.data.lastPostingId == null && request.resource.data.lastWelfareEventId == null
+          && request.resource.data.reconciliationReference.size() >= 5
+        : validAccountRegistration(request.resource.data);
+      allow update: if resource.data.accountId == 'system_welfare_fund'
+        && request.resource.data.get('lastWelfareEventId','') != resource.data.get('lastWelfareEventId','')
+        ? welfareFundUpdate(resource.data, request.resource.data)
+        : validManagementAccountUpdate(accountId, resource.data, request.resource.data);
     }
     match /cash_grn_payments/{paymentId} {
       function validSettlement(data) {
@@ -2152,6 +2168,20 @@ service cloud.firestore {
     }
 
     match /branch_expenses/{expenseId} {
+      allow create: if request.resource.data.keys().hasOnly(['tenantId','branchId','branch_id','staffId','category','amount','date','expense_date','description','payment_method','status','welfareEventId','receipt_number','logged_by','createdAt'])
+        && freshWelfareEvent(expenseId,request.resource.data.tenantId)
+        && getAfter(welfareEventPath(expenseId)).data.type == 'utilization'
+        && request.resource.data.welfareEventId == expenseId
+        && request.resource.data.amount == getAfter(welfareEventPath(expenseId)).data.amountUGX
+        && request.resource.data.branch_id == getAfter(welfareEventPath(expenseId)).data.branchId
+        && request.resource.data.staffId == getAfter(welfareEventPath(expenseId)).data.staffId
+        && request.resource.data.category == 'Staff Welfare' && request.resource.data.status == 'paid'
+        && request.resource.data.expense_date == getAfter(welfareEventPath(expenseId)).data.date
+        && request.resource.data.branchId == request.resource.data.branch_id
+        && request.resource.data.logged_by == request.auth.uid
+        && request.resource.data.receipt_number == getAfter(welfareEventPath(expenseId)).data.paymentReference
+        && request.resource.data.description == getAfter(welfareEventPath(expenseId)).data.reason;
+
       function expenseBranchBelongs(data) {
         return get(/databases/$(database)/documents/branches/$(data.branch_id)).data.tenantId == data.tenantId;
       }
@@ -2174,20 +2204,20 @@ service cloud.firestore {
       }
       allow get: if isAuthenticated() && ((resource == null && isPOSOperator()) || canReadPosFinancial());
       allow read: if isTenantMember(resource.data.tenantId) && canViewBranchFinance();
-      allow create: if !('cashPaymentVersion' in request.resource.data) && atomicWelfareRecord(expenseId, 'branch_expenses');
-      allow create: if isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance()
+      allow create: if !expenseId.matches('^we_.*') && !('cashPaymentVersion' in request.resource.data) && atomicWelfareRecord(expenseId, 'branch_expenses');
+      allow create: if !request.resource.data.keys().hasAny(['welfareEventId']) && !expenseId.matches('^we_.*') && isTenantMember(request.resource.data.tenantId) && canOperateBranchFinance()
         && !request.resource.data.keys().hasAny(['cashOutflowPostingId','cashPaidBy','cashPaidAt','cashApprovedBy','cashApprovedAt'])
         && (request.resource.data.get('cashPaymentVersion', 0) == 0
           || (request.resource.data.cashPaymentVersion == 1 && request.resource.data.status in ['Pending','pending']
             && request.resource.data.amount_ugx is int && request.resource.data.amount_ugx > 0
             && request.resource.data.logged_by == request.auth.uid && expenseBranchBelongs(request.resource.data)
             && (isAssignedToBranch(request.resource.data.branch_id) || isFinance())));
-      allow update: if isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
+      allow update: if !resource.data.keys().hasAny(['welfareEventId']) && !request.resource.data.keys().hasAny(['welfareEventId']) && isTenantMember(resource.data.tenantId) && request.resource.data.tenantId == resource.data.tenantId
         && (resource.data.get('cashPaymentVersion', 0) == 0
           ? canOperateBranchFinance() && !request.resource.data.diff(resource.data).affectedKeys()
             .hasAny(['cashPaymentVersion','cashOutflowPostingId','cashPaidBy','cashPaidAt','cashApprovedBy','cashApprovedAt'])
           : expenseBranchBelongs(resource.data) && validBranchExpenseChange(resource.data, request.resource.data));
-      allow delete: if isAdmin() && isTenantMember(resource.data.tenantId)
+      allow delete: if !resource.data.keys().hasAny(['welfareEventId']) && isAdmin() && isTenantMember(resource.data.tenantId)
         && resource.data.get('cashPaymentVersion', 0) == 0;
     }
 
@@ -4060,6 +4090,8 @@ service cloud.firestore {
     }
 
     match /welfare/{recordId} {
+      allow get: if isPOSOperator() && (resource == null || canReadPosFinancial());
+      allow read: if resource.data.tenantId == getUserData().tenantId && (resource.data.staffId == request.auth.uid || canViewFinance());
       allow create: if atomicWelfareRecord(recordId, 'welfare');
     }
     match /cashTransfers/{recordId} {
@@ -4102,6 +4134,7 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && resource.data.tenantId == getUserData().tenantId && !('revisionRequestId' in resource.data);
     }
 
+    match /welfareAllocations/{id} { allow read: if resource.data.tenantId == getUserData().tenantId && canViewFinance(); }
     match /welfare_records/{recordId} {
       allow read: if isTenantMember(resource.data.tenantId);
       allow create: if isHR() && isTenantMember(request.resource.data.tenantId);
@@ -4241,6 +4274,160 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Level 12. Fund cash is authoritative; employee records reserve, never mint, cash.
+    function welfareFundPath(tenant) { return /databases/$(database)/documents/finance_payment_accounts/$(tenant + '_system_welfare_fund'); }
+    function welfareEventPath(id) { return /databases/$(database)/documents/finance_welfare_v1/$(id); }
+    function welfareReqPath(id) { return /databases/$(database)/documents/petty_cash_requisitions/$(id); }
+    function welfareManager(tenant, branch) {
+      let user = getUserData();
+      let central = ['owner','Owner','CEO','ceo','CEO / MD','ceo / md','Finance Head','Accountant','admin','Admin'];
+      return user.tenantId == tenant && activeStaffFields(user) && !user.get('is_duplicate',false) && isFinance()
+        && (user.role in central || user.get('secondaryRoles',[]).hasAny(central)
+          || (branch != '' ? isAssignedToBranch(branch) : user.get('assigned_branches', []).size() == 0
+            && user.get('branch_id','') == '' && user.get('default_branch_id','') == ''));
+    }
+    function freshWelfareEvent(id, tenant) {
+      let path = welfareEventPath(id);
+      let e = getAfter(path).data;
+      return !exists(path) && e.kind == 'event' && e.id == id && e.tenantId == tenant && e.postedAt == request.time;
+    }
+    function welfareFundUpdate(before, after) {
+      let e = getAfter(welfareEventPath(after.get('lastWelfareEventId',''))).data;
+      let allocation = e.type == 'allocation';
+      let utilized = e.type == 'utilization';
+      return freshWelfareEvent(after.lastWelfareEventId, before.tenantId)
+        && after.diff(before).affectedKeys().hasOnly(['balanceUGX','reservedUGX','lastWelfareEventId','lastPostingId','updatedAt'])
+        && after.balanceUGX == before.balanceUGX - (utilized ? e.amountUGX : 0)
+        && after.reservedUGX == before.reservedUGX + (allocation ? e.amountUGX : -e.amountUGX)
+        && after.reservedUGX >= 0 && after.reservedUGX <= after.balanceUGX
+        && after.balanceUGX >= 0 && after.balanceUGX <= 9007199254740991
+        && after.lastPostingId == (utilized ? e.id : before.lastPostingId);
+    }
+    function welfareLinkedMovement(id, m) {
+      let event = m.get('welfareEventId','');
+      let rpath = welfareReqPath(m.get('welfareRequisitionId',''));
+      let before = event == '' ? get(rpath).data : {};
+      let after = event == '' ? getAfter(rpath).data : {};
+      let e = event != '' ? getAfter(welfareEventPath(event)).data : {};
+      return m.keys().hasOnly(['tenantId','accountDocumentId','amount','accountDeltaUGX','type','source','welfareEventId','welfareRequisitionId','reference_number','postedBy','date','branchId','createdAt','updatedAt','accountingClassification','excludeFromOpexRollup'])
+        && (event != ''
+        ? freshWelfareEvent(event, m.tenantId) && e.type == 'utilization' && id == event
+          && m.accountDocumentId == m.tenantId + '_system_welfare_fund' && m.amount == e.amountUGX
+          && m.postedBy == e.actorId && m.branchId == e.branchId && m.reference_number == e.reference && m.date == e.date
+          && m.type == 'outgoing' && m.source == 'Welfare utilization'
+        : before.source == 'welfare_funding_v12' && before.tenantId == m.tenantId && after.updatedAt == request.time
+          && m.amount == before.amount_requested && m.reference_number == before.requisition_number
+          && ((before.status == 'approved' && after.status == 'issued' && id == m.welfareRequisitionId + '_issue'
+            && m.accountDocumentId == m.tenantId + '_management_petty_cash' && m.type == 'outgoing' && m.postedBy == after.issued_by)
+          || (before.status == 'issued' && after.status == 'received' && id == m.welfareRequisitionId + '_receipt'
+            && m.accountDocumentId == m.tenantId + '_system_welfare_fund' && m.type == 'incoming' && m.postedBy == after.received_by))
+          && m.accountingClassification == 'internal_transfer' && m.excludeFromOpexRollup);
+    }
+    match /finance_welfare_v1/{id} {
+      function canReadWelfare(data) {
+        return data.tenantId == getUserData().tenantId
+          && (request.auth.uid == data.staffId || canViewFinance());
+      }
+      function validEmployee(data) {
+        let e = getAfter(welfareEventPath(data.lastEventId)).data;
+        let before = request.method == 'create' ? {'allocatedUGX':0,'utilizedUGX':0,'recalledUGX':0,'balanceUGX':0,'committedUGX':0} : resource.data;
+        return data.kind == 'employee' && id == data.tenantId + '__employee__' + data.staffId
+          && data.keys().hasOnly(['kind','tenantId','staffId','branchId','allocatedUGX','utilizedUGX','recalledUGX','committedUGX','balanceUGX','lastEventId'])
+          && freshWelfareEvent(data.lastEventId, data.tenantId) && e.staffId == data.staffId && e.branchId == data.branchId
+          && data.committedUGX == before.committedUGX && data.committedUGX >= 0 && data.balanceUGX >= data.committedUGX
+          && data.allocatedUGX == before.allocatedUGX + (e.type == 'allocation' ? e.amountUGX : 0)
+          && data.utilizedUGX == before.utilizedUGX + (e.type == 'utilization' ? e.amountUGX : 0)
+          && data.recalledUGX == before.recalledUGX + (e.type == 'recall' ? e.amountUGX : 0)
+          && data.balanceUGX == data.allocatedUGX - data.utilizedUGX - data.recalledUGX
+          && data.balanceUGX == before.balanceUGX + (e.type == 'allocation' ? e.amountUGX : -e.amountUGX)
+          && data.allocatedUGX <= 9007199254740991
+          && (request.method == 'create' || [data.tenantId,data.staffId] == [resource.data.tenantId,resource.data.staffId]);
+      }
+      function validEvent(e) {
+        let staff = get(/databases/$(database)/documents/staff/$(e.staffId)).data;
+        let f = get(welfareFundPath(e.tenantId)).data;
+        let next = getAfter(welfareFundPath(e.tenantId)).data;
+        let employee = getAfter(welfareEventPath(e.tenantId + '__employee__' + e.staffId)).data;
+        let original = e.type == 'recall' ? get(welfareEventPath(e.originalAllocationId)).data : {};
+        return e.keys().hasOnly(['kind','id','tenantId','staffId','branchId','type','amountUGX','reason','reference','originalAllocationId','actorId','date','paymentReference','balanceBeforeUGX','balanceAfterUGX','employeeBeforeUGX','employeeAfterUGX','postedAt'])
+          && e.kind == 'event' && id == e.id && id.matches('^we_[a-f0-9]{64}$')
+          && welfareManager(e.tenantId,e.branchId) && e.actorId == request.auth.uid && e.postedAt == request.time
+          && e.type in ['allocation','recall','utilization'] && e.amountUGX is int && e.amountUGX > 0
+          && e.reason is string && e.reason.trim().size() >= 5 && e.reason.size() <= 1000
+          && e.reference is string && e.reference.size() >= 5 && e.reference.size() <= 100
+          && e.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && e.paymentReference is string
+          && staff.tenantId == e.tenantId && !staff.get('is_duplicate',false) && staff.get('duplicate_of','') == ''
+          && staff.get('canonical_staff_id',e.staffId) == e.staffId && staff.get('active',true) && staff.get('status','active').lower() == 'active'
+          && e.branchId == staff.get('branch_id',staff.get('default_branch_id',staff.get('assigned_branches',[]).size() > 0 ? staff.assigned_branches[0] : ''))
+          && f.initialized && f.reservedUGX >= 0 && f.reservedUGX <= f.balanceUGX
+          && next.lastWelfareEventId == id && employee.lastEventId == id
+          && e.balanceBeforeUGX == f.balanceUGX && e.balanceAfterUGX == next.balanceUGX && e.employeeAfterUGX == employee.balanceUGX
+          && e.employeeBeforeUGX == employee.balanceUGX + (e.type == 'allocation' ? -e.amountUGX : e.amountUGX)
+          && (e.type != 'recall' || (!staff.get('welfare_vested',false) && original.type == 'allocation' && original.tenantId == e.tenantId && original.staffId == e.staffId))
+          && (e.type == 'recall' || e.originalAllocationId == '')
+          && (e.type != 'utilization' || (e.paymentReference.size() >= 3
+            && getAfter(/databases/$(database)/documents/petty_cash_ledger/$(id)).data.welfareEventId == id
+            && getAfter(/databases/$(database)/documents/branch_expenses/$(id)).data.welfareEventId == id));
+      }
+      allow get: if isAuthenticated() && (resource == null || canReadWelfare(resource.data));
+      allow list: if canReadWelfare(resource.data);
+      allow create: if request.resource.data.kind == 'employee' ? validEmployee(request.resource.data) : validEvent(request.resource.data);
+      allow update: if resource.data.kind == 'employee' && validEmployee(request.resource.data);
+    }
+    function welfareRequisitionUpdate(before, after, id) {
+      let actor = request.auth.uid;
+      let changed = after.diff(before).affectedKeys();
+      let issue = /databases/$(database)/documents/petty_cash_issues/$(id);
+      let receive = after.status == 'received';
+      let move = /databases/$(database)/documents/petty_cash_ledger/$(id + (receive ? '_receipt' : '_issue'));
+      return after.updatedAt == request.time && before.tenantId == getUserData().tenantId && hasActiveStaffProfile()
+        && ((before.status == 'pending' && after.status == 'finance_approved' && welfareManager(before.tenantId,'')
+          && before.requested_by != actor && after.finance_approval_by == actor && changed.hasOnly(['status','finance_approval_by','updatedAt']))
+        || (before.status == 'finance_approved' && after.status == 'approved' && isCEO() && before.finance_approval_by != actor
+          && after.ceo_approval_by == actor && changed.hasOnly(['status','ceo_approval_by','updatedAt'])
+          && !exists(issue) && getAfter(issue).data.requisition_id == id)
+        || (before.status in ['pending','finance_approved'] && after.status == 'rejected' && welfareManager(before.tenantId,'')
+          && after.rejectedBy == actor && changed.hasOnly(['status','rejectedBy','updatedAt']))
+        || (before.status == 'pending' && after.status == 'cancelled' && before.requested_by == actor
+          && after.cancelledBy == actor && changed.hasOnly(['status','cancelledBy','updatedAt']))
+        || (before.status == 'approved' && after.status == 'issued' && welfareManager(before.tenantId,'')
+          && after.issued_by == actor && changed.hasOnly(['status','issued_by','updatedAt'])
+          && !exists(move) && getAfter(move).data.welfareRequisitionId == id && getAfter(issue).data.status == 'completed')
+        || (before.status == 'issued' && receive && before.recipientId == actor && before.issued_by != actor
+          && after.received_by == actor && changed.hasOnly(['status','received_by','updatedAt'])
+          && !exists(move) && getAfter(move).data.welfareRequisitionId == id));
+    }
+    match /petty_cash_requisitions/{id} {
+      function welfareReq(data) { return data.get('source','') == 'welfare_funding_v12' || id.matches('^wf_.*'); }
+      allow get: if isAuthenticated() && (resource == null || isTenantMember(resource.data.tenantId));
+      allow list: if isTenantMember(resource.data.tenantId) && (canViewFinance() || resource.data.requested_by == request.auth.uid);
+      allow create: if !welfareReq(request.resource.data) ? isTenantMember(request.resource.data.tenantId)
+        : welfareManager(request.resource.data.tenantId,'') && id.matches('^wf_[a-f0-9]{64}$')
+          && request.resource.data.sourceReference == id && request.resource.data.source == 'welfare_funding_v12'
+          && request.resource.data.status == 'pending' && request.resource.data.amount_requested is int && request.resource.data.amount_requested > 0
+          && request.resource.data.requested_by == request.auth.uid && request.resource.data.recipientId == request.auth.uid
+          && request.resource.data.reason.size() >= 5 && request.resource.data.branch_id == '';
+      allow update: if welfareReq(resource.data) || welfareReq(request.resource.data)
+        ? welfareRequisitionUpdate(resource.data,request.resource.data,id)
+        : isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if !welfareReq(resource.data) && isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+    match /petty_cash_issues/{id} {
+      function welfareIssue(data) { return id.matches('^wf_.*') || data.get('source','') == 'welfare_funding_v12'; }
+      function linkedIssue(data, creating) {
+        let r = getAfter(welfareReqPath(id)).data;
+        return data.tenantId == r.tenantId && data.requisition_id == id && data.amount == r.amount_requested
+          && r.updatedAt == request.time && (creating ? r.status == 'approved' && data.status == 'pending'
+            : r.status == 'issued' && data.status == 'completed' && data.issued_by == request.auth.uid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','issued_by','issued_at']));
+      }
+      allow read: if isTenantMember(resource.data.tenantId);
+      allow create: if welfareIssue(request.resource.data) ? linkedIssue(request.resource.data,true) : isTenantMember(request.resource.data.tenantId);
+      allow update: if welfareIssue(resource.data) || welfareIssue(request.resource.data) ? linkedIssue(request.resource.data,false)
+        : isTenantMember(resource.data.tenantId) && isTenantMember(request.resource.data.tenantId);
+      allow delete: if !welfareIssue(resource.data) && isAdmin() && isTenantMember(resource.data.tenantId);
+    }
+
     match /finance_transfers_v1/{transferId} {
       function registeredEndpoint(endpoint, tenant, outgoing) {
         let portfolio = get(/databases/$(database)/documents/finance_portfolios_v1/$(tenant + '__' + endpoint.accountId)).data;
@@ -4260,17 +4447,19 @@ service cloud.firestore {
         return endpoint.tenantId == tenant && endpoint.accountDocumentId == tenant + '_' + key
           && account.tenantId == tenant && account.accountId == key && account.portfolioId == key
           && endpoint.name == account.name && endpoint.kind == account.kind
-          && account.currency == 'UGX' && account.initialized
+          && account.currency == 'UGX' && account.initialized && account.get('active',true) && account.get('status','active') == 'active'
           && branch == account.scope.get('branchId', '')
           && (branch == '' || (isAssignedToBranch(branch)
             && get(/databases/$(database)/documents/branches/$(branch)).data.tenantId == tenant))
-          && (key.matches('^(bank_[a-f0-9]{64}|custom_[A-Za-z0-9_-]+)$')
+          && ((key == 'system_welfare_fund' && outgoing && branch == '' && endpoint.kind == 'petty_cash')
+            || (key == 'management_petty_cash' && !outgoing && branch == '' && endpoint.kind == 'petty_cash')
+            || (key.matches('^(bank_[a-f0-9]{64}|custom_[A-Za-z0-9_-]+)$')
             ? registeredEndpoint(endpoint, tenant, outgoing)
             : endpoint.portfolioId == key
               && (key in ['system_mtn_mobile_money', 'system_airtel_mobile_money']
                 ? branch == '' && endpoint.kind == 'bank'
                 : branch != '' && endpoint.kind == 'petty_cash'
-                  && key in ['system_branch_cash_sales_' + branch, 'system_petty_cash_' + branch]));
+                  && key in ['system_branch_cash_sales_' + branch, 'system_petty_cash_' + branch])));
       }
       function allowedTransferRoute(source, destination) {
         let branch = source.branchId;
@@ -4278,7 +4467,10 @@ service cloud.firestore {
         let bank = source.portfolioId == 'system_bank';
         let toBank = destination.portfolioId == 'system_bank';
         let toPetty = destination.branchId != '' && destination.accountId == 'system_petty_cash_' + destination.branchId;
-        return (branch == '' || destination.branchId == '' || branch == destination.branchId)
+        return source.accountId == 'system_welfare_fund'
+          ? destination.branchId == '' && destination.portfolioId in ['system_bank','management_petty_cash','system_mtn_mobile_money','system_airtel_mobile_money']
+            || destination.branchId == '' && destination.accountId.matches('^custom_.*')
+          : destination.accountId != 'management_petty_cash' && (branch == '' || destination.branchId == '' || branch == destination.branchId)
           && (source.accountId.matches('^custom_.*') || destination.accountId.matches('^custom_.*')
             || (toBank && (cashSales || bank || source.accountId in ['system_mtn_mobile_money','system_airtel_mobile_money']))
             || (toPetty && (cashSales || bank)));
@@ -4295,7 +4487,7 @@ service cloud.firestore {
           : validTransferLeg(data.source, data.chargeMovement, feeId);
       }
       function validTransfer(data) {
-        return isFinance() && isTenantMember(data.tenantId)
+        return (data.source.accountId == 'system_welfare_fund' ? welfareManager(data.tenantId,'') : isFinance() && isTenantMember(data.tenantId))
           && transferId == data.id && transferId.matches('^pt_[a-f0-9]{64}$')
           && data.idempotencyKey == transferId && data.auditVersion == 1 && data.reversalOf == null
           && data.status == 'completed' && data.currency == 'UGX' && data.transferClass == (data.source.portfolioId == data.destination.portfolioId ? 'intra_portfolio' : 'inter_portfolio')
@@ -4304,6 +4496,9 @@ service cloud.firestore {
           && data.principalUGX + data.chargeUGX <= 9007199254740991 && validTransferCharge(data)
           && data.reference is string && data.reference.size() >= 5 && data.reference.size() <= 100
           && data.initiatedBy == request.auth.uid && data.initiatedAt is string && data.postedAt == request.time
+          && (data.source.accountId != 'system_welfare_fund' || (data.welfareReason is string && data.welfareReason.trim().size() >= 5
+            && get(/databases/$(database)/documents/finance_payment_accounts/$(data.source.accountDocumentId)).data.balanceUGX
+              - get(/databases/$(database)/documents/finance_payment_accounts/$(data.source.accountDocumentId)).data.reservedUGX >= data.principalUGX + data.chargeUGX))
           && data.source.accountDocumentId != data.destination.accountDocumentId
           && validTransferEndpoint(data.source, data.tenantId, true)
           && validTransferEndpoint(data.destination, data.tenantId, false)

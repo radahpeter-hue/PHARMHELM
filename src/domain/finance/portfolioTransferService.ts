@@ -1,4 +1,5 @@
 import {doc,getDocFromServer,runTransaction,serverTimestamp,type Firestore} from 'firebase/firestore';
+import {WELFARE_ACCOUNT} from './welfareFund';
 import {kampalaBusinessDate} from '../../utils/eodBusinessDate';
 import {db} from '../../firebase';
 import {definePortfolioTransfer,portfolioTransferIdentity,type PortfolioTransfer,type TransferEndpoint} from './portfolioTransfer';
@@ -8,14 +9,14 @@ import {managementAccountDocumentId} from '../../services/managementCashPosting'
 
 export interface SubmitPortfolioTransfer {
   tenantId:string;sourceAccountId:string;destinationAccountId:string;
-  principalUGX:number;chargeUGX?:number;reference:string;actorId:string;
+  principalUGX:number;chargeUGX?:number;reference:string;actorId:string;welfareReason?:string;
 }
 const registered = (id: string) => /^(bank_[a-f0-9]{64}|custom_[A-Za-z0-9_-]+)$/.test(id);
 
 export function resolveTransferEndpoint(account: ManagementPaymentAccount, portfolio: FinancialPortfolio | undefined, tenantId: string, outgoing: boolean): TransferEndpoint {
   const key = account.accountId;
   const branchId = account.scope?.kind === 'branch' ? account.scope.branchId : '';
-  if (account.tenantId !== tenantId || account.portfolioId !== key || !account.initialized || account.currency !== 'UGX')
+  if (account.tenantId !== tenantId || account.portfolioId !== key || !account.initialized || account.currency !== 'UGX' || (account as any).active === false || ['inactive','closed','deleted'].includes((account as any).status))
     throw new Error('Select an active, reconciled UGX account in this tenant.');
   let portfolioId = key;
   if (registered(key)) {
@@ -30,9 +31,11 @@ export function resolveTransferEndpoint(account: ManagementPaymentAccount, portf
       throw new Error('This custom portfolio does not allow transfers in the selected direction.');
     }
   } else {
+    const welfare = outgoing && key === WELFARE_ACCOUNT && !branchId && account.kind === 'petty_cash';
+    const managementPetty = !outgoing && key === 'management_petty_cash' && !branchId && account.kind === 'petty_cash';
     const mobileMoney = ['system_mtn_mobile_money', 'system_airtel_mobile_money'].includes(key);
     const branchAccount = branchId && ['system_branch_cash_sales_' + branchId, 'system_petty_cash_' + branchId].includes(key);
-    if (!(mobileMoney && !branchId && account.kind === 'bank') && !(branchAccount && account.kind === 'petty_cash'))
+    if (!welfare && !managementPetty && !(mobileMoney && !branchId && account.kind === 'bank') && !(branchAccount && account.kind === 'petty_cash'))
       throw new Error('Select an individual Bank account or another eligible reconciled portfolio.');
   }
   return {tenantId, portfolioId, accountId: key, accountDocumentId: managementAccountDocumentId(tenantId, key),
@@ -42,6 +45,8 @@ export function resolveTransferEndpoint(account: ManagementPaymentAccount, portf
 export function allowsPortfolioTransfer(source: TransferEndpoint, destination: TransferEndpoint): boolean {
   if (source.tenantId !== destination.tenantId || source.accountDocumentId === destination.accountDocumentId
       || (source.branchId && destination.branchId && source.branchId !== destination.branchId)) return false;
+  if (source.accountId === WELFARE_ACCOUNT) return ['system_bank','management_petty_cash','system_mtn_mobile_money','system_airtel_mobile_money'].includes(destination.portfolioId) || destination.accountId.startsWith('custom_');
+  if (destination.accountId === WELFARE_ACCOUNT || destination.accountId === 'management_petty_cash') return false;
   const cashSales = !!source.branchId && source.accountId === 'system_branch_cash_sales_' + source.branchId;
   const bank = source.portfolioId === 'system_bank';
   const toBank = destination.portfolioId === 'system_bank';
@@ -52,6 +57,8 @@ export function allowsPortfolioTransfer(source: TransferEndpoint, destination: T
 }
 /** Change 060: one transaction owns the immutable record, both movements and balances. */
 export async function submitPortfolioTransfer(input:SubmitPortfolioTransfer,database:Firestore=db):Promise<{record:PortfolioTransfer;replayed:boolean}> {
+  const welfare=input.sourceAccountId===WELFARE_ACCOUNT;
+  if(welfare&&(!input.welfareReason||input.welfareReason.trim().length<5))throw Error('Initiate this transfer in Welfare Management with a reason.');
   const id=await portfolioTransferIdentity(input.tenantId,input.reference);
   if(input.sourceAccountId===input.destinationAccountId)throw new Error('Select different source and destination accounts.');
   const charge = input.chargeUGX ?? 0;
@@ -63,7 +70,7 @@ export async function submitPortfolioTransfer(input:SubmitPortfolioTransfer,data
   const matches=(record:PortfolioTransfer)=>record.id===id&&record.tenantId===input.tenantId
     &&record.source.accountId===input.sourceAccountId&&record.destination.accountId===input.destinationAccountId
     &&record.principalUGX===input.principalUGX&&record.chargeUGX===charge&&record.initiatedBy===input.actorId
-    &&record.status==='completed'&&record.currency==='UGX';
+    &&record.status==='completed'&&record.currency==='UGX'&&(!welfare||(record as any).welfareReason===input.welfareReason?.trim());
   try{return await runTransaction(database,async tx=>{
     const prior=await tx.get(transferRef);
     if(prior.exists()){
@@ -91,6 +98,8 @@ export async function submitPortfolioTransfer(input:SubmitPortfolioTransfer,data
     const record=definePortfolioTransfer({id,tenantId:input.tenantId,source:fromEndpoint,destination:toEndpoint,
       principalUGX:input.principalUGX,chargeUGX:charge,reference:input.reference,
       initiatedBy:input.actorId,initiatedAt:new Date().toISOString()});
+    if(welfare){(record as any).welfareReason=input.welfareReason!.trim();
+      if(!Number.isSafeInteger((from as any).reservedUGX)||from.balanceUGX-(from as any).reservedUGX<input.principalUGX+charge)throw Error('Transfer exceeds unallocated welfare funds.');}
     const remaining=from.balanceUGX-record.principalUGX-record.chargeUGX,received=to.balanceUGX+record.principalUGX;
     if(!Number.isSafeInteger(from.balanceUGX)||!Number.isSafeInteger(to.balanceUGX)||remaining<0
       ||!Number.isSafeInteger(remaining)||!Number.isSafeInteger(received))throw new Error('Insufficient source funds or balance overflow.');

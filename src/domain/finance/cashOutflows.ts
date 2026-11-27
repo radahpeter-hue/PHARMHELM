@@ -89,7 +89,10 @@ export function collectCashOutflows(input: {
     let postedByName = '';
     let charge = false;
 
-    if (movement.payrollPaymentId) {
+    if(movement.welfareRequisitionId) continue;
+    if(movement.welfareEventId && accountId==='system_welfare_fund' && movement.id===movement.welfareEventId && movement.source==='Welfare utilization'){
+      sourceCollection='branch_expenses';sourceId=movement.id;category='Staff Welfare';
+    } else if (movement.payrollPaymentId) {
       const payment=salaries.get(str(movement.payrollPaymentId));
       if(payment && movement.id===payment.movementId && payment.amountUGX===amount && payment.actorId===actorId && payment.accountId===accountId && payment.reference===reference){
         sourceCollection='finance_payroll_payments_v1';sourceId=payment.id;category='Salary payment';

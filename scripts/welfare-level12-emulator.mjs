@@ -1,0 +1,58 @@
+import {readFileSync} from 'node:fs';
+import assert from 'node:assert/strict';
+import {initializeTestEnvironment,assertFails} from '@firebase/rules-unit-testing';
+import {doc,setDoc,getDoc,updateDoc,deleteDoc,getDocs,query,collection,where} from 'firebase/firestore';
+import {initializeWelfareFund,requestWelfareFunding,transitionWelfareFunding,postWelfareEvent} from '../src/services/welfareFundService.ts';
+import {submitPortfolioTransfer} from '../src/domain/finance/portfolioTransferService.ts';
+const env=await initializeTestEnvironment({projectId:'demo-pharmhelm-level12',firestore:{rules:readFileSync(process.env.WELFARE_RULES_PATH||'firestore.rules','utf8')}});
+const tenantId='tenant_a',bank='bank_'+'a'.repeat(64),dbs={};
+for(const uid of ['ceo','finance','recipient','employee_a','employee_b','outsider','branch_finance'])dbs[uid]=env.authenticatedContext(uid,{tenantId:uid==='outsider'?'tenant_b':tenantId}).firestore();
+const fund=db=>doc(db,'finance_payment_accounts',tenantId+'_system_welfare_fund');
+const employee=(db,staffId)=>doc(db,'finance_welfare_v1',tenantId+'__employee__'+staffId);
+const request={tenantId,actorId:'recipient',amountUGX:1000000,reason:'Staff medical welfare funding',reference:'WELFARE-FUND-001'};
+const transition=(id,action,uid)=>transitionWelfareFunding({tenantId,actorId:uid,requisitionId:id,action},dbs[uid]);
+const event=(type,staffId,amountUGX,reference,extra={},uid='finance')=>postWelfareEvent({tenantId,type,staffId,amountUGX,reference,reason:'Verified welfare purpose',actorId:uid,...extra},dbs[uid]);
+async function check(balance,reserved,a=0,b=0){const f=(await getDoc(fund(dbs.finance))).data();assert.equal(f.balanceUGX,balance);assert.equal(f.reservedUGX,reserved);for(const [id,n] of [['employee_a',a],['employee_b',b]])assert.equal((await getDoc(employee(dbs.finance,id))).data()?.balanceUGX||0,n);}
+try{
+ await env.clearFirestore();await env.withSecurityRulesDisabled(async ctx=>{
+ const db=ctx.firestore();
+ for(const [uid,role,t,branches] of [['ceo','CEO',tenantId,[]],['finance','Finance Head',tenantId,[]],['recipient','Finance Officer',tenantId,[]],['employee_a','Dispenser',tenantId,['masaka']],['employee_b','Dispenser',tenantId,['masaka']],['outsider','Finance Head','tenant_b',[]],['branch_finance','Finance Officer',tenantId,['kampala']]])await setDoc(doc(db,'staff',uid),{tenantId:t,role,status:'active',active:true,secondaryRoles:[],assigned_branches:branches,...uid.startsWith('employee')?{branch_id:'masaka'}:{}});
+ await setDoc(doc(db,'branches','masaka'),{tenantId,name:'Masaka',status:'Active'});
+ await setDoc(doc(db,'finance_payment_accounts',tenantId+'_management_petty_cash'),{tenantId,accountId:'management_petty_cash',portfolioId:'management_petty_cash',kind:'petty_cash',name:'Management cash',currency:'UGX',initialized:true,balanceUGX:2000000,openingBalanceUGX:2000000,reconciliationReference:'TEST-COUNT',scope:{kind:'organisation'},lastPostingId:null});
+ await setDoc(doc(db,'finance_payment_accounts',tenantId+'_'+bank),{tenantId,accountId:bank,portfolioId:bank,kind:'bank',name:'Test bank',currency:'UGX',initialized:true,balanceUGX:0,openingBalanceUGX:0,reconciliationReference:'TEST-BANK',scope:{kind:'organisation'},lastPostingId:null});
+ await setDoc(doc(db,'finance_portfolios_v1',tenantId+'__'+bank),{id:bank,tenantId,origin:'custom',status:'active',currency:'UGX',scope:{kind:'organisation'},bankParentId:'system_bank',classification:'bank'});
+ });
+ console.log('STEP initialize');await initializeWelfareFund(tenantId,'ceo','NEW-FUND-ZERO-HISTORICAL-EXCLUDED',dbs.ceo);await check(0,0);
+ console.log('STEP request');const id=await requestWelfareFunding(request,dbs.recipient);
+ await assert.rejects(event('allocation','employee_a',1,'BEFORE-RECEIPT'));
+ await assert.rejects(transition(id,'finance_approve','recipient'));
+ console.log('STEP approve');await transition(id,'finance_approve','finance');await transition(id,'ceo_approve','ceo');
+ console.log('STEP issue');await transition(id,'issue','finance');await check(0,0);
+ assert.equal((await getDoc(doc(dbs.finance,'finance_payment_accounts',tenantId+'_management_petty_cash'))).data().balanceUGX,1000000);
+ console.log('STEP receive');await transition(id,'receive','recipient');await transition(id,'receive','recipient');await check(1000000,0);
+ console.log('STEP allocate');const aa=await event('allocation','employee_a',300000,'ALLOC-A-001');console.log('STEP allocate B');await event('allocation','employee_b',200000,'ALLOC-B-001');await check(1000000,500000,300000,200000);
+ console.log('STEP utilization');await event('utilization','employee_a',100000,'SPEND-A-001',{paymentReference:'PAYMENT-001'});await check(900000,400000,200000,200000);
+ console.log('STEP recall');await event('recall','employee_a',100000,'RECALL-A-001',{originalAllocationId:aa.id});await check(900000,300000,100000,200000);
+ console.log('STEP reallocate');await event('allocation','employee_b',50000,'ALLOC-B-002');await check(900000,350000,100000,250000);
+ const transfer={tenantId,actorId:'finance',sourceAccountId:'system_welfare_fund',destinationAccountId:bank,principalUGX:200000,reference:'WELFARE-RETURN-001',welfareReason:'Return surplus unallocated funds'};
+ console.log('STEP transfer');await submitPortfolioTransfer(transfer,dbs.finance);await submitPortfolioTransfer(transfer,dbs.finance);await check(700000,350000,100000,250000);
+ assert.equal((await getDoc(doc(dbs.finance,'finance_payment_accounts',tenantId+'_'+bank))).data().balanceUGX,200000);
+ console.log('PASS complete Level 12 acceptance: fund 700000 = unallocated 350000 + reservations 350000; utilization 100000');
+ for(const uid of ['employee_a','outsider','branch_finance'])for(const type of ['allocation','recall','utilization'])await assert.rejects(event(type,'employee_b',10,'DENIED-'+uid+'-'+type,{originalAllocationId:type==='recall'?aa.id:'',paymentReference:'TEST-REF'},uid));
+ await assertFails(getDoc(employee(dbs.employee_a,'employee_b')));
+ await assertFails(updateDoc(fund(dbs.finance),{balanceUGX:9999999}));
+ await assertFails(updateDoc(employee(dbs.finance,'employee_a'),{balanceUGX:9999999}));
+ await assertFails(updateDoc(doc(dbs.finance,'finance_welfare_v1',aa.id),{amountUGX:1}));
+ await assertFails(deleteDoc(doc(dbs.finance,'finance_welfare_v1',aa.id)));
+ await assert.rejects(event('allocation','employee_a',400000,'OVERALLOCATE'));
+ await assert.rejects(event('utilization','employee_a',100001,'OVERUTILIZE',{paymentReference:'PAY-REF'}));
+ await assert.rejects(event('recall','employee_a',100001,'OVERRECALL',{originalAllocationId:aa.id}));
+ await assert.rejects(event('recall','employee_a',1,'EMPTY-REASON',{originalAllocationId:aa.id,reason:''}));
+ await assert.rejects(submitPortfolioTransfer({...transfer,principalUGX:400000,reference:'RESERVED-FUNDS'},dbs.finance));
+ await assert.rejects(submitPortfolioTransfer({...transfer,welfareReason:undefined,reference:'GENERIC-BYPASS'},dbs.finance));
+ const repeats=await Promise.all([1,2].map(()=>event('allocation','employee_a',10000,'DUPLICATE-ALLOC')));assert.equal(repeats.filter(x=>!x.replayed).length,1);
+ await assert.rejects(event('allocation','employee_a',20000,'DUPLICATE-ALLOC'));
+ const concurrent=await Promise.allSettled([event('allocation','employee_a',300000,'CONCURRENT-ALLOC'),submitPortfolioTransfer({...transfer,principalUGX:300000,reference:'CONCURRENT-TRANSFER'},dbs.finance)]);assert.equal(concurrent.filter(x=>x.status==='fulfilled').length,1);
+ const expenses=await getDocs(query(collection(dbs.finance,'branch_expenses'),where('tenantId','==',tenantId)));assert.equal(expenses.docs.reduce((n,d)=>n+(d.data().amount||0),0),100000);
+ console.log('PASS privacy, financial authorization, immutable evidence, overdraw, conflict, replay and concurrent allocation/transfer checks');
+}finally{await env.cleanup();}

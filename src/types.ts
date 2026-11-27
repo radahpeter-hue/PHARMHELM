@@ -1594,6 +1594,7 @@ export interface PettyCashLedger {
 }
 
 export interface PettyCashRequisition {
+  source?: string;
   id: string;
   tenantId: string;
   branch_id: string;

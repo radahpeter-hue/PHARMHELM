@@ -1,0 +1,32 @@
+name: Level 12 Welfare validation
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/welfare-level12.test.ts'
+      - 'scripts/welfare-level12-emulator.mjs'
+      - 'scripts/build-firestore-release-rules.mjs'
+      - 'firestore.rules'
+      - '.github/workflows/welfare-level12-validation.yml'
+permissions:
+  contents: read
+jobs:
+  welfare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: node scripts/build-firestore-release-rules.mjs
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm install --no-save --package-lock=false --ignore-scripts firebase-tools@15.4.0
+      - run: npx firebase emulators:exec --only firestore --project demo-pharmhelm-level12 "node --import tsx scripts/welfare-level12-emulator.mjs"
